@@ -1,0 +1,24 @@
+{
+  "required": true,
+  "package": "dev.twob2tkit.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "AdvancementsScreenMixin",
+    "ClientLoginSeedMixin",
+    "CraftingRecipeDisplayMixin",
+    "FishingHookBiteAccess",
+    "GuiMixin",
+    "LevelRendererGizmoMixin",
+    "LocalAdvancementSelectionMixin",
+    "LocalPlayerShiftMixin",
+    "LocalRecipePlacementMixin",
+    "MinecraftTickMixin",
+    "MinecraftTickTailMixin",
+    "MouseHandlerMixin",
+    "MultiPlayerGameModeMixin",
+    "RecipeBookFilterButtonMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

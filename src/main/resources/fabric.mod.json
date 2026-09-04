@@ -1,0 +1,33 @@
+{
+	"schemaVersion": 1,
+	"id": "2b2t-kit",
+	"version": "${version}",
+	"name": "2b2t-kit",
+	"description": "Client-side high-altitude cruise navigation and AFK safety for Minecraft 26.1.2.",
+	"authors": [
+		"Codex"
+	],
+	"license": "CC0-1.0",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"dev.twob2tkit.KitClient"
+		]
+	},
+	"mixins": [
+		{
+			"config": "2b2t-kit.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.1.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"litematica": "*",
+		"malilib": "*"
+	}
+}
