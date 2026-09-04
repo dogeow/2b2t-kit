@@ -14,14 +14,14 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
-/** 各功能共用 {@code config/2b2t-kit/<module>.log}。 */
+/** 各功能共用 {@code config/twob2tkit/<module>.log}。 */
 public final class ModuleFileLog {
 	/** LogReview 会扫的模块名列表。 */
 	public static final String[] REVIEW_MODULES = {
 		"chopper", "planter", "feeder", "fisher", "cruise", "surround", "brawler",
 		"nether-roof", "combat", "builder", "borer"
 	};
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit");
 	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 	private static final long MAX_BYTES = 256 * 1024;
 
@@ -30,13 +30,13 @@ public final class ModuleFileLog {
 
 	/** 该模块日志文件路径。 */
 	public static Path file(Minecraft client, String module) {
-		return client.gameDirectory.toPath().resolve("config/2b2t-kit/" + module + ".log");
+		return client.gameDirectory.toPath().resolve("config/twob2tkit/" + module + ".log");
 	}
 
 	/** 写一行到游戏日志与模块文件；超大则先拦腰截断。 */
 	public static void append(Minecraft client, String module, String line) {
 		if (client == null || module == null || line == null || line.isBlank()) return;
-		LOGGER.info("[2b2t-kit/{}] {}", module, line);
+		LOGGER.info("[twob2tkit/{}] {}", module, line);
 		try {
 			Path path = file(client, module);
 			Files.createDirectories(path.getParent());
@@ -44,7 +44,7 @@ public final class ModuleFileLog {
 			String stamped = TIME.format(LocalDateTime.now()) + " " + line + System.lineSeparator();
 			Files.writeString(path, stamped, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 		} catch (IOException exception) {
-			LOGGER.warn("Could not write config/2b2t-kit/{}.log", module, exception);
+			LOGGER.warn("Could not write config/twob2tkit/{}.log", module, exception);
 		}
 	}
 

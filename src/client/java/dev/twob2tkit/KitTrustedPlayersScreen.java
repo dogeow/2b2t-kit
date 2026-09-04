@@ -21,7 +21,7 @@ final class KitTrustedPlayersScreen extends KitHudScreen {
 	private String draftName = "";
 
 	KitTrustedPlayersScreen(Screen parent, KitConfig config) {
-		super(Component.literal("2b2t-kit 玩家白名单"), parent);
+		super(Component.literal("twob2tkit 玩家白名单"), parent);
 		this.config = config;
 	}
 

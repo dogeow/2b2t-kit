@@ -84,7 +84,7 @@ public final class SettingsHomeScreen extends KitHudScreen {
 		addRenderableWidget(Button.builder(Component.literal("检查并加载新版"), button -> {
 			TunnelBorer.ReloadResult result = KitClient.reloadBorerRuntime(this.minecraft, false);
 			if (this.minecraft.player != null) {
-				this.minecraft.player.sendSystemMessage(Component.literal("[2b2t-kit] " + result.message())
+				this.minecraft.player.sendSystemMessage(Component.literal("[twob2tkit] " + result.message())
 					.withColor(result.success() ? 0x55FF55 : 0xFF5555));
 			}
 			button.setMessage(Component.literal(result.success() ? "新版已加载" : "未加载，查看聊天"));
@@ -92,7 +92,7 @@ public final class SettingsHomeScreen extends KitHudScreen {
 		addRenderableWidget(Button.builder(Component.literal("恢复内置版本"), button -> {
 			TunnelBorer.ReloadResult result = KitClient.reloadBorerRuntime(this.minecraft, true);
 			if (this.minecraft.player != null) {
-				this.minecraft.player.sendSystemMessage(Component.literal("[2b2t-kit] " + result.message())
+				this.minecraft.player.sendSystemMessage(Component.literal("[twob2tkit] " + result.message())
 					.withColor(result.success() ? 0x55FF55 : 0xFF5555));
 			}
 			button.setMessage(Component.literal(result.success() ? "内置版本已恢复" : "恢复失败，查看聊天"));
@@ -122,7 +122,7 @@ public final class SettingsHomeScreen extends KitHudScreen {
 		}
 		y += 4;
 		if (y + 12 >= footerTop) return;
-		KitUi.centered(graphics, this.font, "只替换 runtime/2b2t-kit-engine.jar，不要把整包模组放进这个目录", center, y, 0xA0A0A0);
+		KitUi.centered(graphics, this.font, "只替换 runtime/twob2tkit-engine.jar，不要把整包模组放进这个目录", center, y, 0xA0A0A0);
 		y += 12;
 		if (y + 12 >= footerTop) return;
 		KitUi.centered(graphics, this.font, "Mixin、按键和核心界面更新仍需重启", center, y, 0xA0A0A0);

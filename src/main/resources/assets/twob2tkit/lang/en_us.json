@@ -1,0 +1,15 @@
+{
+  "key.category.twob2tkit.controls": "2b2t-kit",
+  "key.twob2tkit.open_gui": "Open / close 2b2t-kit",
+  "key.twob2tkit.emergency_stop": "Emergency stop twob2tkit",
+  "key.twob2tkit.start_stop": "Start / stop cruise (Nether: mine ceiling and fly up)",
+  "key.twob2tkit.toggle_borer": "Toggle tunnel borer",
+  "key.twob2tkit.borer_home": "Borer follow path home",
+  "key.twob2tkit.portal_home": "Fly back to Nether portal",
+  "key.twob2tkit.toggle_surround": "Toggle auto surround",
+  "key.twob2tkit.toggle_feeder": "Toggle auto feed (cows, sheep, ...)",
+  "key.twob2tkit.toggle_planter": "Toggle auto farm (crops, sugar cane, ...)",
+  "key.twob2tkit.toggle_chopper": "Toggle auto chop trees",
+  "key.twob2tkit.toggle_fisher": "Toggle auto fish (lock aim, stash when full)",
+  "key.twob2tkit.toggle_villager_scan": "Toggle village profession scan"
+}

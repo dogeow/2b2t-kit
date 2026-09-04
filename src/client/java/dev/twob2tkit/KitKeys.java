@@ -9,22 +9,22 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.resources.Identifier;
 import org.lwjgl.glfw.GLFW;
 
-/** 2b2t-kit 热键：注册、匹配、物理按下检测与绑定改写。 */
+/** twob2tkit 热键：注册、匹配、物理按下检测与绑定改写。 */
 public final class KitKeys {
 	private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(KitClient.MOD_ID, "controls"));
 
-	public static final KeyMapping OPEN_GUI = new KeyMapping("key.2b2t-kit.open_gui", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_U, CATEGORY);
-	public static final KeyMapping EMERGENCY_STOP = new KeyMapping("key.2b2t-kit.emergency_stop", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_END, CATEGORY);
-	public static final KeyMapping START_STOP = new KeyMapping("key.2b2t-kit.start_stop", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_G, CATEGORY);
-	public static final KeyMapping TOGGLE_BORER = new KeyMapping("key.2b2t-kit.toggle_borer", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, CATEGORY);
-	public static final KeyMapping BORER_HOME = new KeyMapping("key.2b2t-kit.borer_home", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_H, CATEGORY);
-	public static final KeyMapping PORTAL_HOME = new KeyMapping("key.2b2t-kit.portal_home", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_P, CATEGORY);
-	public static final KeyMapping TOGGLE_SURROUND = new KeyMapping("key.2b2t-kit.toggle_surround", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_V, CATEGORY);
-	public static final KeyMapping TOGGLE_FEEDER = new KeyMapping("key.2b2t-kit.toggle_feeder", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_N, CATEGORY);
-	public static final KeyMapping TOGGLE_PLANTER = new KeyMapping("key.2b2t-kit.toggle_planter", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_J, CATEGORY);
-	public static final KeyMapping TOGGLE_CHOPPER = new KeyMapping("key.2b2t-kit.toggle_chopper", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_K, CATEGORY);
-	public static final KeyMapping TOGGLE_FISHER = new KeyMapping("key.2b2t-kit.toggle_fisher", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY);
-	public static final KeyMapping TOGGLE_VILLAGER_SCAN = new KeyMapping("key.2b2t-kit.toggle_villager_scan", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY);
+	public static final KeyMapping OPEN_GUI = new KeyMapping("key.twob2tkit.open_gui", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_U, CATEGORY);
+	public static final KeyMapping EMERGENCY_STOP = new KeyMapping("key.twob2tkit.emergency_stop", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_END, CATEGORY);
+	public static final KeyMapping START_STOP = new KeyMapping("key.twob2tkit.start_stop", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_G, CATEGORY);
+	public static final KeyMapping TOGGLE_BORER = new KeyMapping("key.twob2tkit.toggle_borer", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, CATEGORY);
+	public static final KeyMapping BORER_HOME = new KeyMapping("key.twob2tkit.borer_home", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_H, CATEGORY);
+	public static final KeyMapping PORTAL_HOME = new KeyMapping("key.twob2tkit.portal_home", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_P, CATEGORY);
+	public static final KeyMapping TOGGLE_SURROUND = new KeyMapping("key.twob2tkit.toggle_surround", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_V, CATEGORY);
+	public static final KeyMapping TOGGLE_FEEDER = new KeyMapping("key.twob2tkit.toggle_feeder", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_N, CATEGORY);
+	public static final KeyMapping TOGGLE_PLANTER = new KeyMapping("key.twob2tkit.toggle_planter", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_J, CATEGORY);
+	public static final KeyMapping TOGGLE_CHOPPER = new KeyMapping("key.twob2tkit.toggle_chopper", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_K, CATEGORY);
+	public static final KeyMapping TOGGLE_FISHER = new KeyMapping("key.twob2tkit.toggle_fisher", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY);
+	public static final KeyMapping TOGGLE_VILLAGER_SCAN = new KeyMapping("key.twob2tkit.toggle_villager_scan", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, CATEGORY);
 	/** 绑键捕获期间为 true，tick 里吞掉热键点击。 */
 	public static boolean suppressHotkeys;
 

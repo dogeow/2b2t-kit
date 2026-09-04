@@ -31,7 +31,7 @@ public final class PlanterScreen extends KitHudScreen {
 
 	/** 打开自动种田设置屏。 */
 	public PlanterScreen(Screen parent, KitConfig config, AutoPlanter planter) {
-		super(Component.literal("2b2t-kit 自动种田"), parent);
+		super(Component.literal("twob2tkit 自动种田"), parent);
 		this.config = config;
 		this.planter = planter;
 	}

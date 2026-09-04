@@ -33,7 +33,7 @@ public final class RecipeGuideScreen extends KitHudScreen {
 
 	/** 打开本地配方指南屏。 */
 	public RecipeGuideScreen(Screen parent, KitConfig config) {
-		super(Component.literal("2b2t-kit 本地配方指南"), parent);
+		super(Component.literal("twob2tkit 本地配方指南"), parent);
 		this.config = config;
 	}
 

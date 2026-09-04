@@ -18,7 +18,7 @@ import java.util.Map;
 
 /** 区域挖思考记忆：哪类卡住用哪招解开过。坏文件当空白，不崩游戏。 */
 final class BorerAreaThinkStore {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Borer");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	/** 某场景某招的胜/负计数。 */
@@ -37,7 +37,7 @@ final class BorerAreaThinkStore {
 
 	/** 对应配置/日志文件路径。 */
 	static Path file(Minecraft client) {
-		return client.gameDirectory.toPath().resolve("config/2b2t-kit/area-think.json");
+		return client.gameDirectory.toPath().resolve("config/twob2tkit/area-think.json");
 	}
 
 	/** 从磁盘加载。 */
@@ -50,7 +50,7 @@ final class BorerAreaThinkStore {
 			if (parsed == null || parsed.scenes == null) return new File();
 			return parsed;
 		} catch (RuntimeException | IOException exception) {
-			LOGGER.warn("Could not read config/2b2t-kit/area-think.json", exception);
+			LOGGER.warn("Could not read config/twob2tkit/area-think.json", exception);
 			return new File();
 		}
 	}
@@ -65,7 +65,7 @@ final class BorerAreaThinkStore {
 				GSON.toJson(data, writer);
 			}
 		} catch (IOException exception) {
-			LOGGER.warn("Could not write config/2b2t-kit/area-think.json", exception);
+			LOGGER.warn("Could not write config/twob2tkit/area-think.json", exception);
 		}
 	}
 
@@ -85,13 +85,13 @@ final class BorerAreaThinkStore {
 	static void appendLesson(Minecraft client, String lesson) {
 		if (client == null || lesson == null || lesson.isBlank()) return;
 		try {
-			Path path = client.gameDirectory.toPath().resolve("config/2b2t-kit/area-think-lessons.md");
+			Path path = client.gameDirectory.toPath().resolve("config/twob2tkit/area-think-lessons.md");
 			Files.createDirectories(path.getParent());
 			String stamped = "- " + java.time.LocalDateTime.now().toString() + "  " + lesson.trim()
 				+ System.lineSeparator();
 			Files.writeString(path, stamped, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 		} catch (IOException exception) {
-			LOGGER.warn("Could not write config/2b2t-kit/area-think-lessons.md", exception);
+			LOGGER.warn("Could not write config/twob2tkit/area-think-lessons.md", exception);
 		}
 	}
 

@@ -12,9 +12,9 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-/** 被打 / 死亡写到 config/2b2t-kit/combat.log。 */
+/** 被打 / 死亡写到 config/twob2tkit/combat.log。 */
 public final class CombatFileLog {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Combat");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Combat");
 	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 	private static final long MAX_BYTES = 256 * 1024;
 
@@ -24,15 +24,15 @@ public final class CombatFileLog {
 	/** 写一行战斗诊断到 combat.log，同时打 SLF4J。 */
 	public static void append(Minecraft client, String line) {
 		if (client == null || line == null || line.isBlank()) return;
-		LOGGER.info("[2b2t-kit/Combat] {}", line);
+		LOGGER.info("[twob2tkit/Combat] {}", line);
 		try {
-			Path path = client.gameDirectory.toPath().resolve("config/2b2t-kit/combat.log");
+			Path path = client.gameDirectory.toPath().resolve("config/twob2tkit/combat.log");
 			Files.createDirectories(path.getParent());
 			trimIfHuge(path);
 			String stamped = TIME.format(LocalDateTime.now()) + " " + line + System.lineSeparator();
 			Files.writeString(path, stamped, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 		} catch (IOException exception) {
-			LOGGER.warn("Could not write config/2b2t-kit/combat.log", exception);
+			LOGGER.warn("Could not write config/twob2tkit/combat.log", exception);
 		}
 	}
 

@@ -27,14 +27,14 @@ import java.util.jar.JarFile;
 /**
  * 盾构稳定代理：挖矿实现可热替换，不必重注册 Fabric 回调。
  * <p>
- * 负责加载内置/外部 {@code 2b2t-kit-engine.jar}，并把主机配置桥给引擎。
+ * 负责加载内置/外部 {@code twob2tkit-engine.jar}，并把主机配置桥给引擎。
  */
 public final class TunnelBorer {
 	private static final String ENGINE_CLASS = "dev.twob2tkit.runtime.engine.DefaultTunnelBorerEngine";
-	private static final String BUNDLED_ENGINE = "/runtime/2b2t-kit-engine.jar";
-	private static final Path RUNTIME_DIR = FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit/runtime");
-	private static final Path ENGINE_PATH = RUNTIME_DIR.resolve("2b2t-kit-engine.jar");
-	private static final Path ENGINE_SNAPSHOT = RUNTIME_DIR.resolve("2b2t-kit-engine.loaded.jar");
+	private static final String BUNDLED_ENGINE = "/runtime/twob2tkit-engine.jar";
+	private static final Path RUNTIME_DIR = FabricLoader.getInstance().getConfigDir().resolve("twob2tkit/runtime");
+	private static final Path ENGINE_PATH = RUNTIME_DIR.resolve("twob2tkit-engine.jar");
+	private static final Path ENGINE_SNAPSHOT = RUNTIME_DIR.resolve("twob2tkit-engine.loaded.jar");
 	private static final String ENGINE_PACKAGE = "dev.twob2tkit.runtime.engine.";
 
 	/** 盾构模式。 */
@@ -199,15 +199,21 @@ public final class TunnelBorer {
 		}
 	}
 
-	/** 把旧版 autocruise-engine.jar 拷到新路径（若新文件尚不存在）。 */
+	/** 把旧版引擎 jar 拷到新路径（若新文件尚不存在）。 */
 	private static void migrateLegacyEngineJar() {
 		try {
 			if (Files.isRegularFile(ENGINE_PATH)) return;
-			Path legacy = FabricLoader.getInstance().getConfigDir().resolve("autocruise/runtime/autocruise-engine.jar");
-			if (!Files.isRegularFile(legacy)) return;
-			Files.createDirectories(RUNTIME_DIR);
-			Files.copy(legacy, ENGINE_PATH);
-			KitClient.LOGGER.info("Migrated legacy engine jar to {}", ENGINE_PATH);
+			Path[] legacies = {
+				FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit/runtime/2b2t-kit-engine.jar"),
+				FabricLoader.getInstance().getConfigDir().resolve("autocruise/runtime/autocruise-engine.jar")
+			};
+			for (Path legacy : legacies) {
+				if (!Files.isRegularFile(legacy)) continue;
+				Files.createDirectories(RUNTIME_DIR);
+				Files.copy(legacy, ENGINE_PATH);
+				KitClient.LOGGER.info("Migrated legacy engine jar to {}", ENGINE_PATH);
+				return;
+			}
 		} catch (IOException exception) {
 			KitClient.LOGGER.warn("Could not migrate legacy engine jar", exception);
 		}
@@ -320,7 +326,7 @@ public final class TunnelBorer {
 
 	/** 把内置引擎 jar 写出到 runtime 目录。 */
 	public ReloadResult installBundledUpdate(Minecraft client) {
-		Path temp = ENGINE_PATH.resolveSibling("2b2t-kit-engine.jar.new");
+		Path temp = ENGINE_PATH.resolveSibling("twob2tkit-engine.jar.new");
 		try (InputStream input = TunnelBorer.class.getResourceAsStream(BUNDLED_ENGINE)) {
 			if (input == null) return new ReloadResult(false, "当前核心 JAR 没有内置运行引擎");
 			Files.createDirectories(RUNTIME_DIR);

@@ -18,8 +18,8 @@ import java.util.Set;
 
 /** 补给物品目录与背包计数（任意食物、治疗药水等）。 */
 public final class HealingItems {
-	public static final String ANY_FOOD = "2b2t-kit:any_food";
-	public static final String HEALING_POTION = "2b2t-kit:healing_potion";
+	public static final String ANY_FOOD = "twob2tkit:any_food";
+	public static final String HEALING_POTION = "twob2tkit:healing_potion";
 
 	/** 一种可选补给：配置 id、界面名、图标。 */
 	public record Choice(String id, String label, Item icon) {
@@ -64,8 +64,8 @@ public final class HealingItems {
 		Set<String> remapped = new LinkedHashSet<>();
 		for (String id : stored) {
 			if (id == null) continue;
-			if ("autocruise:any_food".equals(id)) remapped.add(ANY_FOOD);
-			else if ("autocruise:healing_potion".equals(id)) remapped.add(HEALING_POTION);
+			if ("autocruise:any_food".equals(id) || "2b2t-kit:any_food".equals(id)) remapped.add(ANY_FOOD);
+			else if ("autocruise:healing_potion".equals(id) || "2b2t-kit:healing_potion".equals(id)) remapped.add(HEALING_POTION);
 			else remapped.add(id);
 		}
 		Set<String> known = new LinkedHashSet<>();

@@ -125,10 +125,10 @@ public final class BorerAreaMarks {
 		return wide + "×" + along + "  Y " + config.borerAreaAy + " 往下";
 	}
 
-	/** 聊天系统消息（带 2b2t-kit 前缀）。 */
+	/** 聊天系统消息（带 twob2tkit 前缀）。 */
 	public static void tell(Minecraft client, String text) {
 		if (client != null && client.player != null) {
-			client.player.sendSystemMessage(Component.literal("[2b2t-kit] " + text).withColor(0x55FFFF));
+			client.player.sendSystemMessage(Component.literal("[twob2tkit] " + text).withColor(0x55FFFF));
 		}
 	}
 }

@@ -29,7 +29,7 @@ final class KitScreen extends KitHudScreen {
 	}
 
 	KitScreen(Screen parent, KitConfig config, KitController controller) {
-		super(Component.literal("2b2t-kit 巡航"), parent);
+		super(Component.literal("twob2tkit 巡航"), parent);
 		this.config = config;
 		this.controller = controller;
 	}

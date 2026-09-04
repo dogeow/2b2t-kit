@@ -12,7 +12,7 @@ import dev.twob2tkit.KitConfig;
 import dev.twob2tkit.ModuleFileLog;
 import dev.twob2tkit.aihud.AiHud;
 
-/** 运行时扫各功能 config/2b2t-kit/<module>.log，卡住就问 Grok。盾构另有「想想」，这里不重复问。 */
+/** 运行时扫各功能 config/twob2tkit/<module>.log，卡住就问 Grok。盾构另有「想想」，这里不重复问。 */
 public final class LogReview {
 	private final KitConfig config;
 	private int ticks;
@@ -48,7 +48,7 @@ public final class LogReview {
 				if (!toldMissingGrok) {
 					toldMissingGrok = true;
 					client.player.sendSystemMessage(Component.literal(
-						"[2b2t-kit] 日志有卡住迹象，但本机没登录 Grok、也没有 xai.key"));
+						"[twob2tkit] 日志有卡住迹象，但本机没登录 Grok、也没有 xai.key"));
 				}
 				return;
 			}
@@ -62,14 +62,14 @@ public final class LogReview {
 				String lesson = advice.lesson == null || advice.lesson.isBlank() ? "看过了，没有明确建议" : advice.lesson;
 				int color = advice.needFix ? 0xFFAA55 : 0x55FF55;
 				if (client.player != null) {
-					client.player.sendSystemMessage(Component.literal("[2b2t-kit/Grok] " + lesson).withColor(color));
+					client.player.sendSystemMessage(Component.literal("[twob2tkit/Grok] " + lesson).withColor(color));
 				}
 				ModuleFileLog.append(client, module,
 					"review needFix=" + advice.needFix + " cause=" + advice.cause + " lesson=" + lesson);
 				AiHud.done(lesson, false);
 			}, () -> {
 				if (client.player != null) {
-					client.player.sendSystemMessage(Component.literal("[2b2t-kit] Grok 看日志失败").withColor(0xFF5555));
+					client.player.sendSystemMessage(Component.literal("[twob2tkit] Grok 看日志失败").withColor(0xFF5555));
 				}
 				ModuleFileLog.append(client, module, "review-fail");
 				AiHud.fail("问 Grok 失败");

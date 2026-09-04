@@ -16,7 +16,7 @@ minecraft-kit/
 
 版本以 `2b2t-kit/gradle.properties` 为准（`version` / `runtime_engine_version`），`2b2t-kit/README.md` 可能落后。
 
-## 技术栈（2b2t-kit）
+## 技术栈（2b2t-kit / mod id: twob2tkit）
 
 
 | 项   | 值                                                   |
@@ -26,7 +26,7 @@ minecraft-kit/
 | 构建  | Java 25、Gradle 9.5.1、Fabric Loom 1.17               |
 | 环境  | 仅客户端（`fabric.mod.json` → `"environment": "client"`） |
 | 包名  | `dev.twob2tkit`                                    |
-| 配置  | `/Applications/.minecraft/config/2b2t-kit.json`   |
+| 配置  | `/Applications/.minecraft/config/twob2tkit.json`   |
 
 
 与 Meteor **没有** Addon API 依赖。飞行靠玩家自己开的第三方飞行；本 Mod 只模拟原版 `KeyMapping.setDown` / `KeyMapping.click`。
@@ -42,14 +42,14 @@ Meteor 源码面向 **26.2**，2b2t-kit 是 **26.1.2**。对照 API 时先在 Ya
 | ------ | -------------------------------------------------------------------------- |
 | 源码     | `/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit`                          |
 | JDK    | `/Users/sam/Code/DogeOW/minecraft-kit/jdk25/Contents/Home`                 |
-| 热加载引擎  | `/Applications/.minecraft/config/2b2t-kit/runtime/2b2t-kit-engine.jar` |
-| 完整 Mod | `/Applications/.minecraft/mods/2b2t-kit-<版本>.jar`                        |
-| 配置     | `/Applications/.minecraft/config/2b2t-kit.json`                          |
-| 各功能诊断 | `/Applications/.minecraft/config/2b2t-kit/<module>.log`（`ModuleFileLog`） |
-| 盾构诊断 | `/Applications/.minecraft/config/2b2t-kit/borer.log`（`BorerFileLog`）     |
-| 挖树诊断 | `/Applications/.minecraft/config/2b2t-kit/chopper.log`（`ChopperFileLog`） |
-| 种田诊断 | `/Applications/.minecraft/config/2b2t-kit/planter.log`（`PlanterFileLog`） |
-| 游戏日志 | `/Applications/.minecraft/logs/latest.log`（`[2b2t-kit/<module>]`）         |
+| 热加载引擎  | `/Applications/.minecraft/config/twob2tkit/runtime/twob2tkit-engine.jar` |
+| 完整 Mod | `/Applications/.minecraft/mods/twob2tkit-<版本>.jar`                        |
+| 配置     | `/Applications/.minecraft/config/twob2tkit.json`                          |
+| 各功能诊断 | `/Applications/.minecraft/config/twob2tkit/<module>.log`（`ModuleFileLog`） |
+| 盾构诊断 | `/Applications/.minecraft/config/twob2tkit/borer.log`（`BorerFileLog`）     |
+| 挖树诊断 | `/Applications/.minecraft/config/twob2tkit/chopper.log`（`ChopperFileLog`） |
+| 种田诊断 | `/Applications/.minecraft/config/twob2tkit/planter.log`（`PlanterFileLog`） |
+| 游戏日志 | `/Applications/.minecraft/logs/latest.log`（`[twob2tkit/<module>]`）         |
 
 
 不要主动跑 `./gradlew runClient`、`./gradlew genSources` 或长时间 Gradle 任务，除非用户明确要求。也不要去改 `jdk25/`。更细的热更新说明见 `2b2t-kit/HOT-RELOAD.md`。
@@ -60,10 +60,10 @@ Meteor 源码面向 **26.2**，2b2t-kit 是 **26.1.2**。对照 API 时先在 Ya
 
 | 文件 | 路径 | 内容 |
 | --- | --- | --- |
-| 游戏日志 | `/Applications/.minecraft/logs/latest.log` | 完整：`start` / `mining-target` / `cannot-break` / `VERTICAL_*` / `skip-ore`；各功能：`[2b2t-kit/<module>]` |
-| 盾构专用 | `/Applications/.minecraft/config/2b2t-kit/borer.log` | 同上（1.6.145 起找矿也会写入；以前只在回家时写，会缺本局） |
-| 挖树专用 | `/Applications/.minecraft/config/2b2t-kit/chopper.log` | `start` / `lock-tree` / `clip-miss` / `clip-switch` / `mine-fail` / `periodic` |
-| 种田专用 | `/Applications/.minecraft/config/2b2t-kit/planter.log` | `start` / `clip-miss` / `harvest-stall` / `periodic` / `stop` |
+| 游戏日志 | `/Applications/.minecraft/logs/latest.log` | 完整：`start` / `mining-target` / `cannot-break` / `VERTICAL_*` / `skip-ore`；各功能：`[twob2tkit/<module>]` |
+| 盾构专用 | `/Applications/.minecraft/config/twob2tkit/borer.log` | 同上（1.6.145 起找矿也会写入；以前只在回家时写，会缺本局） |
+| 挖树专用 | `/Applications/.minecraft/config/twob2tkit/chopper.log` | `start` / `lock-tree` / `clip-miss` / `clip-switch` / `mine-fail` / `periodic` |
+| 种田专用 | `/Applications/.minecraft/config/twob2tkit/planter.log` | `start` / `clip-miss` / `harvest-stall` / `periodic` / `stop` |
 | 喂养 | `.../feeder.log` | `start` / `approach-stuck` / `feed-fail` / `periodic` / `stop` |
 | 钓鱼 | `.../fisher.log` | `start` / `inventory-full` / `no-rod` / `periodic` / `stop` |
 | 巡航 | `.../cruise.log` | `start` / `unstick` / `periodic` / `stop` |
@@ -78,7 +78,7 @@ Meteor 源码面向 **26.2**，2b2t-kit 是 **26.1.2**。对照 API 时先在 Ya
 - `borer.log` 超 256KB 会拦腰截断；行号对不上就从文件头重读。
 - `chopper.log` 同样 256KB 截断；挖树卡住先读这个，不要只猜 `AutoChopper`。
 - `planter.log` 同样 256KB 截断；种田打掉围墙或空挥先读这个。
-- 其它功能同样 256KB 截断，文件名见上表。卡住先读对应 `config/2b2t-kit/<module>.log`。
+- 其它功能同样 256KB 截断，文件名见上表。卡住先读对应 `config/twob2tkit/<module>.log`。
 - 主机 `LogReview` 扫除盾构外的这些日志；盾构卡住走「想想」（`BorerAreaThinkAsk`）。
 
 **当前水印（2026-09-02）**
@@ -91,11 +91,11 @@ Meteor 源码面向 **26.2**，2b2t-kit 是 **26.1.2**。对照 API 时先在 Ya
 
 | 改了什么                                                | 产物                                           | 安装到哪                                              | 怎么生效                  |
 | --------------------------------------------------- | -------------------------------------------- | ------------------------------------------------- | --------------------- |
-| 盾构 / 找矿 / 向下挖 / 铺路 / 拾取 / 垂直寻路                      | `build/runtime-engine/2b2t-kit-engine.jar` | `config/2b2t-kit/runtime/2b2t-kit-engine.jar` | **热加载**，不用关游戏         |
-| 界面、巡航、挖树、种田、按键、Mixin、`BorerHost` 新方法、`fabric.mod.json` | `build/libs/2b2t-kit-<version>.jar`        | `mods/2b2t-kit-<version>.jar`                   | **必须退出 Minecraft 再开** |
+| 盾构 / 找矿 / 向下挖 / 铺路 / 拾取 / 垂直寻路                      | `build/runtime-engine/twob2tkit-engine.jar` | `config/twob2tkit/runtime/twob2tkit-engine.jar` | **热加载**，不用关游戏         |
+| 界面、巡航、挖树、种田、按键、Mixin、`BorerHost` 新方法、`fabric.mod.json` | `build/libs/twob2tkit-<version>.jar`        | `mods/twob2tkit-<version>.jar`                   | **必须退出 Minecraft 再开** |
 
 
-热加载 **只换引擎 jar**。不要把整包 `2b2t-kit-*.jar` 丢进 `config/2b2t-kit/runtime/`。`mods/` 里只能留 **一个** `2b2t-kit-*.jar`。
+热加载 **只换引擎 jar**。不要把整包 `twob2tkit-*.jar` 丢进 `config/twob2tkit/runtime/`。`mods/` 里只能留 **一个** `twob2tkit-*.jar`。
 
 能热更新的源码只限 `src/client/java/dev/twob2tkit/runtime/engine/`（`DefaultTunnelBorerEngine`、`BorerAim`、`BorerHazards`、`BorerItems`、`BorerThreats`、`BorerTrail`、`OreTarget`）。巡航、挖树、界面、Mixin、`TunnelBorer`、`BorerHost` 热加载无效。
 
@@ -112,12 +112,12 @@ JAVA_HOME=/Users/sam/Code/DogeOW/minecraft-kit/jdk25/Contents/Home \
   /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/gradlew \
   -p /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit jar --offline
 
-mkdir -p /Applications/.minecraft/config/2b2t-kit/runtime
-cp /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/build/runtime-engine/2b2t-kit-engine.jar \
-   /Applications/.minecraft/config/2b2t-kit/runtime/2b2t-kit-engine.jar
+mkdir -p /Applications/.minecraft/config/twob2tkit/runtime
+cp /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/build/runtime-engine/twob2tkit-engine.jar \
+   /Applications/.minecraft/config/twob2tkit/runtime/twob2tkit-engine.jar
 ```
 
-1. 游戏里点 **设置 → 检查并加载新版**，或 `/2b2t-kit reload`。加载成功聊天会写引擎版本号；会先停当前盾构并松键。失败会继续用旧引擎，不要当已更新。
+1. 游戏里点 **设置 → 检查并加载新版**，或 `/twob2tkit reload`。加载成功聊天会写引擎版本号；会先停当前盾构并松键。失败会继续用旧引擎，不要当已更新。
 2. 告诉用户：只改挖矿/盾构时 reload 即可，**不要**说关游戏。
 
 「恢复内置版本」会丢掉热加载包，回到当前 mods 里那份主机自带的引擎。
@@ -129,12 +129,12 @@ JAVA_HOME=/Users/sam/Code/DogeOW/minecraft-kit/jdk25/Contents/Home \
   /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/gradlew \
   -p /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit jar --offline
 
-rm -f /Applications/.minecraft/mods/2b2t-kit-*.jar
-cp /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/build/libs/2b2t-kit-<新版本>.jar \
+rm -f /Applications/.minecraft/mods/twob2tkit-*.jar
+cp /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/build/libs/twob2tkit-<新版本>.jar \
    /Applications/.minecraft/mods/
 
-cp /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/build/runtime-engine/2b2t-kit-engine.jar \
-   /Applications/.minecraft/config/2b2t-kit/runtime/2b2t-kit-engine.jar
+cp /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/build/runtime-engine/twob2tkit-engine.jar \
+   /Applications/.minecraft/config/twob2tkit/runtime/twob2tkit-engine.jar
 ```
 
 然后 **完全退出 Minecraft 再开**。F3+T、`/reload`、热加载引擎都不够。对用户要明确说关游戏重开，不要说「reload 就行」。
@@ -146,7 +146,7 @@ cp /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/build/runtime-engine/2b2t-kit-e
 - `KitClient` — `ClientModInitializer`，客户端指令、按键、tick 分发
 - `KitController` — 高空巡航（升空 → 转向前进 → 绕障 → 到达/离线）
 - `KitConfig` — Gson 配置；新增字段要有合理默认值
-- `KitKeys` / `KitKeyBindsScreen` — 按键；语言键在 `assets/2b2t-kit/lang/{zh_cn,en_us}.json`
+- `KitKeys` / `KitKeyBindsScreen` — 按键；语言键在 `assets/twob2tkit/lang/{zh_cn,en_us}.json`
 
 界面：五个标签在 `KitTab`（巡航 / 生电 / 保护 / 助手 / 设置）。屏幕继承 `KitHudScreen`，绘制用 Minecraft 26 的 `extractRenderState(GuiGraphicsExtractor, ...)`，**不要**写回旧版 `render(GuiGraphics, ...)`。
 
@@ -164,7 +164,7 @@ cp /Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/build/runtime-engine/2b2t-kit-e
 | 本地知识 | `LocalRecipes`, `LocalRecipeBookInjector`, `LocalAdvancementManager` | 不向服务器伪造配方或进度          |
 
 
-Mixin（`src/client/resources/2b2t-kit.client.mixins.json`，`JAVA_25`）：
+Mixin（`src/client/resources/twob2tkit.client.mixins.json`，`JAVA_25`）：
 
 - `MinecraftTickMixin`（priority 2000，`tick` HEAD）— 在玩家采样按键**之前**写入移动/挖掘输入
 - `MinecraftTickTailMixin`（priority 500，`tick` RETURN）— Meteor 改朝向之后把巡航朝向写回去
@@ -216,7 +216,7 @@ Mixin（`src/client/resources/2b2t-kit.client.mixins.json`，`JAVA_25`）：
 - 写新功能前先查 `meteor.md`，见上一节。Meteor 有的就用它的，不够就写增强让它配合。
 - 不要把 Meteor 加进 `build.gradle` 依赖；不要用 Meteor Addon API。
 - 移动、挖掘、放置走原版按键/点击，让 Meteor Auto Tool、隔空放置等仍能接手。不要另发一套破坏/放置包。
-- `/2b2t-kit ...` 是 Fabric 客户端指令，不会进服务器聊天。
+- `/twob2tkit ...` 是 Fabric 客户端指令，不会进服务器聊天。
 - 配方书增强不得伪造服务器配方编号；本地进度只写本机配置。
 - 新增按键必须同时改 `KitKeys`、`zh_cn.json`、`en_us.json`。
 - 界面文案可以中文；代码标识符、配置键、枚举名用 ASCII。
@@ -268,7 +268,7 @@ Mixin（`src/client/resources/2b2t-kit.client.mixins.json`，`JAVA_25`）：
 - **挖树闪屏 / 人晃**：够得着还「飞近再砍」会开关飞行、准星在树叶和树干间甩、提示每拍重刷。够得着就站住砍挡路树叶。规则在 `ChopperApproachPolicy`。
 - **剪刀快坏挖不动**：Meteor `auto-tool` 开了 `anti-break` 会取消破坏。不要把快坏剪刀握在手上，叶子改空手。规则在 `ChopperToolPolicy`。
 - **够得着停住砍**：准星对不齐就松手站住，没有超时。够得着要瞬间对准并砍准星那块，约两秒还对不齐就跳过。规则在 `ChopperApproachPolicy`。
-- **游戏里问 Grok 看日志**：`LogReview` 扫各功能 `config/2b2t-kit/*.log`，卡住问本机 Grok 或 `xai.key`。过程画在屏幕左上角固定面板（`AiHud`，不跟镜头）。课也进聊天。不改 jar。规则在 `LogReviewPolicy`。盾构想想同样走这块面板。
+- **游戏里问 Grok 看日志**：`LogReview` 扫各功能 `config/twob2tkit/*.log`，卡住问本机 Grok 或 `xai.key`。过程画在屏幕左上角固定面板（`AiHud`，不跟镜头）。课也进聊天。不改 jar。规则在 `LogReviewPolicy`。盾构想想同样走这块面板。
 - **挖矿提示跟着人晃**：旧 `BorerHud` 把状态钉在准星前的 3D 字上。改由 `BorerScreenHud` 画在屏幕正中下方，转头跑步都不跟。区域黄框/回家箭头仍钉世界坐标。
 - **钻石掉坑里不捡**：背包一增加就结束本轮，坑里剩下的丢掉；原版拾取垂直只有 0.5 格，1 格深的坑沿站着够不着。规则在 `BorerLootPolicy`。
 - **回家箭头穿墙斜线**：主世界把下界门坐标当成路点 0，开局再清成「门+脚底」两条，金色箭头就指着墙壁。箭头只画巷道上相邻路点。规则在 `BorerTrailPolicy`。

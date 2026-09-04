@@ -48,7 +48,7 @@ public final class TechHomeScreen extends KitHudScreen {
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
 		int center = this.width / 2;
-		KitUi.centered(graphics, this.font, "看图用 Litematica，自动摆用 2b2t-kit", center, bodyTop(56), 0x55FFFF);
+		KitUi.centered(graphics, this.font, "看图用 Litematica，自动摆用 twob2tkit", center, bodyTop(56), 0x55FFFF);
 		int y = bodyTop(76);
 		KitUi.centered(graphics, this.font, LitematicaAccess.describe(), center, y, 0xFFFFFF);
 		y += 18;

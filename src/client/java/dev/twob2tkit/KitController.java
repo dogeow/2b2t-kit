@@ -244,7 +244,7 @@ public final class KitController {
 				lastCeilingMessageTick = ticks;
 			}
 			if (ticks % 10 == 0) {
-				client.gui.setOverlayMessage(Component.literal("2b2t-kit | " + ceilingMiner.status()).withColor(0x55FFFF), false);
+				client.gui.setOverlayMessage(Component.literal("twob2tkit | " + ceilingMiner.status()).withColor(0x55FFFF), false);
 			}
 			return;
 		}
@@ -787,7 +787,7 @@ public final class KitController {
 			healthNote = hasEdibleFood(client.player) ? " | 生命偏低请进食" : " | 生命偏低无食物，继续飞";
 		}
 		client.gui.setOverlayMessage(
-			Component.literal(String.format(Locale.ROOT, "2b2t-kit | %s | 剩余 %.0f 格 | Y %.1f/%.1f | ETA %s%s",
+			Component.literal(String.format(Locale.ROOT, "twob2tkit | %s | 剩余 %.0f 格 | Y %.1f/%.1f | ETA %s%s",
 				phase.label, distance, y, desiredY(), eta, healthNote)).withColor(healthNote.isEmpty() ? 0xFFFFFF : 0xFFFF55),
 			false
 		);
@@ -827,7 +827,7 @@ public final class KitController {
 
 	/** 立刻断开服务器。 */
 	private void disconnectNow(Minecraft client, String reason) {
-		Component title = Component.literal("2b2t-kit 已安全离线");
+		Component title = Component.literal("twob2tkit 已安全离线");
 		Component detail = Component.literal(reason);
 		JoinMultiplayerScreen parent = new JoinMultiplayerScreen(new TitleScreen());
 		DisconnectedScreen resultScreen = new DisconnectedScreen(parent, title, detail);
@@ -861,7 +861,7 @@ public final class KitController {
 
 	/** 向玩家发系统消息。 */
 	private static void message(Minecraft client, String text) {
-		if (client.player != null) client.player.sendSystemMessage(Component.literal("[2b2t-kit] " + text));
+		if (client.player != null) client.player.sendSystemMessage(Component.literal("[twob2tkit] " + text));
 	}
 
 	/** 角度归一到 [-180,180)。 */

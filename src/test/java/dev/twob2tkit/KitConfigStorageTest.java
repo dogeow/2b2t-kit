@@ -10,7 +10,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Gson 字段名与 2b2t-kit.json 中 storageSnapshots 结构一致即可持久化。 */
+/** Gson 字段名与 twob2tkit.json 中 storageSnapshots 结构一致即可持久化。 */
 final class KitConfigStorageTest {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 

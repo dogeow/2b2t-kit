@@ -25,7 +25,7 @@ final class KitKeyBindsScreen extends KitHudScreen {
 	private int listScrollMax;
 
 	KitKeyBindsScreen(Screen parent) {
-		super(Component.literal("2b2t-kit 按键绑定"), parent);
+		super(Component.literal("twob2tkit 按键绑定"), parent);
 	}
 
 	/** 布置可滚动绑键列表与底栏按钮。 */

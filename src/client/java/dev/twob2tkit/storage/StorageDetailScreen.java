@@ -29,7 +29,7 @@ public final class StorageDetailScreen extends KitHudScreen {
 
 	/** 打开某条仓库记录详情。 */
 	public StorageDetailScreen(Screen parent, KitConfig.StorageSnapshot snapshot) {
-		super(Component.literal("2b2t-kit 仓库内容"), parent);
+		super(Component.literal("twob2tkit 仓库内容"), parent);
 		this.snapshot = snapshot;
 	}
 

@@ -40,7 +40,7 @@ public final class FeederScreen extends KitHudScreen {
 
 	/** 打开自动喂养设置屏。 */
 	public FeederScreen(Screen parent, KitConfig config, AutoFeeder feeder) {
-		super(Component.literal("2b2t-kit 自动喂养"), parent);
+		super(Component.literal("twob2tkit 自动喂养"), parent);
 		this.config = config;
 		this.feeder = feeder;
 	}

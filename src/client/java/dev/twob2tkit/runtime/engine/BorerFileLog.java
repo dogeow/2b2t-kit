@@ -13,9 +13,9 @@ import java.util.List;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-/** 把盾构诊断写到 config/2b2t-kit/borer.log，不用导出游戏日志包。 */
+/** 把盾构诊断写到 config/twob2tkit/borer.log，不用导出游戏日志包。 */
 final class BorerFileLog {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Borer");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 	private static final long MAX_BYTES = 256 * 1024;
 
@@ -24,7 +24,7 @@ final class BorerFileLog {
 
 	/** borer.log 路径。 */
 	static Path file(Minecraft client) {
-		return client.gameDirectory.toPath().resolve("config/2b2t-kit/borer.log");
+		return client.gameDirectory.toPath().resolve("config/twob2tkit/borer.log");
 	}
 
 	/** 读日志末尾若干行。 */
@@ -56,7 +56,7 @@ final class BorerFileLog {
 			String stamped = TIME.format(LocalDateTime.now()) + " " + line + System.lineSeparator();
 			Files.writeString(path, stamped, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 		} catch (IOException exception) {
-			LOGGER.warn("Could not write config/2b2t-kit/borer.log", exception);
+			LOGGER.warn("Could not write config/twob2tkit/borer.log", exception);
 		}
 	}
 

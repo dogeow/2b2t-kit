@@ -49,7 +49,7 @@ public final class SurroundScreen extends KitHudScreen {
 	private int optionsRow;
 
 	public SurroundScreen(Screen parent, KitConfig config, AutoSurround surround) {
-		super(Component.literal("2b2t-kit 自动围箱"), parent);
+		super(Component.literal("twob2tkit 自动围箱"), parent);
 		this.config = config;
 		this.surround = surround;
 		config.surroundBlockIds = SurroundBlocks.normalize(config.surroundBlockIds);

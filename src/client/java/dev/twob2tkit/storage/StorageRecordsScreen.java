@@ -36,7 +36,7 @@ public final class StorageRecordsScreen extends KitHudScreen {
 
 	/** 打开仓库记录列表屏。 */
 	public StorageRecordsScreen(Screen parent, KitConfig config) {
-		super(Component.literal("2b2t-kit 仓库记录"), parent);
+		super(Component.literal("twob2tkit 仓库记录"), parent);
 		this.config = config;
 	}
 

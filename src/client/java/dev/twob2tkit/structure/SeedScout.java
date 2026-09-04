@@ -56,12 +56,12 @@ import dev.twob2tkit.KitClient;
 /**
  * 种子侦察：收集结构/地图/群系线索，配合 Seedcracker 或手动试种子。
  * <p>
- * 状态落在 {@code config/2b2t-kit/seed-scout.json}；有世界种子后多数扫描会停。
+ * 状态落在 {@code config/twob2tkit/seed-scout.json}；有世界种子后多数扫描会停。
  */
 public final class SeedScout {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final Path STORE = FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit/seed-scout.json");
-	private static final Path REPORT = FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit/seed-report.txt");
+	private static final Path STORE = FabricLoader.getInstance().getConfigDir().resolve("twob2tkit/seed-scout.json");
+	private static final Path REPORT = FabricLoader.getInstance().getConfigDir().resolve("twob2tkit/seed-report.txt");
 
 	private Store store = new Store();
 	private int ticks;
@@ -277,7 +277,7 @@ public final class SeedScout {
 			return "写文件失败：" + exception.getMessage();
 		}
 		if (client.keyboardHandler != null) client.keyboardHandler.setClipboard(text);
-		return "已复制到剪贴板，并保存到 config/2b2t-kit/seed-report.txt";
+		return "已复制到剪贴板，并保存到 config/twob2tkit/seed-report.txt";
 	}
 
 	/** 复制已破解种子到剪贴板。 */
@@ -785,7 +785,7 @@ public final class SeedScout {
 	/** 拼文本报告。 */
 	private String buildReport() {
 		StringBuilder out = new StringBuilder();
-		out.append("2b2t-kit 世界种子探测报告\n");
+		out.append("twob2tkit 世界种子探测报告\n");
 		out.append("Minecraft 26.1.2\n\n");
 		out.append("原理：服务器不把 /seed 发给普通玩家，但进服时会发一份 SHA-256 哈希种子。");
 		out.append("1.18 以后用地牢地板反推已经失效，现在要靠沙漠神殿、丛林神庙、沼泽小屋、雪屋、沉船、前哨站、海底神殿的位置，");

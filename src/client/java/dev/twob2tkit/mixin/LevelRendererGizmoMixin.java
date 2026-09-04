@@ -17,7 +17,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(LevelRenderer.class)
 public abstract class LevelRendererGizmoMixin {
-	/** 在本帧 gizmo 收集开始时发出 2b2t-kit 的世界指引。 */
+	/** 在本帧 gizmo 收集开始时发出 twob2tkit 的世界指引。 */
 	@Inject(method = "finalizeGizmoCollection", at = @At("HEAD"))
 	private void kit$emitFrameGizmos(CallbackInfo info) {
 		KitClient.emitFrameGizmos(Minecraft.getInstance());

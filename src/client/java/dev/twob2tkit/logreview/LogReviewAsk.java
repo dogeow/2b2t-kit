@@ -25,7 +25,7 @@ import dev.twob2tkit.aihud.AiHud;
 
 /** 把挖树等主机日志发给本机已登录的 Grok 或 xAI 密钥。不在游戏线程里等。 */
 public final class LogReviewAsk {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/LogReview");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/LogReview");
 	private static final HttpClient HTTP = HttpClient.newBuilder()
 		.connectTimeout(Duration.ofSeconds(8))
 		.build();
@@ -81,14 +81,14 @@ public final class LogReviewAsk {
 			} finally {
 				BUSY.set(false);
 			}
-		}, "2b2t-kit-log-review");
+		}, "twob2tkit-log-review");
 		thread.setDaemon(true);
 		thread.start();
 	}
 
 	/** 拼给 Grok 的提示词。 */
 	public static String promptText(String module, String logTail) {
-		return "You review 2b2t-kit Minecraft client logs (" + module + "). "
+		return "You review twob2tkit Minecraft client logs (" + module + "). "
 			+ "The player is in-game. Reply JSON only: "
 			+ "{\"need_fix\":true,\"lesson\":\"短中文课\",\"cause\":\"shears-worn\"}. "
 			+ "need_fix=true if code or settings should change. lesson is one Chinese sentence. "
@@ -198,7 +198,7 @@ public final class LogReviewAsk {
 		JsonObject system = new JsonObject();
 		system.addProperty("role", "system");
 		system.addProperty("content",
-			"Review 2b2t-kit Minecraft logs. JSON only: "
+			"Review twob2tkit Minecraft logs. JSON only: "
 				+ "{\"need_fix\":true,\"lesson\":\"短中文\",\"cause\":\"\"}. No markdown.");
 		JsonObject user = new JsonObject();
 		user.addProperty("role", "user");
@@ -226,7 +226,7 @@ public final class LogReviewAsk {
 		Path home = grokHome();
 		Path bin = grokBin(home);
 		if (bin == null) throw new IOException("grok missing");
-		Path dir = client.gameDirectory.toPath().resolve("config/2b2t-kit");
+		Path dir = client.gameDirectory.toPath().resolve("config/twob2tkit");
 		Files.createDirectories(dir);
 		Path promptPath = dir.resolve("log-review-prompt.txt");
 		Path outPath = dir.resolve("log-review-grok.out");
@@ -280,7 +280,7 @@ public final class LogReviewAsk {
 	private static void writeFailNote(Minecraft client, String reason) {
 		if (client == null || reason == null || reason.isBlank()) return;
 		try {
-			Path dir = client.gameDirectory.toPath().resolve("config/2b2t-kit");
+			Path dir = client.gameDirectory.toPath().resolve("config/twob2tkit");
 			Files.createDirectories(dir);
 			Files.writeString(dir.resolve("log-review-grok.err"), reason + System.lineSeparator(),
 				StandardCharsets.UTF_8);
@@ -301,7 +301,7 @@ public final class LogReviewAsk {
 		String env = System.getenv("XAI_API_KEY");
 		if (env != null && !env.isBlank()) return env.trim();
 		if (client == null) return "";
-		Path path = client.gameDirectory.toPath().resolve("config/2b2t-kit/xai.key");
+		Path path = client.gameDirectory.toPath().resolve("config/twob2tkit/xai.key");
 		if (!Files.isRegularFile(path)) return "";
 		try {
 			for (String line : Files.readAllLines(path, StandardCharsets.UTF_8)) {

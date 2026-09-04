@@ -33,15 +33,21 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * 2b2t-kit 全部设置：Gson 读写 {@code config/2b2t-kit.json}，含迁移与默认值。
+ * twob2tkit 全部设置：Gson 读写 {@code config/twob2tkit.json}，含迁移与默认值。
  */
 public final class KitConfig {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit.json");
-	/** 旧版 AutoCruise 配置，首次启动时复制到新路径。 */
-	private static final Path LEGACY_PATH = FabricLoader.getInstance().getConfigDir().resolve("autocruise.json");
-	private static final Path CONFIG_DIR = FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit");
-	private static final Path LEGACY_DIR = FabricLoader.getInstance().getConfigDir().resolve("autocruise");
+	private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("twob2tkit.json");
+	/** 更旧的配置文件名（按优先级尝试迁移）。 */
+	private static final Path[] LEGACY_CONFIG_FILES = {
+		FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit.json"),
+		FabricLoader.getInstance().getConfigDir().resolve("autocruise.json")
+	};
+	private static final Path CONFIG_DIR = FabricLoader.getInstance().getConfigDir().resolve("twob2tkit");
+	private static final Path[] LEGACY_DIRS = {
+		FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit"),
+		FabricLoader.getInstance().getConfigDir().resolve("autocruise")
+	};
 
 	/** 是否已保存巡航目标。 */
 	public boolean hasTarget;
@@ -244,7 +250,7 @@ public final class KitConfig {
 
 	/** 从磁盘加载；不存在则新建并保存。 */
 	public static KitConfig load() {
-		migrateFromAutocruise();
+		migrateLegacyConfig();
 		if (!Files.exists(PATH)) {
 			KitConfig config = new KitConfig();
 			config.save();
@@ -490,7 +496,7 @@ public final class KitConfig {
 		}
 	}
 
-	/** 写回 2b2t-kit.json。 */
+	/** 写回 twob2tkit.json。 */
 	public void save() {
 		try {
 			Files.createDirectories(PATH.getParent());
@@ -502,27 +508,35 @@ public final class KitConfig {
 		}
 	}
 
-	/** 首次从旧版 AutoCruise 复制配置文件与 config 目录（不覆盖已有新文件）。 */
-	private static void migrateFromAutocruise() {
+	/** 首次从旧版 2b2t-kit / AutoCruise 复制配置（不覆盖已有新文件）。 */
+	private static void migrateLegacyConfig() {
 		try {
-			if (!Files.exists(PATH) && Files.isRegularFile(LEGACY_PATH)) {
-				Files.copy(LEGACY_PATH, PATH);
-				KitClient.LOGGER.info("Migrated config {} -> {}", LEGACY_PATH.getFileName(), PATH.getFileName());
+			if (!Files.exists(PATH)) {
+				for (Path legacy : LEGACY_CONFIG_FILES) {
+					if (!Files.isRegularFile(legacy)) continue;
+					Files.copy(legacy, PATH);
+					KitClient.LOGGER.info("Migrated config {} -> {}", legacy.getFileName(), PATH.getFileName());
+					break;
+				}
 			}
-			if (!Files.isDirectory(LEGACY_DIR)) return;
 			Files.createDirectories(CONFIG_DIR);
-			try (var walk = Files.walk(LEGACY_DIR)) {
-				for (Path src : walk.filter(Files::isRegularFile).toList()) {
-					Path rel = LEGACY_DIR.relativize(src);
-					String name = rel.toString().replace('\\', '/').replace("autocruise-engine", "2b2t-kit-engine");
-					Path dest = CONFIG_DIR.resolve(name);
-					if (Files.exists(dest)) continue;
-					Files.createDirectories(dest.getParent());
-					Files.copy(src, dest);
+			for (Path legacyDir : LEGACY_DIRS) {
+				if (!Files.isDirectory(legacyDir)) continue;
+				try (var walk = Files.walk(legacyDir)) {
+					for (Path src : walk.filter(Files::isRegularFile).toList()) {
+						Path rel = legacyDir.relativize(src);
+						String name = rel.toString().replace('\\', '/')
+							.replace("autocruise-engine", "twob2tkit-engine")
+							.replace("2b2t-kit-engine", "twob2tkit-engine");
+						Path dest = CONFIG_DIR.resolve(name);
+						if (Files.exists(dest)) continue;
+						Files.createDirectories(dest.getParent());
+						Files.copy(src, dest);
+					}
 				}
 			}
 		} catch (IOException exception) {
-			KitClient.LOGGER.warn("Could not migrate legacy AutoCruise config", exception);
+			KitClient.LOGGER.warn("Could not migrate legacy config", exception);
 		}
 	}
 

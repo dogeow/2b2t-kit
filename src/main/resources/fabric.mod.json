@@ -1,6 +1,6 @@
 {
 	"schemaVersion": 1,
-	"id": "2b2t-kit",
+	"id": "twob2tkit",
 	"version": "${version}",
 	"name": "2b2t-kit",
 	"description": "Client-side high-altitude cruise navigation and AFK safety for Minecraft 26.1.2.",
@@ -16,7 +16,7 @@
 	},
 	"mixins": [
 		{
-			"config": "2b2t-kit.client.mixins.json",
+			"config": "twob2tkit.client.mixins.json",
 			"environment": "client"
 		}
 	],

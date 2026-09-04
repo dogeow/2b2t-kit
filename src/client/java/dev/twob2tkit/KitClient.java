@@ -33,7 +33,7 @@ import dev.twob2tkit.villager.VillagerScanner;
  * 客户端入口：加载配置、注册按键/指令、tick 分发与各模块开关编排。
  */
 public final class KitClient implements ClientModInitializer {
-	public static final String MOD_ID = "2b2t-kit";
+	public static final String MOD_ID = "twob2tkit";
 	public static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(MOD_ID);
 
 	private KitConfig config;
@@ -98,7 +98,7 @@ public final class KitClient implements ClientModInitializer {
 		ClientTickEvents.END_CLIENT_TICK.register(this::onEndTick);
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			KitCommands.register(dispatcher, config, controller, machineBuilder));
-		LOGGER.info("2b2t-kit loaded. Use /2b2t-kit help");
+		LOGGER.info("twob2tkit loaded. Use /twob2tkit help");
 	}
 
 	/** 帧尾：热键、监视器、围箱与观察类逻辑。 */
@@ -213,7 +213,7 @@ public final class KitClient implements ClientModInitializer {
 		emergencyStop("已死亡");
 		if (client.player != null) {
 			client.player.sendSystemMessage(Component.literal(
-				"[2b2t-kit] 已死亡，所有自动动作已停，停在死亡界面。请自己点重生去捡物。如果没点就活了，关掉 Meteor 的 Auto Respawn，否则掉落物会在出生点刷新"
+				"[twob2tkit] 已死亡，所有自动动作已停，停在死亡界面。请自己点重生去捡物。如果没点就活了，关掉 Meteor 的 Auto Respawn，否则掉落物会在出生点刷新"
 			).withColor(0xFF5555));
 		}
 	}
@@ -356,14 +356,14 @@ public final class KitClient implements ClientModInitializer {
 		emergencyStop(reason);
 		instance.controller.requestLogout(reason);
 		if (client.player != null) {
-			client.player.sendSystemMessage(Component.literal("[2b2t-kit] " + reason).withColor(0xFF5555));
+			client.player.sendSystemMessage(Component.literal("[twob2tkit] " + reason).withColor(0xFF5555));
 		}
 	}
 
 	/** 热加载或恢复内置盾构引擎。 */
 	public static TunnelBorer.ReloadResult reloadBorerRuntime(Minecraft client, boolean installBundled) {
 		if (instance == null || instance.tunnelBorer == null) {
-			return new TunnelBorer.ReloadResult(false, "2b2t-kit 尚未初始化");
+			return new TunnelBorer.ReloadResult(false, "twob2tkit 尚未初始化");
 		}
 		return installBundled
 			? instance.tunnelBorer.installBundledUpdate(client)
@@ -682,7 +682,7 @@ public final class KitClient implements ClientModInitializer {
 		}
 		if (!instance.controller.resume(client)) {
 			if (client.player != null) {
-				client.player.sendSystemMessage(Component.literal("[2b2t-kit] 还没有保存过目标，请先在界面填写坐标或按 "
+				client.player.sendSystemMessage(Component.literal("[twob2tkit] 还没有保存过目标，请先在界面填写坐标或按 "
 					+ KitKeys.boundLabel(KitKeys.OPEN_GUI) + " 打开设置"));
 			}
 		}

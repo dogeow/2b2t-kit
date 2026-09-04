@@ -72,7 +72,7 @@ public final class CombatWatch {
 			if (client.player != null) {
 				String verb = env ? "烫伤" : "被打";
 				client.player.sendSystemMessage(Component.literal(
-					String.format(Locale.ROOT, "[2b2t-kit] %s：%s  血 %.1f→%.1f", verb, attacker, lastHealth, health)
+					String.format(Locale.ROOT, "[twob2tkit] %s：%s  血 %.1f→%.1f", verb, attacker, lastHealth, health)
 				).withColor(0xFFAA55));
 			}
 			if (AutoProtectPolicy.armOnMobHit(config.autoProtectOnHit, BorerThreats.currentHurtIsFromMob(player))) {

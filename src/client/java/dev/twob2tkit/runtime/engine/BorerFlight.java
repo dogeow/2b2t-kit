@@ -186,6 +186,6 @@ public final class BorerFlight {
 	/** 飞速临时备份文件路径。 */
 	private static Path speedBak(Minecraft client) {
 		if (client == null || client.gameDirectory == null) return null;
-		return client.gameDirectory.toPath().resolve("config/2b2t-kit/flight-speed.bak");
+		return client.gameDirectory.toPath().resolve("config/twob2tkit/flight-speed.bak");
 	}
 }

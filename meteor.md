@@ -1,8 +1,8 @@
 # Meteor 功能索引
 
-写 2b2t-kit 新功能之前先查这里，别再造已经有的轮子。
+写 twob2tkit 新功能之前先查这里，别再造已经有的轮子。
 
-来源是本机 `meteor-client-source/`（面向 **26.2**，2b2t-kit 是 **26.1.2**，API 签名可能对不上，
+来源是本机 `meteor-client-source/`（面向 **26.2**，twob2tkit 是 **26.1.2**，API 签名可能对不上，
 但**有没有这个功能**这件事是准的）。要确认细节就直接看：
 
 ```text
@@ -16,7 +16,7 @@ meteor-client-source/src/main/java/meteordevelopment/meteorclient/systems/module
 ## 1. 决策流程
 
 1. **先查表**：本文第 3 节按分类列了全部模块。拿不准就 `rg` 一下 `meteor-client-source`。
-2. **有就用**：Meteor 已经做了的，2b2t-kit 不要再写一份。界面上引导用户去开 Meteor 对应模块即可。
+2. **有就用**：Meteor 已经做了的，twob2tkit 不要再写一份。界面上引导用户去开 Meteor 对应模块即可。
 3. **不够就增强**：Meteor 有但缺了关键部分，写**补齐差额**的那部分，并让两边能共存——
    给一个「这块交给 Meteor」的开关，本模块在开关关闭时不抢视角、不抢按键、不抢攻击充能。
    现成的正面例子是 `KitConfig.brawlerMeleeEnabled`：关掉之后 `PiglinBrawler`
@@ -92,7 +92,7 @@ meteor-client-source/src/main/java/meteordevelopment/meteorclient/systems/module
 | `elytra-boost` / `elytra-fly` | 鞘翅助推 / 鞘翅飞行增强 |
 | `entity-control` | 无鞍也能控制坐骑 |
 | `fast-climb` | 爬梯更快 |
-| `flight` | **飞行**（2b2t-kit 的巡航就是建立在这个之上的） |
+| `flight` | **飞行**（twob2tkit 的巡航就是建立在这个之上的） |
 | `gui-move` | 开着 GUI 也能操作 |
 | `high-jump` / `long-jump` | 跳更高 / 跳更远 |
 | `jesus` | 水上行走 |
@@ -200,11 +200,11 @@ meteor-client-source/src/main/java/meteordevelopment/meteorclient/systems/module
 
 ---
 
-## 4. 2b2t-kit 与 Meteor 的对照
+## 4. twob2tkit 与 Meteor 的对照
 
 ### 4.1 已知重复，应该收敛（欠债）
 
-| 2b2t-kit | Meteor | 现状 |
+| twob2tkit | Meteor | 现状 |
 | --- | --- | --- |
 | `AutoFeeder` | `world/auto-breed` | **部分重复**。Meteor 只喂**手上已经拿着的**饲料，不走近、不换背包、没有种类顺序。本模块多了走近、换槽、喂完收起、按顺序喂（没对应饲料就跳到下一种）。不要两边一起开 |
 | `BorerItems.selectWeapon` | `combat/auto-weapon` | 重复。开着 `auto-weapon` 时两边会抢槽位 |
@@ -216,7 +216,7 @@ meteor-client-source/src/main/java/meteordevelopment/meteorclient/systems/module
 
 ### 4.2 有意做成配合（正面例子）
 
-| 2b2t-kit | Meteor | 怎么配合 |
+| twob2tkit | Meteor | 怎么配合 |
 | --- | --- | --- |
 | `PiglinBrawler` 近战 | `combat/kill-aura` | `brawlerMeleeEnabled=false` 时完全不碰近战和视角，只做 KillAura 不做的：反弹恶魂火球、拉弓射远处 |
 | `PiglinBrawler` 火球 | `combat/arrow-dodge` | **躲和反弹互斥，见下方 4.3**。没开打猪人时保护页「恶魂防护」仍反弹/射恶魂，不飞开 |
@@ -242,7 +242,7 @@ meteor-client-source/src/main/java/meteordevelopment/meteorclient/systems/module
 
 推荐配置（互补，不冲突）：
 
-| | Meteor `arrow-dodge` | 2b2t-kit |
+| | Meteor `arrow-dodge` | twob2tkit |
 | --- | --- | --- |
 | **想反弹火球**（推荐） | 开启，`all-projectiles` **关** | 恶魂防护开，打猪人设置「恶魂火球：反弹」 |
 | 想躲火球 | 开启，`all-projectiles` **开** | 「恶魂火球：不管，交给 Meteor 躲」，并关掉恶魂防护 |
@@ -269,7 +269,7 @@ meteor-client-source/src/main/java/meteordevelopment/meteorclient/systems/module
 
 ### 4.5 悬停高度：Meteor 完全没有
 
-`brawlerHoverHeight`（默认 3 格）是 2b2t-kit 独有的。飞行刷猪人时如果站得不够高，拿矛的猪人
+`brawlerHoverHeight`（默认 3 格）是 twob2tkit 独有的。飞行刷猪人时如果站得不够高，拿矛的猪人
 攻击距离比拿剑的长，会够到玩家。低于设定值时本模块按住空格往上顶（只在飞行时；走地面只在
 状态栏提示，跳一下没用）。空格用的是和横移键一样的「只松自己按下那一次」写法，不会吃掉玩家手按的跳跃。
 
@@ -294,5 +294,5 @@ Meteor 的 `kill-aura` 只有 range，没有高度差概念；`anti-afk` 反而�
   本模块是把人整个封进方块盒子里躲怪。**新增同类功能前务必确认这种「同名不同事」的情况。**
 - `AutoFisher` 定点钓鱼：Meteor 的 `auto-fish` 会抛钩收钩，但不锁视角、满包也不存箱。钩子一偏就钓不到。
   本模块记下开始时的坐标和朝向并写回，满包后找附近箱子存完再走回钓点。可勾选「钩子交给 Meteor auto-fish」，关掉后自己抛收。
-- 2b2t-kit **模块栏**（`ClickGuiScreen` + `ClickGuiPanelScreen`）：左侧菜单 + 右侧主内容（首页总览），
+- twob2tkit **模块栏**（`ClickGuiScreen` + `ClickGuiPanelScreen`）：左侧菜单 + 右侧主内容（首页总览），
   **不是 HTML / 网页**。分类页左键开关、右键或「设置」打开密排设置窗。分页按钮模式仍在设置里可切回去。

@@ -12,9 +12,9 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-/** 挖树诊断写到 config/2b2t-kit/chopper.log，格式跟盾构 borer.log 一样。 */
+/** 挖树诊断写到 config/twob2tkit/chopper.log，格式跟盾构 borer.log 一样。 */
 public final class ChopperFileLog {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Chopper");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Chopper");
 	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 	private static final long MAX_BYTES = 256 * 1024;
 
@@ -23,7 +23,7 @@ public final class ChopperFileLog {
 
 	/** 诊断日志文件路径。 */
 	public static Path file(Minecraft client) {
-		return client.gameDirectory.toPath().resolve("config/2b2t-kit/chopper.log");
+		return client.gameDirectory.toPath().resolve("config/twob2tkit/chopper.log");
 	}
 
 	/**
@@ -33,7 +33,7 @@ public final class ChopperFileLog {
 	 */
 	public static void append(Minecraft client, String version, String line) {
 		if (client == null || line == null || line.isBlank()) return;
-		LOGGER.info("[2b2t-kit/Chopper {}] {}", version, line);
+		LOGGER.info("[twob2tkit/Chopper {}] {}", version, line);
 		try {
 			Path path = file(client);
 			Files.createDirectories(path.getParent());
@@ -41,7 +41,7 @@ public final class ChopperFileLog {
 			String stamped = TIME.format(LocalDateTime.now()) + " " + version + " " + line + System.lineSeparator();
 			Files.writeString(path, stamped, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
 		} catch (IOException exception) {
-			LOGGER.warn("Could not write config/2b2t-kit/chopper.log", exception);
+			LOGGER.warn("Could not write config/twob2tkit/chopper.log", exception);
 		}
 	}
 

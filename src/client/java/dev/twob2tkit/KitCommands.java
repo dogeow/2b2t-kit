@@ -18,12 +18,12 @@ import dev.twob2tkit.borer.BorerAreaProjects;
 import dev.twob2tkit.borer.TunnelBorer;
 import dev.twob2tkit.builder.MachineBuilder;
 
-/** `/2b2t-kit` 客户端指令，从入口类拆出以免 Client 继续变长。 */
+/** `/twob2tkit` 客户端指令，从入口类拆出以免 Client 继续变长。 */
 final class KitCommands {
 	private KitCommands() {
 	}
 
-	/** 注册 /2b2t-kit 及其子命令。 */
+	/** 注册 /twob2tkit 及其子命令。 */
 	static void register(
 		CommandDispatcher<FabricClientCommandSource> dispatcher,
 		KitConfig config,
@@ -31,7 +31,7 @@ final class KitCommands {
 		MachineBuilder machineBuilder
 	) {
 		dispatcher.register(
-			literal("2b2t-kit")
+			literal("twob2tkit")
 				.executes(context -> help(context.getSource()))
 				.then(literal("help").executes(context -> help(context.getSource())))
 				.then(literal("gui").executes(context -> {
@@ -57,7 +57,7 @@ final class KitCommands {
 				)
 				.then(literal("resume").executes(context -> {
 					if (!controller.resume(context.getSource().getClient())) {
-						context.getSource().sendError(Component.literal("还没有保存过目标，请先使用 /2b2t-kit start <x> <z> <y>"));
+						context.getSource().sendError(Component.literal("还没有保存过目标，请先使用 /twob2tkit start <x> <z> <y>"));
 						return 0;
 					}
 					return 1;
@@ -229,15 +229,15 @@ final class KitCommands {
 
 	/** 打印用法与按键摘要。 */
 	private static int help(FabricClientCommandSource source) {
-		source.sendFeedback(Component.literal("2b2t-kit：/2b2t-kit start <x> <z> <巡航Y>"));
+		source.sendFeedback(Component.literal("twob2tkit：/twob2tkit start <x> <z> <巡航Y>"));
 		source.sendFeedback(Component.literal("按键：" + KitKeys.hintLine()));
-		source.sendFeedback(Component.literal("也可在界面「按键」或「选项 → 控制 → 2b2t-kit」中改键"));
-		source.sendFeedback(Component.literal("设置：/2b2t-kit set <arrival|player-radius|min-health|stuck-seconds|disconnect-on-arrival> <值>"));
-		source.sendFeedback(Component.literal("白名单：/2b2t-kit whitelist <add|remove|list> [玩家名]"));
-		source.sendFeedback(Component.literal("运行引擎：/2b2t-kit reload（盾构/找矿更新后无需退出游戏）"));
-		source.sendFeedback(Component.literal("村庄职业：/2b2t-kit villagers"));
-		source.sendFeedback(Component.literal("投影建造：/2b2t-kit print（需已装 Litematica 并放置投影）"));
-		source.sendFeedback(Component.literal("区域挖：/2b2t-kit area a|b [x y z] · area save [名] · area load · area list · area start"));
+		source.sendFeedback(Component.literal("也可在界面「按键」或「选项 → 控制 → twob2tkit」中改键"));
+		source.sendFeedback(Component.literal("设置：/twob2tkit set <arrival|player-radius|min-health|stuck-seconds|disconnect-on-arrival> <值>"));
+		source.sendFeedback(Component.literal("白名单：/twob2tkit whitelist <add|remove|list> [玩家名]"));
+		source.sendFeedback(Component.literal("运行引擎：/twob2tkit reload（盾构/找矿更新后无需退出游戏）"));
+		source.sendFeedback(Component.literal("村庄职业：/twob2tkit villagers"));
+		source.sendFeedback(Component.literal("投影建造：/twob2tkit print（需已装 Litematica 并放置投影）"));
+		source.sendFeedback(Component.literal("区域挖：/twob2tkit area a|b [x y z] · area save [名] · area load · area list · area start"));
 		return 1;
 	}
 
@@ -263,7 +263,7 @@ final class KitCommands {
 	private static int areaLook(FabricClientCommandSource source, KitConfig config, int corner) {
 		BlockPos hit = BorerAreaMarks.lookBlock(source.getClient());
 		if (hit == null) {
-			source.sendError(Component.literal("准星没有方块。看向目标，或 /2b2t-kit area " + (corner == 2 ? "b" : "a") + " <x> <y> <z>"));
+			source.sendError(Component.literal("准星没有方块。看向目标，或 /twob2tkit area " + (corner == 2 ? "b" : "a") + " <x> <y> <z>"));
 			return 0;
 		}
 		if (corner == 2) BorerAreaMarks.setB(config, hit);

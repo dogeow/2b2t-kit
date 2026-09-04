@@ -27,7 +27,7 @@ import java.util.Set;
 
 /** 记录挖矿走过的路点，供沿原路返回。热加载后从磁盘/快照恢复。 */
 final class BorerTrail {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Borer");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final int MAX_POINTS = 5000;
 	/** 没挖矿时在下界闲逛，只留最近这一段去回门，不要把一辈子的路都攒进去。 */
 	static final int IDLE_KEEP = 120;
@@ -569,23 +569,23 @@ final class BorerTrail {
 
 	/** 路点文件路径。 */
 	private static Path trailFile() {
-		return FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit/borer-trail.txt");
+		return FabricLoader.getInstance().getConfigDir().resolve("twob2tkit/borer-trail.txt");
 	}
 
 	/** 地狱门文件路径。 */
 	private static Path portalFile() {
-		return FabricLoader.getInstance().getConfigDir().resolve("2b2t-kit/nether-portal.txt");
+		return FabricLoader.getInstance().getConfigDir().resolve("twob2tkit/nether-portal.txt");
 	}
 
 	/** 旧版路点文件路径。 */
 	private static Path legacyTrailFile(Minecraft client) {
 		if (client == null || client.gameDirectory == null) return null;
-		return client.gameDirectory.toPath().resolve("config/2b2t-kit/borer-trail.txt");
+		return client.gameDirectory.toPath().resolve("config/twob2tkit/borer-trail.txt");
 	}
 
 	/** 旧版地狱门文件路径。 */
 	private static Path legacyPortalFile(Minecraft client) {
 		if (client == null || client.gameDirectory == null) return null;
-		return client.gameDirectory.toPath().resolve("config/2b2t-kit/nether-portal.txt");
+		return client.gameDirectory.toPath().resolve("config/twob2tkit/nether-portal.txt");
 	}
 }

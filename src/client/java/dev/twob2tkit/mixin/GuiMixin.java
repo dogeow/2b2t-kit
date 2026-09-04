@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 注入目标：{@link Gui#extractRenderState}。
  * <p>
  * 注入点：{@code TAIL}。
- * 为何在此时机：原版 HUD 状态已抽取完毕后，再叠画 2b2t-kit 的屏幕 HUD
+ * 为何在此时机：原版 HUD 状态已抽取完毕后，再叠画 twob2tkit 的屏幕 HUD
  * （盾构状态、AI 面板等），避免被原版后续逻辑盖掉或排到错误层级。
  */
 @Mixin(Gui.class)

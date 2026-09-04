@@ -15,9 +15,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 把镐+附魔+方块的挖法记到 config/2b2t-kit/mine-timings.json。 */
+/** 把镐+附魔+方块的挖法记到 config/twob2tkit/mine-timings.json。 */
 final class BorerMineTimings {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Borer");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final int MAX_ENTRIES = 512;
 
@@ -26,7 +26,7 @@ final class BorerMineTimings {
 
 	/** 挖矿节奏记忆文件路径。 */
 	static Path file(Minecraft client) {
-		return client.gameDirectory.toPath().resolve("config/2b2t-kit/mine-timings.json");
+		return client.gameDirectory.toPath().resolve("config/twob2tkit/mine-timings.json");
 	}
 
 	/** 按键取节奏记忆；没有则 null。 */
@@ -67,7 +67,7 @@ final class BorerMineTimings {
 				byKey.put(entry.key, new BorerMineTimingPolicy.Memory(entry.insta, Math.max(0, entry.holdTicks)));
 			}
 		} catch (Exception exception) {
-			LOGGER.warn("Could not read config/2b2t-kit/mine-timings.json", exception);
+			LOGGER.warn("Could not read config/twob2tkit/mine-timings.json", exception);
 		}
 	}
 
@@ -88,7 +88,7 @@ final class BorerMineTimings {
 			Files.writeString(path, GSON.toJson(data), StandardCharsets.UTF_8);
 			dirty = false;
 		} catch (IOException exception) {
-			LOGGER.warn("Could not write config/2b2t-kit/mine-timings.json", exception);
+			LOGGER.warn("Could not write config/twob2tkit/mine-timings.json", exception);
 		}
 	}
 

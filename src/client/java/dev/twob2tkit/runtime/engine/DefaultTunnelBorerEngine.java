@@ -51,8 +51,8 @@ import java.util.Map;
 
 /** 热加载盾构机：找矿、挖通道、封液体、拾取勾选矿种掉落物。 */
 public final class DefaultTunnelBorerEngine implements BorerEngine {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Borer");
-	private static final String RUNTIME_VERSION = "1.7.0";
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
+	private static final String RUNTIME_VERSION = "1.7.1";
 	private static final int CLEAR_CONFIRM_TICKS = 3;
 	private static final int MOVEMENT_RECOVERY_TICKS = 40;
 	private static final int MOVEMENT_TIMEOUT_TICKS = 120;
@@ -484,7 +484,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		disconnecting = true;
 		client.execute(() -> {
 			try {
-				Component title = Component.literal("2b2t-kit 已安全离线");
+				Component title = Component.literal("twob2tkit 已安全离线");
 				Component detail = Component.literal(reason);
 				JoinMultiplayerScreen parent = new JoinMultiplayerScreen(new TitleScreen());
 				DisconnectedScreen resultScreen = new DisconnectedScreen(parent, title, detail);
@@ -3621,7 +3621,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 	/** 追加一行 borer 文件日志。 */
 	void fileLog(Minecraft client, String line) {
-		LOGGER.info("[2b2t-kit/Borer {}] {}", RUNTIME_VERSION, line);
+		LOGGER.info("[twob2tkit/Borer {}] {}", RUNTIME_VERSION, line);
 		BorerFileLog.append(client, RUNTIME_VERSION + " " + line);
 	}
 }

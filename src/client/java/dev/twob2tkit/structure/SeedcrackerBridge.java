@@ -150,7 +150,7 @@ public final class SeedcrackerBridge {
 		if (!status.installed) return "还没装 SeedcrackerX。";
 		if (status.worldSeed != null) return "已经有世界种子：" + status.worldSeed;
 		if (status.baseBits + 0.01 < status.wantedBits && status.liftBits < 40) {
-			return status.line() + "。还要让它自己识别更多神殿/小屋/沉船，2b2t-kit 记的条数不算它的进度。";
+			return status.line() + "。还要让它自己识别更多神殿/小屋/沉船，twob2tkit 记的条数不算它的进度。";
 		}
 		try {
 			Object cracker = Class.forName(CLASS_NAME).getMethod("get").invoke(null);

@@ -52,7 +52,7 @@ final class ClickGuiScreen extends KitHudScreen {
 	private ClickGuiPanelScreen settingsPanel;
 
 	ClickGuiScreen(KitConfig config, KitController controller) {
-		super(Component.literal("2b2t-kit"), null);
+		super(Component.literal("twob2tkit"), null);
 		this.config = config;
 		this.controller = controller;
 	}
@@ -92,7 +92,7 @@ final class ClickGuiScreen extends KitHudScreen {
 		graphics.fill(x0, y0, x0 + winW, y0 + title, ClickGuiStyle.COL_TITLE);
 		graphics.fill(x0, y0 + title, x0 + navW, y0 + winH, ClickGuiStyle.COL_NAV);
 		graphics.fill(x0 + navW, y0 + title, x0 + winW, y0 + winH, ClickGuiStyle.COL_MAIN);
-		KitUi.text(graphics, this.font, "2b2t-kit", x0 + 8, y0 + 5, 0xFFFFFF);
+		KitUi.text(graphics, this.font, "twob2tkit", x0 + 8, y0 + 5, 0xFFFFFF);
 		KitUi.text(graphics, this.font, KitUi.fit(this.font, homeStatus(), 120), x0 + 92, y0 + 5, 0xBBBBBB);
 		boolean overClose = hitClose(mouseX, mouseY);
 		if (overClose) graphics.fill(x0 + winW - 52, y0 + 2, x0 + winW - 6, y0 + title - 2, ClickGuiStyle.COL_HOVER);
@@ -425,7 +425,7 @@ final class ClickGuiScreen extends KitHudScreen {
 		for (Nav nav : NAV) {
 			if (nav.id.equals(page)) return nav.label;
 		}
-		return "2b2t-kit";
+		return "twob2tkit";
 	}
 
 	/** 当前分类的模块列表。 */

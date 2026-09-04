@@ -27,7 +27,7 @@ public final class ChopperScreen extends KitHudScreen {
 	private EditBox range;
 
 	public ChopperScreen(Screen parent, KitConfig config, AutoChopper chopper) {
-		super(Component.literal("2b2t-kit 自动挖树"), parent);
+		super(Component.literal("twob2tkit 自动挖树"), parent);
 		this.config = config;
 		this.chopper = chopper;
 	}

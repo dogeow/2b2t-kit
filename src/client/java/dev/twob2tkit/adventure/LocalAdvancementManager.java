@@ -34,7 +34,7 @@ import dev.twob2tkit.KitConfig;
 
 /** 本机进度：不向服务器伪造，只写本地配置。 */
 public final class LocalAdvancementManager {
-	private static final String NAMESPACE = "2b2t-kit";
+	private static final String NAMESPACE = "twob2tkit";
 	private static final String PATH_PREFIX = "survival/";
 	private static final String CRITERION = "done";
 	private static final Identifier ROOT_ID = id("root");

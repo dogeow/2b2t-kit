@@ -9,7 +9,7 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 
 /**
- * 2b2t-kit 界面基类：游戏内 HUD（不暂停）、热键、顶栏标签与底栏布局。
+ * twob2tkit 界面基类：游戏内 HUD（不暂停）、热键、顶栏标签与底栏布局。
  */
 public abstract class KitHudScreen extends Screen {
 	/** 字段上方标签间距、行距、区块间距、状态行与底栏按钮间距。 */

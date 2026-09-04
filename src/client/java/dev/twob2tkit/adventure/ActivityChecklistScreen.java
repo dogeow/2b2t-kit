@@ -45,7 +45,7 @@ public final class ActivityChecklistScreen extends KitHudScreen {
 
 	/** 打开活动材料清单屏。 */
 	public ActivityChecklistScreen(Screen parent, KitConfig config) {
-		super(Component.literal("2b2t-kit 行动清单"), parent);
+		super(Component.literal("twob2tkit 行动清单"), parent);
 		this.config = config;
 		ActivityRequirements.ensureLists(config);
 	}

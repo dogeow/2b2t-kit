@@ -17,7 +17,7 @@ import java.util.Map;
 
 /** 找矿挖掉后走近并拾取对应掉落物。状态从盾构引擎拆出，避免主循环文件继续膨胀。 */
 final class BorerLoot {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Borer");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final int SEARCH_RADIUS = 7;
 	private static final int STUCK_TICKS = 80;
 	private static final int TIMEOUT_TICKS = 200;
@@ -107,7 +107,7 @@ final class BorerLoot {
 		seen = false;
 		sidestepSign = 1;
 		lastPickupTick = 0;
-		LOGGER.info("[2b2t-kit/Borer {}] loot-collection-start ore={} origin={} inventoryCount={} player={}",
+		LOGGER.info("[twob2tkit/Borer {}] loot-collection-start ore={} origin={} inventoryCount={} player={}",
 			engine.runtimeVersion(), wanted, format(origin), startCount, precise(player));
 	}
 
@@ -135,7 +135,7 @@ final class BorerLoot {
 		boolean itemsRemain = loot != null;
 		if (inventoryCount > lastCount) {
 			lastPickupTick = ticks;
-			LOGGER.info("[2b2t-kit/Borer {}] loot-collection-progress ore={} origin={} picked={}->{} remaining={} item={} player={}",
+			LOGGER.info("[twob2tkit/Borer {}] loot-collection-progress ore={} origin={} picked={}->{} remaining={} item={} player={}",
 				engine.runtimeVersion(), wanted, format(origin), lastCount, inventoryCount, itemsRemain,
 				loot == null ? "-" : precise(loot), precise(player));
 			if (BorerLootPolicy.inventoryProgressResetsStuck(true, itemsRemain)) {
@@ -194,7 +194,7 @@ final class BorerLoot {
 				return abandon(client, player, loot, "经验模式不捡" + wanted.label);
 			}
 			String label = wanted.label;
-			LOGGER.warn("[2b2t-kit/Borer {}] loot-collection-home reason=inventory-full ore={} item={} itemPos={} origin={} player={}",
+			LOGGER.warn("[twob2tkit/Borer {}] loot-collection-home reason=inventory-full ore={} item={} itemPos={} origin={} player={}",
 				engine.runtimeVersion(), wanted, loot.getItem().getHoverName().getString(), precise(loot), format(origin), precise(player));
 			clear();
 			return engine.finishSession(client, player, "背包已满，无法再装" + label, false);
@@ -295,7 +295,7 @@ final class BorerLoot {
 	/** 放弃当前目标并记日志。 */
 	private boolean abandon(Minecraft client, LocalPlayer player, ItemEntity loot, String reason) {
 		ignored.put(loot.getId(), client.level.getGameTime() + IGNORE_TICKS);
-		LOGGER.warn("[2b2t-kit/Borer {}] loot-collection-abandon reason={} ore={} item={} itemPos={} origin={} player={}",
+		LOGGER.warn("[twob2tkit/Borer {}] loot-collection-abandon reason={} ore={} item={} itemPos={} origin={} player={}",
 			engine.runtimeVersion(), reason, wanted, loot.getItem().getHoverName().getString(),
 			precise(loot), format(origin), precise(player));
 		entityId = -1;
@@ -518,7 +518,7 @@ final class BorerLoot {
 
 	/** 结束本轮拾取。 */
 	private void finish(Minecraft client, LocalPlayer player, String result, int inventoryCount) {
-		LOGGER.info("[2b2t-kit/Borer {}] loot-collection-finish result={} ore={} origin={} ticks={} inventoryBefore={} inventoryAfter={} player={}",
+		LOGGER.info("[twob2tkit/Borer {}] loot-collection-finish result={} ore={} origin={} ticks={} inventoryBefore={} inventoryAfter={} player={}",
 			engine.runtimeVersion(), result, wanted, format(origin), ticks, startCount, inventoryCount, precise(player));
 		clear();
 		engine.releaseMine(client);

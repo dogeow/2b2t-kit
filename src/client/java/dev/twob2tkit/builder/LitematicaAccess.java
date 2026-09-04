@@ -81,7 +81,7 @@ public final class LitematicaAccess {
 	/** 放置状态简述。 */
 	public static String describe() {
 		if (!installed()) {
-			return "未安装 Litematica / MaLiLib。请放入 26.1.2 的两个 jar：用投影看图，2b2t-kit 负责自动摆";
+			return "未安装 Litematica / MaLiLib。请放入 26.1.2 的两个 jar：用投影看图，twob2tkit 负责自动摆";
 		}
 		if (!bind()) {
 			return lastError.isBlank() ? "已安装投影，但当前 API 对不上，无法读取" : lastError;

@@ -17,7 +17,7 @@ public final class DeathPointScreen extends KitHudScreen {
 	private final KitController controller;
 
 	DeathPointScreen(Screen parent, KitConfig config, KitController controller) {
-		super(Component.literal("2b2t-kit 最近死亡点"), parent);
+		super(Component.literal("twob2tkit 最近死亡点"), parent);
 		this.config = config;
 		this.controller = controller;
 	}

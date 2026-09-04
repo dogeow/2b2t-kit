@@ -16,7 +16,7 @@ import java.util.regex.Pattern;
 
 /** 把 Grok 改过的引擎源码编成 jar 并原子复制到热加载目录。不在游戏线程里跑。 */
 final class BorerAreaThinkDeploy {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Borer");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final int GRADLE_TIMEOUT_SECONDS = 180;
 	private static final Pattern RUNTIME_VERSION = Pattern.compile("(?m)^runtime_engine_version=(.+)$");
 	private static final Pattern ENGINE_CONST = Pattern.compile(
@@ -99,7 +99,7 @@ final class BorerAreaThinkDeploy {
 			}
 			int code = runGradle(sourceRoot, javaHome);
 			if (code != 0) return new Result(false, version, "gradle exit " + code);
-			Path built = sourceRoot.resolve("build/runtime-engine/2b2t-kit-engine.jar");
+			Path built = sourceRoot.resolve("build/runtime-engine/twob2tkit-engine.jar");
 			if (!Files.isRegularFile(built)) return new Result(false, version, "没有编出引擎 jar");
 			atomicInstall(built, destJar);
 			return new Result(true, version, "");
@@ -140,11 +140,11 @@ final class BorerAreaThinkDeploy {
 	/** 原子替换目标 jar。 */
 	private static void atomicInstall(Path built, Path destJar) throws IOException {
 		Files.createDirectories(destJar.getParent());
-		Path prev = destJar.resolveSibling("2b2t-kit-engine.prev.jar");
+		Path prev = destJar.resolveSibling("twob2tkit-engine.prev.jar");
 		if (Files.isRegularFile(destJar)) {
 			Files.copy(destJar, prev, StandardCopyOption.REPLACE_EXISTING);
 		}
-		Path temp = destJar.resolveSibling("2b2t-kit-engine.jar.new");
+		Path temp = destJar.resolveSibling("twob2tkit-engine.jar.new");
 		Files.copy(built, temp, StandardCopyOption.REPLACE_EXISTING);
 		try {
 			Files.move(temp, destJar, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);

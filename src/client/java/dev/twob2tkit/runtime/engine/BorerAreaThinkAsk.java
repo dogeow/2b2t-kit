@@ -29,7 +29,7 @@ import java.util.function.Consumer;
  * 再由本类编译复制 jar。不在游戏线程里等。
  */
 final class BorerAreaThinkAsk {
-	private static final Logger LOGGER = LoggerFactory.getLogger("2b2t-kit/Borer");
+	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final HttpClient HTTP = HttpClient.newBuilder()
 		.connectTimeout(Duration.ofSeconds(8))
 		.build();
@@ -102,7 +102,7 @@ final class BorerAreaThinkAsk {
 	static Path sourceRoot(Minecraft client) {
 		Path configDir = client == null
 			? null
-			: client.gameDirectory.toPath().resolve("config/2b2t-kit");
+			: client.gameDirectory.toPath().resolve("config/twob2tkit");
 		Path marker = configDir == null ? null : configDir.resolve("source-root.txt");
 		String home = System.getenv("HOME");
 		Path found = BorerAreaThinkPolicy.sourceRoot(
@@ -124,7 +124,7 @@ final class BorerAreaThinkAsk {
 		String env = System.getenv("XAI_API_KEY");
 		if (env != null && !env.isBlank()) return env.trim();
 		if (client == null) return "";
-		Path path = client.gameDirectory.toPath().resolve("config/2b2t-kit/xai.key");
+		Path path = client.gameDirectory.toPath().resolve("config/twob2tkit/xai.key");
 		if (!Files.isRegularFile(path)) return "";
 		try {
 			List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
@@ -162,7 +162,7 @@ final class BorerAreaThinkAsk {
 					BUSY.set(false);
 				}
 			},
-			"2b2t-kit-area-think-ask");
+			"twob2tkit-area-think-ask");
 		thread.setDaemon(true);
 		thread.start();
 	}
@@ -189,7 +189,7 @@ final class BorerAreaThinkAsk {
 		Path sourceRoot, Path replyFile
 	) {
 		return """
-			You are patching 2b2t-kit, a Fabric Minecraft 26.1.2 client mod, while the player keeps mining.
+			You are patching twob2tkit, a Fabric Minecraft 26.1.2 client mod, while the player keeps mining.
 
 			Repo: %s
 			Current engine version: %s
@@ -308,7 +308,7 @@ final class BorerAreaThinkAsk {
 		Runnable onFail
 	) {
 		try {
-			Path dir = client.gameDirectory.toPath().resolve("config/2b2t-kit");
+			Path dir = client.gameDirectory.toPath().resolve("config/twob2tkit");
 			Files.createDirectories(dir);
 			Path replyFile = dir.resolve("area-think-reply.json");
 			Files.deleteIfExists(replyFile);
@@ -321,7 +321,7 @@ final class BorerAreaThinkAsk {
 					Advice advice = runGrokPatch(client, repo, replyFile, scene, scores, logTail, engineVersion);
 					if (advice.patched) {
 						note(client, progress, "正在编译新引擎");
-						Path dest = dir.resolve("runtime/2b2t-kit-engine.jar");
+						Path dest = dir.resolve("runtime/twob2tkit-engine.jar");
 						Path javaHome = BorerAreaThinkDeploy.javaHome(
 							repo, System.getenv("JAVA_HOME"), System.getProperty("java.home"));
 						BorerAreaThinkDeploy.Result deployed = BorerAreaThinkDeploy.deploy(
@@ -388,7 +388,7 @@ final class BorerAreaThinkAsk {
 		Path home = grokHome();
 		Path bin = grokBin(home, System.getenv("GROK_BIN"));
 		if (bin == null) throw new IOException("grok binary missing");
-		Path dir = client.gameDirectory.toPath().resolve("config/2b2t-kit");
+		Path dir = client.gameDirectory.toPath().resolve("config/twob2tkit");
 		Path promptPath = dir.resolve("area-think-patch-prompt.txt");
 		Path outPath = dir.resolve("area-think-grok.out");
 		Path errPath = dir.resolve("area-think-grok.err");
@@ -446,7 +446,7 @@ final class BorerAreaThinkAsk {
 		Path home = grokHome();
 		Path bin = grokBin(home, System.getenv("GROK_BIN"));
 		if (bin == null) throw new IOException("grok binary missing");
-		Path dir = client.gameDirectory.toPath().resolve("config/2b2t-kit");
+		Path dir = client.gameDirectory.toPath().resolve("config/twob2tkit");
 		Files.createDirectories(dir);
 		Path promptPath = dir.resolve("area-think-prompt.txt");
 		Path outPath = dir.resolve("area-think-grok.out");

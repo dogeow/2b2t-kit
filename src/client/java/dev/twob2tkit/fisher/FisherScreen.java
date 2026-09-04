@@ -24,7 +24,7 @@ public final class FisherScreen extends KitHudScreen {
 
 	/** 打开自动钓鱼设置屏。 */
 	public FisherScreen(Screen parent, KitConfig config, AutoFisher fisher) {
-		super(Component.literal("2b2t-kit 自动钓鱼"), parent);
+		super(Component.literal("twob2tkit 自动钓鱼"), parent);
 		this.config = config;
 		this.fisher = fisher;
 	}

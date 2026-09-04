@@ -36,7 +36,7 @@ final class KitSavedPlacesScreen extends KitHudScreen {
 	private String listSearchText = "";
 
 	KitSavedPlacesScreen(Screen parent, KitConfig config, KitController controller) {
-		super(Component.literal("2b2t-kit 已存地点"), parent);
+		super(Component.literal("twob2tkit 已存地点"), parent);
 		this.config = config;
 		this.controller = controller;
 	}

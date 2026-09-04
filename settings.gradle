@@ -10,4 +10,4 @@ pluginManagement {
 }
 
 // Should match your modid
-rootProject.name = '2b2t-kit'
+rootProject.name = 'twob2tkit'

@@ -14,7 +14,7 @@ public final class MeteorCombatAssist {
 		boolean ka = MeteorModules.enable(MeteorModules.KILL_AURA);
 		boolean log = MeteorModules.enable(MeteorModules.AUTO_LOG);
 		if (!ka && !log) return;
-		StringBuilder text = new StringBuilder("[2b2t-kit] 自动保护：已打开 Meteor");
+		StringBuilder text = new StringBuilder("[twob2tkit] 自动保护：已打开 Meteor");
 		if (ka) text.append(" 杀戮光环");
 		if (log) text.append(" 自动断开");
 		if (client.player != null) {

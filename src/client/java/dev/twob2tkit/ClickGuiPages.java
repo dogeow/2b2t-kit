@@ -635,7 +635,7 @@ final class ClickGuiPages {
 			v -> LocalRecipeBookInjector.setEnhancementEnabled(mc(), v));
 		panel.action("按键绑定", "巡航、盾构、紧急停止等热键。",
 			() -> mc().setScreen(new KitKeyBindsScreen(gui)));
-		panel.action("检查并加载新版", "热加载 runtime/2b2t-kit-engine.jar。", () -> {
+		panel.action("检查并加载新版", "热加载 runtime/twob2tkit-engine.jar。", () -> {
 			TunnelBorer.ReloadResult result = KitClient.reloadBorerRuntime(mc(), false);
 			gui.showNotice(result.message(), result.success() ? 0x55FF55 : 0xFF5555);
 		});
@@ -678,7 +678,7 @@ final class ClickGuiPages {
 
 	/** 死亡点摘要文案。 */
 	private static String deathSummary(KitConfig config) {
-		if (!config.hasDeathPoint) return "还没有记录。被打和死亡会写入 config/2b2t-kit/combat.log。";
+		if (!config.hasDeathPoint) return "还没有记录。被打和死亡会写入 config/twob2tkit/combat.log。";
 		String time = java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm:ss")
 			.withZone(java.time.ZoneId.systemDefault())
 			.format(java.time.Instant.ofEpochMilli(config.deathTimeEpochMillis));

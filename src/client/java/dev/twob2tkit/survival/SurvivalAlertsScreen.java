@@ -30,7 +30,7 @@ public final class SurvivalAlertsScreen extends KitHudScreen {
 
 	/** 打开生存提醒设置屏。 */
 	public SurvivalAlertsScreen(Screen parent, KitConfig config) {
-		super(Component.literal("2b2t-kit 生存提醒"), parent);
+		super(Component.literal("twob2tkit 生存提醒"), parent);
 		this.config = config;
 	}
 

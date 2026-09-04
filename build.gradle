@@ -15,7 +15,7 @@ loom {
 	splitEnvironmentSourceSets()
 
 	mods {
-		"2b2t-kit" {
+		"twob2tkit" {
 			sourceSet sourceSets.main
 			sourceSet sourceSets.client
 		}
@@ -71,7 +71,7 @@ def runtimeEngineIncludes = [
 ]
 
 tasks.register('runtimeEngineJar', Jar) {
-	archiveFileName = '2b2t-kit-engine.jar'
+	archiveFileName = 'twob2tkit-engine.jar'
 	destinationDirectory = layout.buildDirectory.dir('runtime-engine')
 	from(sourceSets.client.output) {
 		include runtimeEngineIncludes
@@ -80,8 +80,8 @@ tasks.register('runtimeEngineJar', Jar) {
 	reproducibleFileOrder = true
 	manifest {
 		attributes(
-			'2b2t-kit-Engine-Version': project.runtime_engine_version,
-			'2b2t-kit-Host-API': '2'
+			'twob2tkit-Engine-Version': project.runtime_engine_version,
+			'twob2tkit-Host-API': '2'
 		)
 	}
 }
