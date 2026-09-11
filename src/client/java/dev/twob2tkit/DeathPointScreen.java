@@ -25,6 +25,7 @@ public final class DeathPointScreen extends KitHudScreen {
 	/** 布置返航、设目标、复制、清除与返回。 */
 	@Override
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("DEATH", parent)) return;
 		int left = panelLeft(300);
 		Button returnButton = addRenderableWidget(Button.builder(Component.literal("自动返回死亡点上方"), button -> travel()).bounds(left, bodyTop(118), 300, 20).build());
 		returnButton.active = config.hasDeathPoint && sameDimension();

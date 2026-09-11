@@ -51,12 +51,19 @@ public final class KitConfig {
 
 	/** 是否已保存巡航目标。 */
 	public boolean hasTarget;
+	/** UI-only drafts never authorize movement/mining. Keys include server/dimension and stable page id. */
+	public java.util.Map<String, UiDraft> uiDrafts = new java.util.LinkedHashMap<>();
+	public String workspaceCategory = "HOME";
+	public java.util.List<String> recentUiFeatures = new java.util.ArrayList<>();
+	public java.util.Set<String> favoriteUiFeatures = new java.util.LinkedHashSet<>();
 	/** 巡航目标 X。 */
 	public double targetX;
 	/** 巡航目标 Z。 */
 	public double targetZ;
 	/** 巡航高度 Y。 */
 	public double cruiseY = 200.0;
+	/** Scenery radius is in blocks, independent of the saved point-to-point cruise target. */
+	public int sceneryRadiusBlocks = 256;
 	/** 到达判定半径（格）。 */
 	public double arrivalRadius = 8.0;
 	/** 到达后是否自动离线。 */
@@ -72,6 +79,10 @@ public final class KitConfig {
 	/** 转向速度（度/tick）。 */
 	public double turnSpeed = 12.0;
 	/** 前方障碍自动绕行。 */
+	public boolean projectionAutoMove = true;
+	public int concreteLimit = 0;
+	public int concreteDelayTicks = 4;
+	public int concreteToolReservePercent = 10;
 	public boolean obstacleAvoidance = true;
 	/** 升空时挖掉头上挡路方块。 */
 	public boolean clearCeiling = true;
@@ -89,6 +100,12 @@ public final class KitConfig {
 	public int minimumElytraDurability = 40;
 	public int survivalAlertCooldownSeconds = 60;
 	public String activityProfile = "NONE";
+	public int miningChecklistVersion = 0;
+	public boolean borerAutoDefend = true;
+	/** Destructive discard and automatic storage are explicitly opt-in. */
+	public boolean borerAreaDiscardStone;
+	public boolean borerAreaStoreDrops;
+	public String lastDashboardPage = "home";
 	public List<ActivityList> activityLists = new ArrayList<>();
 	public boolean autoRestockFromOpenedContainers = false;
 	public boolean logReviewEnabled = true;
@@ -173,6 +190,8 @@ public final class KitConfig {
 	public int borerOreRadius = 24;
 	public boolean borerAreaASet;
 	public boolean borerAreaBSet;
+	/** 未完成的区域表单；不参与挖掘，补齐并校验后才应用到 A/B。 */
+	public dev.twob2tkit.borer.AreaDrafts.Draft borerAreaDraft;
 	public int borerAreaAx;
 	public int borerAreaAy;
 	public int borerAreaAz;
@@ -200,7 +219,7 @@ public final class KitConfig {
 	public int surroundSettingsVersion;
 	public String lastUiTab = "CRUISE";
 	/** true = 一屏模块栏（像 Meteor Click GUI）；false = 原来的分页。 */
-	public boolean clickGui = true;
+	public boolean clickGui = false;
 	public int clickGuiX = -1;
 	public int clickGuiY = -1;
 	public int clickGuiW = 560;
@@ -327,7 +346,6 @@ public final class KitConfig {
 			else if (config.lastUiTab.equals("TECH")) config.lastUiTab = "BORER";
 			else if (config.lastUiTab.equals("HELP")) config.lastUiTab = "MORE";
 			if (config.uiSettingsVersion < 1) {
-				config.clickGui = true;
 				config.uiSettingsVersion = 1;
 				config.save();
 			}

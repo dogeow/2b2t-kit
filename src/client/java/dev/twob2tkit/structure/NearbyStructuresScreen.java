@@ -52,6 +52,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 	@Override
 	/** 种子/半径/类型与结果列表按钮。 */
 	protected void init() {
+		if (openUnifiedSearch()) return;
 		if (!dimensionReady) {
 			dimension = currentDimension();
 			kind = config.lastStructureKind(dimension);
@@ -321,6 +322,57 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 	}
 
 	/** 结果是否匹配过滤框。 */
+	private boolean openUnifiedSearch() {
+		dimension = currentDimension(); kind = config.lastStructureKind(dimension);
+		String[] seed = {scout != null && scout.store().crackedSeed != null ? scout.store().crackedSeed.toString() : ""};
+		var kinds = StructureLocator.Kind.forDimension(dimension);
+		var page = new dev.twob2tkit.KitFormScreen(parent, "附近结构 · 搜索", "种子推算的是候选位置；未加载区块可能与服务器实际地形不同。")
+			.bind(config).recordDraft().id("structure-search:" + dimension);
+		page.edit("完整世界种子", "请输入完整整数种子，不是种子哈希。", () -> seed[0], value -> {
+			if (SeedScout.parseSeed(value) == null) throw new IllegalArgumentException("请输入有效的完整世界种子");
+		}, value -> seed[0] = value.trim());
+		page.choiceInput("结构类型", "按当前维度列出可选结构。", java.util.Arrays.stream(kinds).map(k -> k.label).toArray(String[]::new),
+			() -> kind.label, value -> kind = java.util.Arrays.stream(kinds).filter(k -> k.label.equals(value)).findFirst().orElse(kind));
+		page.slider("搜索半径（格）", "256–32768。扩大范围可能增加计算时间。", 256, 32768, () -> config.structureSearchRadius, value -> config.structureSearchRadius = value);
+		page.choiceInput("方向", "以搜索时人物的位置判断方向。", java.util.Arrays.stream(CompassDir.values()).map(d -> d.label).toArray(String[]::new),
+			() -> CompassDir.from(config.structureSearchDir).label, value -> config.structureSearchDir = java.util.Arrays.stream(CompassDir.values()).filter(d -> d.label.equals(value)).findFirst().orElse(CompassDir.ALL).id);
+		page.bool("只看没去过的", "与结构标记里的访问状态共用。", () -> config.structureHideVisited, value -> { config.structureHideVisited = value; config.save(); });
+		page.submit("查找结构", () -> {
+			if (minecraft.player == null || minecraft.level == null || currentDimension() != dimension) { page.message("请进入对应维度后重新打开搜索", 0xFF7777); return; }
+			seedBox = KitUi.field(font, 0, 0, 100, "种子", seed[0], 24);
+			radiusBox = KitUi.field(font, 0, 0, 100, "半径", Integer.toString(config.structureSearchRadius), 8);
+			config.setLastStructureKind(kind); config.save(); foundKey = null; resultFilterText = ""; refreshHits();
+			showUnifiedResults(page);
+		});
+		page.action("结构标记", "查看已去过的位置和备注。", () -> dev.twob2tkit.UiFeature.STRUCTURE_MARKS.open(page));
+		minecraft.setScreen(page); return true;
+	}
+	private void showUnifiedResults(Screen searchPage) {
+		var list = new dev.twob2tkit.KitCollectionScreen<StructureLocator.Hit>(searchPage, config, "structure-results:" + kind,
+			kind.label + " · 候选结果", truncated ? "最多显示 500 项，可缩小范围" : "打开详情不会自动前往",
+			() -> found.stream().filter(hit -> { var mark = config.structureMark(markKind(hit), hit.x(), hit.z()); return !config.structureHideVisited || mark == null || !mark.visited; }).toList(),
+			hit -> hit.label() + "  " + hit.x() + " " + hit.z() + " · " + hit.distance() + " 格", NearbyStructuresScreen::hitHint,
+			hit -> hit.label() + " " + hit.x() + " " + hit.z() + " " + hit.distance()
+				+ " " + (minecraft.player == null ? "" : CompassDir.bearingLabel(minecraft.player.getBlockX(), minecraft.player.getBlockZ(), hit.x(), hit.z())));
+		list.onOpen(hit -> {
+			var detail = new dev.twob2tkit.KitFormScreen(list, hit.label(), "结构候选详情，不保证服务器未加载地形与种子推算一致。")
+				.bind(config).id("structure-detail:" + markKind(hit) + ":" + hit.x() + ":" + hit.z());
+			detail.note("X " + hit.x() + "  Z " + hit.z() + " · 搜索时距离 " + hit.distance() + " 格"); detail.note(hitHint(hit));
+			var savedMark = config.structureMark(markKind(hit), hit.x(), hit.z());
+			if (savedMark != null) detail.note((savedMark.visited ? "已去过" : "尚未标记去过") + "；备注：" + (savedMark.note == null ? "" : savedMark.note));
+			detail.action("编辑备注", "保存本地备注。", () -> minecraft.setScreen(new StructureNoteScreen(list, config, markKind(hit), hit)));
+			detail.action("复制坐标", "只复制，不发送命令。", () -> { copyHit(hit); detail.message("已复制坐标", 0x77DDCC); });
+			minecraft.setScreen(detail);
+		});
+		list.action("指引", "只显示方向和距离。", this::startGuide, hit -> currentDimension() == dimension);
+		list.action("前往", "按当前维度巡航高度前往。", this::cruiseTo, hit -> currentDimension() == dimension);
+		list.action("已去", "切换去过状态。", hit -> { var mark = config.ensureStructureMark(markKind(hit), hit.x(), hit.z()); mark.visited = !mark.visited; config.saveStructureMarks(); list.refresh(); }, hit -> true);
+		list.add("搜索设置", () -> minecraft.setScreen(searchPage));
+		list.footer("Chunkbase", this::openChunkbase);
+		list.footer("停止指引", () -> { if (KitClient.structureGuide() != null) KitClient.structureGuide().stop(); list.message("已停止指引"); });
+		minecraft.setScreen(list);
+	}
+
 	private static boolean matchesResultFilter(StructureLocator.Hit hit, String q, int originX, int originZ) {
 		if (hit.label().toLowerCase(Locale.ROOT).contains(q)) return true;
 		if (Integer.toString(hit.x()).contains(q) || Integer.toString(hit.z()).contains(q)) return true;

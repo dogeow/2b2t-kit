@@ -11,7 +11,9 @@ public final class MeteorCombatAssist {
 
 	/** 打开 Meteor 杀戮光环与自动断开，并提示聊天。 */
 	public static void arm(Minecraft client) {
-		boolean ka = MeteorModules.enable(MeteorModules.KILL_AURA);
+		boolean bowOwned = dev.twob2tkit.KitClient.borerCombatLook(client) != null
+			&& client.player != null && client.player.getMainHandItem().is(net.minecraft.world.item.Items.BOW);
+		boolean ka = !bowOwned && MeteorModules.enable(MeteorModules.KILL_AURA);
 		boolean log = MeteorModules.enable(MeteorModules.AUTO_LOG);
 		if (!ka && !log) return;
 		StringBuilder text = new StringBuilder("[twob2tkit] 自动保护：已打开 Meteor");

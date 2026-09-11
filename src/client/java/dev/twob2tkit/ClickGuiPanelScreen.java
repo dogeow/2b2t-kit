@@ -61,7 +61,11 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 	/** 设底部「运行中」开关。 */
 	ClickGuiPanelScreen active(BooleanSupplier active, Runnable toggle) {
 		this.active = active;
-		this.toggleActive = toggle;
+		this.toggleActive = () -> {
+			boolean wasActive = active.getAsBoolean();
+			toggle.run();
+			if (!wasActive && active.getAsBoolean()) Minecraft.getInstance().setScreen(null);
+		};
 		return this;
 	}
 
@@ -176,12 +180,13 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 
 	/** 当前悬停提示。 */
 	String hoverTip() {
-		return hoverTip;
+		return notice.isEmpty() ? hoverTip : notice;
 	}
+	boolean editingValue() { return valueEditor != null; }
 
 	/** 提交未完成的数值编辑。 */
-	void finishEdits() {
-		commitEdit();
+	boolean finishEdits() {
+		return commitEdit();
 	}
 
 	/** 计算内容高度、窗口高与滚动上限。 */
@@ -264,7 +269,7 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 			int fy = winY + winH - footer;
 			graphics.fill(winX, fy, winX + winW, winY + winH, ClickGuiStyle.COL_ROW);
 			boolean on = active.getAsBoolean();
-			KitUi.text(graphics, ui(), "运行中", winX + 6, fy + 4, ClickGuiStyle.COL_TEXT);
+			KitUi.text(graphics, ui(), on ? "■ 停止此功能" : "▶ 开始此功能", winX + 6, fy + 6, ClickGuiStyle.COL_TEXT);
 			drawCheck(graphics, winX + winW - 16, fy + 4, on);
 		}
 		renderValueEditor(graphics, mouseX, mouseY, delta);
@@ -318,7 +323,7 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 			int fy = winY + winH - footer;
 			graphics.fill(winX, fy, winX + winW, winY + winH, ClickGuiStyle.COL_ROW);
 			boolean on = active.getAsBoolean();
-			KitUi.text(graphics, ui(), "运行中", winX + 6, fy + 4, ClickGuiStyle.COL_TEXT);
+			KitUi.text(graphics, ui(), on ? "■ 停止此功能" : "▶ 开始此功能", winX + 6, fy + 6, ClickGuiStyle.COL_TEXT);
 			drawCheck(graphics, winX + winW - 16, fy + 4, on);
 		}
 		renderValueEditor(graphics, mouseX, mouseY, 0);
@@ -330,12 +335,12 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 		int my = (int)event.y();
 		if (valueEditor != null && valueEditor.mouseClicked(event, false)) return true;
 		if (!hitWindow(mx, my)) {
-			if (editing != null) commitEdit();
+			if (editing != null && !commitEdit()) return true;
 			return false;
 		}
 		int footer = toggleActive == null ? 4 : ClickGuiStyle.ROW + 4;
 		if (toggleActive != null && my >= winY + winH - footer) {
-			if (event.button() == 0) toggleActive.run();
+			if (event.button() == 0 && commitEdit()) toggleActive.run();
 			return true;
 		}
 		int bodyTop = winY;
@@ -358,7 +363,7 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 			if (skip) continue;
 			int h = row.height(ui(), winW);
 			if (my >= y && my < y + h && my >= bodyTop && my < winY + winH - footer) {
-				if (editing != null && row != editing) commitEdit();
+				if (editing != null && row != editing && !commitEdit()) return true;
 				row.click(mx, my, event.button(), winX, y, winW, this);
 				layout();
 				return true;
@@ -439,7 +444,7 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 		}
 		int footer = toggleActive == null ? 4 : ClickGuiStyle.ROW + 4;
 		if (toggleActive != null && my >= winY + winH - footer) {
-			if (event.button() == 0) toggleActive.run();
+			if (event.button() == 0 && commitEdit()) toggleActive.run();
 			return true;
 		}
 		int bodyTop = winY + ClickGuiStyle.HEAD;
@@ -518,6 +523,7 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 	/** 编辑中 Esc 取消、回车提交。 */
 	@Override
 	public boolean keyPressed(KeyEvent event) {
+		if (KitKeys.matches(KitKeys.EMERGENCY_STOP, event)) { cancelEdit(); return super.keyPressed(event); }
 		if (valueEditor != null) {
 			if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
 				cancelEdit();
@@ -547,17 +553,22 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 	}
 
 	/** 提交数值编辑。 */
-	private void commitEdit() {
+	private boolean commitEdit() {
 		if (editing != null && valueEditor != null) {
-			editing.commitValue(valueEditor.getValue());
+			try { editing.commitValue(valueEditor.getValue()); }
+			catch (IllegalArgumentException error) { showNotice(error instanceof NumberFormatException ? "请输入有效数字" : error.getMessage(), 0xFF7777); return false; }
 		}
 		closeEdit();
+		notice = "";
+		return true;
 	}
 
 	/** 取消数值编辑。 */
 	private void cancelEdit() {
+		notice = "";
 		closeEdit();
 	}
+	@Override public void onClose() { if (commitEdit()) super.onClose(); }
 
 	/** 关掉编辑框并恢复热键。 */
 	private void closeEdit() {
@@ -571,7 +582,7 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 
 	/** 开始编辑某一文本行。 */
 	void beginValueEdit(EditRow row, int boxX, int rowY, int boxW) {
-		commitEdit();
+		if (!commitEdit()) return;
 		editing = row;
 		row.focused = true;
 		String seed = row.readValue();
@@ -868,7 +879,8 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 
 		@Override
 		public void click(int mx, int my, int button, int x, int y, int w, ClickGuiPanelScreen screen) {
-			run.run();
+			if (!screen.finishEdits()) return;
+			try { run.run(); } catch (IllegalArgumentException error) { screen.showNotice(error.getMessage(), 0xFF7777); }
 		}
 
 		@Override

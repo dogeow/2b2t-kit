@@ -54,6 +54,7 @@ public final class FeederScreen extends KitHudScreen {
 	@Override
 	/** 繁殖/走近/动物优先列表与开始按钮。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("FEEDER", parent)) return;
 		if (parent == null) addTabBar(KitTab.FEED);
 		typeBoxes.clear();
 		int left = panelLeft(320);

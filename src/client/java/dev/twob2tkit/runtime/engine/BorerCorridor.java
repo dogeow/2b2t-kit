@@ -16,7 +16,7 @@ final class BorerCorridor {
 
 	/** 通道扫描得到的下一挖点。 */
 	BlockPos nextOreBlock(Minecraft client, LocalPlayer player) {
-		BlockPos feet = engine.standingColumn(client, player);
+		BlockPos feet = engine.navigationColumn(client, player);
 		BlockPos adjacent = adjacentOreToMine(client, player);
 		if (adjacent != null) return adjacent;
 		BlockPos gap = engine.vertical.nextOpenableOneByTwo(client, player);
@@ -62,7 +62,7 @@ final class BorerCorridor {
 	/** 身旁、脚下、头顶的勾选矿先挖，不管当前锁的是远处哪一块。 */
 	BlockPos adjacentOreToMine(Minecraft client, LocalPlayer player) {
 		if (client.level == null || player == null) return null;
-		BlockPos feet = engine.standingColumn(client, player);
+		BlockPos feet = engine.navigationColumn(client, player);
 		BlockPos best = null;
 		double bestScore = Double.MAX_VALUE;
 		for (int dx = -1; dx <= 1; dx++) {
@@ -110,12 +110,12 @@ final class BorerCorridor {
 		if (!engine.canPlanMine(client, pos) || !BorerAim.hitInReach(player, hit)) return null;
 		if (engine.isUnsafeFloorMine(client, player, pos) || engine.isBelowFeetNonOre(client, player, pos)) return null;
 		if (engine.isWalkableOneBlockStep(client, player, pos)) return null;
-		BlockPos feet = engine.standingColumn(client, player);
+		BlockPos feet = engine.navigationColumn(client, player);
 		int along = (pos.getX() - feet.getX()) * engine.forward.getStepX() + (pos.getZ() - feet.getZ()) * engine.forward.getStepZ();
 		int dy = pos.getY() - feet.getY();
 		if (along < 0 || along > 2 || dy < 0 || dy > engine.effectiveHeight()) return null;
 		if (!BorerCenterPolicy.inCorridorColumn(Math.abs(engine.lateralDistance(feet, pos)), engine.effectiveWidth())) return null;
-		if (engine.vertical.climbingToOre(client, player) && pos.getY() < engine.standingColumn(client, player).getY()) return null;
+		if (engine.vertical.climbingToOre(client, player) && pos.getY() < engine.navigationColumn(client, player).getY()) return null;
 		return engine.vertical.climbTargetInsteadOfFoothold(client, player, pos);
 	}
 

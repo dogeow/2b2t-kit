@@ -26,6 +26,7 @@ public class AssistHomeScreen extends KitHudScreen {
 	/** 布置配方、村庄、投影建造与关闭按钮。 */
 	@Override
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirectCategory(dev.twob2tkit.UiFeature.Category.PRODUCTION)) return;
 		addTabBar(KitTab.MORE);
 		int left = panelLeft(320);
 		int y = contentTop();

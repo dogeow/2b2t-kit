@@ -14,6 +14,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gizmos.GizmoStyle;
 import net.minecraft.gizmos.Gizmos;
@@ -52,7 +53,7 @@ import java.util.Map;
 /** 热加载盾构机：找矿、挖通道、封液体、拾取勾选矿种掉落物。 */
 public final class DefaultTunnelBorerEngine implements BorerEngine {
 	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
-	private static final String RUNTIME_VERSION = "1.7.1";
+	private static final String RUNTIME_VERSION = "1.7.24";
 	private static final int CLEAR_CONFIRM_TICKS = 3;
 	private static final int MOVEMENT_RECOVERY_TICKS = 40;
 	private static final int MOVEMENT_TIMEOUT_TICKS = 120;
@@ -99,11 +100,21 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	}
 
 	final BorerHost host;
+	private final SceneryExplorer scenery = new SceneryExplorer(this);
 	final BorerLoot loot = new BorerLoot(this);
+	final BorerWalkRoute walkRoute = new BorerWalkRoute(this);
+	private RotationAim.Look oreMoveLook;
 	final BorerHome home = new BorerHome(this);
 	final BorerMobs mobs = new BorerMobs(this);
+	final BorerEngagement engagement = new BorerEngagement();
 	final BorerOreScan ores = new BorerOreScan(this);
 	final BorerArea area = new BorerArea(this);
+	final BorerAreaRunner areaRunner = new BorerAreaRunner(this);
+	boolean standaloneGuard;
+	final BorerRangedCombat rangedCombat = new BorerRangedCombat(this);
+	private final BorerMeteorAutomation meteorAutomation = new BorerMeteorAutomation();
+	private final BorerMealPolicy mealPause = new BorerMealPolicy();
+	BorerToolPolicy toolPolicy = BorerToolPolicy.DEFAULT;
 	final BorerLiquids liquids = new BorerLiquids(this);
 	final BorerVertical vertical = new BorerVertical(this);
 	final BorerPreview preview = new BorerPreview(this);
@@ -205,6 +216,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 预览确认后再开挖时沿用第一次按 B 的朝向，不跟当前视角。 */
 	boolean keepPreviewHeading;
 	boolean showingAreaPreview;
+	/** Session-only visibility; persisted area/project data must not resurrect an idle outline. */
+	boolean areaOutlineVisible;
 	BlockPos areaMin;
 	BlockPos areaMax;
 	boolean areaBoundedDown;
@@ -240,25 +253,39 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 盾构机是否正在运行。 */
 	@Override
 	public boolean isActive() {
-		return active;
+		return active || scenery.active();
 	}
+	@Override public boolean isSceneryActive() { return scenery.active(); }
+	@Override public String sceneryStatus() { return scenery.status(); }
+	@Override public boolean startScenery(Minecraft client, int radius, boolean resume) {
+		if (active) stop(client, "开始风景预加载");
+		return scenery.start(client, radius, resume);
+	}
+	@Override public boolean isManagingInventory() { return active && mode == Mode.AREA && areaRunner.managingInventory(); }
 
 	/** 当前模式内部名：FORWARD / DOWN / ORE。 */
 	@Override
 	public String modeName() {
-		return mode.name();
+		return scenery.active() ? "SCENERY" : mode.name();
 	}
 
 	/** 最近一条给玩家看的状态说明。 */
 	@Override
 	public String status() {
-		return status;
+		return scenery.active() ? scenery.status() : status;
 	}
 
 	/** 按指定模式启动，并重置挖矿、找矿和拾取状态。 */
 	@Override
 	public void start(Minecraft client, String modeName) {
 		if (client.player == null || client.level == null) return;
+		if (scenery.active()) scenery.stop(client, "开始挖掘，停止风景预加载");
+		disconnecting = false; // Minecraft may have discarded an old world's queued tasks during disconnect.
+		standaloneGuard = false;
+		mealPause.reset();
+		engagement.clear();
+		walkRoute.clear(); oreMoveLook = null;
+		rangedCombat.end(client);
 		Mode mode = Mode.fromConfig(modeName);
 		if (mode == Mode.AREA && !prepareArea(client)) return;
 		host.prepareForBorer(client);
@@ -328,6 +355,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		showingHomeRoute = false;
 		showingShaftPreview = false;
 		showingAreaPreview = false;
+		areaOutlineVisible = mode == Mode.AREA;
 		areaWalkTarget = null;
 		areaShaftColumn = null;
 		areaRelocating = false;
@@ -341,7 +369,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		String miningRule = mode == Mode.ORE
 			? "。先按 Z 开启 Meteor Xray；只朝指定矿种开 1×2 通道，挖完会主动靠近并拾取对应掉落物"
 			: mode == Mode.AREA
-				? "。1×1 竖井逐格往下（" + BorerAreaPolicy.orderLabel(host.borerAreaOrder()) + "），到底后开飞行换下一格"
+				? "。实际高度 ≤6 层优先水平清挖；更深区域用 1×1 竖井。以真实触及距离和安全通道为准"
 			: mode == Mode.FORWARD && turnAroundLava()
 				? "。只挖看得见的最前层；前方岩浆会提前左右拐弯（可在盾构页关掉改走直线地铁）"
 				: "。只挖看得见的最前层；液体会先封堵";
@@ -359,20 +387,31 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 停止盾构并松开所有按键。 */
 	@Override
 	public void stop(Minecraft client, String reason) {
+        boolean wasStandaloneGuard=standaloneGuard;
+        standaloneGuard=false;
+		if (scenery.active()) { scenery.stop(client, reason); return; }
+		mealPause.reset();
+		engagement.clear();
+		walkRoute.clear(); oreMoveLook = null;
+		rangedCombat.end(client);
+		areaRunner.stopInventory(client);
+		if (mode == Mode.AREA) areaRunner.releaseFlight(client);
 		mineTimings.save(client);
 		resetMineTimingSample();
 		trail.save(client);
 		showingShaftPreview = false;
 		showingAreaPreview = false;
+		areaOutlineVisible = false;
 		keepPreviewHeading = false;
 		areaWalkTarget = null;
 		areaShaftColumn = null;
 		areaRelocating = false;
 		area.reset();
 		BorerScreenHudBridge.hide(host);
-		BorerFlight.restoreSpeed(client);
+		if (mode != Mode.AREA) BorerFlight.restoreSpeed(client);
 		resetSteer();
 		if (!active) {
+            if(wasStandaloneGuard){status="独立防护已停止："+reason;fileLog(client,"guard-stop reason="+reason);}
 			releaseAll(client);
 			restoreManualAttack(client);
 			return;
@@ -436,13 +475,62 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		message(client, "盾构机已停止：" + reason);
 	}
 
-	/** 镐快坏则下线（若开启）。 */
+	/** No usable reserve pickaxe: do not try mining a return route with a protected tool. */
 	private boolean logoutIfToolsWorn(Minecraft client, LocalPlayer player) {
-		if (!BorerItems.allMiningToolsWorn(player)) return false;
-		ItemStack hand = player.getMainHandItem();
-		int left = BorerItems.isMiningTool(hand) ? BorerItems.remainingDurability(hand) : 0;
-		String reason = "镐耐久过低（剩余 " + left + "），挖不了";
-		return finishSession(client, player, reason, true);
+		if (!place.pickaxesExhausted(player)) return false;
+		String reason = "所有镐均已达到防破门槛或被自动工具排除，没有可用备用镐，已停止挖矿并离线";
+		fileLog(client, "tools-protected-logout " + toolPolicy.describe());
+		stop(client, reason);
+		disconnectFromServer(client, reason);
+		return true;
+	}
+
+	/** Yield before any area/combat/navigation code can release Use or reselect a pick. */
+	private boolean pauseForMeteorFood(Minecraft client, LocalPlayer player) {
+		try {
+			BorerMeteorAutomation.Meal meal = meteorAutomation.meal();
+			boolean usingFood = player.isUsingItem() && player.getUseItem().has(DataComponents.FOOD);
+			boolean entering = !mealPause.paused();
+			BorerMealPolicy.Action action = mealPause.tick(meal.requested(), meal.eating(), usingFood,
+				player.getFoodData().getFoodLevel(), player.getHealth());
+			if (action == BorerMealPolicy.Action.WORK) return false;
+			if (action == BorerMealPolicy.Action.RESUME) {
+				rangedCombat.end(client);
+				fileLog(client, "meteor-eat-resume health=" + player.getHealth() + " hunger=" + player.getFoodData().getFoodLevel());
+				return false;
+			}
+			if (entering) {
+				rangedCombat.pauseForEating(client);
+				// Stop only our shield use; an already-started food/AutoGap use must survive this tick.
+				if (holdingShield && !usingFood && !meal.eating()) {
+					if (player.isUsingItem() && player.getUseItem().is(Items.SHIELD)) player.stopUsingItem();
+					client.options.keyUse.setDown(false);
+				}
+				holdingShield = false;
+				fileLog(client, "meteor-eat-pause " + meal.settings() + " nativeEating=" + meal.eating()
+					+ " health=" + player.getHealth() + " hunger=" + player.getFoodData().getFoodLevel());
+			}
+			releaseMine(client); // Deliberately does NOT release Use or touch food/hotbar.
+			client.options.keyShift.setDown(false);
+			client.options.keySprint.setDown(false);
+			player.setSprinting(false);
+			attemptedForward = false; lastForwardPosition = player.position(); noMovementTicks = 0;
+			miningTargetTicks = miningRetryCount = 0; lastDestroyStage = -1;
+			resetMineTimingSample(); resetAimMissProgress();
+			if (mode == Mode.AREA && !goingHome) areaRunner.suspendForEating(client, entering);
+			else if (player.isInWater() || player.isInLava()) client.options.keyJump.setDown(true);
+			status = "暂停挖矿，等待 Meteor 自动吃完成后继续";
+			statusColor = 0x55FFFF;
+			if (action == BorerMealPolicy.Action.BLOCKED) {
+				fileLog(client, "meteor-eat-blocked " + meal.settings() + " nativeEating=" + meal.eating() + " usingFood=" + usingFood);
+				stop(client, "Meteor 自动吃连续 10 秒未补充血量或饱食度，请检查食物、快捷栏空位或网络；已保留进度");
+			}
+			return true;
+		} catch (IllegalStateException error) {
+			fileLog(client, "meteor-eat-error " + error);
+			stop(client, error.getMessage());
+			return true;
+		}
 	}
 
 	/** 挖满或镐坏了：优先沿路回家/飞回地狱门，到家后再下线。 */
@@ -481,9 +569,14 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 断开服务器连接（镐坏下线等）。 */
 	void disconnectFromServer(Minecraft client, String reason) {
 		if (disconnecting) return;
+		var expectedLevel = client.level;
+		var expectedConnection = client.getConnection();
+		if (expectedLevel == null || expectedConnection == null) return;
 		disconnecting = true;
-		client.execute(() -> {
+		client.schedule(() -> {
 			try {
+				// A stale queued logout must not disconnect a newly joined world/session.
+				if (client.level != expectedLevel || client.getConnection() != expectedConnection) return;
 				Component title = Component.literal("twob2tkit 已安全离线");
 				Component detail = Component.literal(reason);
 				JoinMultiplayerScreen parent = new JoinMultiplayerScreen(new TitleScreen());
@@ -503,7 +596,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 运行中则停止。向下挖第一次只预览范围，再按一次才开挖。 */
 	@Override
 	public void toggle(Minecraft client) {
-		if (active) {
+		if (isActive()) {
 			stop(client, "按键停止");
 			return;
 		}
@@ -517,6 +610,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			return;
 		}
 		if (last == Mode.AREA && !showingAreaPreview) {
+			if (areaRunner.canResumeHere(client)) { start(client, last.name()); return; }
 			preview.beginArea(client);
 			return;
 		}
@@ -568,14 +662,11 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 关掉区域黄框预览。 */
 	public void dismissAreaPreview() {
 		showingAreaPreview = false;
-		areaMin = null;
-		areaMax = null;
-		areaWalkTarget = null;
-		areaShaftColumn = null;
-		areaRelocating = false;
-		areaShaftColumn = null;
-		areaRelocating = false;
-		area.reset();
+		areaOutlineVisible = false;
+	}
+	@Override public void previewArea(Minecraft client) {
+		if (active && mode == Mode.AREA) { areaOutlineVisible = true; return; }
+		if (!isActive()) preview.beginArea(client);
 	}
 
 	/** 下界一律飞行沿原路回去，不挖方块（镐坏了也能走已挖的巷道）。 */
@@ -674,6 +765,9 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 	/** 开始沿路回家或飞回门。 */
 	private void beginReturn(Minecraft client, boolean flyToPortal) {
+		if (scenery.active()) scenery.stop(client, "改为沿挖矿路线返回");
+		rangedCombat.end(client);
+		if (mode == Mode.AREA) { areaRunner.suspend(client); areaRunner.releaseFlight(client); areaRunner.reset(); }
 		if (!active) {
 			host.prepareForBorer(client);
 			mode = Mode.fromConfig(host.borerLastMode());
@@ -744,9 +838,45 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	}
 
 	@Override
+	public boolean tickStandaloneGuard(Minecraft c, boolean enabled) {
+		if (active) return false; // The running mining engine already owns this same combat object.
+		if (!enabled || c.player == null || c.level == null || c.player.isDeadOrDying() || c.screen != null) {
+			if (standaloneGuard) { rangedCombat.end(c); mobs.lowerShield(c); engagement.clear(); }
+			standaloneGuard = false; return false;
+		}
+		engagement.update(c);
+		var meal = meteorAutomation.meal();
+		if (!rangedCombat.hasCreeperEmergency(c) && (meal.requested() || meal.eating() || c.player.isUsingItem() && c.player.getUseItem().has(DataComponents.FOOD))) {
+			if (standaloneGuard) rangedCombat.pauseForEating(c);
+			standaloneGuard = true; pauseGuardMovement(c); return true;
+		}
+		standaloneGuard = true;
+		boolean busy = rangedCombat.tick(c);
+		if (!busy) { mobs.lowerShield(c); standaloneGuard = false; }
+		return busy;
+	}
+	void pauseGuardMovement(Minecraft c) {
+        // Preserve actual movement even if used with an older host lacking manual-takeover handling.
+        for(var key: new net.minecraft.client.KeyMapping[]{c.options.keyUp,c.options.keyDown,c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint}){
+            var bound=net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper.getBoundKeyOf(key);
+            boolean held=c.screen==null && c.isWindowActive() && bound.getType()==com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM
+                && com.mojang.blaze3d.platform.InputConstants.isKeyDown(c.getWindow(),bound.getValue());
+            key.setDown(held);
+        }
+        c.options.keyAttack.setDown(false);
+		c.gameMode.stopDestroyBlock();
+	}
+
+	@Override
 	/** Meteor 改朝向后再写回。 */
 	public void reapplyLook(Minecraft client) {
-		if (!active || client.player == null) return;
+		if (scenery.active()) { scenery.reapply(client); return; }
+		if ((!active && !standaloneGuard) || client.player == null) return;
+		if (mealPause.paused()) return;
+		if (rangedCombat.reapply(client)) return;
+		if (mode == Mode.ORE && !goingHome && oreMoveLook != null && client.screen == null && !client.options.keyAttack.isDown()) {
+			RotationAim.apply(client.player, oreMoveLook); return;
+		}
 		if (goingHome) {
 			BlockPos dest = trail.last();
 			if (dest == null && returningToPortal) dest = trail.portal();
@@ -755,12 +885,20 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			lookAt(client.player, new Vec3(dest.getX() + 0.5, lookY, dest.getZ() + 0.5));
 			return;
 		}
-		if (mode == Mode.AREA) area.reapplyFlyLook(client.player);
+		if (mode == Mode.AREA) areaRunner.reapplyLook(client);
 	}
+	@Override public RotationAim.Look combatLook(Minecraft client) {
+		return (!active && !standaloneGuard) || mealPause.paused() ? null : rangedCombat.visibleLook(client);
+	}
+	@Override public void combatViewRendered(Minecraft client, RotationAim.Look view) {
+		if ((active || standaloneGuard) && !mealPause.paused()) rangedCombat.viewRendered(client, view);
+	}
+	@Override public boolean prepareBowRelease(Minecraft client) { return (!active && !standaloneGuard) || rangedCombat.prepareRelease(client); }
 
 	/** 过门后立刻找附近地狱门，下界走动时持续记路。 */
 	@Override
 	public void observeWorld(Minecraft client) {
+		if (scenery.active()) return; // Do not let idle mining recovery rewrite the active scenery flight lease.
 		if (client.player == null || client.level == null) {
 			wasInNether = false;
 			netherObserverReady = false;
@@ -771,6 +909,10 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		if (!netherObserverReady) {
 			netherObserverReady = true;
 			wasInNether = nether;
+			if (!active && BorerFlight.meteorFlightActive() != null) {
+				try { areaRunner.prepareFlight(client); }
+				catch (IllegalStateException e) { fileLog(client, "area-flight-recover-failed " + e.getMessage()); }
+			}
 			restorePersistentState(client);
 			if (nether) {
 				if (trail.portal() != null) trail.ensureFirst(trail.portal());
@@ -840,13 +982,21 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 每客户端 tick：避岩浆、封液体、挖挡路、走近矿石并拾取勾选掉落物。 */
 	@Override
 	public void tick(Minecraft client) {
+		if (scenery.active()) { scenery.tick(client); return; }
+		oreMoveLook = null;
 		if (!active) return;
 		if (client.player == null || client.level == null || client.gameMode == null) {
 			stop(client, "离开世界");
 			return;
 		}
-		if (client.screen != null) {
-			releaseAll(client);
+		engagement.update(client);
+		if (client.screen != null && !(mode == Mode.AREA && areaRunner.ownsInventoryScreen(client))) {
+			if (mealPause.paused()) releaseMine(client);
+			else {
+				rangedCombat.end(client);
+				if (mode == Mode.AREA) areaRunner.suspend(client);
+				releaseAll(client);
+			}
 			status = "先关掉界面再挖";
 			statusColor = 0xFFFF55;
 			presentStatusHud(client);
@@ -855,6 +1005,16 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 		LocalPlayer player = client.player;
 		try {
+		if (pauseForMeteorFood(client, player)) return;
+		try { toolPolicy = meteorAutomation.tools(); }
+		catch (IllegalStateException error) {
+			fileLog(client, "meteor-tool-error " + error); stop(client, error.getMessage()); return;
+		}
+		if (logoutIfToolsWorn(client, player)) return;
+		if (mode == Mode.AREA && !goingHome) {
+			tickArea(client, player);
+			return;
+		}
 		// 上一拍躲苦力怕按下的后退键，本拍先松开；苦力怕还在的话下面会重新按上。
 		// 不松的话它会和前进键相互抵消，表现成「按着前进却不动」。
 		if (retreating) {
@@ -876,7 +1036,6 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			home.handle(client, player);
 			return;
 		}
-		if (!goingHome && logoutIfToolsWorn(client, player)) return;
 		if (handleFallingSand(client, player)) return;
 		if (updateForwardProgress(client, player)) return;
 		if (pauseTicks > 0) {
@@ -973,11 +1132,19 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			if (home.handle(client, player)) return;
 		} else {
 			if (mode == Mode.ORE) place.discardExcessStone(client, player);
-			if (!loot.active() && mode == Mode.ORE && !skipExperienceLoot() && lastMinedOre != null) {
-				loot.tryBeginFromNearby(client, player, lastMinedOre);
+			if (!loot.active() && mode == Mode.ORE) {
+				loot.tryBeginSelected(client, player);
 			}
 			if (loot.active() && handleLootCollection(client, player)) return;
-			if (mode == Mode.ORE && oreTargetPos == null && sideOreTargetPos == null) {
+			if (mode == Mode.ORE && !loot.active()) {
+				BlockPos goal = sideOreTargetPos != null ? sideOreTargetPos : oreTargetPos;
+				if (goal != null && (currentTarget == null || !wantedBlock(client.level.getBlockState(currentTarget)))
+					&& !(BorerAim.inReach(player, goal) && canSeeBlock(client, player, goal))
+					&& walkRoute.walk(client, Vec3.atCenterOf(goal), false)) {
+					clearMiningTarget(client, "existing-open-route"); return;
+				}
+			}
+			if (mode == Mode.ORE && !loot.active() && oreTargetPos == null && sideOreTargetPos == null) {
 				clearMiningTarget(client, "no-ore-goal");
 				frontOccluded = false;
 				occludedTicks = 0;
@@ -1304,8 +1471,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 					overlay(client, status, 0xFFFF55);
 					return;
 				}
-				place.selectMiningTool(client, player, currentTarget);
-				if (logoutIfToolsWorn(client, player)) return;
+				if (!place.selectMiningTool(client, player, currentTarget)) return;
 				lookAtMiningHit(client, player, hit);
 				BlockHitResult freshHit = BorerAim.clipView(client, player);
 				boolean freshInReach = freshHit != null && BorerAim.hitInReach(player, freshHit);
@@ -1620,6 +1786,43 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			}
 			presentStatusHud(client);
 		}
+	}
+
+	/** AREA owns its navigation and mining; retain combat/tool protection before its controller. */
+	private void tickArea(Minecraft client, LocalPlayer player) {
+		trail.record(client, player);
+		if (host.surroundActive()) {
+			areaRunner.suspend(client);
+			status = "围箱保护中，区域挖暂停";
+			return;
+		}
+		if (player.isInWater() || player.isInLava()) { areaRunner.tick(client, player); return; }
+		if (rangedCombat.tick(client)) return;
+		Creeper creeper = mobs.findCreeper(client, player);
+		if (mobs.creeperImminent(player, creeper)) {
+			areaRunner.suspend(client);
+			RotationAim.apply(player, RotationAim.lookAt(player, creeper.getEyePosition()));
+			mobs.raiseShield(client, player);
+			if (host.borerSurroundOnCreeper()) host.startEmergencySurround(client);
+			status = "苦力怕保护中，区域挖暂停";
+			return;
+		}
+		String combat = BorerThreats.combatPauseReason(player);
+		if (combat != null) combatPauseTicks = 40;
+		Entity close = host.borerPauseOnMob()
+			? mobs.closestCombat(client, player, BorerMobPolicy.pauseRadius(host.borerMobRadius())) : null;
+		if (combatPauseTicks > 0 || close != null) {
+			combatPauseTicks = Math.max(0, combatPauseTicks - 1);
+			areaRunner.suspend(client);
+			if (close != null) RotationAim.apply(player, RotationAim.lookAt(player, close.getEyePosition()));
+			BorerItems.selectWeapon(client, player);
+			mobs.raiseShield(client, player);
+			status = "战斗保护中，区域挖原地暂停，交给自动攻击";
+			return;
+		}
+		mobs.lowerShield(client);
+		mobs.releaseCombatMove(client);
+		areaRunner.tick(client, player);
 	}
 
 	/** 向下模式：松开挖掘并下落到下一层。落点不安全（岩浆/水/太深）则停步。 */
@@ -1960,7 +2163,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	}
 
 	/** 是否为受保护的封堵块。 */
-	private boolean isProtectedSealBlock(Minecraft client, BlockPos pos) {
+	boolean isProtectedSealBlock(Minecraft client, BlockPos pos) {
 		Block expected = protectedSealBlocks.get(pos);
 		if (expected == null) return false;
 		if (client.level.getBlockState(pos).is(expected)) return true;
@@ -2853,7 +3056,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		}
 		client.hitResult = hit;
 		client.crosshairPickEntity = null;
-		place.selectMiningTool(client, player, pos);
+		if (!place.selectMiningTool(client, player, pos)) return true; // Handled pause/stop, not a navigation fallback.
 		applyMineCadence(client, player, pos, !timingActive || currentTarget == null || !pos.equals(currentTarget), false);
 		client.options.keyUp.setDown(false);
 		if (mode == Mode.AREA) {
@@ -2917,10 +3120,19 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 	/** 居中后按前进。 */
 	void walkForwardCentered(Minecraft client, LocalPlayer player) {
-		faceTowardPathCenter(player);
+		boolean centering = mode == Mode.ORE && offColumnCenter(client, player);
+		if (centering) faceForward(player); else faceTowardPathCenter(player);
 		nudgeToColumnCenter(client, player);
-		client.options.keyUp.setDown(true);
-		attemptedForward = true;
+		client.options.keyUp.setDown(!centering);
+		attemptedForward = !centering;
+		rememberOreMove(player);
+	}
+
+	void rememberOreMove(LocalPlayer player) {
+		if (mode == Mode.ORE) oreMoveLook = new RotationAim.Look(player.getYRot(), player.getXRot());
+	}
+	BlockPos navigationColumn(Minecraft client, LocalPlayer player) {
+		return BorerCenterPolicy.navigationColumn(player.blockPosition(), standingColumn(client, player), mode == Mode.ORE);
 	}
 
 	/** 飞向当前目标块，不沿巷道朝向按 W。 */
@@ -2948,6 +3160,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		client.options.keyJump.setDown(up);
 		client.options.keyShift.setDown(down && !up);
 		attemptedForward = go;
+		rememberOreMove(player);
 	}
 
 	/** 矿就在附近更高/更低处：站住挖阶梯，不要沿已挖通道走回头。 */
@@ -2990,11 +3203,11 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 	/** 是否偏出格子中心。 */
 	private boolean offColumnCenter(Minecraft client, LocalPlayer player) {
-		BlockPos feet = standingColumn(client, player);
+		BlockPos feet = navigationColumn(client, player);
 		Direction right = forward.getClockWise();
 		double side = BorerCenterPolicy.sideOffset(
 			player.getX(), player.getZ(), feet.getX(), feet.getZ(), right.getStepX(), right.getStepZ());
-		return BorerCenterPolicy.overlapsSideWall(side);
+		return BorerCenterPolicy.centerBeforeForward(side);
 	}
 
 	/**
@@ -3160,7 +3373,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 是否允许规划挖该格。 */
 	boolean canPlanMine(Minecraft client, BlockPos pos) {
 		if (mode == Mode.AREA && areaMin != null && areaMax != null) {
-			if (!area.allowsMiningTarget(pos)) return false;
+			if (!areaRunner.allowsMiningTarget(pos)) return false;
 			return canMineFlightObstruction(client, pos);
 		}
 		return BorerMiningPolicy.canSelectTarget(
@@ -3305,7 +3518,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		if (mode == Mode.AREA && centerOnShaftColumn(client, player, true)) return;
 		Direction right = forward.getClockWise();
 		if (nudgeToAreaBandCenter(client, player, right)) return;
-		BlockPos feet = standingColumn(client, player);
+		BlockPos feet = navigationColumn(client, player);
 		double dx = feet.getX() + 0.5 - player.getX();
 		double dz = feet.getZ() + 0.5 - player.getZ();
 		double side = dx * right.getStepX() + dz * right.getStepZ();
@@ -3469,7 +3682,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			client.options.keyAttack.isDown(), client.options.keyUp.isDown(),
 			client.options.keyDown.isDown(), client.options.keyLeft.isDown(), client.options.keyRight.isDown(),
 			client.options.keyJump.isDown(),
-			client.options.keyShift.isDown(), player.getYRot(), mode == Mode.AREA ? area.diagnosticState() : "-", crosshairLabel(client), blockAt(client, front),
+			client.options.keyShift.isDown(), player.getYRot(), mode == Mode.AREA ? areaRunner.diagnosticState() : "-", crosshairLabel(client), blockAt(client, front),
 			blockAt(client, front.above()), blockAt(client, feet.above(2)), blockAt(client, front.below()),
 			routeIssue.isBlank() ? "-" : routeIssue, status.isBlank() ? "-" : status);
 		fileLog(client, summary);

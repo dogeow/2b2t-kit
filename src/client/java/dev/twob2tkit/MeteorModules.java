@@ -42,6 +42,15 @@ public final class MeteorModules {
 			return false;
 		}
 	}
+	public static boolean disable(String className) {
+		Object module = module(className);
+		if (module == null) return false;
+		try {
+			if (!Boolean.TRUE.equals(module.getClass().getMethod("isActive").invoke(module))) return false;
+			module.getClass().getMethod("toggle").invoke(module);
+			return !Boolean.TRUE.equals(module.getClass().getMethod("isActive").invoke(module));
+		} catch (ReflectiveOperationException ignored) { return false; }
+	}
 
 	/** 从 Modules 单例按类名取模块实例；未装 Meteor 返回 null。 */
 	private static Object module(String className) {

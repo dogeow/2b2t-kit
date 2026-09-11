@@ -29,6 +29,7 @@ public final class StructureMarksScreen extends KitHudScreen {
 	@Override
 	/** 列表、清空与「只看没去过」开关。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("STRUCTURE_MARKS", parent)) return;
 		int left = panelLeft(360);
 		addRenderableWidget(Button.builder(Component.literal(confirmClear ? "再点一次确认清空" : "全部清空"), button -> {
 			if (!confirmClear) {

@@ -122,7 +122,7 @@ final class BorerMobs {
 		Creeper closest = null;
 		double best = Double.MAX_VALUE;
 		for (Entity entity : client.level.getEntities(player, box)) {
-			if (entity instanceof Creeper creeper && creeper.isAlive()) {
+			if (entity instanceof Creeper creeper && creeper.isAlive() && engine.engagement.shouldReact(player, creeper)) {
 				double distance = player.distanceTo(creeper);
 				if (distance <= radius && distance < best) {
 					closest = creeper;
@@ -138,7 +138,8 @@ final class BorerMobs {
 		if (creeper == null || !creeper.isAlive()) return false;
 		double distance = player.distanceTo(creeper);
 		boolean swelling = creeper.isIgnited() || creeper.getSwelling(1.0F) > 0.15F || creeper.getSwellDir() > 0;
-		return swelling || distance < 4.0 || creeper.isPowered() && distance < 6.0;
+		return BorerDefensePolicy.blastThreat(swelling, creeper.isPowered(), distance)
+			|| engine.engagement.shouldReact(player, creeper) && (distance < 4.0 || creeper.isPowered() && distance < 6.0);
 	}
 
 	/** 已加载实体里、装甲过滤后仍危险的敌对。通道拐弯用这个。 */
@@ -159,6 +160,7 @@ final class BorerMobs {
 		BorerThreats.Loadout loadout = BorerThreats.loadout(player);
 		for (Entity entity : client.level.getEntities(player, box)) {
 			if (!(entity instanceof Enemy) || !entity.isAlive()) continue;
+			if (!engine.engagement.shouldReact(player, entity)) continue;
 			if (player.distanceTo(entity) > radius) continue;
 			if (anyHostile) {
 				if (!BorerThreats.shouldYieldWhenNearby(entity, loadout)) continue;

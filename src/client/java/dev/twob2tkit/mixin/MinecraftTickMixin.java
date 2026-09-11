@@ -22,4 +22,10 @@ public abstract class MinecraftTickMixin {
 	private void kit$tickBeforeMeteor(CallbackInfo info) {
 		KitClient.tickNavigation(Minecraft.getInstance());
 	}
+
+	/** Scripted mining drives the normal game-mode API once per tick, even unfocused. */
+	@Inject(method = "continueAttack", at = @At("HEAD"), cancellable = true)
+	private void kit$ownedMining(boolean held, CallbackInfo info) {
+		if (dev.twob2tkit.automation.AutomationBridge.ownsMining() || KitClient.concrete()!=null && KitClient.concrete().ownsMining()) info.cancel();
+	}
 }

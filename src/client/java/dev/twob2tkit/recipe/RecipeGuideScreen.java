@@ -40,6 +40,7 @@ public final class RecipeGuideScreen extends KitHudScreen {
 	@Override
 	/** 分类、搜索与配方列表。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("RECIPES", parent)) return;
 		int left = panelLeft(PANEL_W);
 		if (search != null) draftQuery = search.getValue();
 

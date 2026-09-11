@@ -64,6 +64,7 @@ public final class SurroundScreen extends KitHudScreen {
 	/** 布置模式按钮、选项、目录图标与优先级列表。 */
 	@Override
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("SURROUND", parent)) return;
 		if (parent == null) addTabBar(KitTab.SURROUND);
 		int left = panelLeft(320);
 		stateRow = stateRowAboveFooter();

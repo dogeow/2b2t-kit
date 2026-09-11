@@ -43,6 +43,7 @@ final class KitScreen extends KitHudScreen {
 	/** 布置坐标输入、地点/结构入口与开始停止。 */
 	@Override
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("CRUISE", parent)) return;
 		if (parent == null) addTabBar(KitTab.CRUISE);
 		int left = panelLeft(340);
 		int top = contentTop();
@@ -70,6 +71,9 @@ final class KitScreen extends KitHudScreen {
 			.bounds(left + 116, fillRow, 108, 20)
 			.tooltip(Tooltip.create(Component.literal("用当前脚底高度填写巡航 Y")))
 			.build());
+		addRenderableWidget(Button.builder(Component.literal("风景预加载"), button -> {
+			this.minecraft.setScreen(new SceneryScreen(this, config));
+		}).bounds(left + 232, fillRow, 108, 20).tooltip(Tooltip.create(Component.literal("以自身为圆心，按服务器视距跑图并保存风景缓存，优先使用 Bobby，可中断继续。"))).build());
 
 		int cruiseRow = footerButtonY();
 		int cruiseOptionsRow = cruiseRow - 24;

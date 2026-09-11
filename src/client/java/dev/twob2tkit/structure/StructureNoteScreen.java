@@ -26,6 +26,7 @@ public final class StructureNoteScreen extends KitHudScreen {
 	@Override
 	/** 备注输入框与保存/返回。 */
 	protected void init() {
+		if (openUnifiedEditor()) return;
 		int left = panelLeft(340);
 		KitConfig.StructureMark mark = config.structureMark(markKind, hit.x(), hit.z());
 		String note = mark == null || mark.note == null ? "" : mark.note;
@@ -46,6 +47,16 @@ public final class StructureNoteScreen extends KitHudScreen {
 	}
 
 	/** 写入标记备注并关界面。 */
+	private boolean openUnifiedEditor() {
+		KitConfig.StructureMark mark = config.structureMark(markKind, hit.x(), hit.z());
+		String[] note = {mark == null || mark.note == null ? "" : mark.note};
+		var page = new dev.twob2tkit.KitFormScreen(parent, "结构备注 · " + hit.label(), "X " + hit.x() + "  Z " + hit.z())
+			.bind(config).recordDraft().id("structure-note:" + markKind + ":" + hit.x() + ":" + hit.z());
+		page.edit("备注", "输入自动暂存，保存后更新结构标记。", () -> note[0], value -> note[0] = value.trim());
+		page.submit("保存备注", () -> { var stored = config.ensureStructureMark(markKind, hit.x(), hit.z()); stored.note = note[0]; config.saveStructureMarks(); page.clearDraft(); minecraft.setScreen(parent); });
+		minecraft.setScreen(page); return true;
+	}
+
 	private void save() {
 		KitConfig.StructureMark mark = config.ensureStructureMark(markKind, hit.x(), hit.z());
 		mark.note = noteBox.getValue().trim();

@@ -12,6 +12,14 @@ import net.minecraft.network.chat.Component;
  * twob2tkit 界面基类：游戏内 HUD（不暂停）、热键、顶栏标签与底栏布局。
  */
 public abstract class KitHudScreen extends Screen {
+	@Override
+	public void extractRenderState(net.minecraft.client.gui.GuiGraphicsExtractor g, int x, int y, float delta) {
+		if (!(this instanceof ClickGuiPanelScreen)) {
+			boolean compactColors = KitClient.config() != null && KitClient.config().clickGui;
+			g.fill(0, 0, this.width, Math.max(0, this.height - 56), compactColors ? 0xEC192534 : 0xEC141D28);
+		}
+		super.extractRenderState(g, x, y, delta);
+	}
 	/** 字段上方标签间距、行距、区块间距、状态行与底栏按钮间距。 */
 	protected static final int LABEL_ABOVE_FIELD = 12;
 	protected static final int CONTROL_ROW_STEP = 24;
@@ -61,56 +69,16 @@ public abstract class KitHudScreen extends Screen {
 			this.minecraft.setScreen(null);
 			return true;
 		}
-		if (!typing && KitKeys.matches(KitKeys.START_STOP, event)) {
-			return onStartStopKey();
-		}
-		if (!typing && KitKeys.matches(KitKeys.TOGGLE_BORER, event)) {
-			KitClient.toggleBorer(this.minecraft);
-			return true;
-		}
-		if (!typing && KitKeys.matches(KitKeys.BORER_HOME, event)) {
-			KitClient.goBorerHome(this.minecraft);
-			this.minecraft.setScreen(null);
-			return true;
-		}
-		if (!typing && KitKeys.matches(KitKeys.PORTAL_HOME, event)) {
-			KitClient.goNetherPortal(this.minecraft);
-			return true;
-		}
-		if (!typing && KitKeys.matches(KitKeys.TOGGLE_SURROUND, event)) {
-			KitClient.toggleSurround(this.minecraft);
-			if (KitClient.surround() != null && KitClient.surround().isActive()) {
-				this.minecraft.setScreen(null);
+		if (!typing) {
+			for (net.minecraft.client.KeyMapping mapping : new net.minecraft.client.KeyMapping[]{
+				KitKeys.START_STOP, KitKeys.TOGGLE_BORER, KitKeys.BORER_HOME, KitKeys.PORTAL_HOME,
+				KitKeys.TOGGLE_SURROUND, KitKeys.TOGGLE_FEEDER, KitKeys.TOGGLE_PLANTER, KitKeys.TOGGLE_CHOPPER,
+				KitKeys.TOGGLE_FISHER, KitKeys.TOGGLE_VILLAGER_SCAN}) {
+				if (KitKeys.matches(mapping, event)) {
+					showNotice("菜单内请用明确的操作按钮；返回游戏后快捷键照常", 0xFFFF55);
+					return true;
+				}
 			}
-			return true;
-		}
-		if (!typing && KitKeys.matches(KitKeys.TOGGLE_FEEDER, event)) {
-			KitClient.toggleFeeder(this.minecraft);
-			if (KitClient.feeder() != null && KitClient.feeder().isActive()) {
-				this.minecraft.setScreen(null);
-			}
-			return true;
-		}
-		if (!typing && KitKeys.matches(KitKeys.TOGGLE_PLANTER, event)) {
-			KitClient.togglePlanter(this.minecraft);
-			if (KitClient.planter() != null && KitClient.planter().isActive()) {
-				this.minecraft.setScreen(null);
-			}
-			return true;
-		}
-		if (!typing && KitKeys.matches(KitKeys.TOGGLE_CHOPPER, event)) {
-			KitClient.toggleChopper(this.minecraft);
-			if (KitClient.chopper() != null && KitClient.chopper().isActive()) {
-				this.minecraft.setScreen(null);
-			}
-			return true;
-		}
-		if (!typing && KitKeys.matches(KitKeys.TOGGLE_FISHER, event)) {
-			KitClient.toggleFisher(this.minecraft);
-			if (KitClient.fisher() != null && KitClient.fisher().isActive()) {
-				this.minecraft.setScreen(null);
-			}
-			return true;
 		}
 		if (!typing && event.isConfirmation() && onEnterPressed()) return true;
 		return super.keyPressed(event);
@@ -123,8 +91,7 @@ public abstract class KitHudScreen extends Screen {
 
 	/** 默认切换巡航；子类可覆盖。 */
 	protected boolean onStartStopKey() {
-		KitClient.toggleCruiseFromKey(this.minecraft);
-		return true;
+		return false;
 	}
 
 	/** 加左对齐文字控件。 */

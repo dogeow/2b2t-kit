@@ -28,6 +28,7 @@ final class KitTrustedPlayersScreen extends KitHudScreen {
 	/** 布置输入框、名单列表与返回。 */
 	@Override
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("TRUSTED", parent)) return;
 		int left = panelLeft(320);
 		if (playerName != null) draftName = playerName.getValue();
 		playerName = addRenderableWidget(KitUi.field(this.font, left, bodyTop(44), 196, "玩家名", draftName, 16));

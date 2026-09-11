@@ -32,6 +32,7 @@ public final class CruiseOptionsScreen extends KitHudScreen {
 	@Override
 	/** 到达半径、挂机保护、绕障与挖顶等控件。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("CRUISE_OPTIONS", parent)) return;
 		int left = panelLeft(340);
 		int y = bodyTop(28);
 		arrivalRadius = addRenderableWidget(KitUi.field(this.font, left, y, 78, "到达半径",

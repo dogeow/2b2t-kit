@@ -167,6 +167,7 @@ public final class TunnelBorer {
 	}
 
 	private final KitConfig config;
+	private final dev.twob2tkit.adventure.MiningChecklist miningChecklist = new dev.twob2tkit.adventure.MiningChecklist();
 	private final HostBridge host;
 	private BorerEngine engine;
 	private URLClassLoader engineLoader;
@@ -223,6 +224,9 @@ public final class TunnelBorer {
 	public boolean isActive() {
 		return engine.isActive();
 	}
+	public boolean isSceneryActive() { return engine.isSceneryActive(); }
+	public String sceneryStatus() { return engine.sceneryStatus(); }
+	public boolean startScenery(Minecraft client, int radius, boolean resume) { return engine.startScenery(client, radius, resume); }
 
 	/** 当前盾构模式。 */
 	public Mode mode() {
@@ -241,6 +245,7 @@ public final class TunnelBorer {
 
 	/** 按模式启动盾构引擎。 */
 	public void start(Minecraft client, Mode mode) {
+		miningChecklist.beforeStart(client, config);
 		engine.start(client, mode.name());
 	}
 
@@ -251,6 +256,7 @@ public final class TunnelBorer {
 
 	/** 热键切换：开则停，停则按上次模式开。 */
 	public void toggle(Minecraft client) {
+		if (!engine.isActive()) miningChecklist.beforeStart(client, config);
 		engine.toggle(client);
 	}
 
@@ -278,6 +284,7 @@ public final class TunnelBorer {
 	public void observeWorld(Minecraft client) {
 		engine.observeWorld(client);
 	}
+	public boolean isManagingInventory() { return engine.isManagingInventory(); }
 
 	/** 是否正在自动回家。 */
 	public boolean isGoingHome() {
@@ -308,9 +315,15 @@ public final class TunnelBorer {
 	public void reapplyLook(Minecraft client) {
 		engine.reapplyLook(client);
 	}
+	public dev.twob2tkit.runtime.api.RotationAim.Look combatLook(Minecraft client) { return engine.combatLook(client); }
+	public void combatViewRendered(Minecraft client, dev.twob2tkit.runtime.api.RotationAim.Look view) { engine.combatViewRendered(client, view); }
+	public boolean prepareBowRelease(Minecraft client) { return engine.prepareBowRelease(client); }
+
+	public boolean tickStandaloneGuard(Minecraft client, boolean enabled) { return engine.tickStandaloneGuard(client, enabled); }
 
 	/** 每拍交给引擎。 */
 	public void tick(Minecraft client) {
+		miningChecklist.tick(client, config, engine.isActive() && !engine.isSceneryActive());
 		engine.tick(client);
 	}
 
@@ -322,6 +335,9 @@ public final class TunnelBorer {
 	/** 关掉区域预览框。 */
 	public void dismissAreaPreview() {
 		engine.dismissAreaPreview();
+	}
+	public void previewArea(Minecraft client) {
+		try { engine.previewArea(client); } catch (LinkageError oldEngine) { BorerAreaMarks.tell(client, "请加载新版引擎以显式预览区域"); }
 	}
 
 	/** 把内置引擎 jar 写出到 runtime 目录。 */
@@ -560,6 +576,30 @@ public final class TunnelBorer {
 
 	/** 把 KitConfig 桥成引擎可读的 BorerHost。 */
 	private static final class HostBridge implements dev.twob2tkit.runtime.api.BorerHost {
+		private final java.util.Set<String> pausedCombatModules = new java.util.HashSet<>();
+		private static final String[] RANGED_CONFLICTS = {
+			dev.twob2tkit.MeteorModules.KILL_AURA,
+			"meteordevelopment.meteorclient.systems.modules.combat.BowAimbot",
+			"meteordevelopment.meteorclient.systems.modules.combat.BowSpam"
+		};
+		@Override public boolean borerAutoDefend() { return config.borerAutoDefend; }
+		@Override public boolean borerAreaDiscardStone() { return config.borerAreaDiscardStone; }
+		@Override public boolean borerAreaStoreDrops() { return config.borerAreaStoreDrops; }
+		private String bowDiagnostic = "";
+		@Override public net.minecraft.world.phys.Vec3 borerBowAim(Minecraft client, net.minecraft.world.entity.Entity target) {
+			var shot = dev.twob2tkit.piglin.BowAim.solve(client, client.player, target);
+			bowDiagnostic = shot.diagnostic(); return shot.aim();
+		}
+		@Override public boolean supportsVisibleBowAim() { return true; }
+		@Override public String borerBowDiagnostics() { return bowDiagnostic; }
+		@Override public void borerRangedMode(boolean active) {
+			if (active) {
+				for (String module : RANGED_CONFLICTS) if (dev.twob2tkit.MeteorModules.disable(module)) pausedCombatModules.add(module);
+			} else {
+				for (String module : pausedCombatModules) dev.twob2tkit.MeteorModules.enable(module);
+				pausedCombatModules.clear();
+			}
+		}
 		private final KitConfig config;
 
 		HostBridge(KitConfig config) {

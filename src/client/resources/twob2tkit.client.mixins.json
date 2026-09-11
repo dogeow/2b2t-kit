@@ -4,6 +4,7 @@
   "compatibilityLevel": "JAVA_25",
   "client": [
     "AdvancementsScreenMixin",
+    "BorerCombatCameraMixin",
     "ClientLoginSeedMixin",
     "CraftingRecipeDisplayMixin",
     "FishingHookBiteAccess",
@@ -12,11 +13,14 @@
     "LocalAdvancementSelectionMixin",
     "LocalPlayerShiftMixin",
     "LocalRecipePlacementMixin",
+    "MeteorKillAuraWorldGuardMixin",
     "MinecraftTickMixin",
     "MinecraftTickTailMixin",
     "MouseHandlerMixin",
     "MultiPlayerGameModeMixin",
-    "RecipeBookFilterButtonMixin"
+    "RecipeBookFilterButtonMixin",
+    "ConcreteBlockUpdatesMixin",
+    "PrinterProposalMixin"
   ],
   "injectors": {
     "defaultRequire": 1

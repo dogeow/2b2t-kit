@@ -92,6 +92,21 @@ public final class KitKeys {
 		return InputConstants.isKeyDown(client.getWindow(), bound.getValue());
 	}
 
+	/** Physical movement takes precedence over a guard-owned key state. Never treat synthesized input as user input. */
+	public static boolean manualMovementDown(Minecraft client) {
+		if(client==null || client.player==null || client.screen!=null || !client.isWindowActive())return false;
+		for(KeyMapping key:movementKeys(client))if(isPhysicallyDown(client,key))return true;
+		return false;
+	}
+	public static KeyMapping[] movementKeys(Minecraft client){
+		var o=client.options;
+		return new KeyMapping[]{o.keyUp,o.keyDown,o.keyLeft,o.keyRight,o.keyJump,o.keyShift,o.keySprint};
+	}
+	public static void restorePhysicalMovement(Minecraft client){
+		if(client==null || client.options==null)return;
+		for(KeyMapping key:movementKeys(client))
+			key.setDown(client.player!=null && client.screen==null && client.isWindowActive() && isPhysicallyDown(client,key));
+	}
 	/** 绑定键显示名；未绑定则「未绑定」。 */
 	public static String boundLabel(KeyMapping mapping) {
 		return mapping.isUnbound() ? "未绑定" : mapping.getTranslatedKeyMessage().getString();

@@ -90,6 +90,7 @@ public final class ContainerAssistant {
 			recordSnapshot(client, screen, menu);
 		}
 		if (config.autoRestockFromOpenedContainers && takeCooldown == 0 && ticksInContainer >= 10
+			&& (KitClient.borer() == null || !KitClient.borer().isManagingInventory())
 			&& (KitClient.fisher() == null || !KitClient.fisher().isDepositing())) {
 			attemptAutoRestock(client, menu);
 		}

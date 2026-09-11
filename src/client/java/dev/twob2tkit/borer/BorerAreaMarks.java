@@ -43,6 +43,7 @@ public final class BorerAreaMarks {
 
 	/** 写入点 A，清空当前工程绑定并存盘。 */
 	public static void setA(KitConfig config, BlockPos pos) {
+		config.borerAreaDraft = null;
 		config.borerAreaAx = pos.getX();
 		config.borerAreaAy = pos.getY();
 		config.borerAreaAz = pos.getZ();
@@ -53,6 +54,7 @@ public final class BorerAreaMarks {
 
 	/** 写入点 B，清空当前工程绑定并存盘。 */
 	public static void setB(KitConfig config, BlockPos pos) {
+		config.borerAreaDraft = null;
 		config.borerAreaBx = pos.getX();
 		config.borerAreaBy = pos.getY();
 		config.borerAreaBz = pos.getZ();
@@ -79,6 +81,7 @@ public final class BorerAreaMarks {
 
 	/** 清空 A/B 与工程绑定，并关掉区域预览。 */
 	public static void clear(KitConfig config) {
+		config.borerAreaDraft = null;
 		config.borerAreaASet = false;
 		config.borerAreaBSet = false;
 		config.activeAreaProjectId = "";

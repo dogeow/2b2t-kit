@@ -29,7 +29,7 @@ public final class BorerAreaProjects {
 		} else {
 			size += " Y" + project.ay;
 		}
-		size += " " + project.stripWidth + "×" + project.sliceHeight;
+		size += " · 自动清挖";
 		String dim = KitConfig.dimensionLabel(project.dimension);
 		if (!dim.equals("未标注")) size += " " + dim;
 		return size;
@@ -55,6 +55,7 @@ public final class BorerAreaProjects {
 
 	/** 把工程加载进配置并切到区域挖模式。 */
 	public static void apply(KitConfig config, KitConfig.AreaProject project) {
+		config.borerAreaDraft = null;
 		config.borerAreaAx = project.ax;
 		config.borerAreaAy = project.ay;
 		config.borerAreaAz = project.az;

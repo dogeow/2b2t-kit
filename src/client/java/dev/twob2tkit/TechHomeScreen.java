@@ -20,6 +20,7 @@ public final class TechHomeScreen extends KitHudScreen {
 	/** 布置开始/停止投影建造与返回。 */
 	@Override
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("BUILDER", parent)) return;
 		int left = panelLeft(340);
 		int y = bodyTop(28);
 

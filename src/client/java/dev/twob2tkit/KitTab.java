@@ -88,7 +88,7 @@ public enum KitTab {
 
 	/** 打开默认首页（巡航）。 */
 	static Screen home(KitConfig config, KitController controller) {
-		return CRUISE.create(config, controller);
+		return new KitWorkspaceScreen(config, controller);
 	}
 
 	/** 切标签：先刷巡航草稿，写入 lastUiTab 再开对应屏。 */

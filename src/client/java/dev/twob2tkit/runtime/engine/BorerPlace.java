@@ -20,6 +20,9 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /** 选镐、封口/铺路、扔废石。SealChoice 类型仍挂在引擎上。 */
 final class BorerPlace {
 	private final DefaultTunnelBorerEngine engine;
@@ -59,32 +62,55 @@ final class BorerPlace {
 	}
 
 	/** 把挖这个方块最快的工具拿到手上；镐在背包里也会换出来，不挤掉快捷栏里别的镐。 */
-	void selectMiningTool(Minecraft client, LocalPlayer player, BlockPos pos) {
-		if (client.level == null || client.gameMode == null) return;
+	boolean selectMiningTool(Minecraft client, LocalPlayer player, BlockPos pos) {
+		if (client.level == null || client.gameMode == null) return false;
+		if (player.containerMenu != player.inventoryMenu) { engine.releaseMine(client); return false; }
 		BlockState state = client.level.getBlockState(pos);
 		Inventory inventory = player.getInventory();
-		int bestSlot = -1;
-		float bestScore = toolScore(player.getMainHandItem(), state);
-		for (int slot = 0; slot < 36; slot++) {
-			float score = toolScore(inventory.getItem(slot), state);
-			if (score > bestScore + 0.01F) {
-				bestScore = score;
-				bestSlot = slot;
-			}
+		int selected = inventory.getSelectedSlot();
+		int bestSlot = BorerToolPolicy.choose(candidates(player, state), selected);
+		if (bestSlot < 0) {
+			engine.fileLog(client, "tool-unavailable target=" + pos + " " + engine.toolPolicy.describe());
+			engine.stop(client, "没有符合防破设置且能挖当前方块的工具，请补充合适的镐");
+			return false;
 		}
-		if (bestSlot < 0) return;
+		if (bestSlot == selected) return true;
+		ItemStack next = bestSlot == 45 ? player.getOffhandItem() : inventory.getItem(bestSlot);
+		engine.fileLog(client, "tool-switch from=" + selected + " fromRemaining=" + BorerItems.remainingDurability(player.getMainHandItem())
+			+ " to=" + bestSlot + " remaining=" + BorerItems.remainingDurability(next) + "/" + next.getMaxDamage()
+			+ " " + engine.toolPolicy.describe());
 		if (bestSlot < 9) {
 			inventory.setSelectedSlot(bestSlot);
-			return;
+		} else {
+			int dest = hotbarSlotForTool(inventory);
+			inventory.setSelectedSlot(dest);
+			// Player inventory menu: main inventory 9..35, offhand 45. Never use a chest's slot numbers.
+			client.gameMode.handleContainerInput(player.inventoryMenu.containerId, bestSlot, dest, ContainerInput.SWAP, player);
 		}
-		int dest = hotbarSlotForTool(inventory);
-		inventory.setSelectedSlot(dest);
-		client.gameMode.handleContainerInput(player.containerMenu.containerId, bestSlot, dest, ContainerInput.SWAP, player);
+		boolean ready = usable(player.getMainHandItem()) && toolScore(player.getMainHandItem(), state) >= 0;
+		if (!ready) engine.stop(client, "备用工具换出未确认，已暂停以免空挖");
+		return ready;
+	}
+
+	boolean pickaxesExhausted(LocalPlayer player) { return BorerToolPolicy.exhausted(candidates(player, null)); }
+	private List<BorerToolPolicy.Candidate> candidates(LocalPlayer player, BlockState state) {
+		List<BorerToolPolicy.Candidate> result = new ArrayList<>();
+		for (int slot = 0; slot <= 36; slot++) {
+			ItemStack stack = slot == 36 ? player.getOffhandItem() : player.getInventory().getItem(slot);
+			if (!BorerItems.isMiningTool(stack)) continue;
+			result.add(new BorerToolPolicy.Candidate(slot == 36 ? 45 : slot, stack.is(ItemTags.PICKAXES),
+				usable(stack), state == null ? 0 : toolScore(stack, state)));
+		}
+		return result;
+	}
+	private boolean usable(ItemStack stack) {
+		return !stack.isEmpty() && engine.toolPolicy.allows(stack.getItem(), stack.isDamageableItem(),
+			stack.getMaxDamage(), BorerItems.remainingDurability(stack));
 	}
 
 	/** 工具对该方块的破坏分。 */
 	private static float toolScore(ItemStack stack, BlockState state) {
-		if (stack.isEmpty() || BorerItems.isTooWorn(stack)) return 0.0F;
+		if (!BorerItems.isMiningTool(stack) || state.requiresCorrectToolForDrops() && !stack.isCorrectToolForDrops(state)) return -1.0F;
 		float speed = stack.getDestroySpeed(state);
 		if (stack.isCorrectToolForDrops(state)) speed += 1.0F;
 		if (stack.is(ItemTags.PICKAXES)) speed += 0.25F;
@@ -121,6 +147,14 @@ final class BorerPlace {
 	/** 自己垫的台阶、封水路不能立刻再挖掉，否则会一直放石头又挖石头。 */
 	boolean placeAndProtect(Minecraft client, LocalPlayer player, BlockPos pos, DefaultTunnelBorerEngine.SealChoice choice) {
 		boolean placed = placeSealAt(client, player, pos, choice.block(), choice.hand());
+		if (placed) rememberPlacedSupport(pos, choice.block());
+		return placed;
+	}
+	/** Side-water sealing must not open an adjacent container or toggle an interactive support. */
+	boolean placeSideWater(Minecraft client, LocalPlayer player, BlockPos pos, DefaultTunnelBorerEngine.SealChoice choice) {
+		BlockHitResult support = findPlacementSupport(client, pos, true);
+		boolean placed = support != null && tryPlaceOn(client, player, pos, choice.block(), choice.hand(), support);
+		if (!placed) placed = tryPlaceOn(client, player, pos, choice.block(), choice.hand(), airPlaceHit(player, pos));
 		if (placed) rememberPlacedSupport(pos, choice.block());
 		return placed;
 	}
@@ -202,11 +236,16 @@ final class BorerPlace {
 
 	/** 找可点击的支撑面。 */
 	private BlockHitResult findPlacementSupport(Minecraft client, BlockPos pos) {
+		return findPlacementSupport(client, pos, false);
+	}
+	private BlockHitResult findPlacementSupport(Minecraft client, BlockPos pos, boolean plainSupport) {
 		Direction[] order = {Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST, Direction.UP};
 		for (Direction direction : order) {
 			BlockPos support = pos.relative(direction);
 			BlockState state = client.level.getBlockState(support);
 			if (state.isAir() || state.canBeReplaced() || !state.getFluidState().isEmpty()) continue;
+			if (plainSupport && (client.level.getBlockEntity(support) != null || state.getMenuProvider(client.level, support) != null
+				|| !state.isCollisionShapeFullBlock(client.level, support))) continue;
 			Direction face = direction.getOpposite();
 			Vec3 location = Vec3.atCenterOf(support).add(face.getStepX() * 0.51, face.getStepY() * 0.51, face.getStepZ() * 0.51);
 			return new BlockHitResult(location, face, support, false);
@@ -242,9 +281,7 @@ final class BorerPlace {
 			if (total <= keep) continue;
 			if (seal && total - stack.getCount() < keep && stack.getCount() <= keep + 8) continue;
 			throwStackBehind(client, player, slot < 9 ? slot + 36 : slot);
-			if (player.getMainHandItem().isEmpty() && engine.currentTarget != null) {
-				selectMiningTool(client, player, engine.currentTarget);
-			}
+			// Select only at the guarded mining call sites; a failed reserve swap must return from the tick.
 			return;
 		}
 	}

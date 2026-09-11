@@ -36,6 +36,7 @@ public final class TunnelSetupScreen extends KitHudScreen {
 	@Override
 	/** 断面快捷按钮、朝向与前探/找矿半径。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirectCategory(dev.twob2tkit.UiFeature.Category.MINING)) return;
 		captureDrafts();
 		int left = panelLeft(340);
 		int y = bodyTop(36);

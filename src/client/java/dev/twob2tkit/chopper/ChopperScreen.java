@@ -41,6 +41,7 @@ public final class ChopperScreen extends KitHudScreen {
 	/** 勾选框、范围输入与底栏按钮。 */
 	@Override
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("CHOPPER", parent)) return;
 		if (parent == null) addTabBar(KitTab.CHOP);
 		int left = panelLeft(320);
 		int optionsTop = contentTop();

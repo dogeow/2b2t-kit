@@ -34,8 +34,20 @@ final class KitCommands {
 			literal("twob2tkit")
 				.executes(context -> help(context.getSource()))
 				.then(literal("help").executes(context -> help(context.getSource())))
+				.then(literal("scenery")
+					.executes(context -> { context.getSource().getClient().setScreen(new SceneryScreen(null, config)); return 1; })
+					.then(literal("start").then(argument("radius", IntegerArgumentType.integer(16, 4096)).executes(context -> {
+						int radius = IntegerArgumentType.getInteger(context, "radius");
+						boolean ok = KitClient.startScenery(context.getSource().getClient(), radius, false);
+						if (ok) { config.sceneryRadiusBlocks = radius; config.save(); }
+						else context.getSource().sendError(Component.literal(KitClient.borer().sceneryStatus()));
+						return ok ? 1 : 0;
+					})))
+					.then(literal("resume").executes(context -> KitClient.startScenery(context.getSource().getClient(), config.sceneryRadiusBlocks, true) ? 1 : 0))
+					.then(literal("stop").executes(context -> { if (KitClient.borer().isSceneryActive()) KitClient.borer().stop(context.getSource().getClient(), "手动暂停风景预加载"); return 1; }))
+					.then(literal("status").executes(context -> { context.getSource().sendFeedback(Component.literal(KitClient.borer().sceneryStatus())); return 1; })))
 				.then(literal("gui").executes(context -> {
-					context.getSource().getClient().setScreen(KitTab.home(config, controller));
+					dev.twob2tkit.automation.AutomationBridge.requestGui();
 					return 1;
 				}))
 				.then(literal("start")
@@ -63,7 +75,7 @@ final class KitCommands {
 					return 1;
 				}))
 				.then(literal("stop").executes(context -> {
-					controller.stop(context.getSource().getClient(), "手动停止");
+					KitClient.emergencyStop("命令停止全部");
 					return 1;
 				}))
 				.then(literal("status").executes(context -> status(context.getSource(), config, controller)))
@@ -153,9 +165,27 @@ final class KitCommands {
 						return 1;
 					}))
 					.then(literal("clear").executes(context -> {
+						if (KitClient.borer() != null && KitClient.borer().isActive()) {
+							context.getSource().sendError(Component.literal("请先停止自动动作再清除选区；只取消显示请用 /twob2tkit area hide"));
+							return 0;
+						}
 						BorerAreaMarks.clear(config);
-						context.getSource().sendFeedback(Component.literal("已清除区域"));
+						context.getSource().sendFeedback(Component.literal("已清除当前 A/B 选择，已保存的工程与进度保留"));
 						return 1;
+					}))
+					.then(literal("hide").executes(context -> {
+						KitClient.dismissAreaPreview();
+						context.getSource().sendFeedback(Component.literal("已隐藏区域黄框，坐标、工程与进度保留")); return 1;
+					}))
+					.then(literal("show").executes(context -> {
+						var borer = KitClient.borer();
+						if (!config.borerAreaASet || !config.borerAreaBSet || borer == null) {
+							context.getSource().sendError(Component.literal("请先设置并应用区域两角")); return 0;
+						}
+						if (borer.isActive() && (borer.isSceneryActive() || borer.mode() != TunnelBorer.Mode.AREA)) {
+							context.getSource().sendError(Component.literal("请先停止其它自动功能再显示区域")); return 0;
+						}
+						borer.previewArea(context.getSource().getClient()); return 1;
 					}))
 					.then(literal("save")
 						.executes(context -> areaSave(context.getSource(), config, ""))
@@ -237,7 +267,9 @@ final class KitCommands {
 		source.sendFeedback(Component.literal("运行引擎：/twob2tkit reload（盾构/找矿更新后无需退出游戏）"));
 		source.sendFeedback(Component.literal("村庄职业：/twob2tkit villagers"));
 		source.sendFeedback(Component.literal("投影建造：/twob2tkit print（需已装 Litematica 并放置投影）"));
+		source.sendFeedback(Component.literal("风景预加载：/twob2tkit scenery · scenery start <半径格数> · scenery resume|stop|status"));
 		source.sendFeedback(Component.literal("区域挖：/twob2tkit area a|b [x y z] · area save [名] · area load · area list · area start"));
+		source.sendFeedback(Component.literal("区域显示：/twob2tkit area hide|show；clear 仅清除当前 A/B，保留已保存工程"));
 		return 1;
 	}
 

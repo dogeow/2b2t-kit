@@ -17,6 +17,7 @@ import dev.twob2tkit.runtime.engine.BorerItems;
 import java.util.Locale;
 import dev.twob2tkit.combat.HealingItems;
 import dev.twob2tkit.cruise.CruiseCeilingMiner;
+import dev.twob2tkit.cruise.CruiseScreenHud;
 import dev.twob2tkit.nether.NetherRoofAssist;
 
 /**
@@ -45,6 +46,21 @@ public final class KitController {
 	private double sampleX = Double.NaN;
 	private double sampleZ = Double.NaN;
 	private double recentSpeed;
+	/** 本趟已走水平路程（格），窗口速度与卡住检测仍会用到。 */
+	private double traveledDistance;
+	/** 开始时起点到目标的直线距离（格），全程固定不跳动。 */
+	private double plannedDistance;
+	private double trackX = Double.NaN;
+	private double trackZ = Double.NaN;
+	private boolean hasTrackSample;
+	/** 近段每秒位移环，用来估当前巡航速度（避免全程均速被前期拉高）。 */
+	private static final int SPEED_WINDOW_SECONDS = 30;
+	private final double[] recentMoved = new double[SPEED_WINDOW_SECONDS];
+	private int recentMovedCount;
+	private int recentMovedIndex;
+	private double windowMovedSum;
+	/** 平滑倒计时秒数；&lt;0 表示尚未就绪。 */
+	private long etaDisplaySeconds = -1;
 	private boolean avoidanceActive;
 	private boolean blockedByObstacle;
 	private double avoidanceX;
@@ -91,12 +107,18 @@ public final class KitController {
 		String target = String.format(Locale.ROOT, "目标 %.1f, %.1f @ Y %.1f", config.targetX, config.targetZ, config.cruiseY);
 		if (!isActive() || client.player == null) return "当前状态：" + phase.label + "  |  " + target;
 		double remaining = Math.hypot(config.targetX - client.player.getX(), config.targetZ - client.player.getZ());
-		String eta = recentSpeed > 0.1 ? formatDuration((long)Math.ceil(remaining / recentSpeed)) : "计算中";
-		return String.format(Locale.ROOT, "当前状态：%s  |  剩余 %.0f 格  |  Y %.1f/%.1f  |  ETA %s",
-			phase.label, remaining, client.player.getY(), desiredY(), eta);
+		return "当前状态：" + phase.label + "  |  " + compactProgress(remaining);
 	}
 
 	/** 写入目标并起飞；到达是否离线跟配置。 */
+	private boolean exactArrival;
+
+	/** Scripted interaction targets require the requested height as well as X/Z. */
+	public void startExact(Minecraft client, double targetX, double targetZ, double cruiseY) {
+		start(client, targetX, targetZ, cruiseY);
+		exactArrival = true;
+	}
+
 	public void start(Minecraft client, double targetX, double targetZ, double cruiseY) {
 		config.targetX = targetX;
 		config.targetZ = targetZ;
@@ -129,12 +151,23 @@ public final class KitController {
 
 	/** 停其它模块、进升空阶段并尝试开 Meteor 飞行。 */
 	private void activate(Minecraft client) {
+		exactArrival = false;
 		KitClient.prepareForCruise(client);
 		releaseKeys(client);
 		phase = Phase.ALTITUDE;
 		ticks = 0;
 		stationarySeconds = 0;
 		recentSpeed = 0.0;
+		traveledDistance = 0.0;
+		plannedDistance = 0.0;
+		hasTrackSample = false;
+		trackX = Double.NaN;
+		trackZ = Double.NaN;
+		recentMovedCount = 0;
+		recentMovedIndex = 0;
+		windowMovedSum = 0.0;
+		etaDisplaySeconds = -1;
+		java.util.Arrays.fill(recentMoved, 0.0);
 		avoidanceActive = false;
 		blockedByObstacle = false;
 		altitudeOffset = 0.0;
@@ -151,7 +184,10 @@ public final class KitController {
 		pendingDisconnectReason = null;
 		lastCeilingMessageTick = -1000;
 		lastHealthWarnTick = -1000;
-		if (client.player != null) resetMovementSample(client.player);
+		if (client.player != null) {
+			resetMovementSample(client.player);
+			plannedDistance = Math.hypot(config.targetX - client.player.getX(), config.targetZ - client.player.getZ());
+		}
 		if (ensureMeteorFlight(client.player)) {
 			message(client, "已打开 Meteor 飞行");
 		} else if (client.player != null && !BorerFlight.isFlying(client.player)) {
@@ -170,6 +206,7 @@ public final class KitController {
 		avoidanceActive = false;
 		blockedByObstacle = false;
 		altitudeOffset = 0.0;
+		CruiseScreenHud.hide();
 		releaseKeys(client);
 		message(client, "已停止：" + reason);
 	}
@@ -191,6 +228,7 @@ public final class KitController {
 		}
 
 		ticks++;
+		trackTravel(player);
 		ensureMeteorFlight(player);
 		if (config.minHealth > 0.0 && player.getHealth() <= config.minHealth && !hasEdibleFood(player)
 			&& lastHealthWarnTick < 0) {
@@ -208,6 +246,14 @@ public final class KitController {
 		double finalDz = config.targetZ - player.getZ();
 		double horizontalDistance = Math.hypot(finalDx, finalDz);
 		if (horizontalDistance <= config.arrivalRadius) {
+			if (exactArrival && Math.abs(config.cruiseY - player.getY()) > 0.7) {
+				altitudeOffset = 0.0;
+				avoidanceActive = false;
+				blockedByObstacle = false;
+				releaseKeys(client);
+				adjustAltitude(client, player, 0.6);
+				return;
+			}
 			arrive(client);
 			return;
 		}
@@ -315,7 +361,14 @@ public final class KitController {
 		if (pendingDisconnectReason == null) return;
 		String reason = pendingDisconnectReason;
 		pendingDisconnectReason = null;
-		disconnectNow(client, reason);
+		var expectedLevel = client.level;
+		var expectedConnection = client.getConnection();
+		if (expectedLevel == null || expectedConnection == null) return;
+		// execute() can run inline on the client thread; schedule() always queues between client tasks.
+		client.schedule(() -> {
+			if (dev.twob2tkit.compat.ClientWorldGuard.sameSession(expectedLevel, client.level, expectedConnection, client.getConnection()))
+				disconnectNow(client, reason);
+		});
 	}
 
 	/** 只有暂停游戏的界面才停（Esc 菜单、断开连接）。聊天、背包、Meteor 菜单继续飞。 */
@@ -690,6 +743,95 @@ public final class KitController {
 		return true;
 	}
 
+	/** 累计本趟水平路程。 */
+	private void trackTravel(LocalPlayer player) {
+		double x = player.getX();
+		double z = player.getZ();
+		if (hasTrackSample) {
+			traveledDistance += Math.hypot(x - trackX, z - trackZ);
+		}
+		trackX = x;
+		trackZ = z;
+		hasTrackSample = true;
+	}
+
+	/**
+	 * 近段窗口水平速度（格/秒）。
+	 * 窗口未攒够时用开局以来的均速暖机；仍不够则 0。
+	 */
+	private double cruiseSpeedBlocksPerSecond() {
+		if (recentMovedCount >= 5) {
+			return windowMovedSum / recentMovedCount;
+		}
+		double elapsedSeconds = ticks / 20.0;
+		if (elapsedSeconds < 2.0 || traveledDistance < 1.0) return 0.0;
+		return traveledDistance / elapsedSeconds;
+	}
+
+	/** 写入近 30 秒位移环。 */
+	private void pushMovedSample(double moved) {
+		if (recentMovedCount < SPEED_WINDOW_SECONDS) {
+			recentMoved[recentMovedCount] = moved;
+			windowMovedSum += moved;
+			recentMovedCount++;
+			recentMovedIndex = recentMovedCount % SPEED_WINDOW_SECONDS;
+			return;
+		}
+		windowMovedSum -= recentMoved[recentMovedIndex];
+		recentMoved[recentMovedIndex] = moved;
+		windowMovedSum += moved;
+		recentMovedIndex = (recentMovedIndex + 1) % SPEED_WINDOW_SECONDS;
+	}
+
+	/**
+	 * 每真实秒推进倒计时：先 −1，再按剩余/近段速度小幅校准。
+	 * 比全程均速更跟得上减速，又不会像瞬时速度那样乱跳。
+	 */
+	private void tickEtaCountdown(double remaining) {
+		double speed = cruiseSpeedBlocksPerSecond();
+		if (speed < 0.1) {
+			etaDisplaySeconds = -1;
+			return;
+		}
+		long estimate = Math.max(0L, Math.round(remaining / speed));
+		if (etaDisplaySeconds < 0) {
+			etaDisplaySeconds = estimate;
+			return;
+		}
+		long predicted = Math.max(0L, etaDisplaySeconds - 1L);
+		long error = estimate - predicted;
+		long maxStep = Math.max(3L, Math.abs(error) / 8L);
+		if (error > maxStep) predicted += maxStep;
+		else if (error < -maxStep) predicted -= maxStep;
+		else predicted = estimate;
+		etaDisplaySeconds = Math.max(0L, predicted);
+	}
+
+	/** HUD/指令用的剩余时间文案。 */
+	private String etaLabel() {
+		if (etaDisplaySeconds < 0) return "计算中";
+		return formatDuration(etaDisplaySeconds);
+	}
+
+	/** 指令用紧凑进度：剩余/全程 + 已走/剩余时间。 */
+	private String compactProgress(double remaining) {
+		double total = plannedDistance > 0.0 ? plannedDistance : remaining;
+		long elapsedSeconds = Math.max(0L, ticks / 20L);
+		return String.format(Locale.ROOT, "剩余 %.0f/%.0f 格  ·  已走 %s / 剩余 %s",
+			remaining, total, formatDuration(elapsedSeconds), etaLabel());
+	}
+
+	/** 屏幕 HUD 两行：主行高亮剩余/全程与剩余时间；副行已走时间与阶段、高度。 */
+	private void publishProgressHud(double remaining, double y, String healthNote) {
+		double total = plannedDistance > 0.0 ? plannedDistance : remaining;
+		long elapsedSeconds = Math.max(0L, ticks / 20L);
+		String primary = String.format(Locale.ROOT, "剩余 %.0f/%.0f 格  ·  %s", remaining, total, etaLabel());
+		String secondary = String.format(Locale.ROOT, "已走 %s  ·  %s  ·  Y %.0f/%.0f%s",
+			formatDuration(elapsedSeconds), phase.label, y, desiredY(),
+			healthNote == null || healthNote.isEmpty() ? "" : "  ·  " + healthNote);
+		CruiseScreenHud.show(primary, secondary);
+	}
+
 	/** 采样水平移动，超时卡住则尝试脱困。 */
 	private void updateMovementSample(Minecraft client, LocalPlayer player) {
 		if (ticks % 20 != 0) return;
@@ -698,6 +840,9 @@ public final class KitController {
 		sampleX = player.getX();
 		sampleZ = player.getZ();
 		recentSpeed = recentSpeed == 0.0 ? moved : recentSpeed * 0.7 + moved * 0.3;
+		pushMovedSample(moved);
+		double remaining = Math.hypot(config.targetX - player.getX(), config.targetZ - player.getZ());
+		tickEtaCountdown(remaining);
 
 		if (moved < 0.75) {
 			stationarySeconds++;
@@ -779,18 +924,13 @@ public final class KitController {
 		}
 	}
 
-	/** 周期性状态聊天提示。 */
+	/** 周期性更新屏幕进度 HUD（不再刷长串 action bar）。 */
 	private void showStatus(Minecraft client, double distance, double y) {
-		String eta = recentSpeed > 0.1 ? formatDuration((long)Math.ceil(distance / recentSpeed)) : "计算中";
 		String healthNote = "";
 		if (config.minHealth > 0.0 && client.player != null && client.player.getHealth() <= config.minHealth) {
-			healthNote = hasEdibleFood(client.player) ? " | 生命偏低请进食" : " | 生命偏低无食物，继续飞";
+			healthNote = hasEdibleFood(client.player) ? "生命偏低请进食" : "生命偏低无食物";
 		}
-		client.gui.setOverlayMessage(
-			Component.literal(String.format(Locale.ROOT, "twob2tkit | %s | 剩余 %.0f 格 | Y %.1f/%.1f | ETA %s%s",
-				phase.label, distance, y, desiredY(), eta, healthNote)).withColor(healthNote.isEmpty() ? 0xFFFFFF : 0xFFFF55),
-			false
-		);
+		publishProgressHud(distance, y, healthNote);
 	}
 
 	/** 背包是否有可食食物。 */
@@ -805,6 +945,7 @@ public final class KitController {
 		avoidanceActive = false;
 		blockedByObstacle = false;
 		altitudeOffset = 0.0;
+		CruiseScreenHud.hide();
 		releaseKeys(client);
 		if (disconnectOnThisArrival) pendingDisconnectReason = reason;
 		else message(client, reason);
@@ -821,6 +962,7 @@ public final class KitController {
 		avoidanceActive = false;
 		blockedByObstacle = false;
 		altitudeOffset = 0.0;
+		CruiseScreenHud.hide();
 		releaseKeys(client);
 		pendingDisconnectReason = reason;
 	}

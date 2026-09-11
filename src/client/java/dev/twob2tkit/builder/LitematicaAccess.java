@@ -32,6 +32,43 @@ public final class LitematicaAccess {
 			&& FabricLoader.getInstance().isModLoaded("malilib");
 	}
 
+    public record BuildBox(BlockPos min,BlockPos max){
+        public boolean contains(BlockPos p){return p.getX()>=min.getX()&&p.getX()<=max.getX()&&p.getY()>=min.getY()&&p.getY()<=max.getY()&&p.getZ()>=min.getZ()&&p.getZ()<=max.getZ();}
+    }
+    public record BuildSelection(String name,String key,BlockPos min,BlockPos max,java.util.List<BuildBox> boxes){
+        public long volume(){return ((long)max.getX()-min.getX()+1)*((long)max.getY()-min.getY()+1)*((long)max.getZ()-min.getZ()+1);}
+        public boolean contains(BlockPos p){return boxes.stream().anyMatch(b->b.contains(p));}
+    }
+    /** The printer sees all enabled projections: require one unambiguous user-selected job. */
+    public static BuildSelection buildSelection(){
+        if(!bind())throw new IllegalStateException(describe());
+        try{
+            Object manager=getPlacementManager.invoke(null);Object all=getAllPlacements.invoke(manager);
+            int enabled=0;if(all instanceof List<?> list)for(Object p:list)if(isUsable(p))enabled++;
+            if(enabled!=1)throw new IllegalStateException("请只启用本次要建造的一份投影");
+            Object placement=selectedOrFirstEnabled();if(placement==null)throw new IllegalStateException("没有启用的投影");
+            Class<?> required=Class.forName("fi.dy.masa.litematica.schematic.placement.SubRegionPlacement$RequiredEnabled");
+            Object mode=required.getField("RENDERING_ENABLED").get(null);
+            var regions=(java.util.Map<?,?>)placement.getClass().getMethod("getSubRegionBoxes",required).invoke(placement,mode);
+            var boxes=new java.util.ArrayList<BuildBox>();var keys=new java.util.ArrayList<String>();
+            for(var e:regions.entrySet()){
+                var box=e.getValue();BlockPos a=(BlockPos)box.getClass().getMethod("getPos1").invoke(box),b=(BlockPos)box.getClass().getMethod("getPos2").invoke(box);
+                if(a==null||b==null)continue;
+                BlockPos min=new BlockPos(Math.min(a.getX(),b.getX()),Math.min(a.getY(),b.getY()),Math.min(a.getZ(),b.getZ()));
+                BlockPos max=new BlockPos(Math.max(a.getX(),b.getX()),Math.max(a.getY(),b.getY()),Math.max(a.getZ(),b.getZ()));
+                boxes.add(new BuildBox(min,max));keys.add(e.getKey()+":"+min+":"+max);
+            }
+            if(boxes.isEmpty())throw new IllegalStateException("没有启用的投影区域");java.util.Collections.sort(keys);
+            int minX=Integer.MAX_VALUE,minY=Integer.MAX_VALUE,minZ=Integer.MAX_VALUE,maxX=Integer.MIN_VALUE,maxY=Integer.MIN_VALUE,maxZ=Integer.MIN_VALUE;
+            for(var box:boxes){minX=Math.min(minX,box.min.getX());minY=Math.min(minY,box.min.getY());minZ=Math.min(minZ,box.min.getZ());maxX=Math.max(maxX,box.max.getX());maxY=Math.max(maxY,box.max.getY());maxZ=Math.max(maxZ,box.max.getZ());}
+            Object range=getRenderLayerRange.invoke(null);String layer="";
+            for(String method:List.of("getLayerMode","getAxis","getLayerMin","getLayerMax"))layer+="/"+range.getClass().getMethod(method).invoke(range);
+            String name=getName.invoke(placement).toString();String key=name+keys+layer;
+            for(String method:List.of("getOrigin","getRotation","getMirror"))key+="/"+placement.getClass().getMethod(method).invoke(placement);
+            return new BuildSelection(name,key,new BlockPos(minX,minY,minZ),new BlockPos(maxX,maxY,maxZ),List.copyOf(boxes));
+        }catch(ReflectiveOperationException e){throw new IllegalStateException("无法读取投影范围："+e.getMessage(),e);}
+    }
+
 	/** 最近一次反射错误。 */
 	public static String lastError() {
 		return lastError;

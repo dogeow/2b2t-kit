@@ -7,6 +7,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -30,6 +31,11 @@ import net.minecraft.world.phys.BlockHitResult;
 public abstract class MultiPlayerGameModeMixin {
 	@Shadow
 	private int destroyDelay;
+	/** Revalidate only the toolkit-owned bow release; manual use and other item types remain vanilla. */
+	@Inject(method = "releaseUsingItem", at = @At("HEAD"), cancellable = true)
+	private void kit$visibleBowRelease(net.minecraft.world.entity.player.Player player, CallbackInfo info) {
+		if (!KitClient.prepareBowRelease(net.minecraft.client.Minecraft.getInstance(), player)) info.cancel();
+	}
 
 	/** 盾构正在破坏时，去掉原版挖完一块后的空挥延迟，避免动画停在同一格。 */
 	@Inject(method = "continueDestroyBlock", at = @At("HEAD"))
@@ -43,6 +49,7 @@ public abstract class MultiPlayerGameModeMixin {
 		LocalPlayer player, InteractionHand hand, BlockHitResult hit, CallbackInfoReturnable<InteractionResult> info
 	) {
 		if (player == null || hit == null) return;
+		dev.twob2tkit.automation.ProfessionalPrinter.noteInteraction(player,hand,hit);
 		KitClient.noteStorageClick(hit.getBlockPos());
 	}
 }

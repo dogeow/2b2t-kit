@@ -37,6 +37,7 @@ public final class SurvivalAlertsScreen extends KitHudScreen {
 	@Override
 	/** 开关与阈值输入。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("SURVIVAL", parent)) return;
 		int left = panelLeft(300);
 		if (minimumHealing != null) {
 			draftHealing = minimumHealing.getValue();

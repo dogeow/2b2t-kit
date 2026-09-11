@@ -34,6 +34,7 @@ public final class PiglinBrawlerScreen extends KitHudScreen {
 	@Override
 	/** 近战交给 Meteor、射程等选项。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("BRAWLER", parent)) return;
 		int left = panelLeft(340);
 		int right = left + 176;
 		int y = bodyTop(ROW_ONE);

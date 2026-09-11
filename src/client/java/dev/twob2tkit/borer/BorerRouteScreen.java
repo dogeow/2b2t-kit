@@ -25,6 +25,7 @@ public final class BorerRouteScreen extends KitHudScreen {
 	@Override
 	/** 清空路点与轴向/任意方向按钮。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("ROUTE", parent)) return;
 		int left = panelLeft(340);
 		int y = bodyTop(36);
 		addRenderableWidget(Button.builder(Component.literal("清空路点"), button -> {

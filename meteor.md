@@ -223,12 +223,13 @@ meteor-client-source/src/main/java/meteordevelopment/meteorclient/systems/module
 | `KitController` 巡航 | `movement/flight` | 开始巡航就打开 Meteor 飞行；升空用跳键当飞升。没开飞就会在地上一直跳 |
 | `NetherRoofAssist` | `movement/flight` | 同上 |
 | 盾构挖掘 | `player/speed-mine`、`world/packet-mine`、`player/break-delay` | 走原版 `KeyMapping`。按镐、附魔、急迫、方块记住是点一下还是按住；没挖过的先试。Meteor 加速/把破坏间隔调成 0 仍可叠加 |
-| 盾构遇怪停手 | `combat/kill-aura` | 开「遇怪躲开」时按「怪物距离」停镐、切剑、举盾，不挥手。钻石套旁边的骷髅僵尸也停。近战交给 KillAura |
+| 区域挖主动反击 | `combat/kill-aura`、`combat/bow-aimbot`、`combat/bow-spam` | 1.7.4 按苦力怕/射手/其它敌怪排序，复用 BowAim 地形弹道并自动拉弓放箭；反击期间临时协调原有三个模块，结束恢复。安全页可关自动反击。其它盾构模式继续原有防护 |
 | 挖树遇铁傀儡 | `combat/kill-aura` | 铁傀儡不是 `Enemy`。KillAura 开着或傀儡在打你时停砍、切剑、飞到头顶，近战交给 KillAura。不要拿着剪刀继续砍叶 |
 | 挖树选剪刀/斧 | `player/auto-tool` 的 `anti-break` | 快坏的工具（默认剩不到 10%）会被 Meteor 取消破坏并松左键。本模块不再选快坏的剪刀/斧，叶子改空手砍 |
 | 挖树日志自检 | 无 | Meteor 没有。`LogReview` 扫 chopper.log，卡住问本机 Grok |
 | 自动保护 | `combat/kill-aura`、`combat/auto-log` | 被怪物打了才用反射打开这两个模块。不自己挥剑、不自己断线。岩浆烫伤不开。默认开 |
 | 盾构扔废石 | `misc/inventory-tweaks` 的 auto-drop | Meteor 会按名单一直扔，且默认朝准星方向。本模块只在主背包空格 ≤ 3 时扔废石，并先发朝后视角包再扔。圆石留 64，深板岩/深板岩圆石不留，其它封路石头每种留 16 |
+| 区域挖卸货（1.7.7） | `misc/inventory-tweaks`、`player/auto-replenish` | 两个默认关闭的选项：快满时到区域外丢普通石料、自动放箱存产物。区域外至少 4 格，留封水石料至少 64 和煤至少 16（整叠保留）；不扔矿物、不存工具补给。卸货旅程临时暂停上述模块并阻止本工具箱自动补货，结束恢复。原地 auto-drop 不负责区域外路线，勿同时依赖两套丢弃规则 |
 
 ### 4.3 恶魂火球：躲 or 反弹，只能二选一
 

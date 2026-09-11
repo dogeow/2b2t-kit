@@ -59,6 +59,7 @@ public final class ActivityChecklistScreen extends KitHudScreen {
 	@Override
 	/** 清单列表、条目与编辑按钮。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("CHECKLIST", parent)) return;
 		if (parent == null) addTabBar(KitTab.CHECKLIST);
 		int left = panelLeft(360);
 		if (newListName != null) draftName = newListName.getValue();

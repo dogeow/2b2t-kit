@@ -18,6 +18,25 @@ public final class BorerLootPolicy {
 
 	private BorerLootPolicy() {
 	}
+	/** Progress toward a route waypoint or actual block clearance counts, not just straight-line distance. */
+	static final class Progress {
+		private int idle;
+		private double best = Double.POSITIVE_INFINITY;
+		boolean tick(double distance, boolean picked, boolean cleared, boolean waypoint) {
+			if (picked || cleared || waypoint || distance < best - .05) { best = distance; idle = 0; }
+			else idle++;
+			return idle >= 160;
+		}
+		int idleTicks() { return idle; }
+	}
+	static boolean keepItemTarget(double currentDistance, double nearestDistance) { return currentDistance <= nearestDistance + 1.5; }
+	static boolean waitInsidePickupBox(int ticksWithoutPickup) { return ticksWithoutPickup < 20; }
+	static boolean canStackDrop(boolean sameComponents, int count, int maximum) { return sameComponents && count < maximum; }
+	static int verticalSearchRadius(boolean noFall) { return Math.max(10, BorerFallPolicy.maxSafeFallBlocks(noFall) + 2); }
+	static boolean safeHop(boolean hop, boolean ceilingBlocked) { return hop && !ceilingBlocked; }
+	static boolean trackDrop(boolean coalXp, boolean quartzXp, boolean coalDrop, boolean quartzDrop) {
+		return !(coalXp && coalDrop || quartzXp && quartzDrop);
+	}
 
 	/**
 	 * 已经捡过则只再等时运晚到的几拍；还没捡过才用刚挖掉的生成窗口。

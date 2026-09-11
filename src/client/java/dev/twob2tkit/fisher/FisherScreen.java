@@ -38,6 +38,7 @@ public final class FisherScreen extends KitHudScreen {
 	@Override
 	/** 勾选 Meteor 钩子、箱子半径与开始/返回按钮。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("FISHER", parent)) return;
 		if (parent == null) addTabBar(KitTab.FISH);
 		int left = panelLeft(320);
 		optionsTop = contentTop();

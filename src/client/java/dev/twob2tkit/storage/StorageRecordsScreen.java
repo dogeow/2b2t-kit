@@ -49,6 +49,7 @@ public final class StorageRecordsScreen extends KitHudScreen {
 	@Override
 	/** 搜索、列表与详情入口。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("STORAGE", parent)) return;
 		if (parent == null) addTabBar(KitTab.STORAGE);
 		if (this.minecraft != null && this.minecraft.level != null) {
 			int removed = config.pruneMissingStorage(

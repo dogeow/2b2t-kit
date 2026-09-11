@@ -27,6 +27,7 @@ public final class BorerSafetyScreen extends KitHudScreen {
 	@Override
 	/** 经验/回家/封液/遇怪等安全开关。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("BORER_SAFETY", parent)) return;
 		if (mobRadius != null) draftMob = mobRadius.getValue();
 		int left = panelLeft(340);
 		int y = bodyTop(36);
@@ -49,6 +50,8 @@ public final class BorerSafetyScreen extends KitHudScreen {
 		mobRadius = addRenderableWidget(KitUi.field(this.font, left + 250, y, 90, "怪物距离",
 			draftMob.isBlank() ? Integer.toString(config.borerMobRadius) : draftMob, 3));
 		y += 28;
+		checkbox(left, y, "自动反击（弓箭优先处理远程威胁）", config.borerAutoDefend, value -> config.borerAutoDefend = value);
+		y += 24;
 
 		addRenderableWidget(Button.builder(Component.literal("返回"), button -> onClose())
 			.bounds(this.width / 2 - 75, contentBottom(), 150, 20).build());

@@ -12,6 +12,41 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 2026-08-25 13624 -53 9217，19→21 remaining=false，14 tick 收工，1.6 格外还掉着。
  */
 final class BorerLootPolicyTest {
+	@Test void realProgressKeepsACollectionAlivePastTheOldTenSecondLimit() {
+		var progress = new BorerLootPolicy.Progress();
+		for (int tick = 0; tick < 1200; tick++) assertFalse(progress.tick(20, false, tick % 40 == 0, false));
+	}
+	@Test void detourWaypointsCountAsProgressEvenWhenStraightLineDistanceIncreases() {
+		var progress = new BorerLootPolicy.Progress();
+		for (int tick = 0; tick < 600; tick++) assertFalse(progress.tick(5 + tick * .01, false, false, tick % 25 == 0));
+	}
+	@Test void jumpingWithoutApproachingDoesNotResetStallForever() {
+		var progress = new BorerLootPolicy.Progress();
+		assertFalse(progress.tick(2, false, false, false));
+		for (int tick = 0; tick < 159; tick++) assertFalse(progress.tick(2 + tick % 2 * .3, false, false, false));
+		assertTrue(progress.tick(2, false, false, false));
+	}
+	@Test void theoreticalPickupBoxOnlyWaitsBrieflyBeforeMovingCloser() {
+		assertTrue(BorerLootPolicy.waitInsidePickupBox(19));
+		assertFalse(BorerLootPolicy.waitInsidePickupBox(20));
+		assertFalse(BorerLootPolicy.safeHop(true, true));
+		assertTrue(BorerLootPolicy.safeHop(true, false));
+	}
+	@Test void silkTouchOreAndActualGemNeedDifferentInventorySpace() {
+		assertFalse(BorerLootPolicy.canStackDrop(false, 12, 64));
+		assertFalse(BorerLootPolicy.canStackDrop(true, 64, 64));
+		assertTrue(BorerLootPolicy.canStackDrop(true, 12, 64));
+	}
+	@Test void targetDoesNotSwitchDueToTinyDistanceOscillation() {
+		assertTrue(BorerLootPolicy.keepItemTarget(3.5, 3.0));
+		assertFalse(BorerLootPolicy.keepItemTarget(8, 3));
+	}
+	@Test void fallingDropsStayInSearchRangeAndXpModesRemainRespected() {
+		assertTrue(BorerLootPolicy.verticalSearchRadius(true) >= 48);
+		assertFalse(BorerLootPolicy.trackDrop(true, false, true, false));
+		assertFalse(BorerLootPolicy.trackDrop(false, true, false, true));
+		assertTrue(BorerLootPolicy.trackDrop(true, true, false, false));
+	}
 	@Test
 	void partialPickupDoesNotFinishWhileDropsRemain() {
 		assertFalse(BorerLootPolicy.finishOnInventoryIncrease(true, false));

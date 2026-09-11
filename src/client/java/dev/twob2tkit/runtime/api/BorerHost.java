@@ -7,6 +7,15 @@ import net.minecraft.client.Minecraft;
  * 新方法必须带 {@code default}，否则旧主机热加载会崩。
  */
 public interface BorerHost {
+	default boolean borerAutoDefend() { return true; }
+	default boolean borerAreaDiscardStone() { return false; }
+	default boolean borerAreaStoreDrops() { return false; }
+	/** Shared host ballistics, also used by the existing ghast archer. */
+	default net.minecraft.world.phys.Vec3 borerBowAim(Minecraft client, net.minecraft.world.entity.Entity target) { return null; }
+	default void borerRangedMode(boolean active) {}
+	/** New host supplies the camera and release hooks; an old host must not silently use the new firing protocol. */
+	default boolean supportsVisibleBowAim() { return false; }
+	default String borerBowDiagnostics() { return ""; }
 	/** 宿主 API 版本，功能包用它判断能不能加载。 */
 	int apiVersion();
 

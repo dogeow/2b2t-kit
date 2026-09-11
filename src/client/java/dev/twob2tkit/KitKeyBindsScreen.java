@@ -14,7 +14,7 @@ import org.jspecify.annotations.Nullable;
 
 /** 按键绑定：点击捕获新键、单项/全部恢复默认。 */
 final class KitKeyBindsScreen extends KitHudScreen {
-	private static final int ROW_H = 19;
+	private static final int ROW_H = 24;
 
 	private @Nullable KeyMapping selectedKey;
 	private Button[] bindButtons;
@@ -32,8 +32,9 @@ final class KitKeyBindsScreen extends KitHudScreen {
 	@Override
 	protected void init() {
 		KitKeys.BindInfo[] infos = KitKeys.allInfos();
-		int left = panelLeft(320);
-		listTop = bodyTop(46);
+		var layout = UiPageLayout.of(width, height);
+		int left = layout.left();
+		listTop = 54;
 		listBottom = footerNoticeY() - 8;
 		int totalHeight = infos.length * ROW_H;
 		int visibleHeight = Math.max(ROW_H, listBottom - listTop);
@@ -44,17 +45,17 @@ final class KitKeyBindsScreen extends KitHudScreen {
 		resetButtons = new Button[infos.length];
 		for (int i = 0; i < infos.length; i++) {
 			int y = listTop + i * ROW_H - listScroll;
-			if (y + 18 <= listTop || y >= listBottom) continue;
+			if (y < listTop || y + 20 > listBottom) continue;
 			KeyMapping mapping = infos[i].mapping();
-			bindButtons[i] = bindButton(left + 170, y, mapping);
+			bindButtons[i] = bindButton(left + layout.width() - 150, y, mapping);
 			resetButtons[i] = addRenderableWidget(Button.builder(Component.literal("重置此项"),
 				button -> reset(mapping))
-				.bounds(left + 256, y, 64, 18).build());
+				.bounds(left + layout.width() - 64, y, 64, 20).build());
 		}
-		addRenderableWidget(Button.builder(Component.literal("全部恢复默认"), button -> resetAll())
-			.bounds(left, footerButtonY(), 150, 20).build());
+		addRenderableWidget(Button.builder(Component.literal("全部恢复默认"), button -> minecraft.setScreen(new KitConfirmScreen(this, "重置所有快捷键", "将所有工具箱快捷键恢复默认；其它模组的按键不变。", this::resetAll)))
+			.bounds(layout.footerButtonX(0, 2), footerButtonY(), layout.footerButtonWidth(2), 20).build());
 		addRenderableWidget(Button.builder(Component.literal("返回"), button -> onClose())
-			.bounds(left + 170, footerButtonY(), 150, 20).build());
+			.bounds(layout.footerButtonX(1, 2), footerButtonY(), layout.footerButtonWidth(2), 20).build());
 		refreshButtons();
 	}
 
@@ -73,22 +74,20 @@ final class KitKeyBindsScreen extends KitHudScreen {
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		int left = panelLeft(320);
+		var layout = UiPageLayout.of(width, height);
+		int left = layout.left();
 		int center = this.width / 2;
 		KitKeys.BindInfo[] infos = KitKeys.allInfos();
-		KitUi.centered(graphics, this.font, this.title.getString(), center, headerY(14), 0xFFFFFF);
-		KitUi.centered(graphics, this.font, "点击按键按钮后按下新键，Esc 可解绑；也同步出现在原版控制选项里", center, headerY(28), 0xA0A0A0);
-		if (listScrollMax > 0) {
-			KitUi.text(graphics, this.font, "滚轮查看更多", left + 200, listTop - LABEL_ABOVE_FIELD, 0x888888);
-		}
+		KitUi.centered(graphics, this.font, "按键绑定", center, 12, 0xFFFFFF);
+		KitUi.centered(graphics, this.font, KitUi.fit(font, "点击按键后按新键；捕获时 Esc 解绑。同步到原版控制选项。", layout.width()), center, 34, 0xA0A0A0);
 		for (int i = 0; i < infos.length; i++) {
 			int y = listTop + i * ROW_H - listScroll;
-			if (y + 9 <= listTop || y >= listBottom) continue;
-			KitUi.text(graphics, this.font, infos[i].label(), left, y + 5, 0xFFFFFF);
+			if (y < listTop || y + 20 > listBottom) continue;
+			KitUi.text(graphics, this.font, KitUi.fit(font, infos[i].label(), layout.width() - 160), left, y + 5, 0xFFFFFF);
 		}
 		int hintY = footerNoticeY();
 		if (!notice.isEmpty()) KitUi.centered(graphics, this.font, notice, center, hintY - 12, noticeColor);
-		KitUi.centered(graphics, this.font, "界面打开时紧急停止仍然有效；输入框打字时不会误关界面", center, hintY, 0xA0A0A0);
+		KitUi.centered(graphics, this.font, KitUi.fit(font, "滚轮查看更多 · 菜单中保留紧急停止，功能启动使用明确按钮", layout.width()), center, hintY, 0xA0A0A0);
 	}
 
 	/** 捕获模式下写入新键或 Esc 解绑。 */
@@ -123,7 +122,7 @@ final class KitKeyBindsScreen extends KitHudScreen {
 	/** 创建「当前键位」按钮并进入捕获。 */
 	private Button bindButton(int x, int y, KeyMapping mapping) {
 		return addRenderableWidget(Button.builder(mapping.getTranslatedKeyMessage(), button -> beginCapture(mapping))
-			.bounds(x, y, 78, 18)
+			.bounds(x, y, 78, 20)
 			.tooltip(Tooltip.create(Component.literal("点击后按下新的键盘或鼠标按键")))
 			.build());
 	}

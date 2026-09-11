@@ -36,6 +36,7 @@ final class BorerArea {
 
 	/** 清空区域挖状态。 */
 	void reset() {
+		engine.areaRunner.reset();
 		phase = BorerAreaShaftPolicy.Phase.POSITION_TOP;
 		pendingShaftColumn = null;
 		completedShafts.clear();

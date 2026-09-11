@@ -36,6 +36,7 @@ final class BorerPreview {
 		if (!engine.prepareArea(client)) return;
 		engine.mode = DefaultTunnelBorerEngine.Mode.AREA;
 		engine.showingAreaPreview = true;
+		engine.areaOutlineVisible = true;
 		engine.status = "预览区域，再按 B 开始挖";
 		DefaultTunnelBorerEngine.message(client, "预览区域 " + BorerAreaPolicy.sizeLabel(
 			engine.areaMin.getX(), engine.areaMax.getY(), engine.areaMin.getZ(),
@@ -73,26 +74,16 @@ final class BorerPreview {
 			engine.dismissAreaPreview();
 			return;
 		}
-		if (!engine.showingAreaPreview && !"AREA".equals(engine.host.borerLastMode())) return;
+		if (!engine.areaOutlineVisible) return;
 		ensureAreaBoundsLoaded();
 	}
 
 	/** 每帧 gizmo 收集里画区域黄框和标题，钉在世界坐标，不跟镜头。 */
 	void emitAreaPreviewGizmosIfNeeded(Minecraft client) {
 		if (client.player == null || client.level == null) return;
-		if (engine.showingShaftPreview || engine.goingHome) return;
-		if (engine.active) {
-			if (engine.mode != DefaultTunnelBorerEngine.Mode.AREA) return;
-			if (engine.areaMin == null || engine.areaMax == null) return;
-			try {
-				emitArea();
-			} catch (IllegalStateException ignored) {
-			}
-			return;
-		}
-		if (!engine.host.borerAreaSet()) return;
-		if (!engine.showingAreaPreview && !"AREA".equals(engine.host.borerLastMode())) return;
-		ensureAreaBoundsLoaded();
+		if (!BorerAreaOutlinePolicy.visible(engine.areaOutlineVisible, engine.host.borerAreaSet(), engine.isActive(),
+			engine.active && engine.mode == DefaultTunnelBorerEngine.Mode.AREA, engine.showingShaftPreview, engine.goingHome)) return;
+		if (!engine.active) ensureAreaBoundsLoaded();
 		if (engine.areaMin == null || engine.areaMax == null) return;
 		try {
 			emitArea();
@@ -102,7 +93,11 @@ final class BorerPreview {
 
 	/** 确保区域预览边界已从配置加载。 */
 	private void ensureAreaBoundsLoaded() {
-		if (engine.showingAreaPreview && engine.areaMin != null && engine.areaMax != null) return;
+		BlockPos min = new BlockPos(Math.min(engine.host.borerAreaAx(), engine.host.borerAreaBx()),
+			Math.min(engine.host.borerAreaAy(), engine.host.borerAreaBy()), Math.min(engine.host.borerAreaAz(), engine.host.borerAreaBz()));
+		BlockPos max = new BlockPos(Math.max(engine.host.borerAreaAx(), engine.host.borerAreaBx()),
+			Math.max(engine.host.borerAreaAy(), engine.host.borerAreaBy()), Math.max(engine.host.borerAreaAz(), engine.host.borerAreaBz()));
+		if (min.equals(engine.areaMin) && max.equals(engine.areaMax)) return;
 		engine.loadAreaFromHost();
 	}
 

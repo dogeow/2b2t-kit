@@ -202,7 +202,7 @@ public final class PiglinBrawler {
 
 	/** 是否有要维持的瞄准。 */
 	public boolean hasLook() {
-		return aim != null;
+		return aim != null && hasBrawlLook;
 	}
 
 	/** 写回瞄准。 */
@@ -239,6 +239,7 @@ public final class PiglinBrawler {
 		} else if (!moduleBowActive) {
 			// 玩家自己选的弓：不抢右键、不拉视角，否则按住右键也拉不开。
 			bowKeyHeld = false;
+			clearAim();
 			return false;
 		}
 		aim = null;

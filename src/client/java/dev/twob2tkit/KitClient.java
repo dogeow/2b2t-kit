@@ -44,12 +44,14 @@ public final class KitClient implements ClientModInitializer {
 	private ContainerAssistant containerAssistant;
 	private RecipeDiscoveryTracker recipeDiscoveryTracker;
 	private MachineBuilder machineBuilder;
+	private dev.twob2tkit.builder.ProjectionBuildJob projectionBuildJob;
 	private TunnelBorer tunnelBorer;
 	private AutoSurround autoSurround;
 	private AutoFeeder autoFeeder;
 	private AutoPlanter autoPlanter;
 	private AutoChopper autoChopper;
 	private AutoFisher autoFisher;
+	private dev.twob2tkit.concrete.ConcreteMaker concreteMaker;
 	private SeedScout seedScout;
 	private NetherRoofAssist netherRoofAssist;
 	private StructureGuide structureGuide;
@@ -80,12 +82,14 @@ public final class KitClient implements ClientModInitializer {
 		containerAssistant = new ContainerAssistant(config);
 		recipeDiscoveryTracker = new RecipeDiscoveryTracker(config);
 		machineBuilder = new MachineBuilder();
+		projectionBuildJob = new dev.twob2tkit.builder.ProjectionBuildJob(config);
 		tunnelBorer = new TunnelBorer(config);
 		autoSurround = new AutoSurround(config);
 		autoFeeder = new AutoFeeder(config);
 		autoPlanter = new AutoPlanter(config);
 		autoChopper = new AutoChopper(config);
 		autoFisher = new AutoFisher(config);
+		concreteMaker = new dev.twob2tkit.concrete.ConcreteMaker(config);
 		seedScout = new SeedScout();
 		seedScout.load();
 		netherRoofAssist = new NetherRoofAssist();
@@ -96,6 +100,12 @@ public final class KitClient implements ClientModInitializer {
 		LocalAdvancementManager.initialize(config);
 		KitKeys.register();
 		ClientTickEvents.END_CLIENT_TICK.register(this::onEndTick);
+		net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+			emergencyStop("离开世界");
+		});
+		net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+			emergencyStop("退出游戏");
+		});
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			KitCommands.register(dispatcher, config, controller, machineBuilder));
 		LOGGER.info("twob2tkit loaded. Use /twob2tkit help");
@@ -103,9 +113,12 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 帧尾：热键、监视器、围箱与观察类逻辑。 */
 	private void onEndTick(Minecraft client) {
+		dev.twob2tkit.automation.AutomationBridge.tick(client);
+		boolean menuBeforeHeldKeys = client.screen instanceof KitHudScreen;
 		handleHeldKeys(client);
-		if (KitKeys.suppressHotkeys) {
+		if (KitKeys.suppressHotkeys || menuBeforeHeldKeys || client.screen instanceof KitHudScreen) {
 			while (KitKeys.EMERGENCY_STOP.consumeClick()) {
+				if (!KitKeys.suppressHotkeys) emergencyStop("菜单内紧急停止");
 			}
 			while (KitKeys.OPEN_GUI.consumeClick()) {
 			}
@@ -166,7 +179,7 @@ public final class KitClient implements ClientModInitializer {
 	}
 
 	/** 物理按住紧急停止（含界面内）。 */
-	private void handleHeldKeys(Minecraft client) {
+	private boolean handleHeldKeys(Minecraft client) {
 		boolean emergencyDown = KitKeys.isPhysicallyDown(client, KitKeys.EMERGENCY_STOP);
 		boolean typingInOtherScreen = client.screen != null
 			&& !(client.screen instanceof KitHudScreen)
@@ -177,6 +190,7 @@ public final class KitClient implements ClientModInitializer {
 			if (client.screen instanceof KitHudScreen) client.setScreen(null);
 		}
 		emergencyWasDown = emergencyDown;
+		return !KitKeys.suppressHotkeys && !typingInOtherScreen && emergencyDown;
 	}
 
 	/** 建造对着容器潜行放置时由 MachineBuilder 置位。 */
@@ -191,8 +205,21 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停掉所有自动动作。 */
 	public static void emergencyStop(String reason) {
-		if (instance == null) return;
-		Minecraft client = Minecraft.getInstance();
+        Minecraft client = Minecraft.getInstance();
+        dev.twob2tkit.automation.AutomationBridge.cancel(client, reason);
+        stopWork(reason);
+        KitKeys.restorePhysicalMovement(client);
+        LOGGER.info("[Control] stopped-all guard=false reason={}",reason);
+        if(client.player!=null)client.player.sendSystemMessage(Component.literal("[twob2tkit] 任务与独立防护已停止，移动已交还").withColor(0xFFFF55));
+    }
+
+    /** Task handoff may retain an explicitly armed guard. It is not an emergency stop. */
+    public static void stopWork(String reason) {
+        Minecraft client=Minecraft.getInstance();
+        dev.twob2tkit.automation.AutomationBridge.cancelWork(client,reason);
+        if (instance == null) return;
+		instance.projectionBuildJob.stop(client,reason);
+		instance.concreteMaker.stop(client, reason);
 		instance.machineBuilder.cancel(client, reason);
 		instance.tunnelBorer.stop(client, reason);
 		instance.autoSurround.stop(client, reason);
@@ -244,7 +271,7 @@ public final class KitClient implements ClientModInitializer {
 	/** 盾构正在挖且非回家。 */
 	public static boolean borerIsBreaking() {
 		TunnelBorer borer = borer();
-		return borer != null && borer.isActive() && !borer.isGoingHome();
+		return borer != null && borer.isActive() && !borer.isGoingHome() && !borer.isSceneryActive();
 	}
 
 	/** 记住刚点的容器坐标。 */
@@ -297,12 +324,15 @@ public final class KitClient implements ClientModInitializer {
 	/** 画屏幕层 HUD（村庄、建造等）。 */
 	public static void renderScreenHud(Minecraft client, net.minecraft.client.gui.GuiGraphicsExtractor graphics) {
 		if (instance == null) return;
+		dev.twob2tkit.cruise.CruiseScreenHud.render(client, graphics);
 		if (instance.villagerScanner != null) instance.villagerScanner.renderHud(client, graphics);
 		if (instance.machineBuilder != null) instance.machineBuilder.renderHud(client, graphics);
 	}
 
 	/** 停下冲突模块后开始上基岩顶。 */
 	public static void startNetherRoof(Minecraft client, boolean thenCruise, double x, double z, double y) {
+		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
+		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || instance.netherRoofAssist == null) return;
 		if (instance.tunnelBorer.isActive()) instance.tunnelBorer.stop(client, "上基岩顶");
 		if (instance.autoSurround.isActive()) instance.autoSurround.stop(client, "上基岩顶");
@@ -323,9 +353,26 @@ public final class KitClient implements ClientModInitializer {
 		if (instance != null && instance.seedScout != null) instance.seedScout.captureSpawnInfo(info);
 	}
 
+	public static dev.twob2tkit.builder.ProjectionBuildJob buildJob(){return instance==null?null:instance.projectionBuildJob;}
+	public static void toggleProjectionBuild(Minecraft client){
+		if(instance==null)return;
+		if(buildJob().isActive()){buildJob().stop(client,"手动停止");return;}
+		emergencyStop("开始投影建造");
+		if(buildJob().start(client) && config().autoProtectOnHit)dev.twob2tkit.automation.AutomationBridge.armCurrentGuard(client);
+	}
+
 	/** 投影建造实例。 */
 	public static MachineBuilder machines() {
 		return instance == null ? null : instance.machineBuilder;
+	}
+
+	public static dev.twob2tkit.concrete.ConcreteMaker concrete() { return instance == null ? null : instance.concreteMaker; }
+	public static void toggleConcrete(Minecraft client) {
+		if(instance == null) return;
+		if(instance.concreteMaker.isActive()) { instance.concreteMaker.stop(client,"手动停止"); return; }
+		emergencyStop("开始混凝土制作");
+		if(instance.concreteMaker.start(client) && instance.config.autoProtectOnHit)
+			dev.twob2tkit.automation.AutomationBridge.armCurrentGuard(client);
 	}
 
 	/** 配置实例。 */
@@ -338,10 +385,18 @@ public final class KitClient implements ClientModInitializer {
 		return instance == null ? null : instance.controller;
 	}
 
+	public static boolean startScenery(Minecraft client, int radius, boolean resume) {
+		if (instance == null || client.player == null) return false;
+		emergencyStop("开始风景预加载，停下其它自动动作");
+		return instance.tunnelBorer.startScenery(client, radius, resume);
+	}
+
 	/** 是否有挂机类自动在跑（巡航/盾构/钓等）。 */
 	public static boolean anyAfkAuto() {
 		if (instance == null) return false;
-		return instance.controller != null && instance.controller.isActive()
+		return instance.projectionBuildJob != null && instance.projectionBuildJob.isActive()
+			|| instance.concreteMaker != null && instance.concreteMaker.isActive()
+			|| instance.controller != null && instance.controller.isActive()
 			|| instance.tunnelBorer != null && instance.tunnelBorer.isActive()
 			|| instance.autoFisher != null && instance.autoFisher.isActive()
 			|| instance.autoChopper != null && instance.autoChopper.isActive()
@@ -372,6 +427,8 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 开始巡航前停冲突模块。 */
 	public static void prepareForCruise(Minecraft client) {
+		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
+		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null) return;
 		if (instance.tunnelBorer.isActive()) instance.tunnelBorer.stop(client, "开始巡航");
 		if (instance.autoSurround.isActive()) instance.autoSurround.stop(client, "开始巡航");
@@ -389,6 +446,8 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 开始投影建造前停冲突模块。 */
 	public static void prepareForMachine(Minecraft client) {
+		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
+		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "开始投影建造");
 		if (instance.tunnelBorer.isActive()) instance.tunnelBorer.stop(client, "开始投影建造");
@@ -401,6 +460,8 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 开始盾构前停冲突模块。 */
 	public static void prepareForBorer(Minecraft client) {
+		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
+		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "开始盾构");
 		if (instance.autoSurround.isActive()) instance.autoSurround.stop(client, "开始盾构");
@@ -421,11 +482,9 @@ public final class KitClient implements ClientModInitializer {
 			return;
 		}
 		if (client.screen == null) {
-			if (instance.config.clickGui) {
-				client.setScreen(new ClickGuiScreen(instance.config, instance.controller));
-			} else {
-				client.setScreen(KitTab.home(instance.config, instance.controller));
-			}
+			client.setScreen(instance.config.clickGui
+				? new ClickGuiScreen(instance.config, instance.controller)
+				: KitTab.home(instance.config, instance.controller));
 		}
 	}
 
@@ -494,6 +553,8 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 开始围箱；stopBorer 控制是否停盾构。 */
 	public static void startSurround(Minecraft client, AutoSurround.Mode mode, boolean stopBorer) {
+		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
+		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "开始围箱，已停巡航");
 		if (stopBorer && instance.tunnelBorer.isActive()) instance.tunnelBorer.stop(client, "开始围箱，已停盾构");
@@ -523,6 +584,8 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停下冲突后开始喂养。 */
 	public static void startFeeder(Minecraft client) {
+		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
+		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "开始喂养，已停巡航");
 		if (instance.tunnelBorer.isActive()) instance.tunnelBorer.stop(client, "开始喂养，已停盾构");
@@ -552,6 +615,8 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停下冲突后开始种田。 */
 	public static void startPlanter(Minecraft client) {
+		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
+		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "开始种田，已停巡航");
 		if (instance.tunnelBorer.isActive()) instance.tunnelBorer.stop(client, "开始种田，已停盾构");
@@ -581,6 +646,8 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停下冲突后开始挖树。 */
 	public static void startChopper(Minecraft client) {
+		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
+		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "开始挖树，已停巡航");
 		if (instance.tunnelBorer.isActive()) instance.tunnelBorer.stop(client, "开始挖树，已停盾构");
@@ -610,6 +677,8 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停下冲突后开始钓鱼。 */
 	public static void startFisher(Minecraft client) {
+		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
+		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "开始钓鱼，已停巡航");
 		if (instance.tunnelBorer.isActive()) instance.tunnelBorer.stop(client, "开始钓鱼，已停盾构");
@@ -695,7 +764,17 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 由 Minecraft.tick HEAD mixin 调用：在玩家采样按键之前写入导航输入。 */
 	public static void tickNavigation(Minecraft client) {
-		if (instance == null || instance.controller == null) return;
+        if (instance == null || instance.controller == null) return;
+        if(instance.handleHeldKeys(client))return;
+        if(dev.twob2tkit.automation.AutomationBridge.yieldGuardToManualInput(client))return;
+		if (dev.twob2tkit.automation.AutomationBridge.beforeGuard(client)) {
+            if(instance.projectionBuildJob.isActive()) instance.projectionBuildJob.pause(client);
+            if(instance.concreteMaker.isActive()) instance.concreteMaker.pause(client);
+            return;
+        }
+        if(instance.projectionBuildJob.isActive()) { instance.projectionBuildJob.tick(client); return; }
+        if(instance.concreteMaker.isActive()) { instance.concreteMaker.tick(client); return; }
+		if (dev.twob2tkit.automation.AutomationBridge.beforeInput(client)) return;
 		handleAreaPick(client);
 		if (client.player != null && client.player.isDeadOrDying()) {
 			freezeForDeath(client);
@@ -747,6 +826,8 @@ public final class KitClient implements ClientModInitializer {
 	public static void reapplyNavigationRotation(Minecraft client) {
 		if (instance == null || instance.controller == null) return;
 		if (client.player != null && client.player.isDeadOrDying()) return;
+		if (borerCombatLook(client) != null) { instance.tunnelBorer.reapplyLook(client); return; }
+		if(instance.projectionBuildJob.isActive()){instance.projectionBuildJob.reapply(client);return;}
 		if (instance.piglinBrawler != null && instance.piglinBrawler.hasLook()) {
 			instance.piglinBrawler.reapplyLook(client);
 			return;
@@ -782,6 +863,17 @@ public final class KitClient implements ClientModInitializer {
 			return;
 		}
 		instance.controller.reapplyNavigationRotation(client);
+	}
+	public static dev.twob2tkit.runtime.api.RotationAim.Look borerCombatLook(Minecraft client) {
+		if (instance == null || instance.tunnelBorer == null || client.player == null || client.player.isDeadOrDying() || client.screen != null) return null;
+		return instance.tunnelBorer.combatLook(client);
+	}
+	public static void combatViewRendered(Minecraft client, dev.twob2tkit.runtime.api.RotationAim.Look view) {
+		if (instance != null && instance.tunnelBorer != null) instance.tunnelBorer.combatViewRendered(client, view);
+	}
+	public static boolean prepareBowRelease(Minecraft client, net.minecraft.world.entity.player.Player player) {
+		if (instance == null || instance.tunnelBorer == null || player != client.player || !player.getUseItem().is(net.minecraft.world.item.Items.BOW)) return true;
+		return instance.tunnelBorer.prepareBowRelease(client);
 	}
 
 	/** 关掉区域预览框。 */

@@ -36,6 +36,7 @@ public final class StorageDetailScreen extends KitHudScreen {
 	@Override
 	/** 分页与返回。 */
 	protected void init() {
+		if (openUnifiedDetail()) return;
 		int rows = gridRows();
 		pageSize = COLS * rows;
 		page = Math.max(0, Math.min(page, maxPage()));
@@ -101,6 +102,23 @@ public final class StorageDetailScreen extends KitHudScreen {
 	}
 
 	/** 画物品格底。 */
+	private boolean openUnifiedDetail() {
+		var config = dev.twob2tkit.KitClient.config();
+		if (config == null) return false;
+		var list = new dev.twob2tkit.KitCollectionScreen<KitConfig.StoredItem>(parent, config, "storage-items:" + snapshot.key(), StorageLabels.headline(snapshot),
+			"记录时的物品快照，不会取出或移动物品", () -> snapshot.items, item -> item.name + " ×" + item.count,
+			item -> item.id + "\nX " + snapshot.x + " Y " + snapshot.y + " Z " + snapshot.z, item -> item.name + " " + item.id).icon(StorageItems::stack);
+		list.onOpen(item -> {
+			var detail = new dev.twob2tkit.KitFormScreen(list, item.name, "仓库快照，不是实时库存").bind(config).id("storage-item:" + snapshot.key() + ":" + item.id);
+			detail.note(item.id + " · 记录数量 " + item.count);
+			detail.note("箱子位置：X " + snapshot.x + " Y " + snapshot.y + " Z " + snapshot.z + "；" + StorageRecordsScreen.dimensionLabel(snapshot.dimension));
+			detail.action("查看相关配方", "只查询本地配方。", () -> dev.twob2tkit.KitRecipePages.open(detail, config, item.name));
+			minecraft.setScreen(detail);
+		});
+		list.footer("复制箱子坐标", () -> { minecraft.keyboardHandler.setClipboard(snapshot.x + " " + snapshot.y + " " + snapshot.z); list.message("已复制箱子坐标"); });
+		minecraft.setScreen(list); return true;
+	}
+
 	private static void drawSlotBackground(GuiGraphicsExtractor graphics, int x, int y) {
 		graphics.fill(x, y, x + SLOT, y + SLOT, 0xFF2A2A2A);
 		graphics.fill(x + 1, y + 1, x + SLOT - 1, y + SLOT - 1, 0xFF1A1A1A);

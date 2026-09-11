@@ -45,6 +45,7 @@ public final class PlanterScreen extends KitHudScreen {
 	@Override
 	/** 走近/锄地/收成等选项与开始按钮。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("PLANTER", parent)) return;
 		if (parent == null) addTabBar(KitTab.PLANT);
 		int left = panelLeft(320);
 		optionsTop = contentTop();

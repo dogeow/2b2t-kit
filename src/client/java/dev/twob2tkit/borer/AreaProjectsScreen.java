@@ -32,6 +32,8 @@ public final class AreaProjectsScreen extends KitHudScreen {
 	@Override
 	/** 工程名输入与工程列表。 */
 	protected void init() {
+        dev.twob2tkit.KitRecordPages.projects(parent, config);
+        if (this.minecraft.screen != this) return;
 		int left = panelLeft(360);
 		if (projectName != null) draftName = projectName.getValue();
 		if (draftDimension == null) draftDimension = BorerAreaProjects.currentDimension(this.minecraft);
@@ -41,7 +43,7 @@ public final class AreaProjectsScreen extends KitHudScreen {
 		addRenderableWidget(Button.builder(Component.literal("保存当前区域"), button -> saveProject())
 			.bounds(left + 176, bodyTop(42), 104, 20)
 			.tooltip(Tooltip.create(Component.literal("把现在的点 A/B 和条带断面存进列表。同名会覆盖。")))
-			.build()).active = config.borerAreaASet && config.borerAreaBSet;
+			.build()).active = config.borerAreaASet && config.borerAreaBSet && !AreaDrafts.hasUnappliedCorners(config);
 		addRenderableWidget(Button.builder(Component.literal("维度：" + KitConfig.dimensionLabel(draftDimension)), button -> {
 			draftDimension = KitConfig.nextDimension(draftDimension);
 			rebuildWidgets();
@@ -71,7 +73,9 @@ public final class AreaProjectsScreen extends KitHudScreen {
 		String subtitle = active.isEmpty() ? "当前区域：" + current : "当前区域：" + current + "  （工程：" + active + "）";
 		KitUi.text(graphics, this.font, KitUi.fit(this.font, subtitle, 360), left, headerY(24), 0xA0A0A0);
 		if (!notice.isEmpty()) KitUi.centered(graphics, this.font, notice, center, bodyTop(58), noticeColor);
-		else if (config.areaProjects.isEmpty()) {
+		else if (AreaDrafts.hasUnappliedCorners(config)) {
+			KitUi.centered(graphics, this.font, "标点草稿已保留，返回区域页继续；下方仅列完整工程", center, bodyTop(58), 0x77DDCC);
+		} else if (config.areaProjects.isEmpty()) {
 			KitUi.centered(graphics, this.font, "还没有工程；标好点 A/B 后填名称点「保存当前区域」", center, bodyTop(58), 0xA0A0A0);
 		} else if (!config.borerAreaASet || !config.borerAreaBSet) {
 			KitUi.centered(graphics, this.font, "当前未标完整区域，可从下面列表加载", center, bodyTop(58), 0xA0A0A0);
@@ -87,6 +91,10 @@ public final class AreaProjectsScreen extends KitHudScreen {
 
 	/** 按名称 upsert 当前区域。 */
 	private void saveProject() {
+		if (AreaDrafts.hasUnappliedCorners(config)) {
+			showNotice("请返回区域页补齐并保存，避免误存旧范围", 0xFFFF55);
+			return;
+		}
 		String name = projectName.getValue().trim();
 		if (name.isEmpty()) {
 			showNotice("请先填写工程名称", 0xFF5555);

@@ -250,7 +250,7 @@ public final class CombatWatch {
 		if (KitClient.fisher() != null && KitClient.fisher().isActive()) return "钓鱼";
 		if (KitClient.controller() != null && KitClient.controller().isActive()) return "巡航";
 		TunnelBorer borer = KitClient.borer();
-		if (borer != null && borer.isActive()) return "盾构";
+		if (borer != null && borer.isActive()) return borer.isSceneryActive() ? "风景预加载" : "盾构";
 		if (KitClient.chopper() != null && KitClient.chopper().isActive()) return "挖树";
 		if (KitClient.planter() != null && KitClient.planter().isActive()) return "种田";
 		if (KitClient.feeder() != null && KitClient.feeder().isActive()) return "喂养";

@@ -19,9 +19,7 @@ import java.util.Map;
 final class BorerLoot {
 	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final int SEARCH_RADIUS = 7;
-	private static final int STUCK_TICKS = 80;
-	private static final int TIMEOUT_TICKS = 200;
-	private static final int IGNORE_TICKS = 400;
+	private static final int IGNORE_TICKS = 100;
 	private static final int MAX_HEADROOM_PROBE = 5;
 
 	private final DefaultTunnelBorerEngine engine;
@@ -39,6 +37,10 @@ final class BorerLoot {
 	private boolean seen;
 	private int sidestepSign = 1;
 	private int lastPickupTick;
+	private int pickupWait;
+	private long nextNearbyScan, lastRouteProgress;
+	private BorerLootPolicy.Progress progress = new BorerLootPolicy.Progress();
+	private final Map<BlockPos, Integer> clearanceStages = new HashMap<>();
 
 	BorerLoot(DefaultTunnelBorerEngine engine) {
 		this.engine = engine;
@@ -84,16 +86,20 @@ final class BorerLoot {
 		seen = false;
 		sidestepSign = 1;
 		lastPickupTick = 0;
+		pickupWait = 0; clearanceStages.clear(); progress = new BorerLootPolicy.Progress();
+		engine.walkRoute.clear();
 	}
 
 	/** 清空已忽略掉落记录。 */
 	void clearIgnored() {
 		ignored.clear();
+		nextNearbyScan = 0;
 		clear();
 	}
 
 	/** 开始一轮针对该矿种的拾取。 */
 	void begin(LocalPlayer player, BlockPos start, OreTarget ore) {
+		clear();
 		origin = start.immutable();
 		wanted = ore;
 		startCount = countMatching(player, wanted);
@@ -107,8 +113,24 @@ final class BorerLoot {
 		seen = false;
 		sidestepSign = 1;
 		lastPickupTick = 0;
+		lastRouteProgress = engine.walkRoute.progress();
 		LOGGER.info("[twob2tkit/Borer {}] loot-collection-start ore={} origin={} inventoryCount={} player={}",
 			engine.runtimeVersion(), wanted, format(origin), startCount, precise(player));
+		engine.fileLog(Minecraft.getInstance(), "loot-start ore=" + wanted + " origin=" + format(origin));
+	}
+
+	/** Revisit drops of ALL selected ores, including after restart and after a mixed vein. */
+	boolean tryBeginSelected(Minecraft c, LocalPlayer p) {
+		if (active() || c.level.getGameTime() < nextNearbyScan) return false;
+		nextNearbyScan = c.level.getGameTime() + 10;
+		ItemEntity nearest = null; OreTarget selected = null;
+		for (OreTarget ore : OreTarget.parseList(engine.oreConfig())) {
+			if (ore == OreTarget.COAL && engine.coalXpMode() || ore == OreTarget.QUARTZ && engine.quartzXpMode()) continue;
+			ItemEntity item = findMatching(c, p, p.blockPosition(), ore);
+			if (item != null && (nearest == null || p.distanceToSqr(item) < p.distanceToSqr(nearest))) { nearest = item; selected = ore; }
+		}
+		if (nearest == null) return false;
+		begin(p, nearest.blockPosition(), selected); return true;
 	}
 
 	/** 地上已经有同类掉落物：先捡，不要立刻改挖旁边的矿。 */
@@ -133,8 +155,10 @@ final class BorerLoot {
 		int inventoryCount = countMatching(player, wanted);
 		ItemEntity loot = findMatching(client, player);
 		boolean itemsRemain = loot != null;
+		boolean inventoryGrew = inventoryCount > lastCount;
 		if (inventoryCount > lastCount) {
 			lastPickupTick = ticks;
+			pickupWait = 0;
 			LOGGER.info("[twob2tkit/Borer {}] loot-collection-progress ore={} origin={} picked={}->{} remaining={} item={} player={}",
 				engine.runtimeVersion(), wanted, format(origin), lastCount, inventoryCount, itemsRemain,
 				loot == null ? "-" : precise(loot), precise(player));
@@ -144,10 +168,6 @@ final class BorerLoot {
 				bestDistance = Double.MAX_VALUE;
 			}
 			lastCount = inventoryCount;
-			if (BorerLootPolicy.finishOnInventoryIncrease(itemsRemain, false)) {
-				finish(client, player, "已拾取" + wanted.label + "掉落物", inventoryCount);
-				return true;
-			}
 		}
 
 		if (loot == null) {
@@ -157,7 +177,10 @@ final class BorerLoot {
 			if (seen) missingTicks++;
 			if (BorerLootPolicy.finishWhenMissing(seen, missingTicks, spawnWaitElapsed)) {
 				String result;
-				if (!seen) {
+				boolean deferred = findMatching(client, player, origin, wanted, true) != null;
+				if (deferred) {
+					result = "还有暂缓的" + wanted.label + "掉落物，稍后重试（未计为已捡完）";
+				} else if (!seen) {
 					result = "矿石已挖掉，但附近未生成可追踪的" + wanted.label + "掉落物";
 				} else if (alreadyPicked) {
 					result = "已拾取" + wanted.label + "掉落物";
@@ -180,6 +203,7 @@ final class BorerLoot {
 			targetTicks = 0;
 			stuckTicks = 0;
 			bestDistance = Double.MAX_VALUE;
+			pickupWait = 0; progress = new BorerLootPolicy.Progress();
 		}
 		targetTicks++;
 		seen = true;
@@ -188,7 +212,7 @@ final class BorerLoot {
 		if (inLava(client, lootBlock)) {
 			return abandon(client, player, loot, "掉落物在岩浆里");
 		}
-		if (!canStore(player, wanted)) {
+		if (!canStore(player, loot.getItem())) {
 			if (engine.coalXpMode() && wanted == OreTarget.COAL
 				|| engine.quartzXpMode() && wanted == OreTarget.QUARTZ) {
 				return abandon(client, player, loot, "经验模式不捡" + wanted.label);
@@ -205,23 +229,23 @@ final class BorerLoot {
 		double dz = loot.getZ() - player.getZ();
 		double distance = player.distanceTo(loot);
 		double horiz = Math.hypot(dx, dz);
-		boolean inPickup = BorerLootPolicy.inVanillaPickupRange(dx, dy, dz);
-		if (distance + 0.2 < bestDistance) {
-			bestDistance = distance;
-			stuckTicks = 0;
-		} else if (!inPickup) {
-			stuckTicks++;
-		} else {
-			stuckTicks = 0;
-		}
-		if (stuckTicks >= STUCK_TICKS || targetTicks >= TIMEOUT_TICKS) {
-			return abandon(client, player, loot, stuckTicks >= STUCK_TICKS ? "靠近后仍无法拾取" : "拾取超时");
-		}
+		boolean pickupBox = BorerLootPolicy.inVanillaPickupRange(dx, dy, dz);
+		pickupWait = pickupBox && !inventoryGrew ? pickupWait + 1 : 0;
+		boolean inPickup = pickupBox && BorerLootPolicy.waitInsidePickupBox(pickupWait);
+		long routeProgress = engine.walkRoute.progress();
+		boolean stalled = progress.tick(distance, inventoryGrew, clearanceProgress(client), routeProgress != lastRouteProgress);
+		lastRouteProgress = routeProgress; stuckTicks = progress.idleTicks();
+		if (ticks % 40 == 0) engine.fileLog(client, "loot-progress id=" + entityId + " item=" + precise(loot)
+			+ " player=" + precise(player) + " idle=" + stuckTicks + " inPickup=" + pickupBox + " targetTicks=" + targetTicks);
+		if (stalled) return abandon(client, player, loot, "连续 8 秒没有靠近、开路或拾取进展");
 
 		BlockPos lootPos = lootBlock.immutable();
 		engine.lockHeadingToward(player.blockPosition(), lootPos);
 		boolean embedded = embeddedInBlock(client, loot);
 		boolean ceilingBlocked = dy > 0.75 && jumpBlocked(client, player, dy);
+		if (!inPickup && !embedded && engine.walkRoute.walk(client, loot.position(), true)) {
+			engine.clearMiningTarget(client, "loot-existing-open-route"); return true;
+		}
 		BlockPos dropCol = BlockPos.containing(loot.getX(), player.getY(), loot.getZ());
 		boolean feetPassable = !hasCollision(client, dropCol);
 		BlockPos dropHead = dropCol.above();
@@ -298,6 +322,8 @@ final class BorerLoot {
 		LOGGER.warn("[twob2tkit/Borer {}] loot-collection-abandon reason={} ore={} item={} itemPos={} origin={} player={}",
 			engine.runtimeVersion(), reason, wanted, loot.getItem().getHoverName().getString(),
 			precise(loot), format(origin), precise(player));
+		engine.fileLog(client, "loot-defer reason=" + reason + " id=" + loot.getId() + " pos=" + precise(loot) + " retryTicks=" + IGNORE_TICKS);
+		engine.walkRoute.clear();
 		entityId = -1;
 		targetTicks = 0;
 		stuckTicks = 0;
@@ -349,7 +375,7 @@ final class BorerLoot {
 			boolean ceilingAbove = jumpBlocked(client, player, dy);
 			boolean hopRim = BorerLootPolicy.shouldHopOffRim(player.onGround(), canDrop, horiz, inPickup);
 			client.options.keyShift.setDown(false);
-			client.options.keyJump.setDown(hopRim || player.onGround() && !ceilingAbove && (
+			client.options.keyJump.setDown(BorerLootPolicy.safeHop(hopRim, ceilingAbove) || player.onGround() && !ceilingAbove && (
 				dy > 0.45 || stuckTicks > 10 && stuckTicks % 16 < 3
 			));
 		}
@@ -357,6 +383,7 @@ final class BorerLoot {
 		client.options.keyLeft.setDown(false);
 		client.options.keyRight.setDown(false);
 		client.options.keyDown.setDown(false);
+		engine.rememberOreMove(player);
 	}
 
 	/** 选靠近掉落物且尽量安全的偏航。 */
@@ -473,9 +500,13 @@ final class BorerLoot {
 
 	/** 找匹配勾选矿的掉落物。 */
 	private ItemEntity findMatching(Minecraft client, LocalPlayer player, BlockPos center, OreTarget ore) {
+		return findMatching(client, player, center, ore, false);
+	}
+	private ItemEntity findMatching(Minecraft client, LocalPlayer player, BlockPos center, OreTarget ore, boolean includeDeferred) {
 		if (client.level == null || player == null || center == null || ore == null) return null;
-		AABB aroundOrigin = new AABB(center).inflate(SEARCH_RADIUS, 10.0, SEARCH_RADIUS);
-		AABB aroundPlayer = player.getBoundingBox().inflate(SEARCH_RADIUS, 10.0, SEARCH_RADIUS);
+		int vertical = BorerLootPolicy.verticalSearchRadius(BorerFlight.meteorNoFallActive());
+		AABB aroundOrigin = new AABB(center).inflate(SEARCH_RADIUS, 10, SEARCH_RADIUS).expandTowards(0, -(vertical - 10), 0);
+		AABB aroundPlayer = player.getBoundingBox().inflate(SEARCH_RADIUS, 10, SEARCH_RADIUS).expandTowards(0, -(vertical - 10), 0);
 		AABB search = new AABB(
 			Math.min(aroundOrigin.minX, aroundPlayer.minX),
 			Math.min(aroundOrigin.minY, aroundPlayer.minY),
@@ -485,12 +516,20 @@ final class BorerLoot {
 			Math.max(aroundOrigin.maxZ, aroundPlayer.maxZ)
 		);
 		long now = client.level.getGameTime();
-		return client.level.getEntitiesOfClass(ItemEntity.class, search, entity ->
+		boolean coalXp = engine.coalXpMode(), quartzXp = engine.quartzXpMode();
+		var matches = client.level.getEntitiesOfClass(ItemEntity.class, search, entity ->
 			entity.isAlive()
 				&& !entity.getItem().isEmpty()
 				&& ore.matchesDrop(entity.getItem())
-				&& ignored.getOrDefault(entity.getId(), 0L) < now
-		).stream().min(Comparator.comparingDouble(player::distanceToSqr)).orElse(null);
+				&& BorerLootPolicy.trackDrop(coalXp, quartzXp, OreTarget.COAL.matchesDrop(entity.getItem()), OreTarget.QUARTZ.matchesDrop(entity.getItem()))
+				&& (includeDeferred || ignored.getOrDefault(entity.getId(), -1L) <= now)
+		);
+		ItemEntity nearest = matches.stream().min(Comparator.comparingDouble(player::distanceToSqr)).orElse(null);
+		if (!includeDeferred && nearest != null && active() && ore == wanted) {
+			for (ItemEntity candidate : matches) if (candidate.getId() == entityId
+				&& BorerLootPolicy.keepItemTarget(player.distanceTo(candidate), player.distanceTo(nearest))) return candidate;
+		}
+		return nearest;
 	}
 
 	/** 清理已忽略掉落记录。 */
@@ -509,9 +548,11 @@ final class BorerLoot {
 	}
 
 	/** 背包是否还能收该矿。 */
-	private static boolean canStore(LocalPlayer player, OreTarget wanted) {
+	private static boolean canStore(LocalPlayer player, ItemStack drop) {
+		ItemStack offhand = player.getOffhandItem();
+		if (BorerLootPolicy.canStackDrop(ItemStack.isSameItemSameComponents(offhand, drop), offhand.getCount(), offhand.getMaxStackSize())) return true;
 		for (ItemStack stack : player.getInventory().getNonEquipmentItems()) {
-			if (wanted.matchesDrop(stack) && stack.getCount() < stack.getMaxStackSize()) return true;
+			if (BorerLootPolicy.canStackDrop(ItemStack.isSameItemSameComponents(stack, drop), stack.getCount(), stack.getMaxStackSize())) return true;
 		}
 		return player.getInventory().getFreeSlot() >= 0;
 	}
@@ -520,13 +561,23 @@ final class BorerLoot {
 	private void finish(Minecraft client, LocalPlayer player, String result, int inventoryCount) {
 		LOGGER.info("[twob2tkit/Borer {}] loot-collection-finish result={} ore={} origin={} ticks={} inventoryBefore={} inventoryAfter={} player={}",
 			engine.runtimeVersion(), result, wanted, format(origin), ticks, startCount, inventoryCount, precise(player));
+		engine.fileLog(client, "loot-finish result=" + result + " ore=" + wanted + " before=" + startCount + " after=" + inventoryCount);
 		clear();
-		engine.releaseMine(client);
-		client.options.keyShift.setDown(false);
+		holdStill(client);
 		if (engine.currentTarget != null && !engine.shouldMine(client, engine.currentTarget)) {
 			engine.clearMiningTarget();
 		}
 		engine.overlay(client, result + "，继续找矿", 0x55FFFF);
+	}
+
+	private boolean clearanceProgress(Minecraft client) {
+		boolean moved = clearanceStages.entrySet().removeIf(e -> client.level.getBlockState(e.getKey()).isAir());
+		BlockPos target = engine.currentTarget;
+		if (target != null && client.gameMode != null) {
+			int stage = client.gameMode.getDestroyStage();
+			if (stage >= 0 && stage > clearanceStages.getOrDefault(target, -1)) { clearanceStages.put(target.immutable(), stage); moved = true; }
+		}
+		return moved;
 	}
 
 	/** 坐标/对象短文本。 */

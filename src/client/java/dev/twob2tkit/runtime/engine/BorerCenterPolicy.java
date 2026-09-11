@@ -1,6 +1,7 @@
 package dev.twob2tkit.runtime.engine;
 
 import net.minecraft.core.Direction;
+import net.minecraft.core.BlockPos;
 
 /**
  * 1×2 通道怎么走。只改这一处。
@@ -19,6 +20,15 @@ public final class BorerCenterPolicy {
 	public static final double SHAFT_CENTER_DEADZONE = 0.08;
 
 	private BorerCenterPolicy() {
+	}
+	/** Route clearance must use the body column; the supporting block may be across a pit edge. */
+	static BlockPos navigationColumn(BlockPos body, BlockPos support, boolean ore) { return ore ? body : support; }
+	static boolean centerBeforeForward(double sideOffset) { return overlapsSideWall(sideOffset); }
+	static boolean reachedWaypoint(double dx, double dy, double dz) { return Math.hypot(dx, dz) <= .14 && Math.abs(dy) <= .2; }
+	record WalkInput(float yaw, boolean forward, double probeX, double probeZ) {}
+	static WalkInput walkInput(double dx, double dz) {
+		double distance = Math.hypot(dx, dz), length = Math.max(.001, distance);
+		return new WalkInput((float)(Math.toDegrees(Math.atan2(dz, dx)) - 90), distance > .06, dx / length * .22, dz / length * .22);
 	}
 
 	/**

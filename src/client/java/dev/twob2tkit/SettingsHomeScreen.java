@@ -28,23 +28,15 @@ public final class SettingsHomeScreen extends KitHudScreen {
 	/** 布置界面开关、配方选项、按键与热加载按钮。 */
 	@Override
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("SETTINGS", parent)) return;
 		addTabBar(KitTab.SETTINGS);
 		int left = panelLeft(320);
 		int y = contentTop();
-		addRenderableWidget(Checkbox.builder(Component.literal("模块栏界面（一屏列出，像 Meteor）"), this.font)
-			.pos(left, y)
-			.selected(config.clickGui)
-			.onValueChange((box, value) -> {
-				config.clickGui = value;
-				config.save();
-				if (value) {
-					KitController controller = KitClient.controller();
-					if (controller != null) this.minecraft.setScreen(new ClickGuiScreen(config, controller));
-				}
-			})
-			.build())
-			.setTooltip(Tooltip.create(Component.literal(
-				"一屏列出功能。关掉就回到这种分页。")));
+		addRenderableWidget(Button.builder(Component.literal("菜单：Minecraft 风格 → 切换模块面板"), button -> {
+			config.clickGui = true;
+			config.save();
+			this.minecraft.setScreen(new ClickGuiScreen(config, KitClient.controller()));
+		}).bounds(left, y, 320, 20).build());
 		y += 24;
 		addRenderableWidget(Checkbox.builder(Component.literal("打开容器后自动补货"), this.font)
 			.pos(left, y)

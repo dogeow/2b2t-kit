@@ -30,6 +30,7 @@ public final class GuardHomeScreen extends KitHudScreen {
 	/** 布置保护相关开关与子页入口。 */
 	@Override
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("GUARD", parent)) return;
 		addTabBar(KitTab.GUARD);
 		int left = panelLeft(320);
 		int y = contentTop();

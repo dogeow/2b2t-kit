@@ -23,6 +23,7 @@ public final class VillagerScanScreen extends KitHudScreen {
 	@Override
 	/** 开关与说明按钮。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("VILLAGER", parent)) return;
 		int left = panelLeft(320);
 		int y = bodyTop(32);
 		VillagerScanner scanner = KitClient.villagerScanner();

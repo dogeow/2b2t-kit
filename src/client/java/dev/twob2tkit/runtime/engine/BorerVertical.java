@@ -21,7 +21,7 @@ final class BorerVertical {
 
 	/** 矿石不在同一层时，挖通道、台阶或选择跳跃方向。 */
 	BlockPos nextRouteTarget(Minecraft client, LocalPlayer player, BlockPos goal) {
-		BlockPos feet = engine.standingColumn(client, player);
+		BlockPos feet = engine.navigationColumn(client, player);
 		boolean ascending = goal.getY() > feet.getY();
 		engine.lockHeadingToward(feet, goal);
 		if (ascending) {
@@ -226,7 +226,7 @@ final class BorerVertical {
 		BlockPos body = player.blockPosition();
 		BlockPos gap = oneByTwoAtColumn(client, player, heading, body);
 		if (gap != null) return gap;
-		BlockPos stand = engine.standingColumn(client, player);
+		BlockPos stand = engine.navigationColumn(client, player);
 		if (!stand.equals(body)) return oneByTwoAtColumn(client, player, heading, stand);
 		return null;
 	}
@@ -328,12 +328,12 @@ final class BorerVertical {
 	/** 1×2 通道里跳不过去的台阶：先挖头顶挡路，不挖立足点。 */
 	private BlockPos mineInsteadOfJump(Minecraft client, LocalPlayer player, BlockPos front) {
 		if (!hasJumpClearance(client, player) || jumpAttemptsExhausted(player)) {
-			BlockPos looked = engine.corridor.corridorCrosshair(client, player, engine.standingColumn(client, player));
+			BlockPos looked = engine.corridor.corridorCrosshair(client, player, engine.navigationColumn(client, player));
 			if (looked != null) {
 				BlockPos climb = climbTargetInsteadOfFoothold(client, player, looked);
 				if (climb != null) return climb;
 			}
-			BlockPos[] blockers = {front.above(), front.above(2), engine.standingColumn(client, player).above(2)};
+			BlockPos[] blockers = {front.above(), front.above(2), engine.navigationColumn(client, player).above(2)};
 			for (BlockPos pos : blockers) {
 				if (!engine.canPlanMine(client, pos) || isClimbFoothold(client, player, pos)) continue;
 				if (engine.inMiningReach(player, pos)
@@ -425,7 +425,7 @@ final class BorerVertical {
 	 */
 	boolean handleClimbDropAscent(Minecraft client, LocalPlayer player, int dropAhead) {
 		BlockPos goal = engine.sideOreTargetPos != null ? engine.sideOreTargetPos : engine.oreTargetPos;
-		BlockPos feet = engine.standingColumn(client, player);
+		BlockPos feet = engine.navigationColumn(client, player);
 		if (goal != null) engine.lockHeadingToward(feet, goal);
 
 		boolean inReach = goal != null && engine.inMiningReach(player, goal);
@@ -489,20 +489,20 @@ final class BorerVertical {
 	boolean climbingToOre(Minecraft client, LocalPlayer player) {
 		if (engine.mode != DefaultTunnelBorerEngine.Mode.ORE || player == null) return false;
 		BlockPos goal = engine.sideOreTargetPos != null ? engine.sideOreTargetPos : engine.oreTargetPos;
-		return goal != null && goal.getY() > engine.standingColumn(client, player).getY();
+		return goal != null && goal.getY() > engine.navigationColumn(client, player).getY();
 	}
 
 	/** 是否在往更低矿下。 */
 	boolean descendingToOre(Minecraft client, LocalPlayer player) {
 		if (engine.mode != DefaultTunnelBorerEngine.Mode.ORE || player == null) return false;
 		BlockPos goal = engine.sideOreTargetPos != null ? engine.sideOreTargetPos : engine.oreTargetPos;
-		return goal != null && goal.getY() < engine.standingColumn(client, player).getY();
+		return goal != null && goal.getY() < engine.navigationColumn(client, player).getY();
 	}
 
 	/** 向上走时，当前列脚这一层是台阶立足点，挖掉会变成一格高的洞。前方挡路不算立足点。 */
 	boolean isClimbFoothold(Minecraft client, LocalPlayer player, BlockPos pos) {
 		if (!climbingToOre(client, player) || pos == null) return false;
-		BlockPos feet = engine.standingColumn(client, player);
+		BlockPos feet = engine.navigationColumn(client, player);
 		if (pos.getX() != feet.getX() || pos.getZ() != feet.getZ()) return false;
 		return pos.getY() == feet.getY() && engine.isStandable(client, pos);
 	}

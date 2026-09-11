@@ -32,6 +32,7 @@ public final class HealingItemsScreen extends KitHudScreen {
 	@Override
 	/** 预设按钮与可滚动勾选列表。 */
 	protected void init() {
+        if (dev.twob2tkit.UiFeature.redirect("HEALING", parent)) return;
 		int listTop = bodyTop(48);
 		int listHeight = Math.max(48, contentBottom() - 28 - listTop);
 		list = addRenderableWidget(new ChoiceList(this.minecraft, this.width, listHeight, listTop));

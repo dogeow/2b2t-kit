@@ -23,6 +23,11 @@ public interface BorerEngine {
 	/** 给 HUD / 聊天看的短状态。 */
 	String status();
 
+	/** Optional scenery capture; old runtime engines remain loadable and explicitly report unsupported. */
+	default boolean startScenery(Minecraft client, int radiusBlocks, boolean resume) { return false; }
+	default boolean isSceneryActive() { return false; }
+	default String sceneryStatus() { return "当前引擎不支持风景预加载，请加载新版"; }
+
 	/** 按模式名启动盾构机。 */
 	void start(Minecraft client, String modeName);
 
@@ -34,6 +39,9 @@ public interface BorerEngine {
 
 	/** 每个客户端 tick 推进挖矿逻辑。 */
 	void tick(Minecraft client);
+
+	/** Reuse mining combat while another task is running, without starting mining or moving. */
+	default boolean tickStandaloneGuard(Minecraft client, boolean enabled) { return false; }
 
 	/** 世界每帧收集 gizmo 时画回家箭头。不要在 tick 里画，否则会闪。 */
 	default void emitFrameGizmos(Minecraft client) {
@@ -55,6 +63,9 @@ public interface BorerEngine {
 	/** 沿走过的路飞回记下的地狱门。 */
 	default void goToPortal(Minecraft client) {
 	}
+
+	/** Suppress host restocking while the runtime is depositing mined cargo. */
+	default boolean isManagingInventory() { return false; }
 
 	/** 未开盾构时也记过门坐标和下界路线。 */
 	default void observeWorld(Minecraft client) {
@@ -87,6 +98,10 @@ public interface BorerEngine {
 	/** Meteor 改朝向之后，回家/回门时把视角写回去。 */
 	default void reapplyLook(Minecraft client) {
 	}
+	/** Optional visible ranged-combat ownership. Old engines leave manual use and the camera untouched. */
+	default RotationAim.Look combatLook(Minecraft client) { return null; }
+	default void combatViewRendered(Minecraft client, RotationAim.Look view) {}
+	default boolean prepareBowRelease(Minecraft client) { return true; }
 
 	/** 热加载前把内存中的挖矿路线导出来，避免只存在旧引擎里。 */
 	default String exportTrailSnapshot() {
@@ -102,6 +117,7 @@ public interface BorerEngine {
 	}
 
 	/** 关掉区域黄框与 HUD；配置里已无区域时引擎应清掉缓存。 */
+	default void previewArea(Minecraft client) {}
 	default void dismissAreaPreview() {
 	}
 }

@@ -1,10 +1,10 @@
-# twob2tkit 1.6.17
+# twob2tkit 1.9.21
 
-Minecraft 26.1.2 Fabric 客户端 Mod。它独立于 Meteor，只模拟原版移动按键；请先开启你已有的飞行功能。
+Minecraft 26.1.2 Fabric 客户端 Mod，提供采矿、采集、投影建造、巡航和生存辅助。不同功能通过普通游戏交互执行；部分功能会协调已安装的 Meteor 或 Litematica Printer。
 
 ## 安装
 
-把 `twob2tkit-1.6.17.jar` 和适用于 Minecraft 26.1.2 的 Fabric API 放入 `.minecraft/mods`。它可以和 Meteor 同时使用，不需要 Meteor Addon API，服务器也不需要安装任何 Mod。
+把 `twob2tkit-1.9.21.jar` 和适用于 Minecraft 26.1.2 的 Fabric API 放入 `.minecraft/mods`。它可以和 Meteor 同时使用，不需要 Meteor Addon API，服务器也不需要安装任何 Mod。
 
 ## 使用
 
@@ -20,13 +20,18 @@ Minecraft 26.1.2 Fabric 客户端 Mod。它独立于 Meteor，只模拟原版移
 /twob2tkit start 100000 -250000 200
 ```
 
-按 `U` 或输入 `/twob2tkit gui` 打开界面。顶部是五个标签：**巡航 / 生电 / 保护 / 助手 / 设置**。上次打开的标签会记住。
+按 `U` 或输入 `/twob2tkit gui` 打开界面。顶部是七个分类：**首页 / 挖掘 / 出行 / 生产 / 仓储 / 保护 / 设置**，支持全局搜索和常用功能。
 
-- 巡航：填坐标、开始/停止、已存地点
-- 生电：机器目录、导入 schematic、盾构机
-- 保护：围箱、生存提醒、死亡点、玩家白名单
-- 助手：行动清单、配方指南、仓库记录、自动喂养、自动种田、自动挖树、世界种子
-- 设置：补货/配方开关、按键绑定
+- 挖掘：区域挖、自动找矿、向前/向下挖、路线与安全设置
+- 出行：巡航、地点收藏、风景预加载、结构与死亡点
+- 生产：自动砍树、种田、喂养、钓鱼、混凝土制作、投影建造、技能库
+- 仓储：仓库记录、行动清单、配方指南
+- 保护：自动保护、围箱、生存提醒、治疗物资与白名单
+- 设置：通用设置、按键、运行信息
+
+技能库入口为 **U → 生产 → 技能库**。本地记录器负责发布技能目录；页面显示所有技能的最新版本，支持搜索、状态筛选、详情和自动刷新。1.9.21 修复 HMCL 改写 Java `user.home` 时读取不到目录的问题。记录器安装与验收规则见 [companion-skills/README.md](companion-skills/README.md)。
+
+事件监督器见 [companion/README.md](companion/README.md)，混凝土制作见 [docs/concrete-maker.md](docs/concrete-maker.md)，放置节奏见 [docs/placement-speed.md](docs/placement-speed.md)。
 
 从 1.6.9 开始，稳定核心与盾构/自动找矿运行引擎分开。1.6.10 修正了固定加载器中盾构移动输入晚于 Minecraft 玩家输入采样的问题。1.6.11 增加自动喂养。1.6.12 在升空被头顶挡住时会保持飞行并挖开挡路方块。1.6.13 增加自动种田。1.6.14 增加自动挖树。1.6.15 增加世界种子探测。1.6.16 让配方书增强在背包 2×2 里也能列出末影箱等 3×3 配方。1.6.17 增加下界基岩顶：珍珠上顶 + Y129 巡航 + 主世界坐标÷8，升级后需完整重启一次。之后只改盾构、找矿、垂直寻路等运行逻辑时，可把新的 `twob2tkit-engine.jar` 放到 `.minecraft/config/twob2tkit/runtime/`，再在“设置”点击“检查并加载新版”，或输入 `/twob2tkit reload`。热加载前会先停止当前动作并释放按键；功能包缺失、损坏或要求更高版本加载器时会拒绝切换并继续使用原引擎。“恢复内置版本”可随时还原当前核心自带的运行引擎。Mixin、按键注册、Fabric 元数据及核心界面发生变化时仍需重启游戏。
 

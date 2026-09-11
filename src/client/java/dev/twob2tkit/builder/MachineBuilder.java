@@ -55,7 +55,7 @@ public final class MachineBuilder {
 	private static final int WALK_RADIUS = 12;
 	private static final Set<String> PLACEMENT_PROPERTIES = Set.of(
 		"facing", "horizontal_facing", "axis", "half", "type", "hinge", "part", "shape",
-		"face", "attachment", "rotation", "delay", "mode", "waterlogged", "open"
+		"face", "attachment", "rotation", "delay", "mode", "waterlogged", "open", "inverted"
 	);
 
 	public enum Kind {
@@ -203,7 +203,7 @@ public final class MachineBuilder {
 			}
 			double dy = Vec3.atCenterOf(cell.pos()).y - player.getY();
 			double horiz = Math.hypot(cell.pos().getX() + 0.5 - player.getX(), cell.pos().getZ() + 0.5 - player.getZ());
-			if ((player.onGround() && dy > 2.4 || Math.abs(dy) > 3.2) && horiz <= 2.8) {
+			if (!dev.twob2tkit.runtime.engine.BorerFlight.isFlying(player) && (player.onGround() && dy > 2.4 || Math.abs(dy) > 3.2) && horiz <= 2.8) {
 				releaseMove(client);
 				status = "请走到或飞到 Y=" + cell.pos().getY() + "，到了会自动接着摆";
 				overlay(client, status, 0xFFFF55);
@@ -304,6 +304,7 @@ public final class MachineBuilder {
 		if (!placing) return false;
 		if (alreadySatisfied(client, cell)) return false;
 		if (!isReplaceable(client.level.getBlockState(cell.pos()))) return false;
+		if (!client.level.isUnobstructed(cell.expected(), cell.pos(), net.minecraft.world.phys.shapes.CollisionContext.placementContext(player))) return false;
 		if (!hasItemFor(player, cell)) return false;
 		if (!placementReady(client, cell)) return false;
 		if (!LitematicaAccess.inVisibleLayer(cell.pos())) return false;
@@ -334,6 +335,7 @@ public final class MachineBuilder {
 					if (cell == null) continue;
 					if (alreadySatisfied(client, cell)) continue;
 					if (!isReplaceable(client.level.getBlockState(pos))) continue;
+					if (!client.level.isUnobstructed(cell.expected(), pos, net.minecraft.world.phys.shapes.CollisionContext.placementContext(player))) continue;
 					if (!hasItemFor(player, cell)) continue;
 					if (!placementReady(client, cell)) continue;
 					if (findSupportHit(client, cell) == null) continue;
@@ -386,7 +388,7 @@ public final class MachineBuilder {
 		if (block instanceof PistonBaseBlock) return Kind.PISTON;
 		if (block instanceof ObserverBlock) return Kind.OBSERVER;
 		if (block instanceof BedBlock) return Kind.BED;
-		if (block instanceof ComparatorBlock || block instanceof RepeaterBlock) return Kind.HORIZONTAL;
+		if (block instanceof ComparatorBlock || block instanceof RepeaterBlock || block instanceof net.minecraft.world.level.block.StairBlock) return Kind.HORIZONTAL;
 		if (block instanceof SlabBlock) return Kind.SLAB;
 		if (block == Blocks.SUGAR_CANE || block == Blocks.BAMBOO || block == Blocks.BAMBOO_SAPLING
 			|| block instanceof CactusBlock) {
@@ -420,6 +422,11 @@ public final class MachineBuilder {
 			if (!isReplaceable(client.level.getBlockState(neighbor))) {
 				return click(neighbor, direction.getOpposite());
 			}
+		}
+		if (dev.twob2tkit.MeteorModules.isActive("meteordevelopment.meteorclient.systems.modules.player.AirPlace") && cell.kind() != Kind.WATER && cell.kind() != Kind.LAVA) {
+			Direction face = Direction.UP;
+			if (cell.expected().hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.HALF) && cell.expected().getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.HALF) == net.minecraft.world.level.block.state.properties.Half.TOP) face = Direction.DOWN;
+			return click(pos, face);
 		}
 		return null;
 	}
@@ -516,7 +523,7 @@ public final class MachineBuilder {
 		}
 
 		client.options.keyUp.setDown(!closeHoriz && horiz > 1.15);
-		if (player.getAbilities().flying) {
+		if (dev.twob2tkit.runtime.engine.BorerFlight.isFlying(player)) {
 			client.options.keyJump.setDown(dy > 1.2);
 			client.options.keyShift.setDown(dy < -1.2);
 		} else {
@@ -574,7 +581,11 @@ public final class MachineBuilder {
 		BlockHitResult hit = findSupportHit(client, cell);
 		if (hit == null) hit = hitFor(cell);
 		if (hit == null) return false;
-		lookAt(player, hit.getLocation());
+		if (cell.facing() == null) lookAt(player, hit.getLocation());
+		else if (cell.facing().getAxis() != Direction.Axis.Y) {
+			RotationAim.apply(player, player.getYRot(), RotationAim.lookAt(player, hit.getLocation()).pitch());
+		}
+		if (cell.facing() != null && !dev.twob2tkit.automation.PlacementRotation.prepare(client, player.getYRot(), player.getXRot())) return false;
 		if (isFluid(cell)) {
 			InteractionResult poured = client.gameMode.useItem(player, hand);
 			return poured.consumesAction() || alreadySatisfied(client, cell);
