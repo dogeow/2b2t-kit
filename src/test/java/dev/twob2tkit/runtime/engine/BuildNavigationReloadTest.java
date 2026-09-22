@@ -37,4 +37,10 @@ class BuildNavigationReloadTest {
         assertThrows(IllegalArgumentException.class,()->new BuildNavigation.Motion(false,false,1,new Vec3(10,0,0)));
         assertThrows(IllegalArgumentException.class,()->new BuildNavigation.Motion(true,false,.01,Vec3.ZERO));
     }
+    @Test void roundedWorldHeightAtToleranceDoesNotDemandAnUnsendableMicroStep(){
+        var nav=new DefaultBuildNavigation();
+        var delta=new Vec3(761011.5-761011.5000005532,61.02-61.025000000000006,797836.5-797836.4969446951);
+        assertTrue(nav.motion(delta).arrived());assertEquals(0,nav.motion(delta).speed());
+        assertFalse(nav.motion(new Vec3(0,.0051,0)).arrived());
+    }
 }

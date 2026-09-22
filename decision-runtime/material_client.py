@@ -53,6 +53,14 @@ class Client:
    if reply.exists() or current.get('last_request')==rid and current.get('id')==rid and current.get('phase') in ('done','stopped','error','waiting'):
     self.rev=current['control_revision']
     with (self.out/'events.jsonl').open('a') as f:f.write(json.dumps({'time':time.time(),'request_id':rid,'world_session':self.world,'op':op,'params':params,'phase':result.get('phase'),'detail':result.get('detail'),'pos':current.get('pos'),'health':current.get('health'),'duration_ms':round((time.monotonic()-request_started)*1000),'evidence_scope':'native_operation_reply_not_goal_completion',**observed_delta(evidence_before,current)},ensure_ascii=False)+'\n')
+    try:
+     from experience_recording import record_native_transaction
+     if getattr(self,'record_experience',False):record_native_transaction(req,evidence_before,result,getattr(self,'experience_state',None))
+    except Exception as e:
+     # An optional local recorder must never turn a completed game action into a retry.
+     try:
+      with (self.out/'experience-recording-errors.jsonl').open('a') as f:f.write(json.dumps({'request_id':rid,'error':str(e)})+'\n')
+     except OSError:pass
     if op=='guard' and result.get('phase')=='done':self.owned=True
     return result
    time.sleep(.15)
@@ -101,9 +109,10 @@ class Client:
    time.sleep(.2)
   raise RuntimeError('Chest was not opened')
 class MaterialClient(Client):
- def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False):
+ def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None):
   self.heartbeat=None;self.owned_material_menu=None
   super().__init__(root,out,server,min_health=18)
+  self.record_experience=record_experience;self.experience_state=experience_state
   s=self.raw()
   if s.get('material_protocol',0)<2 or not s.get('inventory_isolation',{}).get('supported'):raise Handoff('Restart into Kit with verified inventory isolation before crafting')
   if not allow_empty_inventory and not any(v.get('count',0)>0 for v in s.get('inventory',[])):

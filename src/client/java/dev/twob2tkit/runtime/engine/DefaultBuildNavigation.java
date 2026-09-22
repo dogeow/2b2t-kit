@@ -17,8 +17,8 @@ public final class DefaultBuildNavigation implements BuildNavigation {
         }return cells;
     }
     public Motion motion(Vec3 delta){
-        double horizontal=Math.hypot(delta.x,delta.z);boolean vertical=Math.abs(delta.y)>.005;
-        boolean arrived=horizontal<.005&&!vertical;
+        double horizontal=Math.hypot(delta.x,delta.z);boolean vertical=Math.abs(delta.y)>.005001;
+        boolean arrived=horizontal<.005001&&!vertical;
         double speed=arrived?0:vertical?Math.min(.024,Math.abs(delta.y)/10):Math.min(.012,horizontal/20);
         Vec3 probe=arrived?Vec3.ZERO:vertical?new Vec3(0,Math.copySign(speed*5,delta.y),0):new Vec3(delta.x,0,delta.z).normalize().scale(speed*10);
         return new Motion(arrived,vertical,speed,probe);

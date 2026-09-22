@@ -23,7 +23,7 @@ class BuildMovementTest {
                 double dx=horizontalSpeed(x)*10,dy=verticalSpeed(y)*5;
                 assertTrue(dx<=x&&dy<=y);x-=dx;y-=dy;
             }
-            assertTrue(x<=.005);assertTrue(y<=.005);
+            assertTrue(arrived(x,0,0));assertTrue(arrived(0,y,0));assertTrue(x<.006&&y<.006);
         }
         assertEquals(.012,horizontalSpeed(10));assertEquals(.024,verticalSpeed(-10));
     }

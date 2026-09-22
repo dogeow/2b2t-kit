@@ -6,6 +6,7 @@ from .planning import goal_request,compile_plan
 from .model import resolve,validate_action
 from .learning import propose_from_ai,learn_episode
 from .kit import KitRecorder,ingest_supervisor,read_json
+from .automation_path import resolve_automation
 
 def emit(value):print(json.dumps(value,ensure_ascii=False,indent=2),flush=True)
 def compile_skill(manager,name,params):
@@ -31,7 +32,7 @@ def main():
     q=sub.add_parser('compile');q.add_argument('name');q.add_argument('--parameters',default='{}')
     q=sub.add_parser('ingest-events');q.add_argument('file')
     for cmd in ('inspect','watch'):
-        q=sub.add_parser(cmd);q.add_argument('--automation',default='/Applications/.minecraft/config/twob2tkit/automation')
+        q=sub.add_parser(cmd);q.add_argument('--automation',default=None)
         if cmd=='watch':q.add_argument('--seconds',type=int,default=0);q.add_argument('--events',action='append',default=[])
     a=p.parse_args();m=SkillManager(a.state)
     try:
@@ -46,7 +47,7 @@ def main():
         elif a.cmd=='compile':emit(compile_skill(m,a.name,json.loads(a.parameters)))
         elif a.cmd=='ingest-events':emit({'ingested':ingest_supervisor(m,a.file),**m.summary()})
         else:
-            r=KitRecorder(a.automation,m)
+            r=KitRecorder(resolve_automation(a.automation),m)
             if a.cmd=='inspect':emit(r.snapshot());return
             lock=Path(a.state)/'observer.lock'
             with lock.open('w') as f:
@@ -56,11 +57,15 @@ def main():
                 signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
                 while running and (not a.seconds or time.monotonic()-started<a.seconds):
                     try:
+                        selected=resolve_automation(a.automation)
+                        if selected!=r.root:
+                            m.lesson({'kind':'observer_source_changed','from':str(r.root),'to':str(selected)})
+                            r=KitRecorder(selected,m)
                         for event in r.poll():emit(event)
                         for journal in a.events:
                             if Path(journal).exists():ingest_supervisor(m,journal)
                     except (FileNotFoundError,json.JSONDecodeError,ValueError):pass
-                    beat={'pid':os.getpid(),'time':time.time(),'read_only':True,'game_heartbeat_age_seconds':None if r.previous is None else round(time.time()-r.previous.get('time',0)/1000,2),**m.summary()}
+                    beat={'automation':str(r.root),'pid':os.getpid(),'time':time.time(),'read_only':True,'game_heartbeat_age_seconds':None if r.previous is None else round(time.time()-r.previous.get('time',0)/1000,2),**m.summary()}
                     fpath=Path(a.state)/'observer-status.json';tmp=fpath.with_suffix('.tmp');tmp.write_text(json.dumps(beat));tmp.replace(fpath)
                     if time.monotonic()>=next_export:
                         export_catalog(m);next_export=time.monotonic()+2

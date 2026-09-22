@@ -1,0 +1,16 @@
+{
+  "kind": "engineering_experience",
+  "scope": "Minecraft 26.1.2 / Kit 1.9.67 / engine 1.7.58",
+  "provenance": "Reviewed local native action records and projection audits; retrospective summary, not a promotable skill episode",
+  "lessons": [
+    {"id":"search_budget_is_not_no_path","rule":"Keep the A* frontier between bounded ticks; report budget exhaustion separately from an empty frontier.","implementation":"runtime/engine/DefaultBuildNavigation.java","evidence":"A route was found after 21100 expanded positions where the previous 10000-node search stopped.","status":"bounded_live_verified"},
+    {"id":"preserve_original_collision_failure","rule":"A failed or closed supply task must return before running container-phase checks.","implementation":"automation/BuildSupplyTask.java","status":"regression_tested_and_live_route_verified"},
+    {"id":"stored_goods_are_not_missing_goods","rule":"Consult the controller's own storage receipts, then verify each actual inventory increase; a finished depot visit alone is not supply completion.","implementation":"decision-runtime/stored_supplies.py","status":"bounded_live_verified"},
+    {"id":"approach_real_block_shapes","rule":"Use visible vanilla shape faces for slabs and trapdoors; keep a closer pose margin and never replay uncertain interactions.","implementation":"automation/BlockFaceTarget.java; decision-runtime/work_access.py","status":"bounded_live_verified"},
+    {"id":"construction_and_supply_share_motion","rule":"Apply proportional approach speed and a tiny numerical tolerance to avoid an endless micro-step at the arrival boundary.","implementation":"runtime/engine/DefaultBuildNavigation.java","evidence":"Engine 1.7.58 loaded without restarting; recovery succeeded and 18 excavated construction cells were filled.","status":"bounded_live_verified"},
+    {"id":"fixture_work_uses_local_support_poses","rule":"Approach an observed support face, print a short batch, then audit the actual projection states.","implementation":"decision-runtime/local_printing.py","evidence":"Bedroom batch added 16 matches; lighting batches added 9 matches.","status":"bounded_live_verified"},
+    {"id":"release_scope_before_restart","rule":"Compare candidate host classes with the installed main JAR; engine-only changes must use native hot reload.","implementation":"decision-runtime/release_scope.py; decision-runtime/hot_update.py","status":"tested_and_live_hot_reload_verified"},
+    {"id":"portable_stock_round_trip","rule":"Journal temporary shulker placement, verify item-count conservation, recover the intact box and return it to the original ender slot.","implementation":"decision-runtime/packed_supplies.py","status":"candidate_unit_tested_not_live_verified"}
+  ],
+  "limits": ["The house is not finished: last full audit was 2678/2880 block states.","Decoration entities and banner patterns remain separate acceptance requirements.","Retrospective experience does not promote a skill; repeated directly observed successes are required."]
+}

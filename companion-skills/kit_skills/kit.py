@@ -8,7 +8,7 @@ def read_json(path,limit=2000000):
     if p.stat().st_size>limit:raise ValueError('Input exceeds size limit')
     return json.loads(p.read_text())
 def compact(s):
-    keys=('time','id','last_request','connected','server','dimension','pos','health','food','screen','phase','op','detail','guard_busy','guard_armed','professional_printer','inventory','build_job','concrete','chopping','chopper_status','navigating')
+    keys=('world_session','control_revision','kit_version','runtime_version','build_supply','time','id','last_request','connected','server','dimension','pos','health','food','screen','phase','op','detail','guard_busy','guard_armed','professional_printer','inventory','build_job','concrete','chopping','chopper_status','navigating')
     out={k:s[k] for k in keys if k in s}
     if 'professional_printer' in out:out['professional_printer']={k:v for k,v in out['professional_printer'].items() if k!='confirmation_seconds'}
     return out

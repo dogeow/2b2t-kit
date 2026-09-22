@@ -1,14 +1,18 @@
 """Declarative skills and objective evidence. Generated text is never executed as code."""
 import hashlib,json,math,re
 
+ENVELOPE_FIELDS={'id','op','server','dimension','site','world_session','expected_revision','expires_at','task_session','background_ok','local_survival'}
+
 OPS={
  'navigate':{'target','arrival','seconds'},
  'walk':{'target','arrival','seconds','restore_flight'},
  'chop':{'item','target_count','seconds'},
  'professional_print':{'seconds','conservative'},
  'scan':{'min','max'},
+ 'approach_block':{'pos','face','expected_state','seconds','stand_distance'},
+ 'collect_supply':{'source_key','materials','seconds'},
 }
-CHECKS={'inventory_at_least','position_near','server_placements_at_least'}
+CHECKS={'inventory_at_least','position_near','server_placements_at_least','work_block_approach','inventory_targets'}
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
 def resolve(value,params):
     if isinstance(value,dict):
@@ -47,6 +51,14 @@ def validate_action(op,args):
     if op=='chop':
         if not re.fullmatch(r'minecraft:[a-z0-9_]+_log',args.get('item','minecraft:oak_log')):raise ValueError('Chop supports a specific vanilla log type')
         if not isinstance(args.get('target_count'),int) or not 1<=args['target_count']<=512:raise ValueError('Invalid collection target')
+    if op=='approach_block':
+        if not vector(args.get('pos')) or any(int(v)!=v for v in args['pos']):raise ValueError('Integer work block required')
+        if args.get('face') not in {'up','down','north','south','west','east'} or not str(args.get('expected_state','')).startswith('Block{minecraft:'):raise ValueError('Verified work face and state required')
+        if 'stand_distance' in args and not .25<=args['stand_distance']<=3:raise ValueError('Invalid standing distance')
+    if op=='collect_supply':
+        if not re.fullmatch(r'minecraft:[a-z_]+:-?\d+:-?\d+:-?\d+',str(args.get('source_key',''))):raise ValueError('Scoped depot key required')
+        targets=args.get('materials')
+        if not isinstance(targets,dict) or not 1<=len(targets)<=32 or any(not re.fullmatch(r'minecraft:[a-z0-9_]+',i) or isinstance(n,bool) or not isinstance(n,int) or not 1<=n<=4096 for i,n in targets.items()):raise ValueError('Bounded material targets required')
     if op=='scan':
         if not vector(args.get('min')) or not vector(args.get('max')):raise ValueError('Missing scan bounds')
         spans=[b-a+1 for a,b in zip(args['min'],args['max'])]
@@ -62,6 +74,12 @@ def check_success(check,before,after):
     if kind=='inventory_at_least':return inventory(after).get(check['item'],0)>=check['count']
     if kind=='position_near':
         return vector(after.get('pos')) and vector(check.get('target')) and math.dist(after['pos'],check['target'])<=check.get('radius',1.2)
+    if kind=='work_block_approach':
+        supply=after.get('build_supply',{});expected='approach:'+ ', '.join(str(int(v)) for v in check['pos'])
+        return supply.get('phase')=='done' and supply.get('approach_only') is True and not supply.get('failure') and supply.get('source')==expected
+    if kind=='inventory_targets':
+        old,new=inventory(before),inventory(after);targets=check['materials']
+        return all(new.get(i,0)>=n for i,n in targets.items()) and any(new.get(i,0)>old.get(i,0) for i in targets)
     if kind=='server_placements_at_least':
         p=after.get('professional_printer',{})
         return not p.get('failure') and not p.get('waiting_for_server') and p.get('server_confirmed',0)>=check.get('count',1)
@@ -77,9 +95,10 @@ def verify_episode(skill,episode):
     for expected,seen in zip(steps,actual):
         request=seen.get('request',{});result=seen.get('result',{})
         validate_action(expected['op'],expected['args'])
-        if request.get('op')!=expected['op'] or {k:v for k,v in request.items() if k not in {'op','id','server','dimension','site'}}!=expected['args']:return False,'trace differs from proposed skill'
+        if request.get('op')!=expected['op'] or {k:v for k,v in request.items() if k not in ENVELOPE_FIELDS}!=expected['args']:return False,'trace differs from proposed skill'
         if not request.get('id') or result.get('id')!=request['id'] or result.get('phase')!='done' or result.get('last_request',request['id'])!=request['id']:return False,'request was not confirmed complete'
         if not same_world(request,before) or not same_world(result,after):return False,'action context differs'
+        if request.get('world_session') and any(frame.get('world_session')!=request['world_session'] for frame in (before,after,result)):return False,'world session changed'
     checks=resolve(skill['success'],params)
     if not all(check_success(c,before,after) for c in checks):return False,'objective result not reached'
     return True,'objective result verified'
