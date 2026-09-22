@@ -1,0 +1,15 @@
+{
+  "kind": "failed_portable_stock_workflow",
+  "observed": "Two boxes returned normally; the third box was mined but left on the ground when the controller ended. The user recovered it.",
+  "root_cause": "Dropped ItemEntity telemetry exposed an empty contains list. The controller incorrectly required full box contents before initiating pickup.",
+  "fix": [
+    "Remember item UUIDs present before mining the owned box",
+    "Identify only one new matching box drop near the verified removal, rejecting ambiguous or pre-existing drops",
+    "Validate full remaining contents after the box is in inventory",
+    "Register temporary-resource cleanup and run it before stopping the safety heartbeat",
+    "Keep uncertain stages recorded and never count a failed return as completion"
+  ],
+  "safety": "Manual takeover and low-health safety interlocks still override cleanup actions. An unresolved cleanup is reported explicitly; it is not a completed workflow.",
+  "verification": "Regression tests cover hidden drop contents, unrelated and ambiguous boxes, inventory content checks, original-slot return and cleanup ordering. New fix has not yet been live-retested.",
+  "acceptance": "candidate_fix_not_verified_skill"
+}

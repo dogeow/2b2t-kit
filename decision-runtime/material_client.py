@@ -142,6 +142,9 @@ class MaterialClient(Client):
    self.status();time.sleep(.25)
   return r
  def finish(self):
+  # Recover owned temporary resources while heartbeat and defense are still alive.
+  from material_cleanup import run as cleanup_resources
+  cleanup_resources(self)
   # Recover only our exact workbench before releasing its native safety lease.
   try:
    from craft_recovery import clear_owned_workbench

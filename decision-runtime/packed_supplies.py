@@ -9,6 +9,7 @@ from material_plan import inventory_counts
 from inventory_exact import take_exact
 from projection_wood import use_with_margin
 from drop_collection import collect_drop
+from material_cleanup import register as register_cleanup,complete as cleanup_complete
 
 VALUABLE={'minecraft:diamond','minecraft:diamond_block','minecraft:emerald','minecraft:emerald_block',
           'minecraft:netherite_ingot','minecraft:netherite_block','minecraft:blaze_rod','minecraft:blaze_powder'}
@@ -43,6 +44,49 @@ def open_box(client,pos,kind):
     s=wait(client,lambda s:s['menu']['type']==kind and not s['menu']['cursor']['count'])
     client.owned_material_menu=s['menu']['id'];return s
 
+def owned_drop(entities,item,pad,before_ids,known_uuid=None):
+    # Dropped shulkers may omit CONTAINER data. Identity comes from the new drop
+    # near our verified block removal; contents are checked after pickup instead.
+    candidates=[e for e in entities if e.get('type')=='minecraft:item' and e.get('stack',{}).get('item')==item
+                and e['stack'].get('count')==1 and e.get('uuid') not in before_ids
+                and sum((a-b)**2 for a,b in zip(e.get('pos',[]),pad))<9 and len(e.get('pos',[]))==3]
+    if known_uuid:candidates=[e for e in candidates if e['uuid']==known_uuid]
+    if len(candidates)>1:raise RuntimeError('Multiple new portable-box drops; do not guess ownership')
+    return candidates[0] if candidates else None
+
+def carried_box(state,item,expected):
+    return next((v for v in state['inventory'] if v.get('count')==1 and v['item']==item and contents(v.get('contains',[]))==expected),None)
+
+def recover_and_return(client,record,ender,journal):
+    if record['stage']=='returned':return
+    item=record['item'];remaining=record.get('remaining_counts',record['initial_counts']);slot=record['slot'];pad=record['temporary_position']
+    def save(stage):record['stage']=stage;journal.write_text(json.dumps(record,ensure_ascii=False,indent=2))
+    if record['stage']=='broken':
+        until=time.monotonic()+12
+        while time.monotonic()<until:
+            state=client.status()
+            if carried_box(state,item,remaining):break
+            drop=owned_drop(state.get('entities',[]),item,pad,set(record.get('before_drop_uuids',[])),record.get('drop_uuid'))
+            if drop:
+                record['drop_uuid']=drop['uuid'];save('broken')
+                if not collect_drop(client,drop,observation=state):raise RuntimeError('Owned portable box still needs recovery; inventory must be checked before any retry')
+            else:time.sleep(.2)
+        wait(client,lambda s:carried_box(s,item,remaining) is not None);save('recovered')
+    if record['stage'] not in ('carried','recovered'):
+        raise RuntimeError('Portable box remains safely placed or has an uncertain operation; inspect its journal before further mining')
+    wait(client,lambda s:carried_box(s,item,remaining) is not None)
+    if client.status()['menu']['cursor']['count']:raise RuntimeError('Cursor must be recovered before returning the box')
+    if client.status().get('screen'):client.checked('close_menu')
+    state=open_box(client,ender,'ChestMenu')
+    if state['menu']['slots'][slot]['count']:raise RuntimeError('Original ender slot changed; preserve its current contents')
+    boundary=len(state['menu']['slots'])-36;carried=next(v for v in state['menu']['slots'][boundary:] if v['item']==item and v['count']==1 and contents(v.get('contains',[]))==remaining)
+    client.checked('slot_click',menu_id=state['menu']['id'],slot=carried['slot'],expected_item=item,expected_count=1,kind='pickup')
+    client.checked('slot_click',menu_id=state['menu']['id'],slot=slot,expected_item='minecraft:air',expected_count=0,kind='pickup')
+    wait(client,lambda s:s['menu']['cursor']['count']==0 and s['menu']['slots'][slot]['item']==item and contents(s['menu']['slots'][slot].get('contains',[]))==remaining)
+    save('returned');client.checked('close_menu');cleanup_complete(client,str(journal))
+    with (client.out/'packed-transfers.jsonl').open('a') as stream:stream.write(json.dumps(record,ensure_ascii=False)+'\n')
+    print('PACKED_RETURNED',slot,record.get('taken',{}),flush=True)
+
 def take_box(client,ender,pad,slot,targets):
     journal=client.out/'packed-transfer-active.json'
     if journal.exists() and json.loads(journal.read_text()).get('stage')!='returned':
@@ -62,7 +106,7 @@ def take_box(client,ender,pad,slot,targets):
     save('prepared')
     client.checked('slot_click',menu_id=s['menu']['id'],slot=slot,expected_item=item,expected_count=1,kind='quick_move')
     wait(client,lambda s:any(v.get('count')==1 and v['item']==item and contents(v.get('contains',[]))==initial for v in s['inventory']))
-    save('carried');client.checked('close_menu');client.checked('select_item',item=item)
+    save('carried');register_cleanup(client,str(journal),lambda:recover_and_return(client,record,ender,journal));client.checked('close_menu');client.checked('select_item',item=item)
     def pad_empty():
         if block(client,pad) is not None or block(client,ground)!=ground_state:raise RuntimeError('Temporary pad changed before box placement')
     use_with_margin(client,ground,ground_state,item,('up',),pad_empty)
@@ -87,20 +131,8 @@ def take_box(client,ender,pad,slot,targets):
         raise RuntimeError('Box-to-inventory conservation did not match')
     record.update(remaining_counts=remaining,taken={i:n for i,n in taken.items() if n});save('withdrawn');client.checked('close_menu')
     client.checked('select_item',item='minecraft:diamond_pickaxe')
+    record['before_drop_uuids']=[e['uuid'] for e in client.status().get('entities',[]) if e.get('type')=='minecraft:item']
+    save('breaking')
     client.checked('recover_shulker',pos=pad,expected_state=placed,face='up',seconds=15);save('broken')
-    for _ in range(5):
-        s=client.status()
-        if any(v.get('count')==1 and v['item']==item and contents(v.get('contains',[]))==remaining for v in s['inventory']):break
-        drops=[e for e in s.get('entities',[]) if e.get('type')=='minecraft:item' and e.get('stack',{}).get('item')==item and contents(e['stack'].get('contains',[]))==remaining and sum((a-b)**2 for a,b in zip(e['pos'],pad))<9]
-        if not drops:time.sleep(.3);continue
-        if not collect_drop(client,drops[0],observation=s):raise RuntimeError('Portable box drop still needs recovery')
-    wait(client,lambda s:any(v.get('count')==1 and v['item']==item and contents(v.get('contains',[]))==remaining for v in s['inventory']))
-    save('recovered');s=open_box(client,ender,'ChestMenu')
-    if s['menu']['slots'][slot]['count']:raise RuntimeError('Original ender slot changed; preserve its current contents')
-    boundary=len(s['menu']['slots'])-36;carried=next(v for v in s['menu']['slots'][boundary:] if v['item']==item and v['count']==1 and contents(v.get('contains',[]))==remaining)
-    client.checked('slot_click',menu_id=s['menu']['id'],slot=carried['slot'],expected_item=item,expected_count=1,kind='pickup')
-    client.checked('slot_click',menu_id=s['menu']['id'],slot=slot,expected_item='minecraft:air',expected_count=0,kind='pickup')
-    wait(client,lambda s:s['menu']['cursor']['count']==0 and s['menu']['slots'][slot]['item']==item and contents(s['menu']['slots'][slot].get('contains',[]))==remaining)
-    save('returned');client.checked('close_menu')
-    with (client.out/'packed-transfers.jsonl').open('a') as f:f.write(json.dumps(record,ensure_ascii=False)+'\n')
-    print('PACKED_RETURNED',slot,record['taken'],flush=True);return record
+    recover_and_return(client,record,ender,journal)
+    return record
