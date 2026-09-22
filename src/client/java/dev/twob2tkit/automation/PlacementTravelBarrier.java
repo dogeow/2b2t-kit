@@ -8,6 +8,9 @@ import java.util.Objects;
 public final class PlacementTravelBarrier<K,V> {
     private record Pending<V>(V expected,boolean sent) {}
     private final Map<K,Pending<V>> pending=new HashMap<>();
+    private final java.util.function.BiPredicate<V,V> confirmation;
+    public PlacementTravelBarrier(){this(Objects::equals);}
+    public PlacementTravelBarrier(java.util.function.BiPredicate<V,V> confirmation){this.confirmation=confirmation;}
     private boolean unknownAction;
     public void queued(K position,V expected){
         if(position==null||expected==null){unknownAction=true;return;}
@@ -16,9 +19,10 @@ public final class PlacementTravelBarrier<K,V> {
     public void sent(K position){pending.computeIfPresent(position,(k,p)->new Pending<>(p.expected(),true));}
     public void serverBlock(K position,V actual){
         var p=pending.get(position);
-        if(p!=null && p.sent() && Objects.equals(p.expected(),actual))pending.remove(position);
+        if(p!=null && p.sent() && confirmation.test(p.expected(),actual))pending.remove(position);
     }
     public void cancelUnsent(){pending.entrySet().removeIf(e->!e.getValue().sent());}
+    public boolean acknowledge(K position){var p=pending.get(position);if(p==null||!p.sent())return false;pending.remove(position);return true;}
     public boolean settled(){return !unknownAction&&pending.isEmpty();}
     public int pendingCount(){return pending.size();}
 }

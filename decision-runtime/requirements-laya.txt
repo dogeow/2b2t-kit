@@ -1,0 +1,2 @@
+-r requirements.txt
+laya-mlx @ git+https://github.com/mizorewww/laya-mlx.git@fc1df62828a3fedf4d8229fdac1cbd85f1cdf337

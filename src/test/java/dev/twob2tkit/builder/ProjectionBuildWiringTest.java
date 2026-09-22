@@ -13,7 +13,8 @@ class ProjectionBuildWiringTest {
         for(String name:List.of("tick","move","beginPrinting"))assertFalse(calls(method("builder/ProjectionBuildJob",name)).contains("useItemOn"));
     }
     @Test void stoppedJobsRestoreFlightAndReleaseKeys()throws Exception{
-        assertTrue(calls(method("builder/ProjectionBuildJob","stop")).containsAll(List.of("stop","release","closeKeepingFlight","close")));
+        assertTrue(calls(method("builder/ProjectionBuildJob","stop")).contains("finishJob"));
+        assertTrue(calls(method("builder/ProjectionBuildJob","finishJob")).containsAll(List.of("stop","release","closeKeepingFlight","close")));
         assertTrue(calls(method("builder/ProjectionBuildJob","pause")).containsAll(List.of("pause","release","hover")));
     }
     @Test void serverUpdatesReachProjectionVerificationAsWellAsConcrete()throws Exception{
@@ -26,5 +27,11 @@ class ProjectionBuildWiringTest {
         for(var i:tick.instructions)if(i instanceof FieldInsnNode f)names.add(f.name);
         assertTrue(names.contains("paused"));assertTrue(calls(tick).contains("guardBusy"));
         assertTrue(calls(method("builder/ProjectionBuildJob","tick")).contains("resume"));
+    }
+    @Test void reloadOnlyWaitsForAnOwnedPrinterAndDiscardsOldSearch()throws Exception{
+        var names=calls(method("builder/ProjectionBuildJob","prepareRuntimeReload"));
+        assertTrue(names.containsAll(List.of("owned","readyForTravel","stop","release","hover","discardSearch")));
+        assertTrue(names.indexOf("owned")<names.indexOf("readyForTravel"));
+        assertTrue(calls(method("builder/ProjectionBuildJob","runtimeReloaded")).contains("buildNavigation"));
     }
 }

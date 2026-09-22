@@ -49,7 +49,7 @@ class BorerDefensePolicyTest {
 		assertFalse(BorerEngagement.incoming(box, origin, new net.minecraft.world.phys.Vec3(1, 0, 0)));
 		assertFalse(BorerEngagement.incoming(box, origin, net.minecraft.world.phys.Vec3.ZERO));
 	}
-	@Test void disappearingThreatDoesNotRemainEligibleJustBecauseItWasPreviouslyChosen() {
+	@Test void acquisitionSignalMayDisappearButCombatSessionOwnsTheDecisionToResume() {
 		assertTrue(BorerDefensePolicy.engaged(true, false, false, false, true, false, false, 6, 0));
 		assertFalse(BorerDefensePolicy.engaged(true, false, false, false, false, false, false, 6, 0));
 		assertEquals(-1, BorerDefensePolicy.choose(List.of(), 3));

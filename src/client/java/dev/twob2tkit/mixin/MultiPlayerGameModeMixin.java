@@ -44,11 +44,12 @@ public abstract class MultiPlayerGameModeMixin {
 	}
 
 	/** 对手持物品右键方块时，记下命中方块坐标（存储/开箱补货）。 */
-	@Inject(method = "useItemOn", at = @At("HEAD"))
+	@Inject(method = "useItemOn", at = @At("HEAD"), cancellable = true)
 	private void kit$rememberStorageClick(
 		LocalPlayer player, InteractionHand hand, BlockHitResult hit, CallbackInfoReturnable<InteractionResult> info
 	) {
 		if (player == null || hit == null) return;
+        if(dev.twob2tkit.automation.ProfessionalPrinter.prepareInteraction(player,hand,hit)){info.setReturnValue(InteractionResult.FAIL);return;}
 		dev.twob2tkit.automation.ProfessionalPrinter.noteInteraction(player,hand,hit);
 		KitClient.noteStorageClick(hit.getBlockPos());
 	}

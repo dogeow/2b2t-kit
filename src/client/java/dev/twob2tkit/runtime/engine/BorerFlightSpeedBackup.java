@@ -33,5 +33,15 @@ final class BorerFlightSpeedBackup {
 			Files.move(temp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 		} finally { Files.deleteIfExists(temp); }
 	}
+    /** Another feature's write-ahead receipt may describe its currently borrowed speed. */
+    static boolean otherReceiptClaims(Path own,double current) throws IOException {
+        Path parent=own.toAbsolutePath().getParent();if(!Files.isDirectory(parent))return false;
+        try(var files=Files.list(parent)){
+            for(Path path:files.filter(p->p.getFileName().toString().endsWith("flight-speed.bak")&&!p.equals(own.toAbsolutePath())).toList()){
+                Entry entry=new BorerFlightSpeedBackup(path).read();
+                if(entry!=null&&current!=entry.original()&&(current==entry.previous()||current==entry.requested()))return true;
+            }
+        }return false;
+    }
 	void clear() throws IOException { Files.deleteIfExists(path); }
 }

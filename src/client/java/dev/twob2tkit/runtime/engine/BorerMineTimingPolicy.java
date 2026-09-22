@@ -2,8 +2,7 @@ package dev.twob2tkit.runtime.engine;
 
 /**
  * 按镐、附魔、急迫、水下、方块记住挖法。
- * 人手点一下就能碎的石头：按住的拍数用破坏进度算出，裂纹满了立刻换下一块，
- * 不要等客户端空气、更不要按住十几拍。
+ * 预计速度只用于统计和重试，不能凭计时或旧记忆提前松手。
  */
 final class BorerMineTimingPolicy {
 	static final int MAX_SAMPLE_TICKS = 200;
@@ -57,27 +56,9 @@ final class BorerMineTimingPolicy {
 		return newTarget || retryDue;
 	}
 
-	/** 本拍是否应按住攻击。 */
+	/** A still-present non-instant block needs continuous input until vanilla removes it. */
 	static boolean shouldHold(Memory remembered, float destroyProgress, int ticksOnThisBlock, boolean crackComplete) {
-		int need = ticksToBreak(destroyProgress);
-		if (need <= 1) return false;
-		Memory m = effective(remembered, ticksOnThisBlock);
-		if (m != null && m.insta) return false;
-		if (tapSized(destroyProgress)) {
-			if (crackComplete) return false;
-			if (m != null && m.holdTicks > 0) need = Math.min(need, m.holdTicks);
-			return ticksOnThisBlock < need;
-		}
-		// 下界金矿、残骸：裂纹满了也按住。松手会 cancel 破坏，然后「确认服务器」空转重试。
-		return true;
-	}
-
-	/** 本格是否挖完可换下一块。 */
-	static boolean doneWithBlock(int ticksOnThisBlock, float destroyProgress, boolean crackComplete) {
-		if (!tapSized(destroyProgress)) return false;
-		if (crackComplete && ticksOnThisBlock >= 1) return true;
-		int need = ticksToBreak(destroyProgress);
-		return ticksOnThisBlock > need;
+		return destroyProgress > 0 && destroyProgress < 1;
 	}
 
 	/** 根据本格观测生成记忆。 */

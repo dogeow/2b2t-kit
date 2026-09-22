@@ -900,7 +900,7 @@ final class BorerAreaPlanTest {
 			double dx = -Math.sin(radians) * forward;
 			double dz = Math.cos(radians) * forward;
 			double dy = (input.up() ? 1 : input.down() ? -1 : 0) * input.speed() * 5;
-			assertTrue(Math.max(Math.abs(dx), Math.abs(dz)) <= 0.25);
+			assertTrue(Math.max(Math.abs(dx), Math.abs(dz)) <= BorerAreaMotion.MAX_HORIZONTAL_SPEED * 15 + 1e-9);
 			assertTrue(Math.abs(dy) <= 1.20);
 			if (dx == 0 && dy == 0 && dz == 0) { stopMomentum(); return; }
 			// Independent physical execution: sample the swept body at 0.025-block intervals.

@@ -6,38 +6,49 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
 import java.util.*;
+import java.util.function.Predicate;
 
 /** Follow cardinal waypoints without cutting wall corners or sprinting past a turn. ORE/loot only. */
 final class BorerWalkRoute {
 	private final DefaultTunnelBorerEngine engine;
 	private List<BlockPos> path = List.of();
 	private BlockPos target;
-	private boolean loot;
+	private boolean loot, home;
 	private int index, stall;
 	private long nextPlan;
 	private double best = Double.POSITIVE_INFINITY;
-	private long progress;
+	private final BorerWaypointProgress progress = new BorerWaypointProgress();
 	BorerWalkRoute(DefaultTunnelBorerEngine engine) { this.engine = engine; }
-	void clear() { path = List.of(); target = null; index = stall = 0; nextPlan = 0; best = Double.POSITIVE_INFINITY; }
-	long progress() { return progress; }
+	void clear() { path = List.of(); target = null; index = stall = 0; nextPlan = 0; best = Double.POSITIVE_INFINITY; progress.resetTarget(); }
+	long progress() { return progress.count(); }
 	boolean walk(Minecraft c, Vec3 goal, boolean pickup) {
+		return walk(c, goal, pickup, false);
+	}
+	boolean walkHome(Minecraft c, BlockPos goal) {
+		return walk(c, Vec3.atBottomCenterOf(goal), false, true);
+	}
+	static Predicate<BlockPos> routeGoal(Vec3 goal, boolean pickup, boolean home) {
+		BlockPos block = BlockPos.containing(goal);
+		return foot -> home ? BorerTrailPolicy.reachedReturnWaypoint(Vec3.atBottomCenterOf(foot), block) : pickup
+			? BorerLootPolicy.inVanillaPickupRange(goal.x - foot.getX() - .5, goal.y - foot.getY(), goal.z - foot.getZ() - .5)
+			: Math.abs(foot.getX() - block.getX()) + Math.abs(foot.getZ() - block.getZ()) <= 1
+				&& block.getY() - foot.getY() >= -1 && block.getY() - foot.getY() <= 2;
+	}
+	private boolean walk(Minecraft c, Vec3 goal, boolean pickup, boolean returning) {
 		var p = c.player;
 		if (BorerFlight.isFlying(p)) return false;
 		BlockPos block = BlockPos.containing(goal);
-		if (!block.equals(target) || loot != pickup) { clear(); target = block; loot = pickup; }
+		if (!block.equals(target) || loot != pickup || home != returning) { clear(); target = block; loot = pickup; home = returning; }
 		long now = c.level.getGameTime();
 		if (path.isEmpty()) {
 			if (!p.onGround() || now < nextPlan) return false;
 			nextPlan = now + 10;
 			var w = world(c);
-			var route = BorerWalkPath.find(w, p.blockPosition(), foot -> pickup
-				? BorerLootPolicy.inVanillaPickupRange(goal.x - foot.getX() - .5, goal.y - foot.getY(), goal.z - foot.getZ() - .5)
-				: Math.abs(foot.getX() - block.getX()) + Math.abs(foot.getZ() - block.getZ()) <= 1
-					&& block.getY() - foot.getY() >= -1 && block.getY() - foot.getY() <= 2,
-				12, 640, Math.min(12, BorerFallPolicy.maxSafeFallBlocks(BorerFlight.meteorNoFallActive())), BorerFlight.canStepOneBlock(p));
+			var route = BorerWalkPath.find(w, p.blockPosition(), routeGoal(goal, pickup, returning),
+				12, 640, Math.min(returning ? 3 : 12, BorerFallPolicy.maxSafeFallBlocks(BorerFlight.meteorNoFallActive())), BorerFlight.canStepOneBlock(p));
 			if (route.nodes().size() <= 1) return false;
 			path = route.nodes(); index = 0; stall = 0; best = Double.POSITIVE_INFINITY;
-			engine.fileLog(c, "ore-walk-route kind=" + (pickup ? "loot" : "ore") + " goal=" + block + " steps=" + path.size() + " expanded=" + route.expanded());
+			engine.fileLog(c, "ore-walk-route kind=" + (returning ? "home" : pickup ? "loot" : "ore") + " goal=" + block + " steps=" + path.size() + " expanded=" + route.expanded());
 		}
 		engine.releaseMine(c);
 		c.options.keyDown.setDown(false); c.options.keyLeft.setDown(false); c.options.keyRight.setDown(false);
@@ -46,7 +57,7 @@ final class BorerWalkRoute {
 		while (index < path.size()) {
 			BlockPos node = path.get(index);
 			if (!BorerCenterPolicy.reachedWaypoint(node.getX() + .5 - p.getX(), node.getY() - p.getY(), node.getZ() + .5 - p.getZ())) break;
-			if (index > 0) progress++;
+			if (index > 0 && progress.visit(node)) engine.stepCycle.madeProgress();
 			index++; stall = 0; best = Double.POSITIVE_INFINITY;
 		}
 		if (index >= path.size()) { path = List.of(); c.options.keyUp.setDown(false); return false; }
@@ -59,13 +70,14 @@ final class BorerWalkRoute {
 		// Validate the swept body, not a single ray through the middle of a doorway.
 		var input = BorerCenterPolicy.walkInput(dx, dz);
 		double dy = node.getY() > p.getY() + .5 && BorerFlight.canStepOneBlock(p) ? 1 : 0;
+		if (dy > 0) engine.stepCycle.begin(node.below(), p.getX(), p.getY(), p.getZ());
 		if (!c.level.noCollision(p, p.getBoundingBox().move(input.probeX(), dy, input.probeZ()))) {
 			invalidate(c, "body-blocked"); return false;
 		}
 		RotationAim.apply(p, input.yaw(), 0);
 		engine.rememberOreMove(p);
 		c.options.keyUp.setDown(input.forward()); engine.attemptedForward = input.forward();
-		engine.overlay(c, "沿已通路线" + (pickup ? "拾取矿物" : "接近矿点") + " · " + index + "/" + (path.size() - 1), 0x55FFFF);
+		engine.overlay(c, "沿已通路线" + (returning ? "返回" : pickup ? "拾取矿物" : "接近矿点") + " · " + index + "/" + (path.size() - 1), 0x55FFFF);
 		return true;
 	}
 	private void invalidate(Minecraft c, String why) {
@@ -76,6 +88,7 @@ final class BorerWalkRoute {
 		Map<BlockPos, Boolean> clear = new HashMap<>(), floor = new HashMap<>();
 		return new BorerWalkPath.World() {
 			public boolean clear(BlockPos b) { return clear.computeIfAbsent(b, p -> c.level.hasChunkAt(p)
+				&& !engine.miningConfirmation.pending(c.level, p)
 				&& p.getY() >= c.level.getMinY() && p.getY() < c.level.getMaxY()
 				&& c.level.getBlockState(p).getFluidState().isEmpty()
 				&& !c.level.getBlockState(p).is(Blocks.FIRE) && !c.level.getBlockState(p).is(Blocks.SOUL_FIRE)

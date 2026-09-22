@@ -1,6 +1,7 @@
 package dev.twob2tkit.runtime.engine;
 
 import net.minecraft.core.Direction;
+import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -11,6 +12,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 锁住：1×2 两边都是石头时不要左右横移；矿在附近更高处不要走进去再跑出来。
  */
 final class BorerCenterPolicyTest {
+	@Test
+	void pitEdgeDescentUsesOpenBodyLaneAndStillRejectsTheSideWall() {
+		// Live stall: body over the east lip, supported by the west column.
+		BlockPos body = new BlockPos(761042, -50, 797940);
+		BlockPos support = new BlockPos(761041, -50, 797940);
+		BlockPos front = BorerCenterPolicy.navigationColumn(body, support, true).north();
+		assertEquals(new BlockPos(761042, -50, 797939), front);
+		assertFalse(BorerCenterPolicy.isOffCorridorWall(
+			body.getX(), body.getZ(), front.getX(), front.getZ(), 0, -1, 1, 0, 1));
+		// The solid block beside the existing one-block drop must stay protected.
+		BlockPos sideFloor = support.north().below();
+		assertTrue(BorerCenterPolicy.isOffCorridorWall(
+			body.getX(), body.getZ(), sideFloor.getX(), sideFloor.getZ(), 0, -1, 1, 0, 1));
+		assertTrue(BorerStairPolicy.shouldWalkDown(1));
+		assertFalse(BorerStairPolicy.shouldCutFloor(1));
+		assertFalse(BorerStairPolicy.shouldWalkDown(-1));
+	}
 	@Test
 	void scrapingLeftWallWhenFacingEastStrafesSouth() {
 		double side = BorerCenterPolicy.sideOffset(382799.700, 311146.284, 382799, 311146, 0, 1);

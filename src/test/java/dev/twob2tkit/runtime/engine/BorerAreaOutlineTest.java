@@ -9,7 +9,12 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BorerAreaOutlineTest {
+	@org.junit.jupiter.api.io.TempDir static java.nio.file.Path gameDir;
 	@org.junit.jupiter.api.BeforeAll static void bootstrapMinecraftRegistries() {
+		var provider=(net.fabricmc.loader.impl.game.GameProvider)Proxy.newProxyInstance(
+			net.fabricmc.loader.impl.game.GameProvider.class.getClassLoader(),new Class<?>[]{net.fabricmc.loader.impl.game.GameProvider.class},
+			(proxy,method,args)-> {if(method.getName().equals("getLaunchDirectory"))return gameDir;throw new AssertionError(method.getName());});
+		net.fabricmc.loader.impl.FabricLoaderImpl.INSTANCE.setGameProvider(provider);
 		net.minecraft.SharedConstants.tryDetectVersion(); net.minecraft.server.Bootstrap.bootStrap();
 	}
 	@Test void savedAreaDoesNotShowByItselfAfterReloadOrRestart() {

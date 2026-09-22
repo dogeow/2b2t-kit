@@ -56,6 +56,8 @@ final class ClickGuiPages {
 			p.slider("前探（格）", "检查前方通道。", 1, 5, () -> Math.max(1, c.borerLookAhead), v -> { c.borerLookAhead = v; c.save(); });
 		}
 		p.section("准备与安全");
+		p.note("区域挖：开挖前开启 Meteor“瞬时破坏”即可接管连续点挖；运行中暂停其后台循环，结束后自动恢复，无需再次手动开启。");
+		p.liveLine(()->b==null?"":b.preparationSummary());
 		p.bool("轴向瞄准", "仅沿轴向处理眼前通道。", () -> c.borerAxisAim, v -> { c.borerAxisAim = v; c.save(); });
 		p.action("挖矿物资清单", "检查工具、食物、封水方块等。", () -> UiFeature.CHECKLIST.open(p));
 		p.action("安全与反击", "液体、怪物与卸货选项。", () -> miningSafety(p, c));
@@ -67,6 +69,9 @@ final class ClickGuiPages {
 		var b = KitClient.borer();
 		var p = new KitFormScreen(parent, "挖矿安全与物资", "相关任务运行时先停止再修改；不会因编辑而改变正在执行的区域。")
 			.bind(c).id("mining-safety").lockWhen(() -> b != null && b.isActive());
+		p.section("挖矿准备");
+		p.liveLine(()->b==null?"":b.preparationSummary());
+		p.note("水桶用于主世界应急；下界应准备抗火药水。建议带备用镐，区域井底缺光时会尝试补火把。");
 		p.section("液体与撤离");
 		p.bool("尝试封堵液体", "仅在引擎判断可安全封堵时处理；不可封的水或岩浆保留保护。", () -> c.borerSealLiquids, v -> { c.borerSealLiquids = v; c.save(); });
 		p.bool("遇岩浆尝试转向", "用于支持转向的掘进模式。", () -> c.borerTurnAroundLava, v -> { c.borerTurnAroundLava = v; c.save(); });
@@ -80,6 +85,8 @@ final class ClickGuiPages {
 		p.section("区域挖 · 背包管理");
 		p.bool("快满时丢弃普通石料", "仅石料白名单，到安全的区域外丢弃，保留矿物和备用建材。", () -> c.borerAreaDiscardStone, v -> { c.borerAreaDiscardStone = v; c.save(); });
 		p.bool("快满时自动存箱", "优先可达工地箱；不足时尝试放备用箱。不会取走箱内物品。", () -> c.borerAreaStoreDrops, v -> { c.borerAreaStoreDrops = v; c.save(); });
+		p.note("自动存箱可使用可达的工地箱；需要新放箱子时请带普通箱子，建议至少两个。");
+		p.note("默认存入普通采集物；食物、火把、装备和应急物品保留。原木、工作台、封堵方块按“出门挖矿”清单数量留够，余量存箱。");
 		p.action("检查挖矿物资", "打开行动清单。", () -> UiFeature.CHECKLIST.open(p));
 		open(parent, p);
 	}
@@ -87,6 +94,8 @@ final class ClickGuiPages {
 	static void guard(Screen parent, KitConfig c) {
 		var p = new KitFormScreen(parent, "自动保护", "这里配置保护策略；不主动启动采矿或巡航。").bind(c).id("guard");
         p.action("独立防护："+(dev.twob2tkit.automation.AutomationBridge.guardArmed()?"开":"关"), "空闲也反击主动威胁；按移动键或空格立即关闭并交还控制。", () -> {dev.twob2tkit.automation.AutomationBridge.toggleGuard(mc());guard(parent,c);});
+        if(dev.twob2tkit.combat.EmergencyExit.held(mc()))p.action("我已回来，解除安全离线锁", "生命恢复到 9 颗心后手动确认；不会自动启动任务。", () -> {dev.twob2tkit.combat.EmergencyExit.acknowledge(mc());guard(parent,c);});
+        p.note("托管会提前进食；受伤后等生命恢复至 9.5 心再继续工作。");
         p.note("紧急停止会关闭独立防护。换维度或离开当前区域 512 格后需要重新开启。");
 		p.bool("遇袭协调 Meteor 保护", "沿用当前自动保护逻辑。", () -> c.autoProtectOnHit, v -> { c.autoProtectOnHit = v; c.save(); });
 		p.bool("恶魂防护", "独立恶魂防护；具体射程和反弹设置见自动打猪人。", () -> c.ghastGuardEnabled, v -> { c.ghastGuardEnabled = v; c.save(); });
@@ -104,7 +113,7 @@ final class ClickGuiPages {
 		p.bool("背包与工作台配方书增强", "使用本地相关配方。", () -> c.recipeBookEnhancementEnabled, v -> LocalRecipeBookInjector.setEnhancementEnabled(mc(), v));
 		p.action("按键绑定", "查看功能键和紧急停止键。", () -> UiFeature.KEYBINDS.open(p));
 		p.action("运行与兼容信息", "主包、引擎和依赖信息。", () -> diagnostics(p, c));
-		p.action("检查并加载运行引擎", "只热加载运行包；UI 主包变化仍需重启。", () -> { var r = KitClient.reloadBorerRuntime(mc(), false); p.showNotice(r.message(), r.success() ? 0x77DDCC : 0xFF7777); });
+		p.action("检查并加载运行引擎", "更新挖矿、防护、施工寻路与走位；保留投影任务。界面和按键改动仍需重启。", () -> { var r = KitClient.reloadBorerRuntime(mc(), false); p.showNotice(r.message(), r.success() ? 0x77DDCC : 0xFF7777); });
 		p.danger("恢复内置引擎", "停止相关动作并恢复主包内置引擎，不删除工程。", () -> { var r = KitClient.reloadBorerRuntime(mc(), true); p.showNotice(r.message(), r.success() ? 0x77DDCC : 0xFF7777); });
 		p.danger("重置已看配方提示", "仅重置配方提示记录，不清空收藏、工程或物品。", () -> { c.seenRecipeHints.clear(); c.save(); });
 		open(parent, p);
@@ -124,15 +133,15 @@ final class ClickGuiPages {
 
 	static void routes(Screen parent, KitConfig c) {
 		var b = KitClient.borer();
-		var p = new KitFormScreen(parent, "挖矿路线", "路线显示与自动返回分开；清空路线需要确认。").bind(c).id("mining-routes");
-		p.liveNote(() -> b == null ? "运行引擎未就绪" : "已记录路点 " + b.trailLength() + "；" + b.status());
+		var p = new KitFormScreen(parent, "挖矿路线", "暂停、继续和重启保留同一行程；沿路回家返回该行程的起点。").bind(c).id("mining-routes");
+		p.liveNote(() -> b == null ? "运行引擎未就绪" : b.trailOriginLabel() + " · " + b.trailLength() + " 个路点；" + b.status());
 		p.action("显示 / 隐藏回家箭头", "只显示，不自动移动。", () -> { if (b != null) b.toggleHomeRoute(mc()); });
 		p.action("沿路回家", "按现有路点返回，不清除工程进度。", () -> { if (b != null) { KitClient.goBorerHome(mc()); if (b.isGoingHome()) mc().setScreen(null); } });
 		p.action("回地狱门", "使用已记录的地狱门路线。", () -> KitClient.goNetherPortal(mc()));
-		p.danger("清空回家路点", "清除回家路线，仅保留地狱门记录；不删除区域工程。", () -> {
+		p.danger("开始新的挖矿行程", "先备份完整旧路线，再把当前位置设为新起点；不会立即开始挖矿。", () -> {
 			if (b == null) return;
-			if (b.isActive()) { p.showNotice("请先停止当前任务再清空路线", 0xFF7777); return; }
-			b.clearTrailKeepPortal(); p.showNotice("已清空回家路点，地狱门记录保留", 0xFFFF55);
+			if (b.isActive()) { p.showNotice("请先停止当前任务再开始新行程", 0xFF7777); return; }
+			b.clearTrailKeepPortal(); p.showNotice(b.status(), 0xFFFF55);
 		});
 		open(parent, p);
 	}
@@ -752,9 +761,11 @@ final class ClickGuiPages {
 
 	/** 最近死亡点操作。 */
 	static void death(Screen parent, KitConfig config, KitController controller) {
+        dev.twob2tkit.combat.ServerDeathSync.sync(mc(),config);
 		KitFormScreen panel = new KitFormScreen(parent, "最近死亡点", deathSummary(config));
 		panel.action("自动返回死亡点上方", "升到安全高度，到达后不离线。", () -> {
 			if (!config.hasDeathPoint) return;
+            if(!dev.twob2tkit.combat.ServerDeathSync.currentScope(mc(),config)){panel.showNotice("这是其他服务器或角色的记录",0xFF7777);return;}
 			if (mc().level == null || !mc().level.dimension().identifier().toString().equals(config.deathDimension)) { panel.showNotice("死亡点在另一维度，请先切换维度", 0xFF7777); return; }
 			double safeY = Math.max(config.cruiseY, config.deathY + 32.0);
 			controller.startDeathRecovery(mc(), config.deathX, config.deathZ, safeY);
@@ -762,6 +773,7 @@ final class ClickGuiPages {
 		});
 		panel.action("设为巡航目标", "返回后可开始巡航。", () -> {
 			if (!config.hasDeathPoint) return;
+            if(!dev.twob2tkit.combat.ServerDeathSync.currentScope(mc(),config)){panel.showNotice("这是其他服务器或角色的记录",0xFF7777);return;}
 			if (mc().level == null || !mc().level.dimension().identifier().toString().equals(config.deathDimension)) { panel.showNotice("死亡点在另一维度，请先切换维度", 0xFF7777); return; }
 			config.targetX = config.deathX;
 			config.targetZ = config.deathZ;
@@ -781,22 +793,12 @@ final class ClickGuiPages {
 
 	/** 死亡点摘要文案。 */
 	private static String deathSummary(KitConfig config) {
-		if (!config.hasDeathPoint) return "还没有记录。被打和死亡会写入 config/twob2tkit/combat.log。";
-		String time = java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm:ss")
-			.withZone(java.time.ZoneId.systemDefault())
-			.format(java.time.Instant.ofEpochMilli(config.deathTimeEpochMillis));
-		String hit = config.lastAttackTimeEpochMillis <= 0 ? ""
-			: " 上次被打 " + java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
-			.withZone(java.time.ZoneId.systemDefault())
-			.format(java.time.Instant.ofEpochMilli(config.lastAttackTimeEpochMillis))
-			+ " " + config.lastAttacker;
-		return String.format(Locale.ROOT, "%s  %s  凶手:%s  %s%s",
-			time,
-			config.deathActivity.isBlank() ? "空闲" : config.deathActivity,
-			config.deathKiller.isBlank() ? "未知" : config.deathKiller,
-			config.deathMessage.isBlank() ? String.format(Locale.ROOT, "X %.0f Y %.0f Z %.0f", config.deathX, config.deathY, config.deathZ) : config.deathMessage,
-			hit);
-	}
+        if(!config.hasDeathPoint)return "还没有记录到当前死亡点。";
+        String origin=config.deathSource.equals("server")?"服务器同步":config.deathSource.equals("client")?"在线记录":"旧版记录";
+        String dimension=switch(config.deathDimension){case "minecraft:overworld"->"主世界";case "minecraft:the_nether"->"下界";case "minecraft:the_end"->"末地";default->config.deathDimension;};
+        String time=config.deathTimeEpochMillis>0?java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm:ss").withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.ofEpochMilli(config.deathTimeEpochMillis)):"死亡时间未提供";
+        return String.format(Locale.ROOT,"%s · %s · X %.0f Y %.0f Z %.0f · %s",origin,dimension,config.deathX,config.deathY,config.deathZ,time);
+    }
 
 	/** 区域断面快捷 chip。 */
 	private static KitFormScreen.Chip chipAreaSize(KitConfig config, String label, int w, int h) {

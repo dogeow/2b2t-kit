@@ -6,8 +6,11 @@ public final class BuildDeparturePolicy {
     private int emptySince=-1;
     public void reset(){emptySince=-1;}
     public boolean observe(int tick,boolean queueSettled,boolean localWork){
+        return observe(tick,queueSettled,localWork,QUIET_TICKS);
+    }
+    public boolean observe(int tick,boolean queueSettled,boolean localWork,int quietTicks){
         if(!queueSettled||localWork){reset();return false;}
         if(emptySince<0||tick<emptySince)emptySince=tick;
-        return tick-emptySince>=QUIET_TICKS;
+        return tick-emptySince>=quietTicks;
     }
 }

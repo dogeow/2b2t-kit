@@ -1,6 +1,6 @@
 # Kit 技能库 0.1
 
-独立的 Voyager 风格技能层，接入现有 Minecraft Kit 的文件接口。无需更换游戏主包，不启动额外游戏角色，不修改主任务的事件监督器。仅使用 Python 标准库。
+独立的 Voyager 风格技能层，接入现有 Minecraft Kit 的文件接口。无需更换游戏主包，不启动额外游戏角色，不依赖模型故障反馈服务。仅使用 Python 标准库。
 
 ## 游戏内查看
 
@@ -17,7 +17,7 @@
 - AI 可通过 JSON 提交新技能候选；导入的历史/AI 经验不自动充当原生成功证据。
 - 失败、人工接管、未完整观察到的动作保留为经验；人工接管不会被判成技能代码失败。
 - 本地检索最多 5 个相关技能；准备目标规划上下文时技能内容最多 8000 字符。日常记录、检索和验收不调用模型，不消耗模型 Token。
-- 可消费主任务事件监督器的 `events.jsonl`，使用独立读取游标，不改它的代码或数据。
+- 可按需读取本地事件日志，使用独立读取游标；默认只记录 Kit 状态和动作回包，不订阅模型诊断队列。
 
 ## 和 Voyager 的关系
 
@@ -29,7 +29,7 @@
 python3 install_observer.py
 python3 skillctl.py inspect
 python3 skillctl.py watch --seconds 30
-python3 skillctl.py watch --events /实际监督器目录/events.jsonl
+python3 skillctl.py watch --events /自行指定的本地日志/events.jsonl
 python3 skillctl.py status
 python3 skillctl.py retrieve '采集原木'
 python3 skillctl.py retrieve '打印投影' --candidates
@@ -38,7 +38,7 @@ python3 skillctl.py learn 执行经验.json
 python3 skillctl.py compile collect_logs --parameters '{"item":"minecraft:oak_log","target_count":16,"seconds":60}'
 ```
 
-`install_observer.py` 安装独立的 macOS 登录启动服务 `local.sam.minecraft.skill-memory`，自动读取 Kit 心跳及现有监督器的事件/诊断日志；只读游戏、不调用模型。
+`install_observer.py` 安装独立的 macOS 登录启动服务 `local.sam.minecraft.skill-memory`，只读取 Kit 心跳和动作回包，不调用模型。旧 Spark/Codex 自动故障反馈已移除，安装器不会重建它或订阅其日志。
 
 `watch` 不带秒数时持续观察；Ctrl+C 或向该观察器发送 SIGTERM 可停止。使用独立状态库和进程锁，不启动模型。
 
@@ -51,7 +51,7 @@ from kit_skills.learning import propose_from_ai, learn_episode
 
 memory = SkillManager('/自己的持久目录/skills')
 prompt = goal_request(memory, '采集原木', kit_current_state)
-# 由现有监督器把 prompt 交给它选定的模型；本模块不创建新 agent。
+# 可由调用方手动把 prompt 交给自行选择的模型；本模块不会自动发起模型调用。
 # plan = existing_model(prompt)
 # checked = compile_plan(memory, plan)
 # 将 checked 的步骤交给现有 Kit 控制器执行，并逐步验证 verify_after。

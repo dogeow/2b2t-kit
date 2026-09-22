@@ -38,10 +38,13 @@ final class BorerCargoTrip {
 			if (c != null) return c;
 			stage = stage == Stage.RISE ? Stage.OUT : Stage.BACK;
 		} else if (stage == Stage.OUT || stage == Stage.BACK) {
-			c = vertical(w, p, travelY); if (c != null) return c;
+			c = maintainHeight(w, p, travelY); if (c != null) return c;
 			double x = stage == Stage.OUT ? service.x() : origin.getX() + .5;
 			double z = stage == Stage.OUT ? service.z() : origin.getZ() + .5;
 			boolean zBeforeX = stage == Stage.OUT ? zFirst : !zFirst;
+			boolean needX=Math.abs(p.x()-x)>CENTER,needZ=Math.abs(p.z()-z)>CENTER;
+			boolean nextZ=zBeforeX&&needZ||!needX&&needZ;
+			if(nextZ&&Math.abs(p.vx())>=.025||!nextZ&&needX&&Math.abs(p.vz())>=.025)return Command.waitAt(p,"卸货转弯前刹停");
 			if (zBeforeX && Math.abs(p.z() - z) > CENTER) return move(w, p, Action.Z, p.x(), p.y(), z);
 			if (Math.abs(p.x() - x) > CENTER) return move(w, p, Action.X, x, p.y(), p.z());
 			if (Math.abs(p.z() - z) > CENTER) return move(w, p, Action.Z, p.x(), p.y(), z);
@@ -53,17 +56,22 @@ final class BorerCargoTrip {
 		}
 		return Command.waitAt(p, "卸货路线：" + stage);
 	}
+	private Command maintainHeight(World w,Pose p,double y){
+		if(Math.abs(p.y()-y)<=HEIGHT)return Math.abs(p.vy())<.085?null:Command.waitAt(p,"卸货路线稳定高度");
+		return move(w,p,y>p.y()?Action.UP:Action.DOWN,p.x(),y,p.z());
+	}
+
 	private Command vertical(World w, Pose p, double y) {
 		if (Math.abs(p.y() - y) <= HEIGHT) return p.settled() ? null : Command.waitAt(p, "卸货路线稳定高度");
 		return move(w, p, y > p.y() ? Action.UP : Action.DOWN, p.x(), y, p.z());
 	}
 	private Command move(World w, Pose p, Action action, double x, double y, double z) {
-		double nx = p.x() + Math.copySign(Math.min(.25, Math.abs(x - p.x())), x - p.x());
+		double nx = p.x() + Math.copySign(BorerCargoMotion.probe(x - p.x(), p.vx()), x - p.x());
 		double ny = p.y() + Math.copySign(Math.min(1.2, Math.abs(y - p.y())), y - p.y());
-		double nz = p.z() + Math.copySign(Math.min(.25, Math.abs(z - p.z())), z - p.z());
+		double nz = p.z() + Math.copySign(BorerCargoMotion.probe(z - p.z(), p.vz()), z - p.z());
 		for (int by = (int)Math.floor(Math.min(p.y(), ny) + .001); by <= (int)Math.floor(Math.max(p.y(), ny) + 1.799); by++)
-			for (int bx = (int)Math.floor(Math.min(p.x(), nx) - .299); bx <= (int)Math.floor(Math.max(p.x(), nx) + .299); bx++)
-				for (int bz = (int)Math.floor(Math.min(p.z(), nz) - .299); bz <= (int)Math.floor(Math.max(p.z(), nz) + .299); bz++) {
+			for (int bx = (int)Math.floor(Math.min(Math.min(p.x(), nx),p.x()+p.vx()) - .299); bx <= (int)Math.floor(Math.max(Math.max(p.x(), nx),p.x()+p.vx()) + .299); bx++)
+				for (int bz = (int)Math.floor(Math.min(Math.min(p.z(), nz),p.z()+p.vz()) - .299); bz <= (int)Math.floor(Math.max(Math.max(p.z(), nz),p.z()+p.vz()) + .299); bz++) {
 					BlockPos b = new BlockPos(bx, by, bz); Cell cell = w.cell(b);
 					if (cell == Cell.UNLOADED) return Command.waitAt(p, "卸货路线等待区块加载");
 					if (cell == Cell.AIR) continue;

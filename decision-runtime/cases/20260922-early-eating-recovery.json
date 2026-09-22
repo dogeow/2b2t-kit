@@ -1,0 +1,23 @@
+{
+  "observed_version": "1.9.59",
+  "prepared_fix_version": "1.9.60",
+  "evidence": {
+    "first_skeleton_killed_confirmed": "2026-09-22 08:04:28",
+    "health_after_first_hit": 16.5774,
+    "hunger": 17,
+    "second_hit_trigger_health": 13.8873,
+    "emergency_ascent": 11.796012329854292,
+    "real_low_health_hold_timestamp": 1790035495302
+  },
+  "cause": "AutoEat was active with unchanged default thresholds. Hunger 17 and health 16.6 did not satisfy hunger <=16 or health <=10. Construction resumed after the first attacker died before health regenerated.",
+  "changes": [
+    "Scoped early eating at health/hunger 19, Any mode, inventory search",
+    "Restore previous AutoEat values and retain recovery receipt",
+    "After injury below 18, hold normal work until health reaches 19; keep combat priority",
+    "Preserve the real low-health hold and prohibit automatic reconnect"
+  ],
+  "tests_passed": 907,
+  "live_fix_validation_pending": true,
+  "latest_verified_projection_matches": 2413,
+  "projection_total": 2880
+}

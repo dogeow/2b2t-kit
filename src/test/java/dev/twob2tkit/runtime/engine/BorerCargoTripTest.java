@@ -18,11 +18,11 @@ class BorerCargoTripTest {
 				assertEquals(-3.5, p.x(), .085); assertEquals(66.25, p.y(), .10);
 				serviced = true; trip.returnToWork();
 			}
-			var input = BorerAreaMotion.of(c, p, yaw); yaw = input.yaw();
+			var input = BorerCargoMotion.of(c, p, yaw); yaw = input.yaw();
 			double a = Math.toRadians(yaw), dx = input.forward() ? -Math.sin(a) * input.speed() * 10 : 0;
 			double dz = input.forward() ? Math.cos(a) * input.speed() * 10 : 0;
 			double dy = (input.up() ? 1 : input.down() ? -1 : 0) * input.speed() * 5;
-			assertTrue(Math.abs(dx) <= .25 && Math.abs(dz) <= .25 && Math.abs(dy) <= 1.2);
+			assertTrue(Math.abs(dx) <= 1.2 && Math.abs(dz) <= 1.2 && Math.abs(dy) <= 1.2);
 			p = new Pose(p.x() + dx, p.y() + dy, p.z() + dz, dx, dy, dz);
 		}
 		assertTrue(serviced); assertEquals(BorerCargoTrip.Stage.DONE, trip.stage());

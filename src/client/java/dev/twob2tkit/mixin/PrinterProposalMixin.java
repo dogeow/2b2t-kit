@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class PrinterProposalMixin implements dev.twob2tkit.automation.PrinterGateInstalled {
     @Inject(method="onGameTick",at=@At("HEAD"),cancellable=true,remap=false)
     private void kit$gateProposal(CallbackInfoReturnable<Boolean> info){
-        if(ProfessionalPrinter.owned()&&!ProfessionalPrinter.allowNativeProposal(this))info.setReturnValue(false);
+        if(!ProfessionalPrinter.allowNativeProposal(this))info.setReturnValue(false);
     }
     @Inject(method="onGameTick",at=@At("RETURN"),remap=false)
     private void kit$proposalQueued(CallbackInfoReturnable<Boolean> info){

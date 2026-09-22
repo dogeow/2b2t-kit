@@ -23,7 +23,7 @@ class ConfirmedPlacementPacerTest {
     @Test void conservativeAndComplexPlacementsKeepTwentyTickCadence(){
         var p=new ConfirmedPlacementPacer(false);p.queued(1,true);p.sent(5);p.acknowledge();
         assertFalse(p.acquire(20,false,true));assertTrue(p.acquire(21,false,true));
-        p=new ConfirmedPlacementPacer();p.queued(7,false);assertFalse(p.acquire(26,false,true));assertTrue(p.acquire(27,false,true));
+        p=new ConfirmedPlacementPacer();p.queued(7,false);assertFalse(p.acquire(27,false,true));p.sent(10);p.acknowledge();assertFalse(p.acquire(26,false,true));assertTrue(p.acquire(27,false,true));
     }
     @Test void pauseAndBusyNativeQueueBothBlockNewWork(){
         var p=new ConfirmedPlacementPacer();assertFalse(p.acquire(0,true,true));assertFalse(p.acquire(0,false,false));assertTrue(p.acquire(0,false,true));

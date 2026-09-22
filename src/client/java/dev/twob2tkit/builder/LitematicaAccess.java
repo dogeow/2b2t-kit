@@ -69,6 +69,21 @@ public final class LitematicaAccess {
         }catch(ReflectiveOperationException e){throw new IllegalStateException("无法读取投影范围："+e.getMessage(),e);}
     }
 
+    /** Client terrain readiness is not schematic readiness; an unfilled schematic chunk reads as air. */
+    public static String loadingReason(BuildSelection selection){
+        try{
+            Object world=schematicWorld();if(world==null)return "图纸世界尚未建立";
+            Object provider=world.getClass().getMethod("getChunkProvider").invoke(world);
+            var stateMethod=provider.getClass().getMethod("getChunkState",int.class,int.class);
+            var seen=new java.util.HashSet<Long>();
+            for(var box:selection.boxes())for(int x=box.min().getX()>>4;x<=box.max().getX()>>4;x++)for(int z=box.min().getZ()>>4;z<=box.max().getZ()>>4;z++){
+                if(!seen.add(net.minecraft.world.level.ChunkPos.pack(x,z)))continue;
+                String state=((Enum<?>)stateMethod.invoke(provider,x,z)).name();
+                if(!SchematicLoadPolicy.ready(state))return "等待图纸区块 "+x+","+z+"："+state;
+            }return "";
+        }catch(ReflectiveOperationException | ClassCastException e){throw new IllegalStateException("无法确认图纸区块已填充",e);}
+    }
+
 	/** 最近一次反射错误。 */
 	public static String lastError() {
 		return lastError;

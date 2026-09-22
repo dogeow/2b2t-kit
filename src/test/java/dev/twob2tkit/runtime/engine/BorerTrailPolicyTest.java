@@ -1,7 +1,11 @@
 package dev.twob2tkit.runtime.engine;
 
 import org.junit.jupiter.api.Test;
+import java.util.List;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10,6 +14,37 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 来源：2026-08-21 382879 -55 311290，「西北483370格 剩1路点」指着深板岩墙。
  */
 final class BorerTrailPolicyTest {
+	@Test
+	void returnLeavesTheCurrentWaypointEvenWhenThePreviousPointIsFartherFromHome() {
+		var points = List.of(new BlockPos(761071, -41, 797950),
+			new BlockPos(761067, -59, 797949), new BlockPos(761069, -59, 797950),
+			new BlockPos(761071, -59, 797951));
+		assertTrue(points.get(2).distSqr(points.getFirst()) > points.get(3).distSqr(points.getFirst()));
+		int index = BorerTrailPolicy.advanceReturnIndex(points, 3,
+			new Vec3(761071.7, -59, 797951.4));
+		assertEquals(2, index);
+		assertEquals(1, BorerTrailPolicy.advanceReturnIndex(points, index,
+			Vec3.atBottomCenterOf(points.get(2))));
+	}
+
+	@Test
+	void reverseRouteCanTraverseAHairpinWithoutOscillatingOrSkippingUnreachedPoints() {
+		var points = List.of(new BlockPos(0, 0, 0), new BlockPos(0, 0, 3),
+			new BlockPos(3, 0, 3), new BlockPos(3, 0, 0));
+		int index = 3;
+		for (int i = 3; i >= 0; i--) {
+			index = BorerTrailPolicy.advanceReturnIndex(points, index, Vec3.atBottomCenterOf(points.get(i)));
+			assertEquals(Math.max(0, i - 1), index);
+			assertEquals(index, BorerTrailPolicy.advanceReturnIndex(points, index,
+				Vec3.atBottomCenterOf(points.get(i))));
+		}
+	}
+
+	@Test
+	void returnDoesNotSkipAWaypointOnAnotherFloor() {
+		var points = List.of(new BlockPos(0, 0, 0), new BlockPos(0, 3, 0));
+		assertEquals(1, BorerTrailPolicy.advanceReturnIndex(points, 1, new Vec3(.5, 0, .5)));
+	}
 	@Test
 	void adjacentTunnelStepsAreCorridor() {
 		assertTrue(BorerTrailPolicy.isCorridorSegment(1));

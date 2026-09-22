@@ -5,6 +5,7 @@
   "client": [
     "AdvancementsScreenMixin",
     "BorerCombatCameraMixin",
+    "ClientHealthSafetyMixin",
     "ClientLoginSeedMixin",
     "CraftingRecipeDisplayMixin",
     "FishingHookBiteAccess",
@@ -20,7 +21,10 @@
     "MultiPlayerGameModeMixin",
     "RecipeBookFilterButtonMixin",
     "ConcreteBlockUpdatesMixin",
-    "PrinterProposalMixin"
+    "PrinterProposalMixin",
+    "InventoryProfilesCraftingGuardMixin",
+    "PrinterCandidateMixin",
+    "PrinterToolPreparationMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -38,6 +38,11 @@ final class BorerMiningPolicy {
 		return oreInReach && !hitIsExpected && hitIsMineable;
 	}
 
+	/** A verified first obstruction immediately beside a reachable ore is necessary clearance. */
+	static boolean allowAdjacentOreClearance(boolean oreInReach, int distanceToOre, boolean firstHitMatches, boolean safeToMine) {
+		return oreInReach && distanceToOre == 1 && firstHitMatches && safeToMine;
+	}
+
 	/**
 	 * 轴向瞄准没命中、转到矿的可见面就能打到：对着可见面挖，不要继续轴向空挥。
 	 */

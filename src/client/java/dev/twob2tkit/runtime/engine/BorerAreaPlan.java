@@ -29,6 +29,10 @@ final class BorerAreaPlan {
 	private final BlockPos min, max, first;
 	private final boolean horizontal;
 	private BlockPos horizontalWalking;
+	private boolean miningAdvance;
+	private BlockPos streamingColumn;
+	private long streamingObservedAt = Long.MIN_VALUE;
+	private int streamingAirSamples;
 	private int horizontalFinishWait;
 	private BlockPos column, pending;
 	private Phase phase = Phase.SURVEY;
@@ -58,6 +62,7 @@ final class BorerAreaPlan {
 		return true;
 	}
 	void resumeAfterStorage(Pose p) {
+		miningAdvance = false;
 		BlockPos here = new BlockPos((int)Math.floor(p.x), 0, (int)Math.floor(p.z));
 		if (horizontal && containsColumn(key(here)) && !skipped.contains(key(here)) && !bedrockFloors.containsKey(key(here))) {
 			column = new BlockPos((int)Math.floor(p.x), 0, (int)Math.floor(p.z));
@@ -101,6 +106,48 @@ final class BorerAreaPlan {
 
 	Phase phase() { return phase; }
 	boolean horizontal() { return horizontal; }
+	BlockPos miningTravelGoal() { return phase == Phase.HORIZONTAL ? (horizontalWalking != null ? horizontalWalking : pending != null ? pending : column) : null; }
+	void miningAdvanced(World world, Pose p) {
+		if (phase != Phase.HORIZONTAL) return;
+		var here = new BlockPos((int)Math.floor(p.x),0,(int)Math.floor(p.z));
+		if (!containsColumn(key(here)) || !BorerAreaHorizontal.bodyClear(world,here,min.getY())) { miningAdvance=false; return; }
+		column = here; miningAdvance = true;
+	}
+	/** Visit confirmed cleared columns without forcing a stop at each exact centre while mining ahead. */
+	boolean continueMiningWalk(World world, Pose p, long tick, java.util.function.Predicate<BlockPos> outstanding) {
+		if (phase != Phase.HORIZONTAL || p.y<min.getY()-.02 || p.y>min.getY()+.12 || Math.abs(p.vy)>.085) return false;
+		var here = new BlockPos((int)Math.floor(p.x),0,(int)Math.floor(p.z));
+		if (!containsColumn(key(here)) || Math.hypot(p.x-here.getX()-.5,p.z-here.getZ()-.5)>.35) return false;
+		if (horizontalWalking != null && horizontalWalking.equals(here) && BorerAreaHorizontal.bodyClear(world,here,min.getY())) {
+			column=here;horizontalWalking=null;miningAdvance=true;
+		}
+		if (pending == null || !pending.equals(here)) return false;
+		for (int y=min.getY();y<=max.getY();y++) {
+			var block=new BlockPos(here.getX(),y,here.getZ());
+			if (outstanding.test(block) || world.cell(block)!=Cell.AIR) { streamingAirSamples=0;return false; }
+		}
+		if (streamingObservedAt==tick) return false;
+		streamingAirSamples=here.equals(streamingColumn)&&streamingObservedAt==tick-1?streamingAirSamples+1:1;
+		streamingColumn=here;streamingObservedAt=tick;
+		if (streamingAirSamples<2) return false;
+		boolean completed=visited.add(key(here));if(completed)clearedColumns++;
+		column=here;pending=nextUnvisited();airSamples=0;streamingAirSamples=0;miningAdvance=true;
+		return completed;
+	}
+	/** Speculative clicks are confined to working space, never a protected or unloaded column. */
+	boolean pipelineAllowed(World world, BlockPos pos, java.util.function.Predicate<BlockPos> outstanding) {
+		if (phase != Phase.DIG && phase != Phase.HORIZONTAL || pos.getX() < min.getX() || pos.getX() > max.getX()
+			|| pos.getZ() < min.getZ() || pos.getZ() > max.getZ() || pos.getY() < min.getY() || pos.getY() > max.getY()
+			|| skipped.contains(key(pos)) || bedrockFloors.containsKey(key(pos)) || isWaterSeal(pos)) return false;
+		if (phase == Phase.DIG) return pos.getX() == column.getX() && pos.getZ() == column.getZ();
+		for (int y = min.getY(); y <= max.getY(); y++) {
+			var p = new BlockPos(pos.getX(),y,pos.getZ());
+			if (outstanding.test(p)) continue;
+			var cell = world.cell(p);
+			if (cell != Cell.AIR && cell != Cell.SOLID) return false;
+		}
+		return true;
+	}
 	BlockPos column() { return column; }
 	BlockPos pending() { return pending; }
 	int cursorY() { return cursorY; }
@@ -267,6 +314,7 @@ final class BorerAreaPlan {
 	}
 
 	private Command horizontalStep(World world, Pose p) {
+		if (miningAdvance) miningAdvanced(world,p);
 		double workY = min.getY() + 0.08;
 		BlockPos here = new BlockPos((int)Math.floor(p.x), 0, (int)Math.floor(p.z));
 		if (containsColumn(key(here)) && (skipped.contains(key(here)) || bedrockFloors.containsKey(key(here)))
@@ -283,10 +331,10 @@ final class BorerAreaPlan {
 			}
 			Command move = align(world, p, horizontalWalking.getX() + 0.5, horizontalWalking.getZ() + 0.5);
 			if (move != null) return move;
-			column = horizontalWalking; horizontalWalking = null; airSamples = 0;
+			column = horizontalWalking; horizontalWalking = null; airSamples = 0; miningAdvance = false;
 			return Command.waitAt(p, "水平到位，拾取掉落物并检查剩余方块");
 		}
-		Command center = align(world, p, column.getX() + 0.5, column.getZ() + 0.5);
+		Command center = miningAdvance ? null : align(world, p, column.getX() + 0.5, column.getZ() + 0.5);
 		if (center != null) return center;
 		if (pending != null && visited.contains(key(pending))) { pending = null; airSamples = 0; }
 		if (pending == null) pending = !visited.contains(key(column)) && containsColumn(key(column)) ? column : nextUnvisited();
@@ -344,6 +392,7 @@ final class BorerAreaPlan {
 	}
 
 	private Command horizontalFallback(Pose p, String reason) {
+		miningAdvance = false;
 		horizontalWalking = null; airSamples = 0; transferPlanned = false; phase = Phase.RETURN;
 		return Command.waitAt(p, reason);
 	}
@@ -479,12 +528,12 @@ final class BorerAreaPlan {
 
 	private Command movement(World w, Pose p, Action action, double x, double y, double z) {
 		// Sweep the player's body through the next small input step, not just the feet block.
-		double nx = p.x + Math.copySign(Math.min(0.25, Math.abs(x - p.x)), x - p.x);
+		double nx = p.x + Math.copySign(BorerAreaMotion.horizontalProbe(x-p.x,p.vx),x-p.x);
 		double ny = p.y + Math.copySign(Math.min(1.20, Math.abs(y - p.y)), y - p.y);
-		double nz = p.z + Math.copySign(Math.min(0.25, Math.abs(z - p.z)), z - p.z);
+		double nz = p.z + Math.copySign(BorerAreaMotion.horizontalProbe(z-p.z,p.vz),z-p.z);
 		for (int by = (int)Math.floor(Math.min(p.y, ny) + 0.001); by <= (int)Math.floor(Math.max(p.y, ny) + 1.799); by++) {
-			for (int bx = (int)Math.floor(Math.min(p.x, nx) - 0.299); bx <= (int)Math.floor(Math.max(p.x, nx) + 0.299); bx++) {
-				for (int bz = (int)Math.floor(Math.min(p.z, nz) - 0.299); bz <= (int)Math.floor(Math.max(p.z, nz) + 0.299); bz++) {
+			for (int bx = (int)Math.floor(Math.min(Math.min(p.x,nx),p.x+p.vx) - 0.299); bx <= (int)Math.floor(Math.max(Math.max(p.x,nx),p.x+p.vx) + 0.299); bx++) {
+				for (int bz = (int)Math.floor(Math.min(Math.min(p.z,nz),p.z+p.vz) - 0.299); bz <= (int)Math.floor(Math.max(Math.max(p.z,nz),p.z+p.vz) + 0.299); bz++) {
 					BlockPos block = new BlockPos(bx, by, bz);
 					Cell cell = w.cell(block);
 					if (cell == Cell.UNLOADED) return Command.waitAt(p, "等待路径区块加载");
@@ -518,13 +567,20 @@ final class BorerAreaPlan {
 	}
 	private BlockPos nextUnvisited(BlockPos from) {
 		BlockPos next = from;
+		BlockPos closest = null;
+		int distance = Integer.MAX_VALUE;
 		for (int n = 0; n < total(); n++) {
 			next = BorerAreaShaftPolicy.nextSnakeColumn(next.getX(), next.getZ(), min.getX(), min.getZ(),
 				max.getX(), max.getZ(), first.getX(), first.getZ());
 			if (next == null) next = first;
-			if (!visited.contains(key(next))) return next;
+			if (!visited.contains(key(next))) {
+				if (!horizontal) return next;
+				int d = from.distManhattan(next);
+				if (d < distance) { closest = next; distance = d; }
+				if (d <= 1) return next; // Prefer the original sweep among equally near neighbours.
+			}
 		}
-		return null;
+		return closest;
 	}
 	private static long key(BlockPos p) { return ((long)p.getX() << 32) ^ (p.getZ() & 0xffffffffL); }
 

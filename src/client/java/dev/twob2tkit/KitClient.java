@@ -100,7 +100,9 @@ public final class KitClient implements ClientModInitializer {
 		LocalAdvancementManager.initialize(config);
 		KitKeys.register();
 		ClientTickEvents.END_CLIENT_TICK.register(this::onEndTick);
+		net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> dev.twob2tkit.automation.AutomationBridge.joined());
 		net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+			dev.twob2tkit.automation.AutomationBridge.disconnected(client);
 			emergencyStop("离开世界");
 		});
 		net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
@@ -200,17 +202,23 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 放漏斗/箱子时强制潜行，让 isShiftKeyDown 保持为真。 */
 	public static boolean forceSneakForPlacement() {
-		return forceSneakForPlacement;
+		return forceSneakForPlacement || dev.twob2tkit.automation.ProfessionalPrinter.requiresSneak();
 	}
 
 	/** 停掉所有自动动作。 */
 	public static void emergencyStop(String reason) {
+        stopAll(reason,true);
+    }
+
+    private static void stopAll(String reason,boolean announce) {
         Minecraft client = Minecraft.getInstance();
+        dev.twob2tkit.combat.EmergencyExit.cancel(client);
+        if(instance!=null&&instance.controller!=null)instance.controller.cancelPendingLogout();
         dev.twob2tkit.automation.AutomationBridge.cancel(client, reason);
         stopWork(reason);
         KitKeys.restorePhysicalMovement(client);
         LOGGER.info("[Control] stopped-all guard=false reason={}",reason);
-        if(client.player!=null)client.player.sendSystemMessage(Component.literal("[twob2tkit] 任务与独立防护已停止，移动已交还").withColor(0xFFFF55));
+        if(announce&&client.player!=null)client.player.sendSystemMessage(Component.literal("[twob2tkit] 任务与独立防护已停止，移动已交还").withColor(0xFFFF55));
     }
 
     /** Task handoff may retain an explicitly armed guard. It is not an emergency stop. */
@@ -325,6 +333,7 @@ public final class KitClient implements ClientModInitializer {
 	public static void renderScreenHud(Minecraft client, net.minecraft.client.gui.GuiGraphicsExtractor graphics) {
 		if (instance == null) return;
 		dev.twob2tkit.cruise.CruiseScreenHud.render(client, graphics);
+		if (instance.structureGuide != null) instance.structureGuide.renderHud(client, graphics);
 		if (instance.villagerScanner != null) instance.villagerScanner.renderHud(client, graphics);
 		if (instance.machineBuilder != null) instance.machineBuilder.renderHud(client, graphics);
 	}
@@ -355,11 +364,23 @@ public final class KitClient implements ClientModInitializer {
 
 	public static dev.twob2tkit.builder.ProjectionBuildJob buildJob(){return instance==null?null:instance.projectionBuildJob;}
 	public static void toggleProjectionBuild(Minecraft client){
+        dev.twob2tkit.automation.AutomationBridge.userTaskStarting(client);
 		if(instance==null)return;
 		if(buildJob().isActive()){buildJob().stop(client,"手动停止");return;}
-		emergencyStop("开始投影建造");
-		if(buildJob().start(client) && config().autoProtectOnHit)dev.twob2tkit.automation.AutomationBridge.armCurrentGuard(client);
+		stopAll("开始投影建造",false);
+		if(buildJob().start(client)) {
+			if(config().autoProtectOnHit)dev.twob2tkit.automation.AutomationBridge.armPveGuard(client);
+			if(client.player!=null)client.player.sendSystemMessage(Component.literal("[投影建造] 已启动，正在检查图纸和材料"+(config().autoProtectOnHit?"；防护已开启":"")));
+		}
 	}
+
+    /** Explicit scoped automation handoff retains its existing watchdog instead of silently discarding it. */
+    public static boolean startProjectionForMaterialGoal(Minecraft client){
+        if(instance==null||buildJob().isActive())return false;
+        stopWork("材料任务转入投影建造");
+        if(!buildJob().start(client))return false;
+        dev.twob2tkit.automation.AutomationBridge.armPveGuard(client);return true;
+    }
 
 	/** 投影建造实例。 */
 	public static MachineBuilder machines() {
@@ -408,6 +429,8 @@ public final class KitClient implements ClientModInitializer {
 	/** 紧急停止并排队离线。 */
 	public static void safeLogout(Minecraft client, String reason) {
 		if (instance == null || client == null) return;
+        if(dev.twob2tkit.combat.EmergencyExit.active())return;
+        if(client.player!=null&&client.player.getHealth()<14){dev.twob2tkit.combat.EmergencyExit.begin(client,reason);return;}
 		emergencyStop(reason);
 		instance.controller.requestLogout(reason);
 		if (client.player != null) {
@@ -420,13 +443,22 @@ public final class KitClient implements ClientModInitializer {
 		if (instance == null || instance.tunnelBorer == null) {
 			return new TunnelBorer.ReloadResult(false, "twob2tkit 尚未初始化");
 		}
-		return installBundled
-			? instance.tunnelBorer.installBundledUpdate(client)
-			: instance.tunnelBorer.reload(client);
+        if(dev.twob2tkit.combat.EmergencyExit.held(client)||dev.twob2tkit.automation.AutomationBridge.guardBusy())
+            return new TunnelBorer.ReloadResult(false,"防护或安全离线锁生效中，稍后再热更新");
+        if(client.player!=null&&(client.player.getHealth()<19||KitKeys.manualMovementDown(client)||client.player.isUsingItem()
+            ||client.player.containerMenu!=client.player.inventoryMenu))return new TunnelBorer.ReloadResult(false,"请在满血附近、停止手动操作并关闭容器后热更新");
+        var job=buildJob();
+        try {
+            if(job!=null)job.prepareRuntimeReload(client);
+            var result=installBundled?instance.tunnelBorer.installBundledUpdate(client):instance.tunnelBorer.reload(client);
+            if(job!=null)job.runtimeReloaded();
+            return result;
+        }catch(Exception e){return new TunnelBorer.ReloadResult(false,"热更新暂缓："+e.getMessage());}
 	}
 
 	/** 开始巡航前停冲突模块。 */
 	public static void prepareForCruise(Minecraft client) {
+        dev.twob2tkit.automation.AutomationBridge.userTaskStarting(client);
 		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
 		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null) return;
@@ -446,6 +478,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 开始投影建造前停冲突模块。 */
 	public static void prepareForMachine(Minecraft client) {
+        dev.twob2tkit.automation.AutomationBridge.userTaskStarting(client);
 		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
 		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null) return;
@@ -460,6 +493,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 开始盾构前停冲突模块。 */
 	public static void prepareForBorer(Minecraft client) {
+        dev.twob2tkit.automation.AutomationBridge.userTaskStarting(client);
 		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
 		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null) return;
@@ -766,9 +800,11 @@ public final class KitClient implements ClientModInitializer {
 	public static void tickNavigation(Minecraft client) {
         if (instance == null || instance.controller == null) return;
         if(instance.handleHeldKeys(client))return;
+        if(dev.twob2tkit.combat.EmergencyExit.tick(client))return;
         if(dev.twob2tkit.automation.AutomationBridge.yieldGuardToManualInput(client))return;
+        dev.twob2tkit.automation.ProfessionalPrinter.recoverOwnedContainer(client);
 		if (dev.twob2tkit.automation.AutomationBridge.beforeGuard(client)) {
-            if(instance.projectionBuildJob.isActive()) instance.projectionBuildJob.pause(client);
+            if(instance.projectionBuildJob.isActive()) instance.projectionBuildJob.pauseForDefense(client);
             if(instance.concreteMaker.isActive()) instance.concreteMaker.pause(client);
             return;
         }
@@ -824,9 +860,11 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 按优先级把当前模块的朝向再写回。 */
 	public static void reapplyNavigationRotation(Minecraft client) {
+        if(dev.twob2tkit.combat.EmergencyExit.reapply(client))return;
 		if (instance == null || instance.controller == null) return;
 		if (client.player != null && client.player.isDeadOrDying()) return;
 		if (borerCombatLook(client) != null) { instance.tunnelBorer.reapplyLook(client); return; }
+        if(dev.twob2tkit.automation.AutomationBridge.reapplySupplyLook(client))return;
 		if(instance.projectionBuildJob.isActive()){instance.projectionBuildJob.reapply(client);return;}
 		if (instance.piglinBrawler != null && instance.piglinBrawler.hasLook()) {
 			instance.piglinBrawler.reapplyLook(client);

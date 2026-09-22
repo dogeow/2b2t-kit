@@ -32,8 +32,9 @@ final class BorerMobs {
 		boolean swelling = creeper.isIgnited() || creeper.getSwelling(1.0F) > 0.15F || creeper.getSwellDir() > 0;
 		double distance = player.distanceTo(creeper);
 		boolean blast = swelling || distance < 5.0 || creeper.isPowered() && distance < 8.0;
-		if (engine.host.borerSurroundOnCreeper() && blast && !engine.host.surroundActive()) {
+		if (engine.host.borerSurroundOnCreeper() && engine.surroundWait.allowed() && blast && !engine.host.surroundActive()) {
 			engine.host.startEmergencySurround(client);
+            engine.surroundWait.started(player.tickCount,player.getHealth());
 			engine.status = "苦力怕靠近，已围箱";
 		} else if (blast && retreatFrom(client, player, creeper)) {
 			engine.status = swelling ? "苦力怕要炸，面朝它举盾后撤" : "苦力怕贴近，面朝它举盾后撤";

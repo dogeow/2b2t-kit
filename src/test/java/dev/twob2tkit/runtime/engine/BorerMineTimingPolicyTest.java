@@ -33,8 +33,8 @@ final class BorerMineTimingPolicyTest {
 		assertTrue(BorerMineTimingPolicy.shouldClick(null, granite, true, false, 0));
 		assertTrue(BorerMineTimingPolicy.shouldHold(null, granite, 0, false));
 		assertTrue(BorerMineTimingPolicy.shouldHold(null, granite, 1, false));
-		assertFalse(BorerMineTimingPolicy.shouldHold(null, granite, 2, false));
-		assertFalse(BorerMineTimingPolicy.shouldHold(null, granite, 1, true));
+		assertTrue(BorerMineTimingPolicy.shouldHold(null, granite, 2, false));
+		assertTrue(BorerMineTimingPolicy.shouldHold(null, granite, 1, true));
 	}
 
 	@Test
@@ -42,17 +42,15 @@ final class BorerMineTimingPolicyTest {
 		assertEquals(1, BorerMineTimingPolicy.ticksToBreak(1.0f));
 		assertTrue(BorerMineTimingPolicy.shouldClick(null, 1.0f, true, false, 0));
 		assertFalse(BorerMineTimingPolicy.shouldHold(null, 1.0f, 0, false));
-		assertTrue(BorerMineTimingPolicy.doneWithBlock(1, 1.0f, true));
 	}
 
 	@Test
-	void crackFullMeansMoveOnEvenIfClientBlockStillThere() {
+	void fullCracksDoNotReleaseAnExistingNonInstantBlock() {
 		assertTrue(BorerMineTimingPolicy.crackComplete(9));
 		assertTrue(BorerMineTimingPolicy.crackComplete(10));
 		assertFalse(BorerMineTimingPolicy.crackComplete(8));
-		assertTrue(BorerMineTimingPolicy.doneWithBlock(2, 0.577f, true));
-		assertFalse(BorerMineTimingPolicy.doneWithBlock(1, 0.577f, false));
-		assertTrue(BorerMineTimingPolicy.doneWithBlock(3, 0.577f, false));
+		assertTrue(BorerMineTimingPolicy.shouldHold(null, 0.577f, 2, true));
+		assertTrue(BorerMineTimingPolicy.shouldHold(null, 0.577f, 30, false));
 	}
 
 	@Test
@@ -60,8 +58,6 @@ final class BorerMineTimingPolicyTest {
 		float netherGold = 0.289f;
 		assertEquals(4, BorerMineTimingPolicy.ticksToBreak(netherGold));
 		assertFalse(BorerMineTimingPolicy.tapSized(netherGold));
-		assertFalse(BorerMineTimingPolicy.doneWithBlock(4, netherGold, true));
-		assertFalse(BorerMineTimingPolicy.doneWithBlock(20, netherGold, true));
 		assertTrue(BorerMineTimingPolicy.shouldHold(null, netherGold, 4, true));
 		assertTrue(BorerMineTimingPolicy.shouldHold(null, netherGold, 20, true));
 	}
@@ -80,5 +76,24 @@ final class BorerMineTimingPolicyTest {
 		assertEquals(fast, BorerMineTimingPolicy.combine(slow, fast));
 		assertEquals(new BorerMineTimingPolicy.Memory(true, 0),
 			BorerMineTimingPolicy.combine(slow, new BorerMineTimingPolicy.Memory(true, 0)));
+	}
+
+	@Test void staleInstantAndOneTickMemoriesCannotCancelAnUnfinishedNetherrackBlock() {
+		for (var memory : new BorerMineTimingPolicy.Memory[]{
+			new BorerMineTimingPolicy.Memory(true, 0), new BorerMineTimingPolicy.Memory(false, 1)}) {
+			for (int tick : new int[]{0, 1, 2, 20, 1120}) assertTrue(BorerMineTimingPolicy.shouldHold(memory, .6667f, tick, false));
+		}
+	}
+
+	@Test void delayedBreakingStillCompletesWithContinuousInputInsteadOfRepeatedCancellation() {
+		var memory = new BorerMineTimingPolicy.Memory(true, 0);
+		double damage = 0;
+		for (int tick = 0; tick < 6 && damage < 1; tick++) {
+			boolean held = BorerMineTimingPolicy.shouldHold(memory, .6667f, tick, tick > 2);
+			// Model delayed server progress: slower than the client's predicted two ticks.
+			damage = held ? damage + .2 : 0;
+		}
+		assertTrue(damage >= 1);
+		assertFalse(BorerMineTimingPolicy.shouldHold(memory, 0, 6, false));
 	}
 }

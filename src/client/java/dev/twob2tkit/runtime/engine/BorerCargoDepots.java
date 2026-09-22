@@ -13,7 +13,7 @@ final class BorerCargoDepots {
 		boolean acceptsAny(Set<String> cargo) { return !full && (accepts == null || accepts.stream().anyMatch(cargo::contains)); }
 	}
 	private static final Gson JSON = new Gson();
-	private static final class Saved { Map<String, List<Site>> areas = new HashMap<>(); }
+	private static final class Saved { int capacityVersion; Map<String, List<Site>> areas = new HashMap<>(); }
 	private final Path path;
 	private final String key;
 	private final Saved saved;
@@ -31,6 +31,13 @@ final class BorerCargoDepots {
 			if (Files.exists(path) && Files.size(path) > 1_000_000) throw new IOException("卸货箱记录过大");
 			saved = Files.exists(path) ? JSON.fromJson(Files.readString(path), Saved.class) : new Saved();
 			if (saved == null || saved.areas == null) throw new IOException("卸货箱记录损坏，未覆盖");
+			if (saved.capacityVersion < 1) {
+				// Old partial-stack lists only recorded ores/stones. Recheck their menus for other drops.
+				// Full chests and saved locations remain intact, and other projects retain their sites.
+				saved.areas.replaceAll((area, sites) -> new ArrayList<>(sites.stream()
+					.map(s -> s.full ? s : new Site(s.x, s.y, s.z, false, null)).toList()));
+				saved.capacityVersion = 1;
+			}
 		} catch (RuntimeException e) { throw new IOException("卸货箱记录损坏，未覆盖", e); }
 	}
 	List<Site> sites() {

@@ -172,6 +172,11 @@ public final class TunnelBorer {
 	private BorerEngine engine;
 	private URLClassLoader engineLoader;
 	private String loadSource = "内置";
+    private int runtimeGeneration;
+    public int runtimeGeneration(){return runtimeGeneration;}
+    private final dev.twob2tkit.runtime.api.BuildNavigation bundledNavigation=new dev.twob2tkit.runtime.engine.DefaultBuildNavigation();
+    public dev.twob2tkit.runtime.api.BuildNavigation buildNavigation(){var n=engine.buildNavigation();return n==null?bundledNavigation:n;}
+    public String runtimeVersion(){return engine.runtimeVersion();}
 
 	public TunnelBorer(KitConfig config) {
 		this.config = config;
@@ -281,10 +286,12 @@ public final class TunnelBorer {
 	}
 
 	/** 未挖时也观察世界（门/路点等）。 */
+	public String preparationSummary() { return miningChecklist.summary(Minecraft.getInstance(),config); }
 	public void observeWorld(Minecraft client) {
 		engine.observeWorld(client);
 	}
 	public boolean isManagingInventory() { return engine.isManagingInventory(); }
+	public boolean ownsMining() { return engine.ownsMining(); }
 
 	/** 是否正在自动回家。 */
 	public boolean isGoingHome() {
@@ -304,6 +311,11 @@ public final class TunnelBorer {
 	/** 路点数量。 */
 	public int trailLength() {
 		return engine.trailLength();
+	}
+
+	public String trailOriginLabel() {
+		String origin = engine.journeyOrigin();
+		return origin.isBlank() ? "尚未开始挖矿行程" : "起点 " + origin.replace(" ", " / ");
 	}
 
 	/** 清空路点但保留门坐标。 */
@@ -375,8 +387,9 @@ public final class TunnelBorer {
 		}
 		BorerEngine oldEngine = engine;
 		URLClassLoader oldLoader = engineLoader;
+		LoadedEngine loaded = null;
 		try {
-			LoadedEngine loaded = loadExternalEngine();
+			loaded = loadExternalEngine();
 			BorerEngine candidate = loaded.engine();
 			String candidateVersion = candidate.runtimeVersion();
 			String snapshot = exportTrailSafely(oldEngine);
@@ -388,10 +401,12 @@ public final class TunnelBorer {
 			if (snapshot != null && !snapshot.isBlank()) candidate.importTrailSnapshot(snapshot);
 			candidate.restorePersistentState(client);
 			closeQuietly(oldLoader);
-			return new ReloadResult(true, "已加载盾构运行引擎 " + candidateVersion + "，无需退出游戏");
+            runtimeGeneration++;
+			return new ReloadResult(true, "已热更新挖矿、防护与施工策略 " + candidateVersion + "，无需退出游戏");
 		} catch (Throwable throwable) {
 			engine = oldEngine;
 			engineLoader = oldLoader;
+			if(loaded!=null)closeQuietly(loaded.loader());
 			KitClient.LOGGER.warn("Could not reload borer engine from {}", ENGINE_PATH, throwable);
 			return new ReloadResult(false, "加载失败，已继续使用原引擎：" + concise(throwable));
 		}
@@ -582,15 +597,21 @@ public final class TunnelBorer {
 			"meteordevelopment.meteorclient.systems.modules.combat.BowAimbot",
 			"meteordevelopment.meteorclient.systems.modules.combat.BowSpam"
 		};
+		@Override public boolean requestEmergencyExit(Minecraft client,String reason){if(client.player==null||client.player.getHealth()>=14)return false;dev.twob2tkit.combat.EmergencyExit.begin(client,reason);return true;}
+        @Override public void enablePveMelee(){dev.twob2tkit.MeteorModules.enablePveAura();}
 		@Override public boolean borerAutoDefend() { return config.borerAutoDefend; }
 		@Override public boolean borerAreaDiscardStone() { return config.borerAreaDiscardStone; }
 		@Override public boolean borerAreaStoreDrops() { return config.borerAreaStoreDrops; }
+		@Override public boolean[] borerCargoSupplies(Minecraft client) {
+			return dev.twob2tkit.adventure.MiningCargoSupplies.reserved(client.player, config);
+		}
 		private String bowDiagnostic = "";
 		@Override public net.minecraft.world.phys.Vec3 borerBowAim(Minecraft client, net.minecraft.world.entity.Entity target) {
 			var shot = dev.twob2tkit.piglin.BowAim.solve(client, client.player, target);
 			bowDiagnostic = shot.diagnostic(); return shot.aim();
 		}
 		@Override public boolean supportsVisibleBowAim() { return true; }
+		@Override public boolean supportsDirectAreaMining() { return true; }
 		@Override public String borerBowDiagnostics() { return bowDiagnostic; }
 		@Override public void borerRangedMode(boolean active) {
 			if (active) {
@@ -606,7 +627,7 @@ public final class TunnelBorer {
 			this.config = config;
 		}
 
-		@Override public int apiVersion() { return 2; }
+		@Override public int apiVersion() { return 3; }
 		@Override public void prepareForBorer(Minecraft client) { KitClient.prepareForBorer(client); }
 		@Override public boolean surroundActive() { return KitClient.surround() != null && KitClient.surround().isActive(); }
 		@Override public void startEmergencySurround(Minecraft client) { KitClient.startSurroundFromBorer(client); }

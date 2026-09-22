@@ -60,6 +60,61 @@ class BorerAreaHorizontalTest {
         sim.until(() -> sim.plan.completed() == 3);
         assertEquals(0, sim.verticalMoves()); assertEquals(6, sim.world.broken.size()); sim.finish();
     }
+    @Test void clearedRowTailTurnsTowardNearbyRemainingWorkInsteadOfVisitingTheFarEnd() {
+        var sim=new Sim(BlockPos.ZERO,new BlockPos(10,1,1),true,new Pose(3.5,.08,.5,0,0,0));
+        for(int x=0;x<=10;x++)sim.world.clearColumn(x,0);
+        sim.until(()->!sim.world.broken.isEmpty());
+        assertEquals(3,sim.world.broken.getFirst().getX());assertEquals(1,sim.world.broken.getFirst().getZ());
+        assertTrue(sim.traces.stream().allMatch(t->t.before.x()<4.5),"Do not fly to x=10 just to begin the next row");
+        sim.finish();assertEquals(22,sim.world.broken.size());
+    }
+    @Test void approachingWhileMiningDoesNotTriggerACommandBackToThePreviousCellCenter() {
+        var sim=new Sim(BlockPos.ZERO,new BlockPos(2,1,0),true,new Pose(.5,.08,.5,0,0,0));
+        sim.world.clearColumn(0,0);sim.until(()->sim.plan.phase()==Phase.HORIZONTAL);
+        sim.pose=new Pose(.65,.08,.5,.15,0,0);sim.world.pose=sim.pose;
+        sim.plan.miningAdvanced(sim.world,sim.pose);
+        var command=sim.plan.step(sim.world,sim.pose);
+        assertEquals(Action.MINE,command.action());assertEquals(1,command.block().getX());
+    }
+    @Test void walkingIntoAConfirmedColumnContinuesToTheNextWithoutBacktrackingForACenterVisit() {
+        var sim=new Sim(BlockPos.ZERO,new BlockPos(3,1,0),true,new Pose(.5,.08,.5,0,0,0));
+        sim.world.clearColumn(0,0);sim.until(()->sim.plan.phase()==Phase.HORIZONTAL);
+        sim.plan.step(sim.world,sim.pose);sim.world.clearColumn(1,0);
+        var entered=new Pose(1.35,.08,.5,.2,0,0);
+        sim.plan.miningAdvanced(sim.world,entered);
+        assertFalse(sim.plan.continueMiningWalk(sim.world,new Pose(1.35,3,.5,0,0,0),8,p->false));
+        assertFalse(sim.plan.continueMiningWalk(sim.world,new Pose(1.35,3,.5,0,0,0),9,p->false));
+        assertEquals(1,sim.plan.completed(),"Flying above the floor is not a pickup visit");
+        assertFalse(sim.plan.continueMiningWalk(sim.world,entered,10,p->p.getX()==1),"Prediction still pending");
+        assertFalse(sim.plan.continueMiningWalk(sim.world,entered,11,p->false));
+        assertTrue(sim.plan.continueMiningWalk(sim.world,entered,12,p->false));
+        assertEquals(new BlockPos(2,0,0),sim.plan.miningTravelGoal());assertEquals(2,sim.plan.completed());
+        assertFalse(sim.plan.continueMiningWalk(sim.world,entered,13,p->false));assertEquals(2,sim.plan.completed());
+    }
+    @Test void walkingUnderRemainingUpperBlocksDoesNotMarkTheWholeColumnComplete() {
+        var sim=new Sim(BlockPos.ZERO,new BlockPos(2,3,0),true,new Pose(.5,.08,.5,0,0,0));
+        sim.world.clearColumn(0,0);sim.until(()->sim.plan.phase()==Phase.HORIZONTAL);sim.plan.step(sim.world,sim.pose);
+        sim.world.cells.put(new BlockPos(1,0,0),Cell.AIR);sim.world.cells.put(new BlockPos(1,1,0),Cell.AIR);
+        var entered=new Pose(1.35,.08,.5,.2,0,0);
+        sim.plan.miningAdvanced(sim.world,entered);
+        for(int tick=0;tick<10;tick++)assertFalse(sim.plan.continueMiningWalk(sim.world,entered,tick,p->false));
+        assertEquals(1,sim.plan.completed());assertEquals(new BlockPos(1,0,0),sim.plan.miningTravelGoal());
+    }
+    @Test void speculativeClicksStayInsideTheSelectionAndAvoidEntireProtectedColumns() {
+        var sim=new Sim(BlockPos.ZERO,new BlockPos(2,1,1),true,new Pose(.5,.08,.5,0,0,0));
+        sim.world.clearColumn(0,0);sim.until(()->sim.plan.phase()==Phase.HORIZONTAL);
+        BlockPos head=new BlockPos(1,1,0), feet=new BlockPos(1,0,0);
+        assertTrue(sim.plan.pipelineAllowed(sim.world,head,p->false));
+        for(var outside:List.of(new BlockPos(-1,1,0),new BlockPos(1,2,0),new BlockPos(1,-1,0),new BlockPos(1,1,2)))
+            assertFalse(sim.plan.pipelineAllowed(sim.world,outside,p->false));
+        for(var danger:List.of(Cell.PROTECTED,Cell.BEDROCK,Cell.LIQUID,Cell.UNLOADED)){
+            sim.world.cells.put(feet,danger);
+            assertFalse(sim.plan.pipelineAllowed(sim.world,head,p->false),danger.toString());
+        }
+        assertTrue(sim.plan.pipelineAllowed(sim.world,head,feet::equals),"Only our already validated in-flight block can be excepted from the loading check");
+        sim.world.cells.put(feet,Cell.SOLID);sim.plan.rememberWaterSeal(feet);
+        assertFalse(sim.plan.pipelineAllowed(sim.world,head,p->false));
+    }
     @Test void finishingAnEnclosedShallowRoomDoesNotBreakItsUnselectedCeiling() {
         var sim = new Sim(BlockPos.ZERO, new BlockPos(2, 2, 0), true, new Pose(.5, .08, .5, 0, 0, 0));
         sim.world.clearColumn(0, 0);
@@ -96,7 +151,7 @@ class BorerAreaHorizontalTest {
         sim.finish(); assertEquals(Cell.PROTECTED, sim.world.cell(chest)); assertEquals(Cell.LIQUID, sim.world.cell(water));
         assertEquals(2, sim.plan.skipped()); assertEquals(10, sim.plan.completed());
         assertEquals(30, sim.world.broken.size());
-        assertTrue(sim.traces.stream().anyMatch(t -> t.command.reason().contains("水平绕过保护列")));
+        assertFalse(sim.world.broken.contains(chest)); assertFalse(sim.world.broken.contains(water));
     }
     @Test void bedrockUsesSafeTopDownAccessForItsColumnWithoutDestroyingIt() {
         var sim = new Sim(BlockPos.ZERO, new BlockPos(2, 2, 0), true);

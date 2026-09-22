@@ -70,6 +70,19 @@ def runtimeEngineIncludes = [
 	'dev/twob2tkit/runtime/engine/**'
 ]
 
+def generatedEngineVersion = layout.buildDirectory.dir('generated/sources/engineVersion')
+sourceSets.client.java.srcDir(generatedEngineVersion)
+tasks.register('generateEngineVersion') {
+	inputs.property('runtimeVersion', project.runtime_engine_version)
+	outputs.dir(generatedEngineVersion)
+	doLast {
+		def file = generatedEngineVersion.get().file('dev/twob2tkit/runtime/engine/EngineBuildVersion.java').asFile
+		file.parentFile.mkdirs()
+		file.text = "package dev.twob2tkit.runtime.engine; final class EngineBuildVersion { static final String VALUE = \"${project.runtime_engine_version}\"; }\n"
+	}
+}
+tasks.named('compileClientJava') { dependsOn tasks.named('generateEngineVersion') }
+
 tasks.register('runtimeEngineJar', Jar) {
 	archiveFileName = 'twob2tkit-engine.jar'
 	destinationDirectory = layout.buildDirectory.dir('runtime-engine')
@@ -81,7 +94,7 @@ tasks.register('runtimeEngineJar', Jar) {
 	manifest {
 		attributes(
 			'twob2tkit-Engine-Version': project.runtime_engine_version,
-			'twob2tkit-Host-API': '2'
+			'twob2tkit-Host-API': '3'
 		)
 	}
 }
@@ -94,6 +107,7 @@ tasks.register('verifyRuntimeEngineJar') {
 		if (!entries.any { it.endsWith('/dev/twob2tkit/runtime/engine/DefaultTunnelBorerEngine.class') }) {
 			throw new GradleException('Runtime engine JAR is missing DefaultTunnelBorerEngine')
 		}
+		if (!entries.any { it.endsWith('/dev/twob2tkit/runtime/engine/DefaultBuildNavigation.class') }) throw new GradleException('Missing hot build navigation')
 		if (entries.any { it.contains('/dev/twob2tkit/runtime/api/') }) {
 			throw new GradleException('Stable runtime API must stay in the loader JAR')
 		}

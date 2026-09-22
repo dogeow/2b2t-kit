@@ -43,3 +43,9 @@ replay_*.log
 # Python companion runtime
 __pycache__/
 *.py[cod]
+
+# Local deployment receipts and credentials
+/decision-runtime/safety-release-latest.json
+/decision-runtime/*.key
+/decision-runtime/.env
+/decision-runtime/.env.*

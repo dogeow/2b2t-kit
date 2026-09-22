@@ -126,6 +126,10 @@ public final class KitRecordPages {
             p.edit("备注", "用于本地搜索。", () -> note[0], v -> note[0] = v);
             p.submit("保存备注", () -> { s.note = note[0]; c.save(); p.clearDraft(); mc().setScreen(list); }); mc().setScreen(p);
         }, s -> true);
+        list.action("建造补给", "切换是否允许托管从此仓库取建材，仅对当前服务器或单人存档生效。", s -> {
+            dev.twob2tkit.automation.BuildSupplyTask.toggleSource(mc(),s);
+            list.message(dev.twob2tkit.automation.BuildSupplyTask.sourceEnabled(mc(),s)?"已允许作为建造补给箱；不会立即取料":"已取消此箱的建造补给权限");list.refresh();
+        }, s -> mc().player!=null&&sameDimension(s.dimension));
         list.action("指引", "只显示位置，不移动或打开箱子。", s -> {
             if (sameDimension(s.dimension) && KitClient.structureGuide() != null) { KitClient.structureGuide().start(StorageLabels.headline(s), s.x, s.y, s.z); mc().setScreen(null); }
         }, s -> sameDimension(s.dimension));

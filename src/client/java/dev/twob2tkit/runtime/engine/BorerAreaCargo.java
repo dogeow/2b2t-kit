@@ -36,6 +36,7 @@ final class BorerAreaCargo {
 	private ItemStack transferStack;
 	private BorerCargoTransfer transfer;
 	private String failure;
+	private String reserveNote="";
 	private final Set<String> movedIds = new HashSet<>();
 	private Map<String, Integer> expectedBag, expectedChest;
 	private boolean auditPending, audited;
@@ -66,7 +67,7 @@ final class BorerAreaCargo {
 		if (store && !placed && findChest(c) < 0) throw new IllegalStateException("请先带上普通箱子，或暂时关闭自动存箱，只开启丢石料");
 		dropDone = !discard;
 		trip = new BorerCargoTrip(originPose, depot, choice.route());
-		serviceTicks = wait = clickCooldown = 0; failure = null;
+		serviceTicks = wait = clickCooldown = 0; failure = null; reserveNote="";
 		placeRequested = false; droppedSlot = -1;
 		movedIds.clear(); audited = auditPending = false;
 		modules.acquire();
@@ -85,7 +86,7 @@ final class BorerAreaCargo {
 				DepotChoice alternative = rejectedDepots.size() < 8 ? chooseDepot(c, min, max) : null;
 				if (alternative != null) { setDepot(alternative); return Command.waitAt(pose(c), "原卸货路线变化，改用另一处可达箱子 / 放箱位置"); }
 			}
-			return travel;
+			return reserveNote.isEmpty()?travel:new Command(travel.action(),travel.block(),travel.x(),travel.y(),travel.z(),travel.reason()+" · "+reserveNote);
 		}
 		if (++serviceTicks > 2400) return blocked(c, "卸货超过两分钟，已停挖，请检查箱子和网络");
 		if (!dropDone) {
@@ -151,7 +152,7 @@ final class BorerAreaCargo {
 			transfer = new BorerCargoTransfer(stack.getCount(), chestCount(stack));
 			movedIds.add(transferId); audited = false;
 			c.gameMode.handleContainerInput(ownedMenu.containerId, menuSlot.index, 0, ContainerInput.QUICK_MOVE, c.player);
-			return Command.waitAt(pose(c), "批量存入矿物和石料，工具与补给留在身上");
+			return Command.waitAt(pose(c), "存入采集物，保留工具和挖矿清单补给");
 		}
 		return blocked(c, "无法识别箱子背包槽，未移动物品");
 	}
@@ -193,9 +194,20 @@ final class BorerAreaCargo {
 		if (BorerCargoPolicy.nearFull(BorerItems.emptySlots(c.player.getInventory()))) {
 			failure = "保留的工具或补给仍占满背包，请手动整理后继续"; return;
 		}
+		reserveNote=reserveSummary(c);
 		trip.returnToWork();
-		engine.fileLog(c, "area-cargo-return free=" + BorerItems.emptySlots(c.player.getInventory()));
+		engine.fileLog(c, "area-cargo-return free=" + BorerItems.emptySlots(c.player.getInventory())+" reserve="+reserveNote);
 	}
+	private String reserveSummary(Minecraft c){
+		List<BorerCargoPolicy.Stack> stacks=bag(c);boolean[] keep=store?BorerCargoPolicy.reservedForStore(stacks):BorerCargoPolicy.reserved(stacks);
+		Map<String,Integer> items=new LinkedHashMap<>();
+		for(int i=0;i<stacks.size();i++)if(keep[i]&&!stacks.get(i).special()&&stacks.get(i).count()>0){
+			var item=c.player.getInventory().getItem(i);items.merge(item.getHoverName().getString(),item.getCount(),Integer::sum);
+		}
+		return items.isEmpty()?"":"保留备用："+items.entrySet().stream().limit(5).map(e->e.getKey()+"×"+e.getValue()).collect(java.util.stream.Collectors.joining("、"))
+			+(items.size()>5?" 等"+items.size()+"类":"");
+	}
+
 	private Command place(Minecraft c) throws java.io.IOException {
 		if (placeRequested && c.level.getBlockState(depot).is(Blocks.CHEST)) {
 			depots.remember(depot, false); placed = true; wait = 0;
@@ -272,8 +284,8 @@ final class BorerAreaCargo {
 		Set<BlockPos> full = new HashSet<>(rejectedDepots);
 		Set<String> cargo = new HashSet<>();
 		List<BorerCargoPolicy.Stack> bag = bag(c);
-		boolean[] keep = BorerCargoPolicy.reserved(bag);
-		for (int i = 0; i < bag.size(); i++) if (!keep[i] && BorerCargoPolicy.material(bag.get(i).id())) cargo.add(bag.get(i).id());
+		boolean[] keep = BorerCargoPolicy.reservedForStore(bag);
+		for (int i = 0; i < bag.size(); i++) if (!keep[i] && bag.get(i).count() > 0 && BorerCargoPolicy.depositable(bag.get(i))) cargo.add(bag.get(i).id());
 		for (var site : depots.sites()) if (!site.acceptsAny(cargo)) full.add(site.pos());
 		Set<BlockPos> known = new HashSet<>();
 		for (var site : depots.sites()) known.add(site.pos());
@@ -386,8 +398,15 @@ final class BorerAreaCargo {
 		return BorerCargoPolicy.next(bag(c), drop, fits);
 	}
 	private List<BorerCargoPolicy.Stack> bag(Minecraft c) {
+		boolean[] supplies = null;
+		try { supplies = engine.host.borerCargoSupplies(c); } catch (LinkageError oldHost) { /* Keep the legacy whitelist. */ }
+		if (supplies != null && supplies.length != 36) throw new IllegalStateException("挖矿补给清单无效，已停止整理背包");
 		List<BorerCargoPolicy.Stack> stacks = new ArrayList<>();
-		for (int i = 0; i < 36; i++) { ItemStack s = c.player.getInventory().getItem(i); stacks.add(new BorerCargoPolicy.Stack(id(s), s.getCount(), special(s))); }
+		for (int i = 0; i < 36; i++) {
+			ItemStack s = c.player.getInventory().getItem(i);
+			stacks.add(supplies == null ? new BorerCargoPolicy.Stack(id(s), s.getCount(), special(s))
+				: new BorerCargoPolicy.Stack(id(s), s.getCount(), special(s), supplies[i], true));
+		}
 		return stacks;
 	}
 	private void rememberCapacity(Minecraft c) throws java.io.IOException {

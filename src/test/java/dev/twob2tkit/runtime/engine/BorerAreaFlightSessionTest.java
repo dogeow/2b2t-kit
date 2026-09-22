@@ -18,6 +18,16 @@ final class BorerAreaFlightSessionTest {
 		assertEquals(0.1, f.flight.speed.get());
 	}
 
+    @Test void freshHotEngineCannotTreatConstructionHoverAsLegacyZero() throws Exception {
+        Fixture f=new Fixture();var owner=f.session();
+        owner.prepare(temp.resolve("build-flight-speed.bak"));assertNull(owner.acquire());owner.hover();
+        var fresh=f.session();assertNull(fresh.prepare(temp.resolve("area-flight-speed.bak")));
+        assertEquals(0.0,f.flight.speed.get());assertNull(owner.acquire());
+        owner.close();assertEquals(.12,f.flight.speed.get());
+        assertNull(fresh.prepare(temp.resolve("area-flight-speed.bak")));assertNull(fresh.acquire());fresh.close();
+        assertEquals(.12,f.flight.speed.get());
+    }
+
 	@Test void idlePreparationDoesNotTouchManualNonzeroSpeedOrKeys() {
 		Fixture f = new Fixture();
 		f.flight.speed.set(0.37); f.flight.active = true;

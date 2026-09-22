@@ -24,6 +24,12 @@ final class BorerAreaRunner {
 	private double bestDistance = Double.POSITIVE_INFINITY;
 	private String progressKey = "", lastLogged = "";
 	private boolean attacking;
+	private final BorerAreaPipeline pipeline = new BorerAreaPipeline();
+	private final BorerMeteorInstant instant = new BorerMeteorInstant();
+	private BlockPos failedFastTarget;
+	private String pipelineGate = "";
+	private int pipelineGateTick;
+	private int confirmationTicks;
 	private Path progressPath;
 	private String progressWorld;
 	private int saveTicks;
@@ -35,6 +41,8 @@ final class BorerAreaRunner {
 
 	BorerAreaRunner(DefaultTunnelBorerEngine engine) { this.engine = engine; cargo = new BorerAreaCargo(engine); water = new BorerAreaWater(engine); }
 	boolean managingInventory() { return cargo.active(); }
+	private boolean directMiningSupported(){try{return engine.host.supportsDirectAreaMining();}catch(LinkageError oldHost){return false;}}
+	boolean ownsMining(){return attacking && directMiningSupported();}
 	boolean ownsInventoryScreen(Minecraft c) { return cargo.ownsScreen(c); }
 	void stopInventory(Minecraft c) { cargo.reset(c); water.reset(c); }
 
@@ -48,13 +56,16 @@ final class BorerAreaRunner {
 
 	/** At the top of an excavated shaft, restoring gravity would drop the player into it. */
 	void releaseFlight(Minecraft client) {
+		pipeline.clear(); // Vanilla retains and corrects any unacknowledged predictions independently.
 		checkpoint();
 		if (client.player != null && client.level != null && !client.player.onGround()) {
-			if (flight.closeKeepingFlight()) DefaultTunnelBorerEngine.message(client, "当前在空中，已保留飞行供你接管");
+			if (flight.closeKeepingFlight()) engine.stopSafetyNote="已保留飞行";
 		} else flight.close();
 	}
 
 	void reset() {
+		pipeline.clear();
+		failedFastTarget = null;
 		checkpoint();
 		cargo.reset(Minecraft.getInstance());
 		water.reset(Minecraft.getInstance());
@@ -64,7 +75,7 @@ final class BorerAreaRunner {
 		look = null;
 		mining = null;
 		attacking = false;
-		aimFailures = mineIdleTicks = moveIdleTicks = diagnostics = 0;
+		aimFailures = mineIdleTicks = moveIdleTicks = diagnostics = confirmationTicks = 0;
 		lastStage = -1;
 		progressKey = lastLogged = "";
 		bestDistance = Double.POSITIVE_INFINITY;
@@ -159,12 +170,20 @@ final class BorerAreaRunner {
 				engine.fileLog(client, "area-v2-start bounds=" + BorerText.block(engine.areaMin) + ".." + BorerText.block(engine.areaMax)
 					+ " columns=" + plan.total() + " bottom=" + bottom + " strategy=" + (shallow ? "SHALLOW_HORIZONTAL" : "VERTICAL_SHAFT")
 					+ " height=" + (engine.areaMax.getY() - bottom + 1) + " breakReach=" + BorerAim.breakReach(player));
-				DefaultTunnelBorerEngine.message(client, shallow ? "浅层区域：保持底部高度水平清挖；够不到或通道不连通时安全换位" : "深层区域：1×1 竖井逐列清挖");
+				engine.status=shallow ? "浅层区域：水平清挖" : "深层区域：逐列清挖";
 			}
 			if (player.isInWater() || player.isInLava()) { rescue(client, player); return; }
 			rescueTicks = 0;
+			if (pipeline.active()) { tickPipeline(client, player); return; }
 			if (water.active()) { sealSideWater(client); return; }
 			if (torch.tick(client, engine)) { flight.fly(); flight.speed(0); stopAttack(client); return; }
+			if(mining!=null && engine.miningConfirmation.pending(client.level,mining)){
+				stopAttack(client);flight.fly();flight.speed(0);naturalDescent=false;
+				show(client,"等待服务器确认方块更新 "+BorerText.block(mining));
+				if(++confirmationTicks>=100)stop(client,"方块更新连续 5 秒未获确认 "+BorerText.block(mining)+"；当前列未完成");
+				return;
+			}
+			confirmationTicks=0;
 			if (plan.phase() != BorerAreaPlan.Phase.SURVEY && plan.phase() != BorerAreaPlan.Phase.DONE && plan.phase() != BorerAreaPlan.Phase.BLOCKED
 				&& !cargo.active() && cargo.shouldStart(client)) {
 				checkpoint(); stopAttack(client); flight.fly(); flight.speed(0);
@@ -215,7 +234,9 @@ final class BorerAreaRunner {
 				naturalDescent = false; // Brake over an open cave at the requested bottom instead of falling below it.
 			}
 			// A deep open shaft needs the user's NoFall; otherwise use controlled flight descent.
-			if (naturalDescent && BorerFlight.meteorNoFallActive()) flight.digOnFoot();
+			if (canGroundForMining(client,player) && (command.action() == BorerAreaPlan.Action.MINE || command.action() == BorerAreaPlan.Action.WAIT)) {
+				naturalDescent = false; flight.speed(0); flight.digOnFoot();
+			} else if (naturalDescent && BorerFlight.meteorNoFallActive()) flight.digOnFoot();
 			else { naturalDescent = false; flight.fly(); }
 			if (plan.reachedBottomThisStep()) {
 				stopAttack(client);
@@ -287,7 +308,7 @@ final class BorerAreaRunner {
 	}
 
 	private BorerAreaPlan.Cell cell(Minecraft client, BlockPos pos) {
-		if (!client.level.hasChunkAt(pos)) return BorerAreaPlan.Cell.UNLOADED;
+		if (!client.level.hasChunkAt(pos) || engine.miningConfirmation.pending(client.level,pos)) return BorerAreaPlan.Cell.UNLOADED;
 		if (pos.getY() < client.level.getMinY() || pos.getY() >= client.level.getMaxY()) return BorerAreaPlan.Cell.PROTECTED;
 		var state = client.level.getBlockState(pos);
 		if (state.isAir()) return BorerAreaPlan.Cell.AIR;
@@ -358,15 +379,29 @@ final class BorerAreaRunner {
 		int stage = client.gameMode.getDestroyStage();
 		if (stage > lastStage) { lastStage = stage; mineIdleTicks = 0; }
 		else mineIdleTicks++;
-		if (mineIdleTicks >= 240) { stop(client, "服务器连续 12 秒未确认挖掘进展 " + BorerText.block(target) + "；当前列未完成"); return; }
+		if (mineIdleTicks >= 240) { stop(client, "当前方块连续 12 秒没有挖掘进展 " + BorerText.block(target) + "；当前列未完成"); return; }
 		client.hitResult = actual;
 		client.crosshairPickEntity = null;
-		boolean retry = mineIdleTicks > 0 && mineIdleTicks % 40 == 0;
-		if (!attacking || retry) {
-			if (retry) client.gameMode.stopDestroyBlock();
-			KeyMapping.click(com.mojang.blaze3d.platform.InputConstants.getKey(client.options.keyAttack.saveString()));
+		logPipelineGate(client, "repeat=" + repeatClick(client) + " onGround=" + player.onGround()
+			+ " progress=" + client.level.getBlockState(target).getDestroyProgress(player,client.level,target));
+		if (!cargo.active() && directMiningSupported() && (plan.phase() == BorerAreaPlan.Phase.DIG || plan.phase() == BorerAreaPlan.Phase.HORIZONTAL)
+			&& !target.equals(failedFastTarget) && fastClick(client, target) && pipeline.canClick(player.tickCount)) {
+			if (clickPipeline(client, player, target, actual)) { advanceWhileMining(client,player); return; }
 		}
-		client.options.keyAttack.setDown(true);
+		boolean retry = mineIdleTicks > 0 && mineIdleTicks % 40 == 0;
+		if(directMiningSupported()){
+			client.options.keyAttack.setDown(false);
+			if(!attacking||retry){
+				if(retry)client.gameMode.stopDestroyBlock();
+				engine.miningConfirmation.startObservedBreak(client,target,actual.getDirection());
+			}else client.gameMode.continueDestroyBlock(target,actual.getDirection());
+		}else{
+			if (!attacking || retry) {
+				if (retry) client.gameMode.stopDestroyBlock();
+				KeyMapping.click(com.mojang.blaze3d.platform.InputConstants.getKey(client.options.keyAttack.saveString()));
+			}
+			client.options.keyAttack.setDown(true);
+		}
 		attacking = true;
 		BorerAreaMotion.Input input = BorerAreaMotion.of(command, pose(player), look.yaw());
 		flight.speed(naturalDescent ? 0 : input.speed());
@@ -374,6 +409,138 @@ final class BorerAreaRunner {
 		progressKey = "";
 		moveIdleTicks = 0;
 		show(client, (plan.phase() == BorerAreaPlan.Phase.HORIZONTAL ? "浅层水平清挖 " : "挖第 ") + Math.min(plan.total(), plan.completed() + 1) + "/" + plan.total() + " 列 · Y " + target.getY());
+		advanceWhileMining(client,player);
+	}
+	private boolean fastClick(Minecraft c, BlockPos pos) {
+		var state = c.level.getBlockState(pos);
+		return repeatClick(c) || instant.allows(state.getBlock(), state.getDestroyProgress(c.player,c.level,pos));
+	}
+	private boolean repeatClick(Minecraft c) {
+		return engine.areaInstantRebreakRequested() && instant.repeatAllows(c.player.getMainHandItem().is(net.minecraft.tags.ItemTags.PICKAXES));
+	}
+	private void logPipelineGate(Minecraft c, String reason) {
+		if (!reason.equals(pipelineGate) || c.player.tickCount - pipelineGateTick >= 100) {
+			engine.fileLog(c,"area-pipeline-gate "+reason); pipelineGate = reason; pipelineGateTick = c.player.tickCount;
+		}
+	}
+	private boolean canGroundForMining(Minecraft c, LocalPlayer p) {
+		if (cargo.active() || plan == null || plan.phase() != BorerAreaPlan.Phase.HORIZONTAL) return false;
+		var box = p.getBoundingBox();
+		boolean supported = true;
+		for (int x = (int)Math.floor(box.minX+.001); x <= (int)Math.floor(box.maxX-.001); x++)
+			for (int z = (int)Math.floor(box.minZ+.001); z <= (int)Math.floor(box.maxZ-.001); z++) {
+				var floor = new BlockPos(x,plan.bottomY()-1,z);
+				if (!safeWalkingFloor(c,floor)) supported = false;
+			}
+		var v = p.getDeltaMovement();
+		return BorerAreaGrounding.allowed(true,p.getY(),plan.bottomY(),v.x,v.y,v.z,supported);
+	}
+	private void holdForMining(Minecraft c, LocalPlayer p) {
+		releaseMovement(c); flight.speed(0); naturalDescent = false;
+		if (canGroundForMining(c,p)) flight.digOnFoot(); else flight.fly();
+	}
+	private boolean clickPipeline(Minecraft c, LocalPlayer player, BlockPos pos, BlockHitResult hit) {
+		stopAttack(c); holdForMining(c,player);
+		if (!fastClick(c,pos)) return false;
+		boolean repeat = repeatClick(c);
+		engine.miningConfirmation.startObservedBreak(c,pos,hit.getDirection());
+		if (repeat && !c.level.getBlockState(pos).isAir()) instant.finishRepeat(pos,hit.getDirection());
+		if (!repeat && !c.level.getBlockState(pos).isAir()) {
+			failedFastTarget = pos; attacking = true;
+			show(c,"当前方块不能点挖，转为持续挖掘"); return true;
+		}
+		if (!repeat && !engine.miningConfirmation.pending(c.level,pos)) {
+			stop(c,"瞬时破坏未登记服务器确认，已暂停；请重新进服核对方块"); return true;
+		}
+		pipeline.submitted(pos,player.tickCount);
+		player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+		mining = pos; progressKey = ""; moveIdleTicks = mineIdleTicks = 0;
+		engine.fileLog(c,"area-pipeline-click block="+pos+" pending="+pipeline.size()+" mode="+(repeat?"InstantRebreak":"SpeedMine/vanilla")+" onGround="+player.onGround());
+		show(c,"连续点挖 · 待确认 "+pipeline.size()+"/"+BorerAreaPipeline.LIMIT);
+		return true;
+	}
+	private void tickPipeline(Minecraft c, LocalPlayer player) {
+		try { tickPipelineWork(c,player); }
+		finally { if (engine.active && pipeline.active()) advanceWhileMining(c,player); }
+	}
+	private void tickPipelineWork(Minecraft c, LocalPlayer player) {
+		stopAttack(c); holdForMining(c,player);
+		var confirmed = pipeline.update(player.tickCount, p -> new BorerAreaPipeline.Observation(
+			c.level.hasChunkAt(p) && c.level.getBlockState(p).isAir(), engine.miningConfirmation.pending(c.level,p)));
+		for (var pos : confirmed)
+			engine.fileLog(c,"area-pipeline-confirmed block="+pos);
+		BlockPos expired = pipeline.expired(player.tickCount);
+		if (expired != null) { stop(c,"连续点挖 5 秒未确认 "+BorerText.block(expired)+"，已停挖；未计完成"); return; }
+		var tool = player.getMainHandItem();
+		boolean toolReady = BorerItems.isMiningTool(tool) && engine.toolPolicy.allows(tool.getItem(),tool.isDamageableItem(),tool.getMaxDamage(),BorerItems.remainingDurability(tool));
+		// Vanilla has one delayed-destroy slot: B's first STOP may be ignored while A still owns it.
+		if (!confirmed.isEmpty() && toolReady && repeatClick(c)) {
+			for (var pos : pipeline.positions()) {
+				if (cell(c,pos) != BorerAreaPlan.Cell.SOLID || !plan.pipelineAllowed(world(c),pos,pipeline::contains)
+					|| BorerHazards.wouldOpenWater(c,pos) || BorerHazards.wouldOpenLava(c,pos)) continue;
+				var state = c.level.getBlockState(pos);
+				if (state.requiresCorrectToolForDrops() && !tool.isCorrectToolForDrops(state)) continue;
+				var hit = BorerAim.visibleHit(c,player,pos,pos::equals);
+				if (hit == null || pipeline.blocksRay(player.getEyePosition(),hit.getLocation(),pos)) continue;
+				look = RotationAim.lookAt(player,BorerAim.lookAlongRay(player.getEyePosition(),hit)); RotationAim.apply(player,look);
+				var actual = BorerAim.clipView(c,player);
+				if (actual == null || !pos.equals(actual.getBlockPos())) continue;
+				instant.finishRepeat(pos,actual.getDirection());
+				engine.fileLog(c,"area-pipeline-followup block="+pos+" reason=previous-block-confirmed");
+			}
+		}
+		if (!pipeline.canClick(player.tickCount) || cargo.shouldStart(c) || !toolReady || torch.needsService(c)) {
+			show(c,"核对方块更新 · 待确认 "+pipeline.size()); return;
+		}
+		var candidates = new java.util.ArrayList<BlockPos>();
+		var candidateWorld = world(c);
+		BlockPos base = player.blockPosition();
+		for (BlockPos pos : BlockPos.betweenClosed(base.offset(-4,-4,-4),base.offset(4,4,4))) {
+			if (pipeline.contains(pos) || pos.equals(failedFastTarget) || cell(c,pos) != BorerAreaPlan.Cell.SOLID
+				|| player.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(pos))
+				|| !plan.pipelineAllowed(candidateWorld,pos,pipeline::contains) || BorerHazards.wouldOpenWater(c,pos) || BorerHazards.wouldOpenLava(c,pos)) continue;
+			candidates.add(pos.immutable());
+		}
+		candidates.sort(java.util.Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(player.getEyePosition())));
+		int attempts = 0;
+		for (var pos : candidates) {
+			if (++attempts > 24) break;
+			BlockHitResult hit = BorerAim.visibleHit(c,player,pos,pos::equals);
+			if (hit == null || pipeline.blocksRay(player.getEyePosition(),hit.getLocation())) continue;
+			// An in-flight click keeps its tool until confirmed; never cancel it with an inventory swap.
+			var state = c.level.getBlockState(pos);
+			if (state.requiresCorrectToolForDrops() && !player.getMainHandItem().isCorrectToolForDrops(state) || !fastClick(c,pos)) continue;
+			look = RotationAim.lookAt(player,BorerAim.lookAlongRay(player.getEyePosition(),hit)); RotationAim.apply(player,look);
+			BlockHitResult actual = BorerAim.clipView(c,player);
+			if (actual == null || !pos.equals(actual.getBlockPos()) || pipeline.blocksRay(player.getEyePosition(),actual.getLocation())) continue;
+			c.hitResult = actual; c.crosshairPickEntity = null;
+			if (clickPipeline(c,player,pos,actual)) return;
+		}
+		if (!pipeline.active()) { mining = null; look = null; show(c,"本批方块已确认，继续清挖"); return; }
+		logPipelineGate(c,"等待独立可见目标 candidates="+candidates.size()+" pending="+pipeline.size());
+		show(c,"等待已点方块确认，保持原地");
+	}
+	private boolean safeWalkingFloor(Minecraft c, BlockPos floor) {
+		if (!c.level.hasChunkAt(floor) || engine.miningConfirmation.pending(c.level,floor) || pipeline.contains(floor)) return false;
+		var state=c.level.getBlockState(floor);
+		return state.isCollisionShapeFullBlock(c.level,floor) && state.getFluidState().isEmpty() && !state.is(Blocks.MAGMA_BLOCK);
+	}
+	private void advanceWhileMining(Minecraft c, LocalPlayer player) {
+		if (!engine.active || c.screen != null || cargo.active() || cargo.shouldStart(c) || look == null
+			|| plan == null || plan.phase() != BorerAreaPlan.Phase.HORIZONTAL || player.isUsingItem()) return;
+		if (plan.continueMiningWalk(world(c),pose(player),player.tickCount,pipeline::contains))
+			torch.begin(new BlockPos(plan.column().getX(),plan.bottomY(),plan.column().getZ()));
+		var input = BorerAreaAdvance.input(pose(player),plan.miningTravelGoal(),look.yaw());
+		var safety = new BorerAreaAdvance.World() {
+			public boolean air(BlockPos p) { return !pipeline.contains(p) && cell(c,p)==BorerAreaPlan.Cell.AIR; }
+			public boolean floor(BlockPos p) { return safeWalkingFloor(c,p); }
+		};
+		if (!BorerAreaAdvance.safe(safety,pose(player),plan.bottomY(),input)) return;
+		flight.speed(0); flight.digOnFoot(); naturalDescent=false;
+		c.options.keyUp.setDown(input.forward()); c.options.keyDown.setDown(input.back());
+		c.options.keyLeft.setDown(input.left()); c.options.keyRight.setDown(input.right());
+		plan.miningAdvanced(world(c),pose(player));
+		show(c,"边挖边接近下一格 · 待确认 "+pipeline.size());
 	}
 
 	private void beginSideWater(Minecraft client, BlockPos target) {
@@ -406,7 +573,8 @@ final class BorerAreaRunner {
 		stopAttack(client);
 		engine.clearMiningTarget(client, "area-v2-moving");
 		mining = null;
-		BorerAreaMotion.Input input = BorerAreaMotion.of(command, pose(player), player.getYRot());
+		BorerAreaMotion.Input input = cargo.active() ? BorerCargoMotion.of(command, pose(player), player.getYRot())
+			: BorerAreaMotion.of(command, pose(player), player.getYRot());
 		// A single axis and one yaw per tick, including the host's post-tick reapply.
 		look = new RotationAim.Look(input.yaw(), command.action() == BorerAreaPlan.Action.DOWN && plan.phase() == BorerAreaPlan.Phase.DIG ? 90 : 0);
 		RotationAim.apply(player, look);

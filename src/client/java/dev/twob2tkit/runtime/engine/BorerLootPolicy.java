@@ -23,7 +23,7 @@ public final class BorerLootPolicy {
 		private int idle;
 		private double best = Double.POSITIVE_INFINITY;
 		boolean tick(double distance, boolean picked, boolean cleared, boolean waypoint) {
-			if (picked || cleared || waypoint || distance < best - .05) { best = distance; idle = 0; }
+			if (picked || cleared || waypoint || distance < best - .05) { best = Math.min(best, distance); idle = 0; }
 			else idle++;
 			return idle >= 160;
 		}

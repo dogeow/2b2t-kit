@@ -29,11 +29,14 @@ public final class ChopperTrees {
 	}
 
 	/** 一棵树：原木列表、可补种树桩、最低基座。 */
-	public record Tree(List<BlockPos> logs, List<BlockPos> stumps, BlockPos base) {
+	public record Tree(List<BlockPos> logs, List<BlockPos> stumps, BlockPos base, Set<BlockPos> witness) {
 	}
 
 	/** 玩家附近最近一棵合法树；没有则 null。 */
 	public static Tree findNearest(Minecraft client, LocalPlayer player, int range, boolean requireLeaves, Set<BlockPos> ignored) {
+		return findNearest(client,player,range,requireLeaves,ignored,"");
+	}
+	public static Tree findNearest(Minecraft client, LocalPlayer player,int range,boolean requireLeaves,Set<BlockPos> ignored,String materialLog){
 		BlockPos origin = player.blockPosition();
 		Set<BlockPos> seen = new HashSet<>();
 		Tree best = null;
@@ -41,12 +44,14 @@ public final class ChopperTrees {
 		for (int dx = -range; dx <= range; dx++) {
 			for (int dz = -range; dz <= range; dz++) {
 				if (dx * dx + dz * dz > range * range) continue;
-				for (int dy = -1; dy <= 24; dy++) {
+				for (int dy = -24; dy <= 24; dy++) {
 					BlockPos pos = origin.offset(dx, dy, dz);
 					if (!client.level.hasChunkAt(pos) || seen.contains(pos) || ignored.contains(pos)) continue;
 					if (!isWood(client.level.getBlockState(pos))) continue;
+					if(!materialLog.isEmpty()&&!BuiltInRegistries.BLOCK.getKey(client.level.getBlockState(pos).getBlock()).toString().equals(materialLog))continue;
 					Tree tree = flood(client, pos, seen, requireLeaves, ignored);
 					if (tree == null) continue;
+					if(!materialLog.isEmpty()&&(tree.stumps.isEmpty()||tree.logs.stream().anyMatch(p->!BuiltInRegistries.BLOCK.getKey(client.level.getBlockState(p).getBlock()).toString().equals(materialLog))))continue;
 					double dist = player.position().distanceToSqr(Vec3.atCenterOf(tree.base));
 					if (dist < bestDist) {
 						bestDist = dist;
@@ -94,13 +99,29 @@ public final class ChopperTrees {
 			ignored.addAll(local);
 			return null;
 		}
-		List<BlockPos> bases = new ArrayList<>();
-		BlockPos lowest = logs.getFirst();
-		for (BlockPos log : logs) {
-			if (log.getY() < lowest.getY()) lowest = log;
-			if (!isWood(client.level.getBlockState(log.below()))) bases.add(log.immutable());
+		Block source=client.level.getBlockState(start).getBlock();
+		var crown=ChopperCanopy.collect(canopyWorld(client,source),logs,MAX_LOGS);
+		if(!crown.complete()){ignored.addAll(crown.logs());return null;}
+		logs=new ArrayList<>(crown.logs());globalSeen.addAll(logs);
+		List<BlockPos> bases=new ArrayList<>();BlockPos lowest=logs.getFirst();
+		for(BlockPos log:logs){
+			if(log.getY()<lowest.getY())lowest=log;
+			if(client.level.getBlockState(log.below()).is(BlockTags.DIRT))bases.add(log.immutable());
 		}
-		return new Tree(List.copyOf(logs), bases, lowest.immutable());
+		return new Tree(List.copyOf(logs),bases,lowest.immutable(),crown.witness());
+	}
+	static ChopperCanopy.World canopyWorld(Minecraft c,Block source){
+		String type=BuiltInRegistries.BLOCK.getKey(source).getPath().replace("stripped_","");
+		String leaves=type.contains("mangrove")?"mangrove_leaves":type.replace("_log","_leaves").replace("_wood","_leaves");
+		return new ChopperCanopy.World(){
+			public boolean wood(BlockPos p){return c.level.hasChunkAt(p)&&c.level.getBlockState(p).is(source);}
+			public boolean leaf(BlockPos p){
+				if(!c.level.hasChunkAt(p))return false;var s=c.level.getBlockState(p);
+				return s.is(BlockTags.LEAVES)&&BuiltInRegistries.BLOCK.getKey(s.getBlock()).getPath().equals(leaves)
+					&&s.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.PERSISTENT)
+					&&!s.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.PERSISTENT);
+			}
+		};
 	}
 
 	/** 原木周围树叶数量（够 {@link #MIN_LEAVES} 可早停）。 */

@@ -7,6 +7,46 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BorerCargoPolicyTest {
 	private BorerCargoPolicy.Stack stack(String id, int count) { return new BorerCargoPolicy.Stack("minecraft:" + id, count, false); }
+	@Test void currentHostStoresEveryOrdinaryDropWithoutExpandingDiscardRules() {
+		for (String id : List.of("minecraft:pumpkin", "minecraft:wheat_seeds", "minecraft:poppy", "minecraft:oak_log", "minecraft:gunpowder", "example:raw_ore")) {
+			var drops = List.of(new BorerCargoPolicy.Stack(id,8,false,false,true));
+			assertEquals(0,BorerCargoPolicy.next(drops,false),id);
+			assertEquals(-1,BorerCargoPolicy.next(drops,true),id);
+		}
+	}
+	@Test void checklistMaskProtectsSuppliesFromBothDepositAndDiscard() {
+		var bag = List.of(new BorerCargoPolicy.Stack("minecraft:dirt",64,false,true,true),
+			new BorerCargoPolicy.Stack("minecraft:cobblestone",64,false,true,true),
+			new BorerCargoPolicy.Stack("minecraft:pumpkin",8,false,false,true),
+			new BorerCargoPolicy.Stack("minecraft:stone",64,false,false,true));
+		assertArrayEquals(new boolean[]{true,true,false,false},BorerCargoPolicy.reservedForStore(bag));
+		assertEquals(2,BorerCargoPolicy.next(bag,false));assertEquals(3,BorerCargoPolicy.next(bag,true));
+		assertEquals(-1,BorerCargoPolicy.next(bag,false,i->i<2));
+	}
+	@Test void specialItemsRemainProtectedEvenWhenNoChecklistRuleMatches() {
+		var bag = List.of(new BorerCargoPolicy.Stack("minecraft:pumpkin",8,true,false,true));
+		assertEquals(-1,BorerCargoPolicy.next(bag,false));assertEquals(-1,BorerCargoPolicy.next(bag,true));
+	}
+	@Test void olderHostWithoutSupplyMaskRemainsOnTheSafeMaterialOnlyPolicy() {
+		assertEquals(-1,BorerCargoPolicy.next(List.of(stack("pumpkin",8),stack("chest",2),stack("bread",64)),false));
+	}
+	@Test void sandstoneIsDepositedButTheDiscardWhitelistIsNotExpanded(){
+		for(String id:List.of("sandstone","red_sandstone")){
+			assertTrue(BorerCargoPolicy.material("minecraft:"+id));assertFalse(BorerCargoPolicy.stone("minecraft:"+id));
+			assertEquals(0,BorerCargoPolicy.next(List.of(stack(id,64)),false));assertEquals(-1,BorerCargoPolicy.next(List.of(stack(id,64)),true));
+		}
+	}
+	@Test void dirtReserveLetsAllPlainStoneAndSandstoneEnterTheChest(){
+		var bag=List.of(stack("stone",64),stack("sandstone",64),stack("dirt",64),stack("cobblestone",64));
+		assertArrayEquals(new boolean[]{false,false,true,false},BorerCargoPolicy.reservedForStore(bag));
+		assertEquals(0,BorerCargoPolicy.next(bag,false));
+		assertEquals(1,BorerCargoPolicy.next(bag,false,i->i!=0));
+		assertEquals(-1,BorerCargoPolicy.next(bag,false,i->i==2));
+	}
+	@Test void preferOneFullReserveStackOverSeveralPartiallyFilledSlots(){
+		assertArrayEquals(new boolean[]{false,true,false},BorerCargoPolicy.reservedForStore(List.of(stack("dirt",10),stack("cobblestone",64),stack("stone",64))));
+		assertArrayEquals(new boolean[]{true,false},BorerCargoPolicy.reservedForStore(List.of(stack("stone",64),stack("stone",32))));
+	}
 	@Test void ordinaryStonesAreExplicitlyRecognisedButEveryOreAndToolIsSafeFromDiscard() {
 		for (String id : BorerCargoPolicy.STONE) assertTrue(BorerCargoPolicy.stone("minecraft:" + id));
 		for (String id : List.of("lapis_lazuli", "lapis_block", "gold_ore", "raw_gold", "gold_ingot", "diamond", "deepslate_diamond_ore",

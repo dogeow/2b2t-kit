@@ -2,6 +2,9 @@
 
 Minecraft 26.1.2 Fabric 客户端 Mod，提供采矿、采集、投影建造、巡航和生存辅助。不同功能通过普通游戏交互执行；部分功能会协调已安装的 Meteor 或 Litematica Printer。
 
+当前主包 **1.9.67**，运行引擎 **1.7.57**。投影和补货共用可热更新的寻路/走位引擎；本机材料流程支持真实库存核对、依赖合成、局部打印及施工修正。低血量安全离线锁须在游戏中手动解除。热更新范围与操作见 [HOT-UPDATE.md](decision-runtime/HOT-UPDATE.md)。
+
+
 ## 安装
 
 把 `twob2tkit-1.9.21.jar` 和适用于 Minecraft 26.1.2 的 Fabric API 放入 `.minecraft/mods`。它可以和 Meteor 同时使用，不需要 Meteor Addon API，服务器也不需要安装任何 Mod。
@@ -31,7 +34,9 @@ Minecraft 26.1.2 Fabric 客户端 Mod，提供采矿、采集、投影建造、�
 
 技能库入口为 **U → 生产 → 技能库**。本地记录器负责发布技能目录；页面显示所有技能的最新版本，支持搜索、状态筛选、详情和自动刷新。1.9.21 修复 HMCL 改写 Java `user.home` 时读取不到目录的问题。记录器安装与验收规则见 [companion-skills/README.md](companion-skills/README.md)。
 
-事件监督器见 [companion/README.md](companion/README.md)，混凝土制作见 [docs/concrete-maker.md](docs/concrete-maker.md)，放置节奏见 [docs/placement-speed.md](docs/placement-speed.md)。
+自动模型故障反馈已移除。本地技能记录不调用模型；混凝土制作见 [docs/concrete-maker.md](docs/concrete-maker.md)，放置节奏见 [docs/placement-speed.md](docs/placement-speed.md)。
+
+Jev 按次决策与 Laya-MLX 本机对比见 [decision-runtime/README.md](decision-runtime/README.md)。基础接口已在独立单人测试世界验证移动与等待；Laya 暂限比较模式，不自动控制游戏，也不启动后台模型服务。
 
 从 1.6.9 开始，稳定核心与盾构/自动找矿运行引擎分开。1.6.10 修正了固定加载器中盾构移动输入晚于 Minecraft 玩家输入采样的问题。1.6.11 增加自动喂养。1.6.12 在升空被头顶挡住时会保持飞行并挖开挡路方块。1.6.13 增加自动种田。1.6.14 增加自动挖树。1.6.15 增加世界种子探测。1.6.16 让配方书增强在背包 2×2 里也能列出末影箱等 3×3 配方。1.6.17 增加下界基岩顶：珍珠上顶 + Y129 巡航 + 主世界坐标÷8，升级后需完整重启一次。之后只改盾构、找矿、垂直寻路等运行逻辑时，可把新的 `twob2tkit-engine.jar` 放到 `.minecraft/config/twob2tkit/runtime/`，再在“设置”点击“检查并加载新版”，或输入 `/twob2tkit reload`。热加载前会先停止当前动作并释放按键；功能包缺失、损坏或要求更高版本加载器时会拒绝切换并继续使用原引擎。“恢复内置版本”可随时还原当前核心自带的运行引擎。Mixin、按键注册、Fabric 元数据及核心界面发生变化时仍需重启游戏。
 

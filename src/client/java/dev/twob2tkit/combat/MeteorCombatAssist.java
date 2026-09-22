@@ -11,8 +11,10 @@ public final class MeteorCombatAssist {
 
 	/** 打开 Meteor 杀戮光环与自动断开，并提示聊天。 */
 	public static void arm(Minecraft client) {
+        if(EmergencyExit.active()){MeteorModules.enablePveAura();return;}
 		boolean bowOwned = dev.twob2tkit.KitClient.borerCombatLook(client) != null
 			&& client.player != null && client.player.getMainHandItem().is(net.minecraft.world.item.Items.BOW);
+		if(dev.twob2tkit.automation.AutomationBridge.pveOnly()){if(!bowOwned)MeteorModules.enablePveAura();MeteorModules.enable(MeteorModules.AUTO_LOG);return;}
 		boolean ka = !bowOwned && MeteorModules.enable(MeteorModules.KILL_AURA);
 		boolean log = MeteorModules.enable(MeteorModules.AUTO_LOG);
 		if (!ka && !log) return;

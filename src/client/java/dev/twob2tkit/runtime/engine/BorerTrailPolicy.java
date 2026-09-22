@@ -1,5 +1,10 @@
 package dev.twob2tkit.runtime.engine;
 
+import java.util.List;
+import java.util.Set;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
+
 /**
  * 回家路点怎么记、怎么画。只改这一处。
  * <p>
@@ -19,6 +24,22 @@ public final class BorerTrailPolicy {
 	public static final int DRAW_NEAR_Y = 8;
 
 	private BorerTrailPolicy() {
+	}
+
+	/** 到达后只往较早的路点走；绕弯时到起点的直线距离可以暂时增加。 */
+	static int advanceReturnIndex(List<BlockPos> points, int index, Vec3 position) {
+		return advanceReturnIndex(points, index, position, Set.of());
+	}
+	static int advanceReturnIndex(List<BlockPos> points, int index, Vec3 position, Set<Integer> breaks) {
+		while (index > 0 && !breaks.contains(index) && reachedReturnWaypoint(position, points.get(index))) {
+			index--;
+		}
+		return index;
+	}
+
+	/** 路点记录的是脚底；落地可在记录点下一格，不能用方块中心额外抬高半格。 */
+	static boolean reachedReturnWaypoint(Vec3 feet, BlockPos waypoint) {
+		return feet.distanceToSqr(Vec3.atBottomCenterOf(waypoint)) < 2.25;
 	}
 
 	/** 两路点是巷道上的一步，不是穿墙斜线。 */

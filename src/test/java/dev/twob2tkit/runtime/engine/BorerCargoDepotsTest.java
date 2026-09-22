@@ -11,6 +11,19 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BorerCargoDepotsTest {
 	@TempDir Path temp;
+	@Test void oldMineralOnlyCapacityIsRecheckedWithoutForgettingLocationsOrFullChests() throws Exception {
+		Path p=temp.resolve("depots.json");
+		Files.writeString(p,"""
+			{"areas":{"a":[{"x":1,"y":65,"z":0,"full":false,"accepts":["minecraft:stone"]},
+			{"x":2,"y":65,"z":0,"full":true,"accepts":[]}],"b":[{"x":3,"y":65,"z":0,"full":false,"accepts":[]}]}}
+			""");
+		var depots=new BorerCargoDepots(p,"a");
+		assertTrue(depots.sites().getFirst().acceptsAny(Set.of("minecraft:pumpkin")));
+		assertTrue(depots.sites().get(1).full());
+		depots.remember(new BlockPos(1,65,0),false,List.of("minecraft:stone"));
+		assertFalse(new BorerCargoDepots(p,"a").sites().getFirst().acceptsAny(Set.of("minecraft:pumpkin")));
+		assertEquals(1,new BorerCargoDepots(p,"b").sites().size());
+	}
 	@Test void onlyRecordedProjectChestsSurviveReloadAndFullStatusIsUpdated() throws Exception {
 		Path p = temp.resolve("depots.json");
 		var depots = new BorerCargoDepots(p, "server|dim|area-a");

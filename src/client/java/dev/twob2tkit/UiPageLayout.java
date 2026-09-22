@@ -7,6 +7,11 @@ public record UiPageLayout(int left, int width, int top, int bottom, int footer)
         int footer = Math.max(126, screenHeight - 80);
         return new UiPageLayout((screenWidth - width) / 2, width, 54, footer - 22, footer);
     }
+    /** The feature launcher needs slightly more content space while leaving the normal HUD below its footer. */
+    public static UiPageLayout workspace(int screenWidth,int screenHeight){
+        var base=of(screenWidth,screenHeight);int footer=Math.max(126,screenHeight-72);
+        return new UiPageLayout(base.left(),base.width(),54,footer-22,footer);
+    }
     public int height() { return Math.max(20, bottom - top); }
     public int fieldWidth() { return Math.max(86, Math.min(220, width * 2 / 5)); }
     public int fieldX() { return left + width - fieldWidth(); }

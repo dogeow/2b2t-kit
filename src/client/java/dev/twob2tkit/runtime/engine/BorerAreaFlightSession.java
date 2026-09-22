@@ -33,7 +33,9 @@ public final class BorerAreaFlightSession implements AutoCloseable {
 			Object module = requireModule(FLIGHT, "Meteor Flight 尚未就绪");
 			SettingHandle speed = new SettingHandle(module, "speed");
 			if (!(speed.original instanceof Double current)) throw new IllegalStateException("Flight 速度类型不兼容");
-			BorerFlightSpeedBackup backup = new BorerFlightSpeedBackup(path);
+			// A freshly loaded idle engine must not restore another feature's active hover.
+            if(BorerFlightSpeedBackup.otherReceiptClaims(path,current))return null;
+            BorerFlightSpeedBackup backup = new BorerFlightSpeedBackup(path);
 			BorerFlightSpeedBackup.Entry entry = backup.read();
 			double restored = entry == null ? current : entry.restore(current);
 			// Migration for 1.7.2–1.7.4: those releases had no durable backup. Do not touch nonzero manual speeds.
@@ -155,14 +157,14 @@ public final class BorerAreaFlightSession implements AutoCloseable {
 	}
 
 	/** Normal mining uses gravity; only this deliberate off state is accepted by acquire(). */
-	void digOnFoot() {
+	public void digOnFoot() {
 		if (!acquired) return;
 		try {
 			if (flight.active()) flight.toggle();
 			grounded = true;
 		} catch (ReflectiveOperationException e) { throw new IllegalStateException("无法关闭挖掘飞行", e); }
 	}
-	void fly() {
+	public void fly() {
 		if (!acquired || !grounded) return;
 		try {
 			if (!flight.active()) { flight.toggle(); enabledByUs |= !originallyActive; }

@@ -18,6 +18,11 @@ final class BorerAreaTorch {
 	static boolean needsLight(int brightness, boolean hasTorch) { return brightness < 8 && hasTorch; }
 	void begin(BlockPos pos) { target = pos.immutable(); ticks = 0; }
 	void reset() { target = null; ticks = 0; }
+	boolean needsService(Minecraft client) {
+		if(target==null || client.level.getMaxLocalRawBrightness(target)>=8)return false;
+		for(int i=0;i<36;i++)if(client.player.getInventory().getItem(i).is(Items.TORCH))return true;
+		return false;
+	}
 	boolean tick(Minecraft client, DefaultTunnelBorerEngine engine) {
 		if (target == null) return false;
 		var player = client.player;

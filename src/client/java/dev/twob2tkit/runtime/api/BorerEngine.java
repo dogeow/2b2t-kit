@@ -13,9 +13,13 @@ public interface BorerEngine {
 
 	/** 当前功能包版本，给设置页和日志用。 */
 	String runtimeVersion();
+	/** Optional capability. Older engines keep using the bundled navigation. */
+	default BuildNavigation buildNavigation(){return null;}
 
 	/** 是否正在挖矿或找矿。 */
 	boolean isActive();
+	/** Optional native mining ownership; older engines keep their existing key-driven behavior. */
+	default boolean ownsMining() { return false; }
 
 	/** 当前模式内部名。 */
 	String modeName();
@@ -90,6 +94,9 @@ public interface BorerEngine {
 	default int trailLength() {
 		return 0;
 	}
+
+	/** Optional origin label; avoids serializing a long route on every UI frame. */
+	default String journeyOrigin() { return ""; }
 
 	/** 丢掉旧路点，只留地狱门。 */
 	default void clearTrailKeepPortal() {

@@ -1,0 +1,33 @@
+{
+  "case": "excavation_loot_recovery",
+  "date": "2026-09-22",
+  "kit": "1.9.62",
+  "lessons": [
+    "Known pre-dispatch item count/UUID changes are re-observed with a finite budget. Unknown movement results are not replayed.",
+    "Ordinary material stacks can be reselected nearby after a source UUID vanishes; log that this is a new pickup, not proof of identical entity lineage.",
+    "Micro ground pickup checks support, body clearance, hazards, a short descent, then actual inventory gain.",
+    "Create standing headroom before opening the lowest foundation layer.",
+    "Select the tool before moving to a verified mining pose. Occluded targets are logged and skipped for the rest of the session.",
+    "Stop batch printing when its exact cells match and the server queue is settled; this is not whole-goal completion."
+  ],
+  "matched_after": 2597,
+  "still_incomplete": true,
+  "python_tests": 158,
+  "ground_pickup_evidence": [
+    {
+      "phase": "done",
+      "detail": "walk target reached",
+      "position_before": [
+        761017.4153428898,
+        61.0,
+        797833.500010811
+      ],
+      "position_after": [
+        761017.604445655,
+        61.0,
+        797833.500010811
+      ],
+      "inventory_delta": {}
+    }
+  ]
+}

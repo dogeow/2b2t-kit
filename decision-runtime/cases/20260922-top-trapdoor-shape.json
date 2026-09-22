@@ -1,0 +1,23 @@
+{
+  "case": "top_trapdoor_access_from_below",
+  "date": "2026-09-22",
+  "observed_in_kit": "1.9.61",
+  "fixed_in_kit": "1.9.62",
+  "expected_state": "minecraft:oak_trapdoor[facing=east,half=top,open=false,powered=false,waterlogged=false]",
+  "requested_face": "down",
+  "failure": "No visible collision-free depot approach",
+  "root_cause": "The full-cube lower face is outside a top-mounted trapdoor outline. The ray ended below the actual surface.",
+  "fix": "Generate candidates from the vanilla outline AABBs and use the actual ray hit; recheck visibility after rotation. Block placement preserves its requested face. Sword-based block use may choose another visible face.",
+  "tests": [
+    "top trapdoor lower surface at 13/16",
+    "top slab lower surface at 1/2",
+    "all faces on open trapdoor and full block",
+    "multipart and empty shapes",
+    "wrong block and wrong placement face rejected"
+  ],
+  "java_tests": 922,
+  "installed": true,
+  "live_tested": true,
+  "requires_restart": false,
+  "live_evidence": "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/work/projection-completion/phase12/basement-hatch.json"
+}

@@ -22,4 +22,21 @@ public final class BuildPath {
         }
         return new Result(List.of(),n);
     }
+    /** Compatibility wrapper for callers that deliberately request one bounded search. */
+    public static Result find(World world,BlockPos start,Collection<BlockPos> goals,int budget){
+        var search=new GoalSearch(world,start,goals);
+        var result=search.advance(budget,Long.MAX_VALUE);
+        return result==null?new Result(List.of(),search.expanded()):result;
+    }
+    /** Resumable A*. A null slice result means pending, never proof that a path is absent. */
+    public static final class GoalSearch {
+        private final dev.twob2tkit.runtime.api.BuildNavigation.Search delegate;
+        public GoalSearch(World world,BlockPos start,Collection<BlockPos> goals){
+            delegate=new dev.twob2tkit.runtime.engine.DefaultBuildNavigation().search(new dev.twob2tkit.runtime.api.BuildNavigation.World(){
+                public boolean clear(BlockPos p){return world.clear(p);}public boolean edge(BlockPos a,BlockPos b){return world.edge(a,b);}
+            },start,goals);
+        }
+        public int expanded(){return delegate.expanded();}
+        public Result advance(int maxNodes,long deadlineNanos){var r=delegate.advance(maxNodes,deadlineNanos);return r==null?null:new Result(r.nodes(),r.expanded());}
+    }
 }

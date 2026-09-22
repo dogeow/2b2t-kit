@@ -18,8 +18,8 @@ final class BorerInstaPolicyTest {
 	}
 
 	@Test
-	void instaSkipServerConfirmHardBlocksStillWait() {
-		assertEquals(0, BorerInstaPolicy.clearConfirmTicks(true, 3));
+	void instantAndHardBlocksBothKeepTheConfirmationWindow() {
+		assertEquals(3, BorerInstaPolicy.clearConfirmTicks(true, 3));
 		assertEquals(3, BorerInstaPolicy.clearConfirmTicks(false, 3));
 	}
 

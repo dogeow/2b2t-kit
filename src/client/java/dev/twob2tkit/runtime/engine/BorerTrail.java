@@ -28,23 +28,22 @@ import java.util.Set;
 /** 记录挖矿走过的路点，供沿原路返回。热加载后从磁盘/快照恢复。 */
 final class BorerTrail {
 	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
-	private static final int MAX_POINTS = 5000;
-	/** 没挖矿时在下界闲逛，只留最近这一段去回门，不要把一辈子的路都攒进去。 */
-	static final int IDLE_KEEP = 120;
-	/** 磁盘里已经顶满的旧路，加载时只留门和最近一段。 */
-	static final int STALE_KEEP = 200;
 	private static final double RECORD_DISTANCE = 2.2;
 	/** 每隔几个路点补一个方块框。路点间距约 2.2 格，四个大概九格一个。 */
 	private static final int MARKER_EVERY = 4;
 	/** 回家箭头只画眼前这一段，整条穿墙会卡。 */
 	private static final int HOME_ARROWS = 40;
-	/** 走到这个距离内就算踏上该路点，再取更靠近家的下一个。 */
-	private static final double ARRIVE_DISTANCE_SQR = 2.25;
 	/** 沿已挖开的巷道 BFS。只确认还在这条巷道里，不必扫 2500 格。 */
 	private static final int REACH_SCAN_LIMIT = 400;
 	private static final long SAVE_INTERVAL_MS = 8000L;
 	private static final int REACH_CACHE_TICKS = 8;
 	private final ArrayList<BlockPos> points = new ArrayList<>();
+	private final Set<Integer> breaks = new HashSet<>();
+	private final BorerTrailStore store;
+	private String scope;
+	private boolean contextLoaded;
+	BorerTrail() { this(new BorerTrailStore(FabricLoader.getInstance().getConfigDir().resolve("twob2tkit"))); }
+	BorerTrail(BorerTrailStore store) { this.store = store; }
 	private BlockPos portal;
 	/** 沿路回家时粘住的路点下标，避免 BFS 每 tick 跳到旁边的分叉。 */
 	private int stickyIndex = -1;
@@ -65,6 +64,7 @@ final class BorerTrail {
 	/** 清空路点。 */
 	void clear() {
 		points.clear();
+		breaks.clear();
 		stickyIndex = -1;
 		dirty = true;
 		invalidateReachCache();
@@ -98,8 +98,10 @@ final class BorerTrail {
 	void ensureFirst(BlockPos pos) {
 		if (pos == null) return;
 		BlockPos anchor = pos.immutable();
-		if (!points.isEmpty() && points.getFirst().distSqr(anchor) <= 9.0) return;
-		if (points.size() >= MAX_POINTS) points.removeLast();
+		if (!points.isEmpty()) return; // Preserve the locked origin when a later portal is found.
+		Set<Integer> shifted = new HashSet<>();
+		for (int i : breaks) shifted.add(i + 1);
+		breaks.clear(); breaks.addAll(shifted);
 		points.addFirst(anchor);
 		dirty = true;
 		invalidateReachCache();
@@ -130,30 +132,37 @@ final class BorerTrail {
 
 	/** 按当前位置追加路点并裁到上限。 */
 	void record(Minecraft client, LocalPlayer player) {
-		record(client, player, MAX_POINTS);
+		recordPosition(client, player);
 	}
 
 	/** 没开盾构时只留最近一段路回门，避免和下界乱飞叠成 5000 点。 */
 	void recordIdle(Minecraft client, LocalPlayer player) {
-		record(client, player, IDLE_KEEP);
+		// Do not append lobby/teleport jumps while merely connected. An explicit
+		// mining restart records the discontinuity without replacing the origin.
+		if (player != null && !points.isEmpty()
+			&& player.blockPosition().distManhattan(last()) <= BorerTrailPolicy.CORRIDOR_MANHATTAN) recordPosition(client, player);
 	}
 
 	/** 按当前位置追加路点并裁到上限。 */
-	private void record(Minecraft client, LocalPlayer player, int maxKeep) {
+	private void recordPosition(Minecraft client, LocalPlayer player) {
 		if (player == null) return;
-		BlockPos here = player.blockPosition();
+		append(player.blockPosition());
+		maybeSave(client);
+	}
+
+	/** Stops/restarts append to the same journey; long unobserved jumps are explicit gaps. */
+	void append(BlockPos here) {
 		if (points.isEmpty()) {
 			points.add(here.immutable());
-			save(client);
+			dirty = true;
 			return;
 		}
 		BlockPos last = points.getLast();
 		if (here.distSqr(last) < RECORD_DISTANCE * RECORD_DISTANCE) return;
+		if (!BorerTrailPolicy.isCorridorSegment(here.distManhattan(last))) breaks.add(points.size());
 		points.add(here.immutable());
-		trimKeepFirst(maxKeep);
 		dirty = true;
 		invalidateReachCache();
-		maybeSave(client);
 	}
 
 	/**
@@ -161,63 +170,41 @@ final class BorerTrail {
 	 * 主世界不把下界门坐标写进路点。
 	 */
 	void beginMiningSession(Minecraft client, LocalPlayer player, boolean inNether) {
+		loadIfEmpty(client);
 		if (!inNether) detachPortalAnchor();
-		if (player != null && !points.isEmpty()) {
-			Vec3 pos = player.position();
-			int nearest = nearestIndex(pos);
-			double dist = Math.sqrt(pos.distanceToSqr(Vec3.atCenterOf(points.get(nearest))));
-			if (BorerTrailPolicy.resumeExistingTrail(dist)) {
-				if (inNether && portal != null) ensureFirst(portal);
-				record(client, player, MAX_POINTS);
-				save(client);
-				return;
-			}
-		}
-		BlockPos gate = portal;
-		points.clear();
-		stickyIndex = -1;
-		invalidateReachCache();
-		if (BorerTrailPolicy.includePortalAsHome(inNether) && gate != null) {
-			points.add(gate.immutable());
-		}
-		if (player != null) {
-			BlockPos here = player.blockPosition();
-			if (points.isEmpty() || here.distSqr(points.getLast()) >= RECORD_DISTANCE * RECORD_DISTANCE) {
-				points.add(here.immutable());
-			}
-		}
-		dirty = true;
+		if (player != null) append(player.blockPosition());
+		resetFollow();
 		save(client);
 	}
 
 	/** 主世界路点里的下界门坐标不是能走的巷道。 */
 	void detachPortalAnchor() {
-		if (portal == null || points.isEmpty()) return;
-		boolean removed = points.removeIf(pos -> pos.distManhattan(portal) <= 3);
-		if (removed) {
-			stickyIndex = -1;
-			dirty = true;
-			invalidateReachCache();
-		}
+		// World-scoped snapshots never mix portal anchors with overworld points.
+		portal = null;
 	}
 
 	/** 清空路点但保留地狱门。 */
 	void clearKeepPortal() {
 		BlockPos gate = portal;
 		points.clear();
+		breaks.clear();
 		stickyIndex = -1;
 		invalidateReachCache();
 		if (gate != null) points.add(gate.immutable());
 		dirty = true;
 	}
 
-	/** 裁路点但保留起点。 */
-	private void trimKeepFirst(int maxKeep) {
-		int keep = Math.max(2, maxKeep);
-		while (points.size() > keep) {
-			if (points.size() > 1) points.remove(1);
-			else break;
-		}
+	/** Back up before replacing the active journey. A failed backup leaves it intact. */
+	Path startNewJourney(BlockPos here) throws IOException {
+		if (scope == null) throw new IOException("尚未进入有效世界");
+		Path backup = store.archive(scope, snapshot());
+		String replacement = BorerTrailStore.header(scope)
+			+ (portal == null ? "" : "portal " + portal.getX() + " " + portal.getY() + " " + portal.getZ() + "\n")
+			+ here.getX() + " " + here.getY() + " " + here.getZ() + "\n";
+		store.write(scope, replacement);
+		restore(replacement);
+		dirty = false;
+		return backup;
 	}
 
 	/** 画出回家路点箭头。 */
@@ -271,35 +258,10 @@ final class BorerTrail {
 		return nextTowardHome(client, player);
 	}
 
-	/**
-	 * 下一个该走的路点：先回到最近路点，再选更靠近家的邻居。
-	 * 不能一律往下标减小，否则后来往家走时记下的点会把人指回去。
-	 */
+	/** 先贴回已记录的路线，然后按记录的逆序走，保留矿道里的绕行。 */
 	BlockPos nextTowardHome(Minecraft client, LocalPlayer player) {
 		if (points.isEmpty() || player == null) return null;
-		int from = followIndex(client, player);
-		Vec3 pos = player.position();
-		BlockPos stand = points.get(from);
-		if (pos.distanceToSqr(Vec3.atCenterOf(stand)) >= ARRIVE_DISTANCE_SQR) return stand;
-		BlockPos home = points.getFirst();
-		double current = stand.distSqr(home);
-		BlockPos best = null;
-		double bestDist = current;
-		if (from > 0) {
-			BlockPos prev = points.get(from - 1);
-			if (BorerTrailPolicy.towardHome(prev.distSqr(home), bestDist)) {
-				best = prev;
-				bestDist = prev.distSqr(home);
-			}
-		}
-		if (from + 1 < points.size()) {
-			BlockPos next = points.get(from + 1);
-			if (BorerTrailPolicy.towardHome(next.distSqr(home), bestDist)) {
-				best = next;
-				bestDist = next.distSqr(home);
-			}
-		}
-		return best != null ? best : stand;
+		return points.get(followIndex(client, player));
 	}
 
 	/** 往家方向看更远的路点，避免盯着脚边 2 格外的锯齿点左右甩头。 */
@@ -335,16 +297,16 @@ final class BorerTrail {
 			int reachable = nearestReachableIndex(client, player);
 			stickyIndex = reachable >= 0 ? reachable : nearestIndex(pos);
 		}
-		while (stickyIndex > 0 && pos.distanceToSqr(Vec3.atCenterOf(points.get(stickyIndex))) < ARRIVE_DISTANCE_SQR) {
-			int prev = stickyIndex - 1;
-			BlockPos home = points.getFirst();
-			if (home != null && !BorerTrailPolicy.towardHome(
-				points.get(prev).distSqr(home), points.get(stickyIndex).distSqr(home))) {
-				break;
-			}
-			stickyIndex--;
-		}
+		stickyIndex = BorerTrailPolicy.advanceReturnIndex(points, stickyIndex, pos, breaks);
 		return stickyIndex;
+	}
+
+	boolean returnRouteHasGap(Minecraft client, LocalPlayer player) {
+		if (points.isEmpty()) return false;
+		if (BorerTrailPolicy.reachedReturnWaypoint(player.position(), first())) return false;
+		int index = followIndex(client, player);
+		return breaks.contains(index) && BorerTrailPolicy.reachedReturnWaypoint(player.position(), points.get(index))
+			|| player.position().distanceToSqr(Vec3.atBottomCenterOf(points.get(index))) > 12 * 12;
 	}
 
 	/** 最近可达路点下标。 */
@@ -422,6 +384,7 @@ final class BorerTrail {
 	boolean arrivedHome(Minecraft client, LocalPlayer player) {
 		BlockPos home = first();
 		if (home == null || player == null) return false;
+		if (BorerTrailPolicy.reachedReturnWaypoint(player.position(), home)) return true;
 		if (player.position().distanceToSqr(Vec3.atCenterOf(home)) > 16.0) return false;
 		return followIndex(client, player) <= 1;
 	}
@@ -443,6 +406,8 @@ final class BorerTrail {
 	/** 导出路点快照字符串。 */
 	String snapshot() {
 		StringBuilder text = new StringBuilder();
+		if (scope != null) text.append(BorerTrailStore.header(scope));
+		for (int index : breaks.stream().sorted().toList()) text.append("gap ").append(index).append('\n');
 		if (portal != null) {
 			text.append("portal ").append(portal.getX()).append(' ').append(portal.getY()).append(' ')
 				.append(portal.getZ()).append('\n');
@@ -457,12 +422,13 @@ final class BorerTrail {
 	void restore(String snapshot) {
 		if (snapshot == null || snapshot.isBlank()) return;
 		points.clear();
+		breaks.clear(); portal = null; scope = null;
 		stickyIndex = -1;
 		invalidateReachCache();
 		for (String line : snapshot.split("\n")) {
 			parseLine(line.trim());
 		}
-		if (points.size() >= MAX_POINTS) trimKeepFirst(STALE_KEEP);
+		contextLoaded = scope != null;
 	}
 
 	/** 有变更时写盘。 */
@@ -472,78 +438,66 @@ final class BorerTrail {
 		save(client);
 	}
 
-	/** 立即写盘。 */
+	/** Save the bound world, even while the client is disconnecting or changing dimensions. */
 	void save(Minecraft client) {
 		try {
-			Path file = trailFile();
-			Files.createDirectories(file.getParent());
-			List<String> lines = new ArrayList<>(points.size() + 1);
-			if (portal != null) {
-				lines.add("portal " + portal.getX() + " " + portal.getY() + " " + portal.getZ());
-			}
-			for (BlockPos pos : points) {
-				lines.add(pos.getX() + " " + pos.getY() + " " + pos.getZ());
-			}
-			Files.write(file, lines, StandardCharsets.UTF_8);
+			if (scope == null) loadIfEmpty(client);
+			if (scope == null) return;
+			store.write(scope, snapshot());
 			dirty = false;
 			lastSaveMs = System.currentTimeMillis();
 		} catch (IOException exception) {
-			LOGGER.warn("Could not save borer trail", exception);
+			LOGGER.warn("Could not save borer journey", exception);
 		}
 	}
 
-	/** 内存空时从磁盘加载路点。 */
+	static String canonicalServer(String address) {
+		String value=address.strip().toLowerCase(java.util.Locale.ROOT);
+		return value.endsWith(":25565") ? value.substring(0,value.length()-6) : value;
+	}
+
+	static String worldScope(Minecraft client) {
+		if (client == null || client.level == null) return null;
+		String server = client.getCurrentServer() != null ? "server:" + canonicalServer(client.getCurrentServer().ip)
+			: client.getSingleplayerServer() != null ? "local:" + client.getSingleplayerServer()
+				.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).toAbsolutePath().normalize() : null;
+		return server == null ? null : server + "|" + client.level.dimension().identifier();
+	}
+
+	boolean matchesWorld(Minecraft client) {
+		return contextLoaded && scope != null && scope.equals(worldScope(client));
+	}
+
+	/** Restore this world's journey once; an intentionally empty journey stays empty. */
 	void loadIfEmpty(Minecraft client) {
-		if (!points.isEmpty()) return;
-		Path file = trailFile();
-		if (!Files.isRegularFile(file) && client != null) {
-			Path legacy = legacyTrailFile(client);
-			if (legacy != null && Files.isRegularFile(legacy)) file = legacy;
-		}
-		if (!Files.isRegularFile(file)) return;
-		try {
-			for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-				parseLine(line.trim());
-			}
-			if (points.size() >= MAX_POINTS) {
-				trimKeepFirst(STALE_KEEP);
-				dirty = true;
-				LOGGER.info("Trimmed stale borer trail to {} points ({})", points.size(), file);
-			} else {
-				LOGGER.info("Loaded {} borer trail points from {}", points.size(), file);
-			}
-		} catch (Exception exception) {
-			LOGGER.warn("Could not load borer trail", exception);
-			points.clear();
+		String key = worldScope(client);
+		if (key == null) return;
+		try { useScope(key); }
+		catch (IOException | IllegalArgumentException error) {
+			LOGGER.error("Could not switch mining journey; keep prior snapshot and refuse this world", error);
+			contextLoaded = false;
 		}
 	}
 
-	/** 尚未记门时从磁盘加载。 */
-	void loadPortalIfMissing(Minecraft client) {
-		if (portal != null) return;
-		Path file = portalFile();
-		if (!Files.isRegularFile(file) && client != null) {
-			Path legacy = legacyPortalFile(client);
-			if (legacy != null && Files.isRegularFile(legacy)) file = legacy;
-		}
-		if (!Files.isRegularFile(file)) return;
-		try {
-			List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-			if (lines.isEmpty()) return;
-			String[] parts = lines.getFirst().trim().split("\\s+");
-			if (parts.length < 3) return;
-			int i = parts[0].equalsIgnoreCase("portal") ? 1 : 0;
-			if (parts.length < i + 3) return;
-			portal = new BlockPos(Integer.parseInt(parts[i]), Integer.parseInt(parts[i + 1]), Integer.parseInt(parts[i + 2]));
-		} catch (Exception exception) {
-			LOGGER.warn("Could not load nether portal", exception);
-			portal = null;
-		}
+	void useScope(String key) throws IOException {
+		if (contextLoaded && key.equals(scope)) return;
+		String imported = scope == null && !points.isEmpty() ? snapshot() : null;
+		if (scope != null && dirty) store.write(scope, snapshot());
+		String next = store.read(key);
+		if (next == null) next = store.migrateLegacy(key, imported);
+		if (next == null) next = BorerTrailStore.header(key);
+		restore(next);
+		dirty = false;
 	}
+
+	/** The portal is part of the scoped journey, not a shared global coordinate. */
+	void loadPortalIfMissing(Minecraft client) { loadIfEmpty(client); }
 
 	/** 解析一行持久化路点。 */
 	private void parseLine(String line) {
 		if (line.isBlank()) return;
+		if (line.startsWith("scope ")) { scope = BorerTrailStore.scopeOf(line); return; }
+		if (line.startsWith("gap ")) { breaks.add(Integer.parseInt(line.substring(4))); return; }
 		String[] parts = line.split("\\s+");
 		if (parts.length >= 4 && parts[0].equalsIgnoreCase("portal")) {
 			if (portal == null) {
@@ -552,40 +506,11 @@ final class BorerTrail {
 			return;
 		}
 		if (parts.length < 3) return;
-		points.add(new BlockPos(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]), Integer.parseInt(parts[2])));
+		BlockPos point = new BlockPos(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+		if (!points.isEmpty() && point.distManhattan(points.getLast()) > BorerTrailPolicy.CORRIDOR_MANHATTAN) breaks.add(points.size());
+		points.add(point);
 	}
 
-	/** 保存地狱门坐标。 */
-	private void savePortal(Minecraft client) {
-		if (portal == null) return;
-		try {
-			Path file = portalFile();
-			Files.createDirectories(file.getParent());
-			Files.write(file, List.of(portal.getX() + " " + portal.getY() + " " + portal.getZ()), StandardCharsets.UTF_8);
-		} catch (IOException exception) {
-			LOGGER.warn("Could not save nether portal", exception);
-		}
-	}
-
-	/** 路点文件路径。 */
-	private static Path trailFile() {
-		return FabricLoader.getInstance().getConfigDir().resolve("twob2tkit/borer-trail.txt");
-	}
-
-	/** 地狱门文件路径。 */
-	private static Path portalFile() {
-		return FabricLoader.getInstance().getConfigDir().resolve("twob2tkit/nether-portal.txt");
-	}
-
-	/** 旧版路点文件路径。 */
-	private static Path legacyTrailFile(Minecraft client) {
-		if (client == null || client.gameDirectory == null) return null;
-		return client.gameDirectory.toPath().resolve("config/twob2tkit/borer-trail.txt");
-	}
-
-	/** 旧版地狱门文件路径。 */
-	private static Path legacyPortalFile(Minecraft client) {
-		if (client == null || client.gameDirectory == null) return null;
-		return client.gameDirectory.toPath().resolve("config/twob2tkit/nether-portal.txt");
-	}
+	/** Portal writes share the same atomic, per-world snapshot. */
+	private void savePortal(Minecraft client) { save(client); }
 }

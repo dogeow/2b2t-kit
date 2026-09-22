@@ -47,6 +47,7 @@ public final class CombatWatch {
 			return;
 		}
 		wasDead = false;
+        if(player.tickCount%20==0)ServerDeathSync.sync(client,config);
 		noteHurt(client, player);
 		if (shouldGuardLogout()) maybeLogout(client, player);
 	}
@@ -100,6 +101,7 @@ public final class CombatWatch {
 		}
 		if (message == null || message.isBlank()) message = "已死亡";
 		config.hasDeathPoint = true;
+        config.deathSource="client";config.deathScope=ServerDeathSync.scope(client);config.deathIgnoredServerMarker="";
 		config.deathX = player.getX();
 		config.deathY = player.getY();
 		config.deathZ = player.getZ();

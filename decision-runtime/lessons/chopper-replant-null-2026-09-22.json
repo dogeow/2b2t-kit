@@ -1,0 +1,20 @@
+{
+  "issue": "AutoChopper.tryReplant continued after approach stopped and cleared saplingItem",
+  "evidence": "crash-2026-09-22_01.21.06-client.txt: AutoChopper.tryReplant line 548",
+  "trigger": {
+    "remaining_logs": 0,
+    "trees_finished": 4,
+    "phase": "walk to replant"
+  },
+  "fixed_version": "1.9.49",
+  "fix": [
+    "Check approach return before reading mutable tree state",
+    "Defer inaccessible replant locations only when no logs remain",
+    "Continue to stop for inaccessible unfinished trunks"
+  ],
+  "verification": {
+    "native_regression_tests": 3,
+    "live": "Second harvesting session logged replant-deferred and completed at 79 spruce logs without crash"
+  },
+  "model_called_per_game_action": false
+}

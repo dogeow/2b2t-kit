@@ -18,9 +18,9 @@ final class BorerInstaPolicy {
 		return !oneClickBreaks;
 	}
 
-	/** 刚点过秒破，空气格不用再等服务器确认。 */
+	/** 即使本地秒破也留出确认窗口；真正的服务器预测确认另由引擎检查。 */
 	static int clearConfirmTicks(boolean lastClickBrokeInstantly, int defaultTicks) {
-		return lastClickBrokeInstantly ? 0 : Math.max(0, defaultTicks);
+		return Math.max(0, defaultTicks);
 	}
 
 	/** 新目标、到了重试拍、或这格能秒破：这一拍要点一下。 */

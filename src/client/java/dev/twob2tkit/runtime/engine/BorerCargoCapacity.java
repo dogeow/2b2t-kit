@@ -14,7 +14,7 @@ record BorerCargoCapacity(boolean full, List<String> accepts) {
 			if (slot.count <= 0) { empty = true; full = false; }
 			else if (slot.count < slot.max) {
 				full = false;
-				if (slot.ordinary && BorerCargoPolicy.material(slot.id)) partial.add(slot.id);
+				if (slot.ordinary) partial.add(slot.id);
 			}
 		}
 		return new BorerCargoCapacity(full, empty ? null : List.copyOf(partial));

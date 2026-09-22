@@ -26,6 +26,7 @@ public final class DeathPointScreen extends KitHudScreen {
 	@Override
 	protected void init() {
         if (dev.twob2tkit.UiFeature.redirect("DEATH", parent)) return;
+        dev.twob2tkit.combat.ServerDeathSync.sync(this.minecraft,config);
 		int left = panelLeft(300);
 		Button returnButton = addRenderableWidget(Button.builder(Component.literal("自动返回死亡点上方"), button -> travel()).bounds(left, bodyTop(118), 300, 20).build());
 		returnButton.active = config.hasDeathPoint && sameDimension();
@@ -105,7 +106,7 @@ public final class DeathPointScreen extends KitHudScreen {
 
 	/** 当前世界是否与死亡记录同一维度。 */
 	private boolean sameDimension() {
-		return this.minecraft.level != null && this.minecraft.level.dimension().identifier().toString().equals(config.deathDimension);
+		return dev.twob2tkit.combat.ServerDeathSync.currentScope(this.minecraft,config) && this.minecraft.level != null && this.minecraft.level.dimension().identifier().toString().equals(config.deathDimension);
 	}
 
 	/** 把 epoch 毫秒格式成本地时间；无效则「无」。 */

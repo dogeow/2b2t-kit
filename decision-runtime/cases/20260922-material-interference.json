@@ -1,0 +1,57 @@
+{
+  "observations": [
+    {
+      "cause": "Unowned Litematica Printer remained enabled during workbench crafting",
+      "effect": "Six oak planks were consumed and placed at expected barrel positions",
+      "coordinates": [
+        [
+          761018,
+          69,
+          797833
+        ],
+        [
+          761018,
+          69,
+          797834
+        ],
+        [
+          761018,
+          69,
+          797835
+        ],
+        [
+          761018,
+          69,
+          797836
+        ],
+        [
+          761018,
+          69,
+          797837
+        ],
+        [
+          761018,
+          69,
+          797838
+        ]
+      ]
+    },
+    {
+      "cause": "Inventory Profiles Next continuous crafting refilled the previous recipe",
+      "effect": "A stack of 64 oak logs reappeared in crafting slot 1 while the next recipe was being prepared"
+    }
+  ],
+  "fixes": [
+    "Force-stop printing when a material lease begins",
+    "Reject unowned printer proposals while Kit owns material inventory",
+    "Suppress IPN onTickInGame and onCrafted only during owned Kit tasks",
+    "Verify the optional IPN tick hook before admitting unattended crafting",
+    "Count cursor and crafting inputs in reconnect continuity checks",
+    "Use the same visible face for approach and mining"
+  ],
+  "proof_limits": [
+    "Real materials have been manufactured",
+    "Six wrong placements still require verified correction",
+    "No final house completion has been claimed"
+  ]
+}

@@ -76,8 +76,9 @@ final class BorerAreaMotionTest {
 					assertTrue(input.speed() > 0);
 					boolean horizontal = action == Action.X || action == Action.Z;
 					if (horizontal) {
-						assertTrue(input.speed() * 10 <= 0.25);
-						assertTrue(input.speed() * 15 <= 0.25);
+						double error=action==Action.X?command.x()-POSE.x():command.z()-POSE.z();
+						assertTrue(input.speed()*15<=BorerAreaMotion.horizontalProbe(error,0)+1e-9);
+						assertTrue(input.speed()<=BorerAreaMotion.MAX_HORIZONTAL_SPEED);
 					} else assertTrue(input.speed() * 5 <= 1.20);
 				}
 			}

@@ -51,6 +51,11 @@ final class BorerLoot {
 		return origin != null;
 	}
 
+	/** Check a just-arrived inventory update before movement guards run this tick. */
+	boolean hasInventoryProgress(LocalPlayer player) {
+		return origin != null && wanted != null && countMatching(player, wanted) > lastCount;
+	}
+
 	/** 拾取起点坐标。 */
 	BlockPos origin() {
 		return origin;
@@ -157,6 +162,7 @@ final class BorerLoot {
 		boolean itemsRemain = loot != null;
 		boolean inventoryGrew = inventoryCount > lastCount;
 		if (inventoryCount > lastCount) {
+			engine.stepCycle.madeProgress();
 			lastPickupTick = ticks;
 			pickupWait = 0;
 			LOGGER.info("[twob2tkit/Borer {}] loot-collection-progress ore={} origin={} picked={}->{} remaining={} item={} player={}",

@@ -1,0 +1,24 @@
+{
+  "observed_version": "1.9.52",
+  "fixed_version": "1.9.53",
+  "trigger": "Engaged zombie under an indoor ceiling during a supervised storage-to-workbench trip",
+  "health_at_trigger": 19.2675,
+  "observed_result": "Full ascent unavailable; healthy player disconnected before crafting. Safety hold prevented automatic reconnect.",
+  "root_cause": "Optional melee-hover failure was incorrectly routed to unconditional emergency exit. Only short rise clearance was checked, allowing a partial climb before hitting the roof.",
+  "change": [
+    "Check entire target-height clearance before climbing",
+    "Fall through to existing ranged or melee defense when hover is unavailable",
+    "Keep construction paused until combat is actually resolved",
+    "Native emergency-exit bridge rejects requests at health 14 or above",
+    "Keep existing safety hold until player acknowledgement"
+  ],
+  "evidence_limits": [
+    "No client death event observed",
+    "Server-side survival after combat disconnect remains unverified",
+    "1.9.53 passes tests but needs later in-game verification"
+  ],
+  "regression_tests": [
+    "GuardWeaponPolicyTest.aLowCeilingKeepsTheBowFallbackInsteadOfForcingLogout",
+    "EmergencyExitWiringTest.blockedZombieAscentFallsThroughToCombatRatherThanDisconnecting"
+  ]
+}

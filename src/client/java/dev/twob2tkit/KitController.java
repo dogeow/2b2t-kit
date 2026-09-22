@@ -67,6 +67,8 @@ public final class KitController {
 	private double avoidanceZ;
 	private int lastObstacleMessageTick = -1000;
 	private String pendingDisconnectReason;
+    private long logoutGeneration;
+    public void cancelPendingLogout(){pendingDisconnectReason=null;logoutGeneration++;}
 	private boolean disconnectOnThisArrival;
 	private final CruiseCeilingMiner ceilingMiner;
 	private double sampleY = Double.NaN;
@@ -361,12 +363,13 @@ public final class KitController {
 		if (pendingDisconnectReason == null) return;
 		String reason = pendingDisconnectReason;
 		pendingDisconnectReason = null;
+		long generation=logoutGeneration;
 		var expectedLevel = client.level;
 		var expectedConnection = client.getConnection();
 		if (expectedLevel == null || expectedConnection == null) return;
 		// execute() can run inline on the client thread; schedule() always queues between client tasks.
 		client.schedule(() -> {
-			if (dev.twob2tkit.compat.ClientWorldGuard.sameSession(expectedLevel, client.level, expectedConnection, client.getConnection()))
+			if (generation==logoutGeneration && dev.twob2tkit.compat.ClientWorldGuard.sameSession(expectedLevel, client.level, expectedConnection, client.getConnection()))
 				disconnectNow(client, reason);
 		});
 	}
@@ -969,7 +972,7 @@ public final class KitController {
 
 	/** 立刻断开服务器。 */
 	private void disconnectNow(Minecraft client, String reason) {
-		Component title = Component.literal("twob2tkit 已安全离线");
+		Component title = Component.literal("twob2tkit 已断开连接");
 		Component detail = Component.literal(reason);
 		JoinMultiplayerScreen parent = new JoinMultiplayerScreen(new TitleScreen());
 		DisconnectedScreen resultScreen = new DisconnectedScreen(parent, title, detail);

@@ -6,6 +6,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BorerCargoCapacityTest {
 	private BorerCargoCapacity.Slot slot(String id, int count, int max) { return new BorerCargoCapacity.Slot("minecraft:" + id, count, max, true); }
+	@Test void partialPumpkinAndSeedStacksAcceptThoseDropsEvenWithoutAnEmptySlot() {
+		var c=BorerCargoCapacity.of(List.of(slot("pumpkin",40,64),slot("wheat_seeds",12,64),slot("stone",64,64)));
+		assertFalse(c.full());assertEquals(List.of("minecraft:pumpkin","minecraft:wheat_seeds"),c.accepts());
+	}
 	@Test void exactlyFullSingleOrDoubleChestIsRecordedImmediately() {
 		for (int slots : new int[]{27, 54}) {
 			var full = BorerCargoCapacity.of(java.util.Collections.nCopies(slots, slot("stone", 64, 64)));

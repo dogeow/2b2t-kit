@@ -44,7 +44,7 @@ import dev.twob2tkit.KitKeys;
  */
 public final class AutoChopper {
 	/** 挖树主机逻辑版本（打进诊断日志）。 */
-	public static final String VERSION = "1.6.200";
+	public static final String VERSION = "1.9.49";
 	/** 无进度时多久再点一次攻击（tick）。 */
 	private static final int RETRY_TICKS = 40;
 	/** 挖不动多久跳过这块（tick）。 */
@@ -56,10 +56,22 @@ public final class AutoChopper {
 
 	private final KitConfig config;
 	private final ChopperLoot loot = new ChopperLoot();
+	private final ChopperScaffold scaffold = new ChopperScaffold();
+	private final dev.twob2tkit.runtime.engine.BorerMiningConfirmation confirmation = new dev.twob2tkit.runtime.engine.BorerMiningConfirmation();
+	private BlockPos treeBase;
+	private Set<BlockPos> crownWitness=Set.of();
+	private net.minecraft.world.level.block.Block crownWood;
+	private int completionTicks;
+	private BlockPos nativeTarget;
+	private final dev.twob2tkit.runtime.engine.BorerMiningModules miningModules = new dev.twob2tkit.runtime.engine.BorerMiningModules();
+	private int confirmationTicks;
 	private final Set<BlockPos> treeLogs = new HashSet<>();
 	private final Set<BlockPos> stumps = new HashSet<>();
 	private final Set<BlockPos> ignored = new HashSet<>();
 	private boolean active;
+	private boolean finishRequested,materialTargetFinished;
+	private String materialLog="";
+	private int materialTreeLimit;
 	private String status = "";
 	private BlockPos mineTarget;
 	private BlockPos walkTarget;
@@ -92,6 +104,14 @@ public final class AutoChopper {
 	public boolean isActive() {
 		return active;
 	}
+	public void limitTrees(int n){materialTreeLimit=n;}
+	public boolean waitingForTree(){return active&&!materialLog.isEmpty()&&searchCooldown>0&&!currentTreeOpen&&treeLogs.isEmpty()&&!loot.active()&&scaffold.count()==0;}
+	public void finishCurrentTree(){if(active)finishRequested=true;}
+	public boolean materialTargetFinished(){return materialTargetFinished;}
+	public void startMaterial(Minecraft client,String logId){start(client);materialLog=logId;}
+	public int remainingLogs(){return treeLogs.size();}
+	public int platforms(){return scaffold.count();}
+	public boolean ownsMining() { return active && combatPauseTicks==0 && (mineTarget!=null || scaffold.busy()); }
 
 	/** 最近一条状态文案（界面与 HUD 共用）。 */
 	public String status() {
@@ -122,7 +142,9 @@ public final class AutoChopper {
 	public void start(Minecraft client) {
 		if (client.player == null || client.level == null) return;
 		active = true;
+		finishRequested=false;materialTargetFinished=false;materialLog="";materialTreeLimit=0;
 		clearTree();
+		try { scaffold.start(client); miningModules.acquire(); } catch (IllegalStateException e) { stop(client,e.getMessage()); return; }
 		ignored.clear();
 		loot.resetSession();
 		loot.setCollectLeaves(config.chopperLeaves);
@@ -136,7 +158,7 @@ public final class AutoChopper {
 		logTicks = 0;
 		lastFileLog = "";
 		status = "开始找树";
-		ChopperKeys.message(client, "自动挖树已开启。够得着就站着砍，够不着才飞。树叶会换剪刀。再按 "
+		ChopperKeys.message(client, "自动挖树已开启。高树飞到工作位隔空放一块泥土，整片树冠清空后回收平台、落地拾取。再按 "
 			+ KitKeys.boundLabel(KitKeys.TOGGLE_CHOPPER) + " 或 End 停止");
 		fileLog(client, "start player=" + precisePosition(client.player)
 			+ " range=" + formatRange()
@@ -149,6 +171,8 @@ public final class AutoChopper {
 	public void stop(Minecraft client, String reason) {
 		if (!active) return;
 		int pickedLoot = loot.picked();
+		scaffold.stop(client);
+		miningModules.release(); nativeTarget=null;
 		active = false;
 		clearTree();
 		ignored.clear();
@@ -183,14 +207,25 @@ public final class AutoChopper {
 		LocalPlayer player = client.player;
 		if (flyToggleCooldown > 0) flyToggleCooldown--;
 		if (updateCombatPause(client, player)) return;
+		try {
+			if (scaffold.tick(client)) { mineLook=null; status=scaffold.status(); ChopperKeys.overlay(client,status,0x75D8C5); return; }
+		} catch (IllegalStateException e) { stop(client,e.getMessage()); return; }
+		if (mineTarget!=null && confirmation.pending(client.level,mineTarget)) {
+			ChopperKeys.holdStill(client); status="等待服务器确认原木已挖掉";
+			if (++confirmationTicks>=100) stop(client,"服务器未确认挖掘，已停下并保留原木");
+			return;
+		}
+		confirmationTicks=0;
 		pruneGone(client);
 		if (ignored.size() > 800) ignored.clear();
 		logTicks++;
 		if (logTicks % LOG_EVERY_TICKS == 0) logPeriodic(client, player);
 
+		if (treeLogs.isEmpty() && currentTreeOpen && !verifyCrown(client)) return;
 		if (treeLogs.isEmpty()) {
 			boolean moreLeaves = config.chopperLeaves && currentTreeOpen && nearestLeaf(client, player) != null;
 			if (!moreLeaves) {
+				if (currentTreeOpen && scaffold.workingAboveGround()) { scaffold.beginCleanup(); return; }
 				if (currentTreeOpen) finishTree(client);
 				if (!loot.miningObstacle()) ChopperKeys.releaseMine(client);
 				if (config.chopperPickup && loot.active()) {
@@ -218,6 +253,7 @@ public final class AutoChopper {
 					if (tryReplant(client, player)) return;
 					stumps.clear();
 				}
+				if(finishRequested || materialTreeLimit>0 && treesDone>=materialTreeLimit){stop(client,finishRequested?"数量目标已达到，整棵树与掉落物处理完毕":"本批树木已收完，继续搜索材料");materialTargetFinished=true;return;}
 				if (searchCooldown > 0) {
 					searchCooldown--;
 					applyFlight(player, false);
@@ -259,11 +295,9 @@ public final class AutoChopper {
 
 		BlockHitResult hit = BorerAim.firstMineable(client, player, next, pos -> isMineableTreeBlock(client, pos) && !ignored.contains(pos));
 		if (hit != null) {
-			boolean fly = keepFlyingFor(player, hit.getBlockPos());
-			applyFlight(player, fly);
+			ChopperKeys.releaseWalk(client);
 			if (mine(client, player, hit.getBlockPos(), hit)) {
-				if (fly) holdFlightToward(client, player, mineTarget != null ? mineTarget : hit.getBlockPos());
-				else ChopperKeys.releaseWalk(client);
+				ChopperKeys.releaseWalk(client);
 				status = "砍 " + label(client, mineTarget != null ? mineTarget : hit.getBlockPos())
 					+ BorerAim.reachInfo(player, mineTarget != null ? mineTarget : hit.getBlockPos())
 					+ "  已砍 " + choppedLogs + " 根 / " + treesDone + " 棵";
@@ -284,8 +318,8 @@ public final class AutoChopper {
 			ChopperKeys.overlay(client, status, 0xFFFF55);
 			return;
 		}
-		if (!approach(client, player, next)) return;
-		status = (hit != null ? "树叶挡住，飞近再砍 " : "走近 ")
+		if (!active || !approach(client, player, next)) return;
+		status = (hit != null ? "树叶挡住，换工作位 " : "走近 ")
 			+ label(client, next) + BorerAim.reachInfo(player, next);
 		ChopperKeys.overlay(client, status, 0x55FFFF);
 		emitGizmos(client);
@@ -294,6 +328,7 @@ public final class AutoChopper {
 	/** Meteor 改朝向后写回挖树/捡物瞄准。 */
 	public void reapplyLook(Minecraft client) {
 		if (!active || combatPauseTicks > 0 || client.player == null || client.screen != null) return;
+		if (scaffold.busy()) { ChopperKeys.reapplySmoothLook(client.player); return; }
 		if (mineLook != null) {
 			ChopperKeys.reapplySmoothLook(client.player);
 			return;
@@ -303,13 +338,26 @@ public final class AutoChopper {
 	}
 
 	/** 当前树原木砍完：计数、可选开捡物、设补种延迟。 */
+	private boolean verifyCrown(Minecraft c){
+		for(BlockPos p:crownWitness)if(!c.level.hasChunkAt(p)){stop(c,"树冠范围尚未完全加载，不能判断砍完");return false;}
+		if(crownWood==null)return false;
+		var remaining=ChopperCanopy.remaining(ChopperTrees.canopyWorld(c,crownWood),crownWitness);
+		if(!remaining.isEmpty()){
+			treeLogs.addAll(remaining);completionTicks=0;mineTarget=nativeTarget=null;
+			fileLog(c,"crown-rescan remaining="+remaining.size());return false;
+		}
+		for(BlockPos p:crownWitness)if(confirmation.pending(c.level,p)){completionTicks=0;return false;}
+		if(++completionTicks<10){ChopperKeys.holdStill(c);status="复查整片树冠，确认没有残留原木";return false;}
+		return true;
+	}
 	private void finishTree(Minecraft client) {
-		if (!currentTreeOpen || !treeLogs.isEmpty()) return;
+		if (!currentTreeOpen || !ChopperSupportPolicy.canFinishTree(treeLogs.size(),scaffold.count())) return;
 		currentTreeOpen = false;
 		treesDone++;
+		fileLog(client,"crown-complete verified=0 witness="+crownWitness.size()+" supports="+scaffold.count());
 		replantDelay = config.chopperReplant ? 12 : 4;
 		if (config.chopperPickup) {
-			BlockPos start = walkTarget != null ? walkTarget
+			BlockPos start = scaffold.groundOrigin()!=null ? scaffold.groundOrigin() : treeBase != null ? treeBase
 				: !stumps.isEmpty() ? stumps.iterator().next()
 				: client.player != null ? client.player.blockPosition() : null;
 			if (start != null) loot.begin(start, saplingItem);
@@ -324,11 +372,13 @@ public final class AutoChopper {
 	private boolean lockNextTree(Minecraft client, LocalPlayer player) {
 		clearTree();
 		int range = Math.max(4, (int)Math.round(config.chopperRange));
-		ChopperTrees.Tree best = ChopperTrees.findNearest(client, player, range, config.chopperRequireLeaves, ignored);
+		ChopperTrees.Tree best = ChopperTrees.findNearest(client, player, range, config.chopperRequireLeaves, ignored,materialLog);
 		if (best == null) return false;
 		treeLogs.addAll(best.logs());
+		crownWitness=best.witness();crownWood=client.level.getBlockState(best.logs().getFirst()).getBlock();completionTicks=0;
 		stumps.addAll(best.stumps());
-		walkTarget = best.base().immutable();
+		treeBase = best.base().immutable();
+		walkTarget = treeBase;
 		saplingItem = ChopperTrees.saplingFor(client.level.getBlockState(best.base()).getBlock());
 		approach.reset();
 		currentTreeOpen = true;
@@ -400,7 +450,7 @@ public final class AutoChopper {
 	private boolean isMineableTreeBlock(Minecraft client, BlockPos pos) {
 		if (!ChopperTrees.canBreak(client, pos)) return false;
 		BlockState state = client.level.getBlockState(pos);
-		return ChopperTrees.isWood(state) || state.is(BlockTags.LEAVES);
+		return treeLogs.contains(pos) && ChopperTrees.isWood(state) || state.is(BlockTags.LEAVES) || disposableGrass(state);
 	}
 
 	/**
@@ -427,18 +477,13 @@ public final class AutoChopper {
 			mineTicks++;
 		}
 		if (mineTicks >= STALL_TICKS) {
-			ignored.add(pos.immutable());
-			treeLogs.remove(pos);
-			mineTarget = null;
-			ChopperKeys.releaseMine(client);
-			status = label(client, pos) + " 挖不动，跳过";
-			fileLog(client, "stall skip=" + format(pos) + " block=" + label(client, pos)
-				+ " player=" + precisePosition(player));
+			stop(client,"这棵树仍有方块挖不动，已停止；未跳过剩余原木");
 			return false;
 		}
-		mineLook = BorerAim.lookPoint(hit);
-		ChopperKeys.smoothLookAt(player, mineLook, 40.0F);
-		BlockHitResult aimed = BorerAim.clipToward(client, player, mineLook);
+
+		mineLook = BorerAim.lookAlongRay(player.getEyePosition(),hit);
+		ChopperKeys.lookAt(player,mineLook);
+		BlockHitResult aimed = BorerAim.clipView(client, player);
 		if (aimed != null && BorerAim.hitInReach(player, aimed) && isMineableTreeBlock(client, aimed.getBlockPos())
 			&& !ignored.contains(aimed.getBlockPos())) {
 			if (!aimed.getBlockPos().equals(pos)) {
@@ -449,8 +494,8 @@ public final class AutoChopper {
 				pos = aimed.getBlockPos().immutable();
 				mineTarget = pos;
 				hit = aimed;
-				mineLook = BorerAim.lookPoint(aimed);
-				ChopperKeys.smoothLookAt(player, mineLook, 40.0F);
+				mineLook = BorerAim.lookAlongRay(player.getEyePosition(),aimed);
+				ChopperKeys.lookAt(player,mineLook);
 			}
 		} else {
 			fileLogOnce(client, "clip-miss target=" + format(pos)
@@ -463,10 +508,10 @@ public final class AutoChopper {
 		selectTool(client, aimed.getBlockPos());
 		client.hitResult = aimed;
 		client.crosshairPickEntity = null;
-		if (fresh || mineTicks > 0 && mineTicks % RETRY_TICKS == 0) {
-			ChopperKeys.clickAttack(client);
-		}
-		client.options.keyAttack.setDown(true);
+		client.options.keyAttack.setDown(false);
+		if (!pos.equals(nativeTarget)) { client.gameMode.startDestroyBlock(pos,aimed.getDirection()); nativeTarget=pos.immutable(); }
+		else client.gameMode.continueDestroyBlock(pos,aimed.getDirection());
+		player.swing(InteractionHand.MAIN_HAND);
 		try {
 			Gizmos.cuboid(pos, GizmoStyle.strokeAndFill(0xFF00FFFF, 2.6F, 0x3300FFFF));
 		} catch (IllegalStateException ignored) {
@@ -499,8 +544,12 @@ public final class AutoChopper {
 			}
 			if (!BorerAim.inReach(player, soil)) {
 				if (config.chopperWalk) {
-					approach(client, player, soil);
-					status = "去补种 " + new ItemStack(saplingItem).getHoverName().getString();
+					Item seed=saplingItem;
+					if(!approach(client,player,soil)){
+						if(!active || saplingItem==null)return true;
+						iterator.remove();continue;
+					}
+					status = "去补种 " + new ItemStack(seed).getHoverName().getString();
 					ChopperKeys.overlay(client, status, 0x55FFFF);
 					return true;
 				}
@@ -515,6 +564,7 @@ public final class AutoChopper {
 			player.swing(hand);
 			if (result.consumesAction() || client.level.getBlockState(plant).is(blockItem.getBlock())) {
 				replanted++;
+				fileLog(client,"replant pos="+plant+" pending="+confirmation.pending(client.level,plant));
 				iterator.remove();
 				status = "已补种 " + new ItemStack(saplingItem).getHoverName().getString();
 				ChopperKeys.overlay(client, status, 0x55FF55);
@@ -540,83 +590,24 @@ public final class AutoChopper {
 		Vec3 destCenter = Vec3.atCenterOf(dest);
 		double dist = Math.sqrt(BorerAim.nearestDistanceSqr(player.getEyePosition(), dest));
 		if (approach.track(dest, dist, STUCK_TICKS)) {
-			ignored.addAll(treeLogs);
-			clearTree();
-			ChopperKeys.holdStill(client);
-			status = "过不去，换一棵";
-			fileLog(client, "approach-stuck dest=" + format(dest)
-				+ " dist=" + String.format(Locale.ROOT, "%.1f", dist)
-				+ " player=" + precisePosition(player));
-			ChopperKeys.overlay(client, status, 0xFFFF55);
-			return false;
+			if(ChopperReplantPolicy.blocked(treeLogs.size())==ChopperReplantPolicy.Blocked.DEFER_REPLANT){
+				ChopperKeys.holdStill(client);approach.reset();walkTarget=null;
+				status="补种位置暂时无法安全到达，保留树苗";fileLog(client,"replant-deferred pos="+dest);return false;
+			}
+			stop(client,"这片树冠仍有 "+treeLogs.size()+" 根无法到达；已停止，未跳过到下一棵");return false;
 		}
+
 		if (walkTarget == null || !walkTarget.equals(dest)) {
 			walkTarget = dest.immutable();
 		}
 		mineLook = destCenter;
 		ChopperKeys.lookAt(player, destCenter);
-		boolean fly = keepFlyingFor(player, dest);
-		applyFlight(player, fly);
-		double horiz = Math.hypot(destCenter.x - player.getX(), destCenter.z - player.getZ());
-		if (fly) {
-			client.options.keyUp.setDown(horiz > 0.35);
-			client.options.keyDown.setDown(false);
-			client.options.keyJump.setDown(destCenter.y > player.getY() + 0.35);
-			client.options.keyShift.setDown(destCenter.y < player.getY() - 0.25 && horiz < 1.2);
-			return true;
-		}
-		client.options.keyUp.setDown(horiz > 0.2);
-		client.options.keyDown.setDown(false);
-		boolean stepUp = dest.getY() > player.getY() + 0.45 && dest.getY() <= player.getY() + 1.25;
-		client.options.keyJump.setDown(stepUp && player.onGround());
-		client.options.keyShift.setDown(false);
-		return true;
-	}
-
-	/** 站着够得着就落地砍（空中挖掘只有 1/5 速度）。只在目标明显高于站立触及距离时才飞。 */
-	private boolean keepFlyingFor(LocalPlayer player, BlockPos dest) {
-		if (player == null || dest == null) return false;
-		if (BorerAim.inReach(player, dest) && player.onGround()) return false;
-		double reach = BorerAim.breakReach(player);
-		double horiz = Math.hypot(dest.getX() + 0.5 - player.getX(), dest.getZ() + 0.5 - player.getZ());
-		if (BorerAim.inReach(player, dest)) {
-			return dest.getY() + 0.5 > player.getEyeY() + 0.35 && !player.onGround();
-		}
-		double standingEye = player.onGround()
-			? player.getEyeY()
-			: (walkTarget != null ? walkTarget.getY() + player.getEyeHeight() : player.getY() + player.getEyeHeight());
-		return horiz <= 2.8 && dest.getY() + 0.5 > standingEye + reach - 0.35;
-	}
-
-	/** 飞高时按移动键；没在挖方块或盘旋时重新瞄准，避免樱花树叶挡准星空转。 */
-	private void holdFlightToward(Minecraft client, LocalPlayer player, BlockPos dest) {
-		if (dest == null) return;
-		if (flightDest == null || !flightDest.equals(dest)) {
-			flightDest = dest.immutable();
-			flightHorizBest = Double.MAX_VALUE;
-			flightHorizTicks = 0;
-		}
-		Vec3 center = Vec3.atCenterOf(dest);
-		double horiz = Math.hypot(center.x - player.getX(), center.z - player.getZ());
-		flightHorizTicks++;
-		if (horiz + 0.5 < flightHorizBest) {
-			flightHorizBest = horiz;
-			flightHorizTicks = 0;
-		}
-		boolean mining = client.gameMode != null && client.gameMode.getDestroyStage() >= 0;
-		boolean orbit = flightHorizTicks >= 20 && horiz > flightHorizBest + 0.5;
-		if (!mining || orbit) {
-			ChopperKeys.smoothLookAt(player, center, 40.0F);
-			mineLook = center;
-			if (orbit) {
-				flightHorizBest = horiz;
-				flightHorizTicks = 0;
-			}
-		}
-		client.options.keyUp.setDown(horiz > 0.35);
-		client.options.keyDown.setDown(false);
-		client.options.keyJump.setDown(center.y > player.getY() + 0.35);
-		client.options.keyShift.setDown(center.y < player.getY() - 0.25 && horiz < 1.2);
+		if (treeLogs.isEmpty()) { ChopperKeys.walkToward(client,player,Vec3.atBottomCenterOf(dest)); return true; }
+		try {
+			scaffold.moveToTree(client,treeLogs);
+			mineTarget=nativeTarget=null;mineLook=null;approach.reset();
+		} catch(IllegalStateException e){stop(client,e.getMessage());}
+		return false;
 	}
 
 	/** 按需开关本模块持有的飞行；玩家自开的飞行不抢关。 */
@@ -649,7 +640,7 @@ public final class AutoChopper {
 	private void pruneGone(Minecraft client) {
 		if (treeLogs.isEmpty()) return;
 		int before = treeLogs.size();
-		treeLogs.removeIf(pos -> !ChopperTrees.isWood(client.level.getBlockState(pos)));
+		treeLogs.removeIf(pos -> !confirmation.pending(client.level,pos) && !ChopperTrees.isWood(client.level.getBlockState(pos)));
 		int removed = before - treeLogs.size();
 		if (removed > 0) choppedLogs += removed;
 		if (mineTarget != null && !stillValid(client, mineTarget)) {
@@ -676,6 +667,7 @@ public final class AutoChopper {
 	/** 清空当前树锁定与瞄准状态（不含 ignored）。 */
 	private void clearTree() {
 		treeLogs.clear();
+		treeBase=null; nativeTarget=null; confirmationTicks=0;crownWitness=Set.of();crownWood=null;completionTicks=0;
 		stumps.clear();
 		mineTarget = null;
 		walkTarget = null;
@@ -727,14 +719,16 @@ public final class AutoChopper {
 	private boolean stillValid(Minecraft client, BlockPos pos) {
 		BlockState state = client.level.getBlockState(pos);
 		if (ChopperTrees.isWood(state)) return ChopperTrees.canBreak(client, pos);
+		if (disposableGrass(state)) return !treeLogs.isEmpty();
 		if (!state.is(BlockTags.LEAVES) || !ChopperTrees.canBreak(client, pos)) return false;
 		return config.chopperLeaves || !treeLogs.isEmpty();
 	}
 
 	/** 树叶换剪刀，否则换斧。 */
+	private static boolean disposableGrass(BlockState state) { return state.is(net.minecraft.world.level.block.Blocks.SHORT_GRASS) || state.is(net.minecraft.world.level.block.Blocks.FERN); }
 	private void selectTool(Minecraft client, BlockPos pos) {
 		if (client.level != null && client.level.getBlockState(pos).is(BlockTags.LEAVES)) {
-			selectShears(client);
+			if(config.chopperLeaves)selectShears(client);else selectAxe(client);
 			return;
 		}
 		selectAxe(client);

@@ -126,6 +126,11 @@ public final class KitConfig {
 	public String deathKiller = "";
 	public String deathMessage = "";
 	public String deathActivity = "";
+    public String deathSource = "";
+    public String deathScope = "";
+    public String deathLastServerMarker = "";
+    public String deathIgnoredServerMarker = "";
+    public long deathObservedEpochMillis;
 	public long lastAttackTimeEpochMillis;
 	public String lastAttacker = "";
 	public float lastAttackHealth;
@@ -133,6 +138,8 @@ public final class KitConfig {
 	/** 旧字段：走近敌对曾用来下线。现在只在钓鱼被打中一次才下，此半径不再踢人。 */
 	public double afkHostileRadius = 12.0;
 	public List<StorageSnapshot> storageSnapshots = new ArrayList<>();
+	/** Explicitly scoped depots allowed for projection supply. Empty by default. */
+	public List<ProjectionSupplySource> projectionSupplySources = new ArrayList<>();
 	/** 附近玩家保护白名单。 */
 	public List<String> trustedPlayers = new ArrayList<>();
 	/** 已存地点。 */
@@ -300,6 +307,10 @@ public final class KitConfig {
 			if (config.deathKiller == null) config.deathKiller = "";
 			if (config.deathMessage == null) config.deathMessage = "";
 			if (config.deathActivity == null) config.deathActivity = "";
+            if(config.deathSource==null)config.deathSource="";
+            if(config.deathScope==null)config.deathScope="";
+            if(config.deathLastServerMarker==null)config.deathLastServerMarker="";
+            if(config.deathIgnoredServerMarker==null)config.deathIgnoredServerMarker="";
 			if (config.lastAttacker == null) config.lastAttacker = "";
 			if (config.lastAttackActivity == null) config.lastAttackActivity = "";
 			if (config.afkHostileRadius < 0.0 || config.afkHostileRadius > 64.0) config.afkHostileRadius = 12.0;
@@ -905,6 +916,7 @@ public final class KitConfig {
 
 	/** 清除死亡点相关字段。 */
 	public void clearDeathPoint() {
+        deathIgnoredServerMarker=deathLastServerMarker;deathSource="";deathScope="";
 		hasDeathPoint = false;
 		deathDimension = "";
 		deathKiller = "";
@@ -1054,6 +1066,11 @@ public final class KitConfig {
 		public int sliceHeight = 2;
 		public String dimension = "";
 		public long updatedAt;
+	}
+
+	public static final class ProjectionSupplySource {
+		public String server="", dimension="", worldId="";
+		public int x,y,z;
 	}
 
 	/** 开过的容器快照。 */

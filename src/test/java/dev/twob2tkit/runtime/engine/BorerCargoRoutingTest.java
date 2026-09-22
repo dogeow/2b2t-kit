@@ -91,7 +91,7 @@ class BorerCargoRoutingTest {
 			Command command = trip.step(world, p);
 			assertNotEquals(Action.BLOCKED, command.action()); assertNotEquals(Action.MINE, command.action());
 			if (trip.stage() == BorerCargoTrip.Stage.SERVICE) { serviced = true; trip.returnToWork(); }
-			var input = BorerAreaMotion.of(command, p, yaw); yaw = input.yaw();
+			var input = BorerCargoMotion.of(command, p, yaw); yaw = input.yaw();
 			double dx = input.forward() ? -Math.sin(Math.toRadians(yaw)) * input.speed() * 10 : 0;
 			double dz = input.forward() ? Math.cos(Math.toRadians(yaw)) * input.speed() * 10 : 0;
 			double dy = (input.up() ? 1 : input.down() ? -1 : 0) * input.speed() * 5;

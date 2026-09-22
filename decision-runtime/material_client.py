@@ -1,0 +1,166 @@
+"""Shared native material client. Every action is scoped to a live world, revision and safety lease."""
+import json,time,uuid
+from pathlib import Path
+from build_supervisor import SafetyHeartbeat,stocks
+from run_evidence import observed_delta,write_manifest
+class Handoff(Exception):pass
+class Client:
+ def __init__(self,root,out,server,min_health=18):
+  self.root=Path(root);self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True);self.server=server
+  s=self.raw();assert s.get('server','').removesuffix(':25565')==self.server.removesuffix(':25565') and s['dimension']=='minecraft:overworld'
+  assert not s['screen'] and not s.get('manual_movement') and s['health']>=min_health
+  assert not any(s.get(k) for k in ('borer_active','chopping','navigating'))
+  self.anchor=list(s['pos']);self.world=s['world_session'];self.rev=s['control_revision'];self.owned=False;self.last=None
+ def raw(self):
+  s=json.loads((self.root/'status.json').read_text())
+  from safety_interlock import require_unlocked
+  require_unlocked(self.root,s)
+  if time.time()*1000-s['time']>3000:raise RuntimeError('Game state is stale')
+  return s
+ def status(self):
+  s=self.raw()
+  if not s.get('connected') or s.get('world_session')!=self.world or s.get('control_revision')!=self.rev or s.get('manual_movement'):raise Handoff('Control or world changed; no more commands')
+  if s.get('screen') not in ('','ContainerScreen','InventoryScreen','CraftingScreen','ShulkerBoxScreen'):raise Handoff('User opened a different interface')
+  return s
+ def request(self,op,**params):
+  until=time.monotonic()+60
+  while True:
+   s=self.status()
+   if op!='safe_logout' and s.get('health',0)<14:raise RuntimeError('Low health')
+   if op in ('guard','snapshot','scan','scan_trees','safe_logout') or not s.get('guard_busy'):break
+   if time.monotonic()>until:raise RuntimeError('Defense remains busy')
+   time.sleep(.25)
+  if op!='safe_logout' and s.get('health',0)<14:raise RuntimeError('Low health')
+  path=self.root/'request.json'
+  if path.exists() and json.loads(path.read_text()).get('id')!=s.get('last_request'):raise Handoff('Another controller has a pending request')
+  rid='materials-'+uuid.uuid4().hex[:12]
+  req={'id':rid,'op':op,'server':s['server'],'dimension':s['dimension'],'site':self.anchor,
+       'world_session':self.world,'expected_revision':self.rev,'expires_at':int(time.time()*1000)+5000,**params}
+  evidence_before=s;request_started=time.monotonic()
+  tmp=path.with_suffix('.materials.tmp');tmp.write_text(json.dumps(req));tmp.replace(path);self.last=rid
+  expected=self.rev+(2 if op in ('stop','safe_logout') else 1 if op in ('navigate','chop','walk','walk_path','print','mine_block','recover_shulker','professional_print','projection_start') else 0)
+  end=time.monotonic()+params.get('seconds',20)+15
+  while time.monotonic()<end:
+   current=self.raw()
+   if current.get('world_session')!=self.world or not current.get('connected'):
+    if op=='safe_logout':return current
+    raise Handoff('World disconnected')
+   reply=self.root/('reply-'+rid+'.json');result=json.loads(reply.read_text()) if reply.exists() else current
+   terminal=result.get('id')==rid and result.get('phase') in ('done','stopped','error','waiting')
+   lease=current.get('supervision_lease',{})
+   native_stop=terminal and current.get('last_request')==rid and lease.get('job_session')==getattr(self,'task',None) and lease.get('revision')==current['control_revision'] and lease.get('kind')=='materials'
+   if current.get('manual_movement') or current['control_revision'] not in (self.rev,expected) and not native_stop:raise Handoff('Control revision changed outside the owned request')
+   if reply.exists() or current.get('last_request')==rid and current.get('id')==rid and current.get('phase') in ('done','stopped','error','waiting'):
+    self.rev=current['control_revision']
+    with (self.out/'events.jsonl').open('a') as f:f.write(json.dumps({'time':time.time(),'request_id':rid,'world_session':self.world,'op':op,'params':params,'phase':result.get('phase'),'detail':result.get('detail'),'pos':current.get('pos'),'health':current.get('health'),'duration_ms':round((time.monotonic()-request_started)*1000),'evidence_scope':'native_operation_reply_not_goal_completion',**observed_delta(evidence_before,current)},ensure_ascii=False)+'\n')
+    if op=='guard' and result.get('phase')=='done':self.owned=True
+    return result
+   time.sleep(.15)
+  raise RuntimeError('Native operation timed out; do not replay it')
+ def checked(self,op,**params):
+  r=self.request(op,**params)
+  if r.get('phase')!='done':raise RuntimeError(r.get('detail',op+' failed'))
+  return r
+ def finish(self):
+  if not self.owned:return
+  try:
+   s=self.status()
+   if s.get('guard_armed'):
+    if s.get('phase')=='running':
+     if s.get('last_request')!=self.last:return
+     self.checked('stop')
+    self.request('safe_logout')
+  except Handoff:pass
+ def transfer(self,item,target,deposit=False):
+  for _ in range(16):
+   s=self.status();before=stocks(s).get(item,0)
+   if before<=target if deposit else before>=target:return before
+   menu=s['menu'];assert menu['type'] in ('ChestMenu','ShulkerBoxMenu') and menu['cursor']['count']==0
+   boundary=len(menu['slots'])-36
+   pool=menu['slots'][boundary:] if deposit else menu['slots'][:boundary]
+   if deposit and not any(v['count']==0 or v['item']==item and v['count']<v.get('max_stack',64) for v in menu['slots'][:boundary]):raise RuntimeError('Depot has no space for '+item)
+   source=next((v for v in pool if v['item']==item and v['count']),None)
+   if source is None:return before
+   self.checked('slot_click',menu_id=menu['id'],slot=source['slot'],expected_item=item,expected_count=source['count'],kind='quick_move')
+   deadline=time.monotonic()+6
+   while time.monotonic()<deadline:
+    after=stocks(self.status()).get(item,0)
+    if (after<before if deposit else after>before):break
+    time.sleep(.2)
+   else:raise RuntimeError('Inventory transfer not confirmed; no duplicate click')
+  raise RuntimeError('Transfer limit reached')
+ def open(self,pos):
+  self.checked('select_item',item='minecraft:diamond_sword')
+  block=self.request('scan',min=pos,max=pos)['blocks'];assert len(block)==1 and 'minecraft:chest' in block[0]['state']
+  self.checked('interact',pos=pos,face='south',expected_state=block[0]['state'],expected_hand='minecraft:diamond_sword')
+  end=time.monotonic()+5
+  while time.monotonic()<end:
+   s=self.status()
+   if s['menu']['type']=='ChestMenu':
+    self.owned_material_menu=s['menu']['id'];return
+   time.sleep(.2)
+  raise RuntimeError('Chest was not opened')
+class MaterialClient(Client):
+ def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False):
+  self.heartbeat=None;self.owned_material_menu=None
+  super().__init__(root,out,server,min_health=18)
+  s=self.raw()
+  if s.get('material_protocol',0)<2 or not s.get('inventory_isolation',{}).get('supported'):raise Handoff('Restart into Kit with verified inventory isolation before crafting')
+  if not allow_empty_inventory and not any(v.get('count',0)>0 for v in s.get('inventory',[])):
+   raise Handoff('Inventory is empty or not synchronized; material work cannot start')
+  if s.get('professional_printer',{}).get('enabled'):
+   if s.get('professional_printer',{}).get('owned') or s.get('build_job',{}).get('active') or s.get('supervision_lease',{}).get('kind') not in (None,'parking'):raise Handoff('Another task owns printing; do not interrupt it for material work')
+   stopped=Client.request(self,'stop')
+   s=self.status()
+   if stopped.get('phase')!='stopped' or s.get('professional_printer',{}).get('enabled'):raise Handoff('External printer could not be suspended before material control')
+  parking=s.get('supervision_lease',{});replace=parking.get('id') if parking.get('kind')=='parking' else None
+  self.task='materials-'+uuid.uuid4().hex[:16]
+  write_manifest(self.out,self.task,s)
+  self.heartbeat=SafetyHeartbeat(self.root,self.world);self.heartbeat.start()
+  try:
+   self.checked('material_session',supervision_lease=self.heartbeat.id,**({'replace_parking_lease':replace} if replace else {}))
+   self.heartbeat.attached=True
+  except BaseException:self.heartbeat.close();raise
+ def raw(self):
+  s=super().raw()
+  if self.heartbeat:self.heartbeat.touch()
+  return s
+ def request(self,op,**params):
+  for attempt in range(4):
+   r=super().request(op,task_session=self.task,background_ok=True,**params)
+   if r.get('phase')!='error' or r.get('detail')!='Construction guard is defending or eating; wait before changing items or starting work':return r
+   # This exact native rejection happens before dispatch mutates game state; ambiguous failures are never replayed.
+   self.status();time.sleep(.25)
+  return r
+ def finish(self):
+  # Recover only our exact workbench before releasing its native safety lease.
+  try:
+   from craft_recovery import clear_owned_workbench
+   clear_owned_workbench(self)
+   s=self.status();m=s.get('menu',{})
+   clean_workbench=m.get('type')=='CraftingMenu' and all(not v['count'] for v in m['slots'][:10])
+   storage=m.get('type') in ('ChestMenu','ShulkerBoxMenu')
+   if self.owned_material_menu==m.get('id') and (clean_workbench or storage) and not m['cursor']['count']:
+    self.checked('close_menu')
+  except (Handoff,RuntimeError,KeyError):pass
+  self.heartbeat.close()
+  p=self.root/('supervision-receipt-'+self.heartbeat.id+'.json')
+  for _ in range(600):
+   pending_disconnect=False
+   if p.exists():
+    d=json.loads(p.read_text())
+    pending_disconnect=d.get('action')=='LOGOUT' and not d.get('confirmed')
+    if d.get('confirmed'):
+     (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('DISCONNECT_CONFIRMED',d['action'],d['cause'],flush=True);return
+   try:s=self.raw()
+   except RuntimeError:
+    print('Native finish acknowledgement unavailable; heartbeat has stopped',flush=True);return
+   lease=s.get('supervision_lease',{})
+   if lease.get('id')==self.heartbeat.id and lease.get('kind')=='parking':self.rev=s['control_revision']
+   if s.get('world_session')!=self.world or s.get('manual_movement') or s.get('control_revision')!=self.rev and not pending_disconnect:return
+   if lease and lease.get('id')!=self.heartbeat.id:return
+   time.sleep(.15)
+ def fetch(self,pos,materials):
+  r=self.request('collect_supply',source_key='minecraft:overworld:'+':'.join(map(str,pos)),materials={'minecraft:'+k:v for k,v in materials.items()},seconds=180)
+  print('FETCH',pos,r.get('phase'),r.get('detail'),r.get('build_supply'),flush=True)
+  return r

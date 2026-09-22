@@ -16,7 +16,7 @@ public class KitWorkspaceScreen extends KitHudScreen {
     private int scroll;
     private final List<Placed> entries = new ArrayList<>();
     private UiPageLayout layout;
-    private int bodyTop, bodyHeight, contentHeight;
+    private int bodyTop, bodyHeight, contentHeight, featureCount;
     private record Placed(AbstractWidget widget, int y) {}
     public KitWorkspaceScreen(KitConfig config, KitController controller) { this(config, controller, UiFeature.Category.parse(config.workspaceCategory)); }
     public KitWorkspaceScreen(KitConfig config, KitController controller, UiFeature.Category category) {
@@ -24,7 +24,7 @@ public class KitWorkspaceScreen extends KitHudScreen {
     }
     @Override protected void init() {
         if (search != null) query = search.getValue();
-        layout = UiPageLayout.of(width, height);
+        layout = UiPageLayout.workspace(width, height);
         int n = UiFeature.Category.values().length, w = (layout.width() - (n - 1) * 3) / n;
         for (var item : UiFeature.Category.values()) {
             var button = addRenderableWidget(Button.builder(Component.literal(item.label), b -> {
@@ -53,7 +53,7 @@ public class KitWorkspaceScreen extends KitHudScreen {
     }
     private void rebuildEntries() {
         for (Placed p : entries) removeWidget(p.widget()); entries.clear();
-        List<UiFeature> features = selected();
+        List<UiFeature> features = selected(); featureCount=features.size();
         UiFeatureGridLayout grid = UiFeatureGridLayout.of(layout, features.size());
         for (int i = 0; i < features.size(); i++) {
             UiFeature feature = features.get(i);
@@ -90,9 +90,14 @@ public class KitWorkspaceScreen extends KitHudScreen {
     @Override public void extractRenderState(GuiGraphicsExtractor g, int x, int y, float delta) {
         super.extractRenderState(g, x, y, delta);
         if (config.clickGui) g.fill(layout.left(), 30, layout.left() + layout.width(), 32, 0xFF6FA9B6);
+        if(contentHeight>bodyHeight){
+            int right=layout.left()+layout.width(),thumb=Math.max(12,bodyHeight*bodyHeight/contentHeight);
+            int y0=bodyTop+(bodyHeight-thumb)*scroll/Math.max(1,contentHeight-bodyHeight);
+            g.fill(right-3,bodyTop,right,bodyTop+bodyHeight,0xFF273B4A);g.fill(right-3,y0,right,y0+thumb,0xFF8DAEC0);
+        }
         if (entries.isEmpty()) KitUi.centered(g, font, "没有匹配功能，换个关键词试试", width / 2, bodyTop + 8, 0xAABBCC);
         String running = Arrays.stream(UiFeature.values()).filter(UiFeature::active).map(f -> f.title).collect(java.util.stream.Collectors.joining(" · "));
-        String status = !notice.isEmpty() ? notice : running.isEmpty() ? "点击功能进入配置 · ☆ 设为常用 · Esc 返回游戏" : "正在运行：" + running;
+        String status = !notice.isEmpty() ? notice : running.isEmpty() ? "共 "+featureCount+" 项 · "+(contentHeight>bodyHeight?"滚轮查看更多 · ":"")+"☆ 设为常用 · Esc 返回游戏" : "正在运行：" + running;
         KitUi.text(g, font, KitUi.fit(font, status, layout.width()), layout.left(), layout.footer() - 14, notice.isEmpty() ? 0xAABBCC : noticeColor);
     }
     public void showDetail(KitFormScreen screen) { minecraft.setScreen(screen.bind(config)); }
