@@ -13,6 +13,9 @@ class GravelHarvestTest(unittest.TestCase):
         self.assertTrue(dry_top_gravel(rows,p))
         self.assertFalse(dry_top_gravel(rows+[block([10,64,20],'Block{minecraft:gravel}')],p))
         self.assertFalse(dry_top_gravel(rows+[block([11,63,20],'Block{minecraft:water}[level=0]')],p))
+        waterlogged=block([11,63,20],'Block{minecraft:seagrass}')
+        waterlogged['fluid']=True
+        self.assertFalse(dry_top_gravel(rows+[waterlogged],p))
 
     def test_existing_drops_are_not_claimed_as_new_gravel(self):
         p=[10,63,20]

@@ -17,6 +17,7 @@ import dev.twob2tkit.runtime.engine.BorerItems;
 import java.util.Locale;
 import dev.twob2tkit.combat.HealingItems;
 import dev.twob2tkit.cruise.CruiseCeilingMiner;
+import dev.twob2tkit.cruise.CruiseCollisionPath;
 import dev.twob2tkit.cruise.CruiseScreenHud;
 import dev.twob2tkit.nether.NetherRoofAssist;
 
@@ -562,7 +563,7 @@ public final class KitController {
 		double yaw = Math.toRadians(player.getYRot());
 		double fx = -Math.sin(yaw);
 		double fz = Math.cos(yaw);
-		AABB ahead = player.getBoundingBox().move(fx * 0.45, 0.0, fz * 0.45).inflate(0.02, 0.05, 0.02);
+		AABB ahead = CruiseCollisionPath.horizontal(player.getBoundingBox(), fx * 0.45, fz * 0.45);
 		return !client.level.noCollision(player, ahead);
 	}
 
@@ -626,6 +627,7 @@ public final class KitController {
 	private boolean raiseCruiseToClear(Minecraft client, LocalPlayer player) {
 		double next = Math.min(maxSafeFlyY(client), Math.max(player.getY(), desiredY()) + 16.0);
 		if (next <= desiredY() + 0.5) return false;
+		if (!client.level.noCollision(player, CruiseCollisionPath.vertical(player.getBoundingBox(), next-player.getY()))) return false;
 		applyClimbHeight(client, player, next, "巡航高度偏低，升高到 Y %.0f 越过障碍", true);
 		return true;
 	}
@@ -666,7 +668,7 @@ public final class KitController {
 	private boolean spaceFreeAtY(Minecraft client, LocalPlayer player, double dy) {
 		double y = player.getY() + dy;
 		if (!client.level.hasChunkAt(BlockPos.containing(player.getX(), y, player.getZ()))) return false;
-		AABB box = player.getBoundingBox().move(0.0, dy, 0.0).inflate(0.2, 0.1, 0.2);
+		AABB box = CruiseCollisionPath.vertical(player.getBoundingBox(), dy);
 		return client.level.noCollision(player, box);
 	}
 
@@ -695,13 +697,13 @@ public final class KitController {
 		if (distance < 2.0) return true;
 		double unitX = dx / fullDistance;
 		double unitZ = dz / fullDistance;
-		AABB playerBox = player.getBoundingBox().move(0.0, dy, 0.0).inflate(0.2, 0.1, 0.2);
+		AABB playerBox = player.getBoundingBox().move(0.0, dy, 0.0);
 		if (!client.level.noCollision(player, playerBox)) return false;
 		for (double step = 1.0; step <= distance; step += 1.0) {
 			double x = player.getX() + unitX * step;
 			double z = player.getZ() + unitZ * step;
 			if (!client.level.hasChunkAt(BlockPos.containing(x, player.getY() + dy, z))) return false;
-			if (!client.level.noCollision(player, playerBox.move(unitX * step, 0.0, unitZ * step))) return false;
+			if (!client.level.noCollision(player, CruiseCollisionPath.horizontal(playerBox, unitX * step, unitZ * step))) return false;
 		}
 		return true;
 	}
@@ -717,13 +719,13 @@ public final class KitController {
 		if (distance < 0.8) return -1.0;
 		double unitX = dx / fullDistance;
 		double unitZ = dz / fullDistance;
-		AABB playerBox = player.getBoundingBox().move(0.0, dy, 0.0).inflate(0.25, 0.15, 0.25);
+		AABB playerBox = player.getBoundingBox().move(0.0, dy, 0.0);
 		if (!client.level.noCollision(player, playerBox)) return 0.0;
 		for (double step = 0.8; step <= distance; step += 0.8) {
 			double x = player.getX() + unitX * step;
 			double z = player.getZ() + unitZ * step;
 			if (!client.level.hasChunkAt(BlockPos.containing(x, player.getY() + dy, z))) return -1.0;
-			if (!client.level.noCollision(player, playerBox.move(unitX * step, 0.0, unitZ * step))) return step;
+			if (!client.level.noCollision(player, CruiseCollisionPath.horizontal(playerBox, unitX * step, unitZ * step))) return step;
 		}
 		return -1.0;
 	}
@@ -736,12 +738,12 @@ public final class KitController {
 		if (distance < 0.001) return true;
 		double unitX = dx / distance;
 		double unitZ = dz / distance;
-		AABB playerBox = player.getBoundingBox().inflate(0.35, 0.2, 0.35);
+		AABB playerBox = player.getBoundingBox();
 		for (double step = 2.0; step <= distance; step += 1.0) {
 			double x = player.getX() + unitX * step;
 			double z = player.getZ() + unitZ * step;
 			if (!client.level.hasChunkAt(BlockPos.containing(x, player.getY(), z))) return false;
-			if (!client.level.noCollision(player, playerBox.move(unitX * step, 0.0, unitZ * step))) return false;
+			if (!client.level.noCollision(player, CruiseCollisionPath.horizontal(playerBox, unitX * step, unitZ * step))) return false;
 		}
 		return true;
 	}

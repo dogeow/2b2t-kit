@@ -16,4 +16,13 @@ class Tests(unittest.TestCase):
   c=MaterialClient.__new__(MaterialClient);c.task='t';c.status=lambda:{}
   with patch.object(Client,'request',return_value={'phase':'error','detail':'Inventory transfer not confirmed'}) as call:
    self.assertEqual(c.request('slot_click')['phase'],'error');self.assertEqual(call.call_count,1)
+ def test_empty_approved_depot_is_not_reported_as_a_successful_fetch(self):
+  c=MaterialClient.__new__(MaterialClient);c.task='t'
+  c.status=lambda:{'inventory':[{'slot':0,'item':'minecraft:gravel','count':1}]}
+  with patch.object(MaterialClient,'request',return_value={'phase':'done','build_supply':{'taken':{}}}) as call:
+   result=c.fetch([1,2,3],{'gravel':16})
+   self.assertEqual(result['phase'],'waiting')
+   self.assertEqual(result['shortfall'],{'gravel':15})
+   self.assertEqual(result['native_phase'],'done')
+   self.assertEqual(call.call_count,1)
 if __name__=='__main__':unittest.main()

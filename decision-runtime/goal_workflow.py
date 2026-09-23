@@ -49,14 +49,21 @@ def subset_matches(observed,targets):
     actual={tuple(row['pos']):row['state'] for row in observed}
     return bool(targets) and all(actual.get(tuple(row['pos']))==row['expected'] for row in targets)
 
-def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None):
+def station_target(label):
+    try:
+        parts=[int(part.strip()) for part in label.split(',')]
+        return [parts[0]+.5,parts[1]+.02,parts[2]+.5] if len(parts)==3 else None
+    except (AttributeError,TypeError,ValueError):
+        return None
+
+def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None,max_station_repositions=0):
     s=client.status()
     if s['projection_selection'].get('key')!=selection_key:raise Handoff('Selected projection changed')
     if not s.get('window_active'):
         raise RuntimeError('Minecraft must be the foreground window for construction movement')
     if s['screen']:client.checked('close_menu')
     client.checked('projection_start',manual_start=True,placement_key=selection_key)
-    started=time.monotonic();last_gain=started;best=0;last_report=-1;last_sample=0;last_subset_check=0
+    started=time.monotonic();last_gain=started;best=0;last_report=-1;last_sample=0;last_subset_check=0;repositions=0
     while time.monotonic()-started<seconds:
         s=client.status();b=s['build_job']
         if time.monotonic()-last_sample>=2:
@@ -64,6 +71,9 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             with (client.out/'build-station-events.jsonl').open('a') as stream:stream.write(json.dumps({'time':s['time'],'pos':s['pos'],'velocity':s.get('velocity'),'movement_keys':s.get('movement_keys'),'window_active':s.get('window_active'),'flight':s.get('flight'),'health':s['health'],'guard_busy':s.get('guard_busy'),'build':b,'printer':s.get('professional_printer')},ensure_ascii=False)+'\n')
         if b.get('placement_key')!=selection_key or s.get('projection_selection',{}).get('key')!=selection_key:raise Handoff('Projection changed during build')
         if b.get('outcome')=='manual_stop':raise Handoff('Player stopped construction')
+        if not s.get('window_active'):
+            if b.get('active'):client.checked('build_control',job_session=b['session'],action='pause_and_report')
+            raise RuntimeError('Minecraft left foreground during construction')
         if b.get('matched',0)>best:best=b['matched'];last_gain=time.monotonic()
         if best-last_report>=10:print('BUILD',best,b.get('total'),b.get('phase'),flush=True);last_report=best
         if not b['active']:break
@@ -78,6 +88,21 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             if settled and subset_matches(observed,complete_cells):
                 print('BUILD_SUBSET_VERIFIED',len(complete_cells),flush=True);break
         if not s.get('guard_busy') and time.monotonic()-last_gain>stall_seconds:
+            target=station_target(b.get('station'))
+            if (b.get('phase')=='自动走位' and target and repositions<max_station_repositions
+                    and s.get('window_active') and s['health']>=18):
+                client.checked('build_control',job_session=b['session'],action='pause_and_report')
+                moved=client.request('navigate',target=target,arrival=2,seconds=20)
+                proof={'time':s['time'],'station':b['station'],'from':s['pos'],'phase':moved.get('phase'),
+                       'detail':moved.get('detail'),'to':client.status()['pos']}
+                with (client.out/'build-repositions.jsonl').open('a') as stream:
+                    stream.write(json.dumps(proof,ensure_ascii=False)+'\n')
+                repositions+=1
+                if moved.get('phase')=='done' and client.status()['health']>=18:
+                    client.checked('projection_start',manual_start=True,placement_key=selection_key)
+                    last_gain=time.monotonic();last_sample=0
+                    print('BUILD_REPOSITION',repositions,b['station'],flush=True)
+                    continue
             print('BUILD_STALL',b.get('reason'),flush=True);break
         time.sleep(.3)
     s=client.status();b=s['build_job']

@@ -3,6 +3,12 @@ import math,time,json
 k=None
 from craft_grid import checked,click,take_portion,wait_for_recipe,count,compact_once,output_room,InventoryCapacity
 
+SAFE_SINGLE_ROUND={'minecraft:bone_meal','minecraft:white_dye','minecraft:polished_andesite',
+                   'minecraft:spruce_planks','minecraft:chest','minecraft:hopper'}
+
+def safe_single_round(output):
+    return output.endswith('_concrete_powder') or output in SAFE_SINGLE_ROUND
+
 
 def wait_clear_cursor(state, menu_id):
     """A click reply may precede the server's cursor update; observe, never re-click."""
@@ -41,7 +47,7 @@ def wait_grid_placed(state, menu_id, item, slots, count_each):
 
 
 def bounded_rounds(output, proposed):
-    return min(proposed, 1) if output.endswith('_concrete_powder') or output in ('minecraft:bone_meal','minecraft:white_dye') else proposed
+    return min(proposed, 1) if safe_single_round(output) else proposed
 
 def pin_chest_planks(plan, item):
     """Pin every tag-resolved chest cell to one ample plank type, without losing cells."""
@@ -110,7 +116,7 @@ def mixed(recipe,output,output_per_recipe,target_total):
                 s=wait_grid_placed(s,m['id'],item,slots,rounds)
                 continue
             pickup=(source['count']+1)//2 if amount<source['count'] and amount<=(source['count']+1)//2 else source['count']
-            if output.endswith('_concrete_powder') or amount+2 < pickup-amount+2:
+            if safe_single_round(output) or amount+2 < pickup-amount+2:
                 s=click(s,source['slot'])
                 for cell_id in slots:
                     for _ in range(rounds):

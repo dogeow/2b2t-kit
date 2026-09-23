@@ -214,5 +214,11 @@ class MaterialClient(Client):
    print('High hover was not confirmed; requested safe logout',flush=True)
  def fetch(self,pos,materials):
   r=self.request('collect_supply',source_key='minecraft:overworld:'+':'.join(map(str,pos)),materials={'minecraft:'+k:v for k,v in materials.items()},seconds=180)
+  if r.get('phase')=='done':
+   held=stocks(self.status())
+   short={name:max(0,target-held.get('minecraft:'+name,0)) for name,target in materials.items()}
+   short={name:count for name,count in short.items() if count}
+   if short:
+    r={**r,'phase':'waiting','native_phase':'done','detail':'Approved depot contains less than the requested stock','shortfall':short}
   print('FETCH',pos,r.get('phase'),r.get('detail'),r.get('build_supply'),flush=True)
   return r

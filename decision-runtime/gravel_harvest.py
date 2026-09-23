@@ -21,7 +21,9 @@ def dry_top_gravel(rows, pos):
     x, y, z = pos
     if block_state(rows, pos) != 'Block{minecraft:gravel}' or block_state(rows, [x, y+1, z]) != 'Block{minecraft:air}':
         return False
-    return all(not block_state(rows, neighbor).startswith('Block{minecraft:water}')
+    observed={tuple(row['pos']):row for row in rows}
+    return all(not observed.get(tuple(neighbor),{}).get('fluid',False)
+               and not block_state(rows, neighbor).startswith('Block{minecraft:water}')
                for neighbor in ([x+1,y,z], [x-1,y,z], [x,y,z+1], [x,y,z-1], [x,y-1,z]))
 
 
@@ -57,6 +59,7 @@ def harvest(client, low, high, target_count, out):
             record['approach']=approach.get('detail');blocked.add(tuple(p));result['blocks'].append(record);continue
         client.checked('select_item',item='minecraft:diamond_shovel')
         before=client.status()
+        fluid_veto=False
         for attempt in range(3):
             state=block_state(client.request('scan',min=p,max=p)['blocks'],p)
             if state!='Block{minecraft:gravel}':
@@ -64,12 +67,20 @@ def harvest(client, low, high, target_count, out):
             mined=client.request('mine_block',pos=p,face='up',expected_state=state,seconds=20)
             record['mine_phase']=mined.get('phase');record['mine_detail']=mined.get('detail')
             if mined.get('phase')=='done':break
+            if mined.get('detail')=='Fluid next to target is protected':
+                fluid_veto=True
+                break
             if mined.get('phase')!='error' or mined.get('detail') not in ('Mining target out of reach','Construction guard is defending or eating; wait before changing items or starting work'):
                 raise RuntimeError('Gravel mining was not confirmed: '+str(mined.get('detail')))
             if attempt==2:raise RuntimeError('Guard repeatedly interrupted gravel mining')
             again=client.request('approach_block',pos=p,face='up',expected_state=state,seconds=120)
             if again.get('phase')!='done':raise RuntimeError('Could not return to the gravel target after defense')
             client.checked('select_item',item='minecraft:diamond_shovel')
+        if fluid_veto:
+            blocked.add(tuple(p));record['skipped']='fluid protection';result['blocks'].append(record)
+            Path(out).mkdir(parents=True,exist_ok=True)
+            (Path(out)/'progress.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
+            continue
         deadline=time.monotonic()+12
         while time.monotonic()<deadline:
             after=client.status()

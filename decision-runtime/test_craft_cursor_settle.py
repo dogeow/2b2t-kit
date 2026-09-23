@@ -9,6 +9,12 @@ class CraftCursorSettleTest(unittest.TestCase):
         self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:white_concrete_powder', 7))
         self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:bone_meal', 7))
         self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:white_dye', 7))
+        self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:polished_andesite', 7))
+        self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:chest', 7))
+        self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:hopper', 7))
+        self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:spruce_planks', 7))
+        self.assertTrue(craft_recipe.safe_single_round('minecraft:chest'))
+        self.assertTrue(craft_recipe.safe_single_round('minecraft:hopper'))
         self.assertEqual(7, craft_recipe.bounded_rounds('minecraft:iron_ingot', 7))
 
     def test_delayed_server_cursor_update_is_observed_without_another_click(self):

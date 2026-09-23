@@ -1,5 +1,5 @@
 import unittest
-from goal_workflow import open_workbench,subset_matches,build_phase
+from goal_workflow import open_workbench,subset_matches,build_phase,station_target
 
 
 class Client:
@@ -18,6 +18,10 @@ class Client:
 
 
 class WorkbenchTests(unittest.TestCase):
+    def test_station_reposition_uses_only_three_verified_integer_coordinates(self):
+        self.assertEqual([760816.5,87.02,797764.5],station_target('760816, 87, 797764'))
+        self.assertIsNone(station_target('760816, 87'))
+        self.assertIsNone(station_target('untrusted station'))
     def test_background_construction_refuses_to_wait_on_ignored_movement_keys(self):
         class Background:
             def status(self):return {'projection_selection':{'key':'selected'},'window_active':False}

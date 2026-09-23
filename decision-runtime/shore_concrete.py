@@ -7,6 +7,7 @@ on any ambiguous result instead of replaying a possibly completed batch.
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 from material_client import MaterialClient
@@ -112,8 +113,24 @@ def convert(client, support, expected_state, powder, solid, count, batch_size=8,
         if out is not None:
             Path(out).mkdir(parents=True, exist_ok=True)
             (Path(out)/'progress.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
+        if batch.get('phase') != 'done' and 'Drop pickup not confirmed at the reached position' in str(batch.get('detail')):
+            # The server may award the final drop just after the bounded
+            # pickup navigator yields. Observe the exact inventory delta and
+            # reopened water cell; never replay a placement on this signal.
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                after = client.status()
+                if (item_count(before, powder) - item_count(after, powder) == n
+                        and item_count(after, solid) - item_count(before, solid) == n):
+                    reopened = client.request('scan', min=cell, max=cell)['blocks']
+                    if block_state(reopened, cell).startswith('Block{minecraft:water}'):
+                        entry.update(phase='late_verified', native_phase=batch.get('phase'),
+                                     powder_after=item_count(after, powder), solid_after=item_count(after, solid))
+                        break
+                time.sleep(.2)
         if batch.get('phase') != 'done':
-            raise RuntimeError('Native concrete batch stopped: ' + str(batch.get('detail')))
+            if entry['phase'] != 'late_verified':
+                raise RuntimeError('Native concrete batch stopped: ' + str(batch.get('detail')))
         entry.update(reconcile_batch(before, after, powder, solid, n))
         done += n
     result['completed'] = done
