@@ -52,6 +52,8 @@ def subset_matches(observed,targets):
 def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None):
     s=client.status()
     if s['projection_selection'].get('key')!=selection_key:raise Handoff('Selected projection changed')
+    if not s.get('window_active'):
+        raise RuntimeError('Minecraft must be the foreground window for construction movement')
     if s['screen']:client.checked('close_menu')
     client.checked('projection_start',manual_start=True,placement_key=selection_key)
     started=time.monotonic();last_gain=started;best=0;last_report=-1;last_sample=0;last_subset_check=0
@@ -59,7 +61,7 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
         s=client.status();b=s['build_job']
         if time.monotonic()-last_sample>=2:
             last_sample=time.monotonic()
-            with (client.out/'build-station-events.jsonl').open('a') as stream:stream.write(json.dumps({'time':s['time'],'pos':s['pos'],'health':s['health'],'guard_busy':s.get('guard_busy'),'build':b,'printer':s.get('professional_printer')},ensure_ascii=False)+'\n')
+            with (client.out/'build-station-events.jsonl').open('a') as stream:stream.write(json.dumps({'time':s['time'],'pos':s['pos'],'velocity':s.get('velocity'),'movement_keys':s.get('movement_keys'),'window_active':s.get('window_active'),'flight':s.get('flight'),'health':s['health'],'guard_busy':s.get('guard_busy'),'build':b,'printer':s.get('professional_printer')},ensure_ascii=False)+'\n')
         if b.get('placement_key')!=selection_key or s.get('projection_selection',{}).get('key')!=selection_key:raise Handoff('Projection changed during build')
         if b.get('outcome')=='manual_stop':raise Handoff('Player stopped construction')
         if b.get('matched',0)>best:best=b['matched'];last_gain=time.monotonic()

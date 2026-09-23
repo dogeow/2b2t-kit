@@ -44,7 +44,7 @@ def reconcile_batch(before, after, powder, solid, count):
 
 
 def convert(client, support, expected_state, powder, solid, count, batch_size=8, out=None,
-            waypoint=None, staging=None):
+            waypoint=None, staging=None, stand_block=None):
     if not 1 <= count <= 64 or not 1 <= batch_size <= 16:
         raise ValueError('Count must be 1..64 and batch size 1..16')
     start = client.status()
@@ -89,7 +89,17 @@ def convert(client, support, expected_state, powder, solid, count, batch_size=8,
     done = 0
     while done < count:
         n = min(batch_size, count-done)
-        client.checked('approach_block', pos=list(support), face='up', expected_state=expected_state, seconds=120)
+        if stand_block is not None:
+            marker = block_state(client.request('scan', min=list(stand_block), max=list(stand_block))['blocks'], stand_block)
+            if marker == 'Block{minecraft:air}' or 'minecraft:water' in marker:
+                raise RuntimeError('Dry standing marker changed')
+            client.checked('approach_block', pos=list(stand_block), face='up', expected_state=marker,
+                           stand_distance=.75, seconds=120)
+            feet = client.status()['pos']
+            if abs(feet[0]-(x+.5))<.9 and abs(feet[2]-(z+.5))<.9:
+                raise RuntimeError('Standing position overlaps the powder cell')
+        else:
+            client.checked('approach_block', pos=list(support), face='up', expected_state=expected_state, seconds=120)
         client.checked('select_item', item=powder)
         before = client.status()
         batch = client.request('concrete_batch', support=list(support), expected_state=expected_state,
@@ -122,6 +132,8 @@ def main():
     parser.add_argument('--staging', type=int, nargs=3)
     parser.add_argument('--park-high', type=float, nargs=3,
                         help='Stay online with PvE guard only after a verified high hover')
+    parser.add_argument('--stand-block', type=int, nargs=3,
+                        help='Verified dry marker near the water cell; prevents standing over fresh powder')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     root = '/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation'
@@ -130,7 +142,7 @@ def main():
                             park_target=args.park_high)
     try:
         result = convert(client, args.support, args.expected_state, args.powder, args.solid,
-                         args.count, args.batch_size, args.out, args.waypoint, args.staging)
+                         args.count, args.batch_size, args.out, args.waypoint, args.staging, args.stand_block)
         (args.out/'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
         print(json.dumps(result, ensure_ascii=False), flush=True)
     finally:

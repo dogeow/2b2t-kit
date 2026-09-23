@@ -12,6 +12,7 @@ from drop_collection import collect_drop
 from material_cleanup import register as register_cleanup,complete as cleanup_complete
 
 VALUABLE={'minecraft:diamond','minecraft:diamond_block','minecraft:emerald','minecraft:emerald_block',
+          'minecraft:bone_block',
           'minecraft:netherite_ingot','minecraft:netherite_block','minecraft:blaze_rod','minecraft:blaze_powder'}
 def contents(rows):
     result=Counter()

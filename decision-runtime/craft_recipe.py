@@ -41,7 +41,7 @@ def wait_grid_placed(state, menu_id, item, slots, count_each):
 
 
 def bounded_rounds(output, proposed):
-    return min(proposed, 1) if output.endswith('_concrete_powder') else proposed
+    return min(proposed, 1) if output.endswith('_concrete_powder') or output in ('minecraft:bone_meal','minecraft:white_dye') else proposed
 
 def pin_chest_planks(plan, item):
     """Pin every tag-resolved chest cell to one ample plank type, without losing cells."""

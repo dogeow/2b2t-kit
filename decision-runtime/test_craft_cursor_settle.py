@@ -7,6 +7,8 @@ import craft_recipe
 class CraftCursorSettleTest(unittest.TestCase):
     def test_concrete_mix_is_limited_to_one_verified_recipe_per_transaction(self):
         self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:white_concrete_powder', 7))
+        self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:bone_meal', 7))
+        self.assertEqual(1, craft_recipe.bounded_rounds('minecraft:white_dye', 7))
         self.assertEqual(7, craft_recipe.bounded_rounds('minecraft:iron_ingot', 7))
 
     def test_delayed_server_cursor_update_is_observed_without_another_click(self):

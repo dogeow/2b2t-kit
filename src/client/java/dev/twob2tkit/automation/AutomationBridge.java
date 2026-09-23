@@ -262,6 +262,19 @@ public final class AutomationBridge {
         if(active!=null && Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) && supplyTask!=null){supplyTask.input(c);return true;}
         if(active==null || !Set.of("walk","walk_path","mine_block","use_item").contains(op) || c.player==null || c.level==null)return false;
         if(survival(active))try{survivalGuard(c,active);}catch(Exception e){KitClient.emergencyStop(e.getMessage());return true;}
+        if(op.equals("walk")&&active.has("freefall_brake_y")){
+            double brakeY=active.get("freefall_brake_y").getAsDouble();
+            int low=Math.max((int)Math.floor(brakeY)-2,c.player.blockPosition().getY()-8);
+            boolean blocked=!freefallColumnClear(c,c.player.blockPosition(),low,c.player.blockPosition().getY()+2);
+            if(FreefallPolicy.brake(c.player.getY(),brakeY,c.player.getHealth(),c.screen!=null)||blocked){
+                MeteorModules.enable(MeteorModules.FLIGHT);
+                if(!MeteorModules.isActive(MeteorModules.FLIGHT)){
+                    KitClient.safeLogout(c,"快速下降刹车未确认，已安全退出");return true;
+                }
+                finish(c,"done",blocked?"freefall braked before a new obstacle":"freefall braked above target");
+            }else{c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);}
+            return true;
+        }
         if(op.equals("use_item")){c.options.keyUse.setDown(true);return true;}
         if(c.screen!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyAttack.setDown(false);return true;}
         if(op.equals("mine_block")){
@@ -289,7 +302,16 @@ public final class AutomationBridge {
         double dy=p.get(1).getAsDouble()-c.player.getY();c.options.keyJump.setDown(c.player.onGround() && dy>.5 && dy<1.3);
         return true;
     }
-    private static void releaseWalk(Minecraft c){if(op.equals("use_item")){c.options.keyUse.setDown(false);if(c.gameMode!=null && c.player!=null)c.gameMode.releaseUsingItem(c.player);if(c.player!=null && foodOriginalSlot>=0 && c.player.getInventory().getSelectedSlot()==foodUseSlot)c.player.getInventory().setSelectedSlot(foodOriginalSlot);foodOriginalSlot=foodUseSlot=-1;return;}if(!Set.of("walk","walk_path","mine_block").contains(op))return;if(c.options!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);c.options.keyAttack.setDown(false);}if(op.equals("mine_block") && c.gameMode!=null)c.gameMode.stopDestroyBlock();if(restoreFlight){MeteorModules.enable(MeteorModules.FLIGHT);restoreFlight=false;}}
+    private static void releaseWalk(Minecraft c){if(op.equals("use_item")){c.options.keyUse.setDown(false);if(c.gameMode!=null && c.player!=null)c.gameMode.releaseUsingItem(c.player);if(c.player!=null && foodOriginalSlot>=0 && c.player.getInventory().getSelectedSlot()==foodUseSlot)c.player.getInventory().setSelectedSlot(foodOriginalSlot);foodOriginalSlot=foodUseSlot=-1;return;}if(!Set.of("walk","walk_path","mine_block").contains(op))return;if(c.options!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);c.options.keyAttack.setDown(false);}if(op.equals("mine_block") && c.gameMode!=null)c.gameMode.stopDestroyBlock();if(op.equals("walk")&&active!=null&&active.has("freefall_brake_y"))MeteorModules.enable(MeteorModules.FLIGHT);if(restoreFlight){MeteorModules.enable(MeteorModules.FLIGHT);restoreFlight=false;}}
+    private static boolean freefallColumnClear(Minecraft c,BlockPos center,int lowY,int highY){
+        if(c.level==null||highY<lowY||highY-lowY>256)return false;
+        for(int x=center.getX()-1;x<=center.getX()+1;x++)for(int z=center.getZ()-1;z<=center.getZ()+1;z++)for(int y=lowY;y<=highY;y++){
+            BlockPos p=new BlockPos(x,y,z);if(!c.level.hasChunkAt(p))return false;
+            var state=c.level.getBlockState(p);
+            if(!state.getCollisionShape(c.level,p).isEmpty()||!state.getFluidState().isEmpty())return false;
+        }
+        return true;
+    }
     public static void tick(Minecraft c){
         if(!initialized){initialized=true;try{Path old=root(c).resolve("request.json");if(Files.isRegularFile(old))lastId=str(JsonParser.parseString(Files.readString(old)).getAsJsonObject(),"id");}catch(Exception ignored){}}
         if(guiRequested){guiRequested=false;if(c.player!=null)KitClient.openGui(c);}
@@ -532,6 +554,12 @@ public final class AutomationBridge {
             }else if(command.equals("walk")){
                 JsonArray p=r.getAsJsonArray("target");checkSiteTarget(r,p);
                 double d=Math.hypot(p.get(0).getAsDouble()-c.player.getX(),p.get(2).getAsDouble()-c.player.getZ());if(d>32)throw new IllegalArgumentException("Walking waypoint must be within 32 blocks");
+                if(r.has("freefall_brake_y")){
+                    double brakeY=r.get("freefall_brake_y").getAsDouble();
+                    if(!r.has("task_session")||d>.5||!FreefallPolicy.eligible(c.player.getY(),brakeY,c.player.getHealth(),guardScope!=null,MeteorModules.isActive(MeteorModules.FLIGHT))
+                        ||!freefallColumnClear(c,c.player.blockPosition(),(int)Math.floor(brakeY)-2,(int)Math.ceil(c.player.getY())+2))
+                        throw new IllegalStateException("Guarded freefall requires a clear loaded column and active Flight");
+                }
                 restoreFlight=MeteorModules.isActive(MeteorModules.FLIGHT) && (!r.has("restore_flight") || r.get("restore_flight").getAsBoolean());MeteorModules.disable(MeteorModules.FLIGHT);
             }else if(command.equals("navigate")){
                 JsonArray p=r.getAsJsonArray("target");checkSiteTarget(r,p);
@@ -686,7 +714,7 @@ public final class AutomationBridge {
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
         if(supervisionLease!=null)j.add("supervision_lease",supervisionLease.deepCopy());if(lastSafetyEvent!=null)j.add("supervision_safety",lastSafetyEvent.deepCopy());
         j.add("safety_hold",dev.twob2tkit.combat.EmergencyExit.snapshot(c));
-        j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("tree_survey_protocol",1);j.addProperty("material_protocol",2);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",3);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.screen==null?"":c.screen.getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
+        j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("tree_survey_protocol",1);j.addProperty("material_protocol",2);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("freefall_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",3);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.screen==null?"":c.screen.getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
         if(c.player==null || c.level==null)return j;
         j.addProperty("player_name",c.player.getGameProfile().name());j.addProperty("player_uuid",c.player.getUUID().toString());j.addProperty("experience_level",c.player.experienceLevel);
         c.player.getLastDeathLocation().ifPresent(death->{var marker=new JsonObject();marker.addProperty("dimension",death.dimension().identifier().toString());marker.add("pos",JSON.toJsonTree(new int[]{death.pos().getX(),death.pos().getY(),death.pos().getZ()}));j.add("server_last_death",marker);});

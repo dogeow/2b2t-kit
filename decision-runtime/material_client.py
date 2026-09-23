@@ -113,6 +113,11 @@ class Client:
    time.sleep(.2)
   raise RuntimeError('Chest was not opened')
 class MaterialClient(Client):
+ PARK_RADIUS_SQR=8*8
+ def park_near(self,state):
+  pos=state.get('pos')
+  return bool(pos and abs(pos[1]-self.park_target[1])<=2 and
+              (pos[0]-self.park_target[0])**2+(pos[2]-self.park_target[2])**2<=self.PARK_RADIUS_SQR)
  def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None,remote_finish='disconnect',park_target=None):
   if remote_finish not in ('disconnect','guard') or remote_finish=='guard' and (not isinstance(park_target,(list,tuple)) or len(park_target)!=3):raise ValueError('Guard finish requires a high park target')
   self.remote_finish=remote_finish;self.park_target=list(park_target) if park_target is not None else None
@@ -168,11 +173,11 @@ class MaterialClient(Client):
    try:
     s=self.status()
     if s['health']<18 or not s.get('guard_armed'):raise RuntimeError('High parking needs full health and PvE guard')
-    if sum((a-b)**2 for a,b in zip(s['pos'],self.park_target))>2*2:
+    if not self.park_near(s):
      r=self.request('navigate',target=self.park_target,arrival=2,seconds=120)
      if r.get('phase')!='done':raise RuntimeError('High parking route did not finish: '+str(r.get('detail')))
     s=self.status()
-    if s['health']<18 or not s.get('guard_armed') or sum((a-b)**2 for a,b in zip(s['pos'],self.park_target))>2*2:
+    if s['health']<18 or not s.get('guard_armed') or not self.park_near(s):
      raise RuntimeError('High parking position or guard not verified')
    except Handoff:
     self.heartbeat.close();return
@@ -190,7 +195,7 @@ class MaterialClient(Client):
     if self.remote_finish=='guard' and d.get('action')=='KEEP_PVE_GUARD':
      try:s=self.raw()
      except RuntimeError:break
-     if s.get('connected') and s.get('guard_armed') and s.get('health',0)>=18 and s.get('pos') and sum((a-b)**2 for a,b in zip(s['pos'],self.park_target))<=2*2:
+     if s.get('connected') and s.get('guard_armed') and s.get('health',0)>=18 and self.park_near(s):
       (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('HIGH_GUARD_CONFIRMED',flush=True);return
     pending_disconnect=d.get('action')=='LOGOUT' and not d.get('confirmed')
     if d.get('confirmed'):

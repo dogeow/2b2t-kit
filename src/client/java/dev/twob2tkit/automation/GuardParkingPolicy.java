@@ -10,6 +10,6 @@ public final class GuardParkingPolicy {
             && Double.isFinite(targetX)&&Double.isFinite(targetY)&&Double.isFinite(targetZ)
             && health>=18&&flightActive&&guardArmed
             && targetY-groundY>=20&&y-groundY>=18
-            && Math.hypot(x-targetX,z-targetZ)<=2&&Math.abs(y-targetY)<=2;
+            && Math.hypot(x-targetX,z-targetZ)<=8&&Math.abs(y-targetY)<=2;
     }
 }

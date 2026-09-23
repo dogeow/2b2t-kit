@@ -1,5 +1,5 @@
 import unittest
-from goal_workflow import open_workbench,subset_matches
+from goal_workflow import open_workbench,subset_matches,build_phase
 
 
 class Client:
@@ -18,6 +18,11 @@ class Client:
 
 
 class WorkbenchTests(unittest.TestCase):
+    def test_background_construction_refuses_to_wait_on_ignored_movement_keys(self):
+        class Background:
+            def status(self):return {'projection_selection':{'key':'selected'},'window_active':False}
+        with self.assertRaisesRegex(RuntimeError,'foreground'):
+            build_phase(Background(),'selected')
     def test_subset_needs_every_exact_block_state_and_is_not_whole_goal_success(self):
         targets=[{'pos':[1,2,3],'expected':'Block{minecraft:stone_bricks}'},
                  {'pos':[2,2,3],'expected':'Block{minecraft:ladder}[facing=east]'}]
