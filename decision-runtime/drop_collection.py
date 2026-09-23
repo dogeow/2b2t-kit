@@ -37,5 +37,13 @@ def collect_drop(client,drop,observation=None,seconds=90):
         if reply.get('phase')=='error' and reply.get('detail') in REFRESH_ONLY:
             time.sleep(.2);continue
         if reply.get('detail') in NO_ACCESS:return collect_nearby_ground(client,current)
+        if reply.get('phase')=='waiting' and reply.get('detail')=='Drop pickup not confirmed at the reached position':
+            latest=client.status()
+            if inventory_counts(latest)[item]>=before+current['stack']['count'] \
+                    and not any(e.get('uuid')==current['uuid'] for e in latest.get('entities',[])):
+                return True
+            same=next((e for e in latest.get('entities',[]) if e.get('uuid')==current['uuid']
+                       and e.get('stack')==current.get('stack')),None)
+            if same is not None:return collect_nearby_ground(client,same)
         return False
     return False

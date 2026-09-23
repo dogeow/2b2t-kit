@@ -31,7 +31,10 @@ def descend_if_clear(client, target_y, braking_margin=16):
         return {'used': False, 'reason': 'Native frame brake is unavailable'}
     if start['health'] < 18 or not start.get('guard_armed') or y-brake_y <= 24:
         return {'used': False, 'reason': 'No long, guarded descent required'}
-    low = math.floor(brake_y)
+    # Match the native guard's extra two blocks below the nominal brake Y.
+    # Otherwise the wrapper can approve a column that the game rejects after
+    # dispatch, leaving the descent to abort mid-workflow.
+    low = math.floor(brake_y) - 2
     high = math.ceil(y) + 2
     bx, bz = math.floor(x), math.floor(z)
     observed = client.request('scan', min=[bx-1, low, bz-1], max=[bx+1, high, bz+1], details=True)
@@ -44,6 +47,9 @@ def descend_if_clear(client, target_y, braking_margin=16):
     result = client.request('walk', target=target, arrival=.35,
                             restore_flight=False, freefall_brake_y=brake_y, seconds=20)
     after = client.status()
+    if result.get('phase')=='error' and after.get('flight') and after['health']>=18 \
+            and math.dist(after['pos'],latest['pos'])<1:
+        return {'used':False,'reason':str(result.get('detail','Native guard rejected descent'))}
     if result.get('phase') != 'done' or after['health'] < 18 or not after.get('flight') or after['pos'][1]<brake_y-2:
         # The ordinary exact-height navigator re-enables Meteor Flight; do not
         # leave a failed free-fall attempt without braking.

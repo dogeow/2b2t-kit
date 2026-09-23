@@ -51,6 +51,16 @@ class Tests(unittest.TestCase):
    def status(self):return {'inventory':[],'entities':[DROP]}
    def request(self,*a,**k):self.calls+=1;return {'phase':'waiting','detail':'Drop disappeared without inventory confirmation'}
   c=C();self.assertFalse(collect_drop(c,DROP));self.assertEqual(c.calls,1)
+ def test_reached_but_uncollected_drop_uses_one_verified_ground_correction(self):
+  class C:
+   calls=0
+   def status(self):return {'inventory':[],'entities':[DROP]}
+   def request(self,*a,**k):self.calls+=1;return {'phase':'waiting','detail':'Drop pickup not confirmed at the reached position'}
+  c=C()
+  with patch('drop_collection.collect_nearby_ground',return_value=True) as correction:
+   self.assertTrue(collect_drop(c,DROP))
+  self.assertEqual(c.calls,1)
+  correction.assert_called_once()
  def test_already_collected_requires_actual_inventory_gain(self):
   class C:
    def status(self):return {'inventory':[{'slot':0,'item':'minecraft:cobblestone','count':1}], 'entities':[]}
