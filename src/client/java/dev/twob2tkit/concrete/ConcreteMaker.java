@@ -27,7 +27,7 @@ public final class ConcreteMaker {
     private final KitConfig config;
     private final ConcreteConfirmation confirmation=new ConcreteConfirmation();
     private boolean active, breaking, submitted, pending, mineStarted;
-    private int completed, ticks, stateSince, pendingSince, emptyTicks, lastSlot=-1, originalSlot=-1, powderSlot=-1, failures;
+    private int completed, ticks, stateSince, pendingSince, emptyTicks, lastSlot=-1, originalSlot=-1, powderSlot=-1, failures, sessionLimit=-1;
     private long generation;
     private ClientLevel level;
     private BlockPos target, anchor;
@@ -47,13 +47,36 @@ public final class ConcreteMaker {
     public JsonObject snapshot(){var j=new JsonObject();j.addProperty("active",active);j.addProperty("completed",completed);j.addProperty("status",status());if(target!=null)j.addProperty("target",target.toShortString());return j;}
     private static String id(Item item){return BuiltInRegistries.ITEM.getKey(item).toString();}
     public boolean start(Minecraft c){
+        sessionLimit=-1;
         try{return begin(c);}catch(Exception e){return fail(e.getMessage()==null?"无法检查制作条件":e.getMessage());}
+    }
+    /** A supervised client may name one visible support instead of relying on the current crosshair. */
+    public boolean startAt(Minecraft c,BlockPos support,int limit){
+        if(limit<1||limit>4096)return fail("制作数量必须在 1 到 4096 之间");
+        try{
+            if(c.player==null||c.level==null)return fail("请先进入世界");
+            String color=ConcretePolicy.solidId(id(c.player.getMainHandItem().getItem()));
+            if(color==null)return fail("主手不是混凝土粉末");
+            Block solid=BuiltInRegistries.BLOCK.getValue(net.minecraft.resources.Identifier.parse(color));
+            BlockPos aimed=c.level.getBlockState(support.above()).is(solid)?support.above():support;
+            Vec3 aim=Vec3.atCenterOf(aimed).add(0,.499,0);
+            if(c.player.getEyePosition().distanceTo(aim)>c.player.blockInteractionRange()-.1)return fail("支撑面超出可操作距离");
+            var observed=c.level.clip(new ClipContext(c.player.getEyePosition(),aim,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,c.player));
+            if(!observed.getBlockPos().equals(aimed)||observed.getDirection()!=Direction.UP)return fail("支撑面或待回收混凝土顶部不可见");
+            var hit=new BlockHitResult(aim,Direction.UP,aimed,false);
+            if(!begin(c,hit))return false;
+            sessionLimit=limit;return true;
+        }catch(Exception e){return fail(e.getMessage()==null?"无法检查制作条件":e.getMessage());}
     }
     private boolean begin(Minecraft c){
         if(c.player==null || c.level==null || c.gameMode==null)return fail("请先进入世界");
+        if(!(c.player.pick(c.player.blockInteractionRange(),1,false) instanceof BlockHitResult hit) || hit.getType()!=HitResult.Type.BLOCK)return fail("准星需要指向漏斗顶面或固定支撑面");
+        return begin(c,hit);
+    }
+    private boolean begin(Minecraft c,BlockHitResult hit){
+        if(c.player==null || c.level==null || c.gameMode==null)return fail("请先进入世界");
         var hand=c.player.getMainHandItem();String color=ConcretePolicy.solidId(id(hand.getItem()));
         if(color==null)return fail("请先在主手拿混凝土粉末，再瞄准放置面");
-        if(!(c.player.pick(c.player.blockInteractionRange(),1,false) instanceof BlockHitResult hit) || hit.getType()!=HitResult.Type.BLOCK)return fail("准星需要指向漏斗顶面或固定支撑面");
         Block match=BuiltInRegistries.BLOCK.getValue(net.minecraft.resources.Identifier.parse(color));
         BlockState pointed=c.level.getBlockState(hit.getBlockPos());
         BlockPos cell;
@@ -127,7 +150,7 @@ public final class ConcreteMaker {
                 if(++emptyTicks<8){status="等待方块移除确认";return;}
                 completed++;confirmation.reset(false);breaking=submitted=mineStarted=false;emptyTicks=0;stateSince=ticks;failures=0;
                 if(completed==1 || completed%16==0)log(c,"progress");
-                if(ConcretePolicy.reached(completed,config.concreteLimit)){stop(c,"达到设定数量");return;}
+                if(ConcretePolicy.reached(completed,sessionLimit>=0?sessionLimit:config.concreteLimit)){stop(c,"达到设定数量");return;}
                 status="准备下一块";return;
             }
             emptyTicks=0;

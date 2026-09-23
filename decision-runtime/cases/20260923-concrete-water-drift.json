@@ -1,0 +1,9 @@
+{
+  "case": "concrete-water-drop-drift",
+  "date": "2026-09-23",
+  "environment": "Simpcraft survival, natural water at 761042,62,797835",
+  "observed": "The 1-block pilot returned 1 white concrete into inventory. In a longer batch, 40 blocks were made but only 15 new blocks entered inventory; 25 formed one item entity drifting about four blocks in the water. The controller stopped the batch and recovered the exact observed item UUID/count, reaching 41 concrete total including the pilot.",
+  "lesson": "Do not mark a concrete batch complete from the maker's mined count. Compare the inventory delta, then collect only newly spawned exact-color item entities near the locked cell and verify the final count. Preserve the player's hotbar and stop on ambiguous drops.",
+  "implementation": ["ConcreteDropPolicy.java", "AutomationBridge.java"],
+  "status": "one-block creation and separate item-entity recovery live-verified; first integrated pickup rejected an inaccessible near-water pose and stopped safely, then 13 were recovered separately; retry after observed drift is pending live test"
+}

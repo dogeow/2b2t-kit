@@ -26,7 +26,11 @@ public final class AutomationBridge {
     private static Object observedLevel;
     private static String worldSession="";
     private static boolean survivalArmed, survivalBackground;
-    private static int useCount, pathIndex;
+    private static int useCount, pathIndex, foodOriginalSlot=-1, foodUseSlot=-1, concretePickupDeadline;
+    private static final Set<UUID> concretePreexistingDrops=new HashSet<>();
+    private static UUID concreteRetryUuid;
+    private static Vec3 concreteRetryPos;
+    private static int concreteRetryTick;
     private static SurvivalCraftTask craftTask;
     private static BuildSupplyTask supplyTask;
     private static JsonObject craftSpec;
@@ -148,7 +152,7 @@ public final class AutomationBridge {
     }
     private static boolean survival(JsonObject r){return r!=null && r.has("local_survival") && r.get("local_survival").getAsBoolean();}
     private static boolean background(JsonObject r){return r!=null && r.has("background_ok") && r.get("background_ok").getAsBoolean();}
-    private static boolean survivalMenu(Minecraft c){return c.screen==null || Set.of("InventoryScreen","CraftingScreen","FurnaceScreen").contains(c.screen.getClass().getSimpleName());}
+    private static boolean survivalMenu(Minecraft c){return c.screen==null || Set.of("InventoryScreen","CraftingScreen","FurnaceScreen","BlastFurnaceScreen","SmokerScreen").contains(c.screen.getClass().getSimpleName());}
     private static void survivalGuard(Minecraft c,JsonObject r){
         if(!survival(r))return;
         if(!str(r,"world_session").equals(session(c)) || c.getCurrentServer()!=null || c.getSingleplayerServer()==null
@@ -228,23 +232,23 @@ public final class AutomationBridge {
         active=null;phase="stopped";detail=reason;if(!dispatching)writeStatus(c);
     }
     /** Short-range walking owns input before Minecraft samples keys; it does not use cruise fly-over routing. */
-    public static boolean reapplySupplyLook(Minecraft c){if(active==null || !Set.of("build_supply","collect_supply","approach_block","collect_item").contains(op) || supplyTask==null)return false;supplyTask.reapply(c);return true;}
+    public static boolean reapplySupplyLook(Minecraft c){if(active==null || !Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) || supplyTask==null)return false;supplyTask.reapply(c);return true;}
     private static boolean ownsMaterialMenu(Minecraft c){
         if(active==null||!active.has("task_session")||c.player==null)return false;
         var menu=c.player.containerMenu;String command=str(active,"op");
         if(command.equals("slot_click"))return active.has("menu_id")&&menu.containerId==active.get("menu_id").getAsInt();
         // An interact request is waiting for the server-opened container, so no menu id exists yet.
         if(command.equals("interact")){
-            boolean owned=menu instanceof net.minecraft.world.inventory.ChestMenu||menu instanceof net.minecraft.world.inventory.ShulkerBoxMenu||menu instanceof net.minecraft.world.inventory.CraftingMenu;
+            boolean owned=menu instanceof net.minecraft.world.inventory.ChestMenu||menu instanceof net.minecraft.world.inventory.ShulkerBoxMenu||menu instanceof net.minecraft.world.inventory.CraftingMenu||menu instanceof net.minecraft.world.inventory.AbstractFurnaceMenu;
             if(owned)ownedMaterialMenu=menu.containerId;return owned;
         }
         return false;
     }
     public static boolean beforeInput(Minecraft c){
         if(active!=null)ownsMaterialMenu(c); // Capture our CraftingMenu even though it is an allowed survival screen.
-        if(active!=null && (active.has("job_session")||active.has("task_session")) && c.player!=null && (KitKeys.manualMovementDown(c) || !background(active) && !c.isWindowActive() || !survivalMenu(c) && !ownsMaterialMenu(c) && !(supplyTask!=null && Set.of("build_supply","collect_supply","approach_block","collect_item").contains(op) && supplyTask.ownsMenu(c)))){KitClient.emergencyStop("托管技能交还控制");return true;}
+        if(active!=null && (active.has("job_session")||active.has("task_session")) && c.player!=null && (KitKeys.manualMovementDown(c) || !background(active) && !c.isWindowActive() || !survivalMenu(c) && !ownsMaterialMenu(c) && !(supplyTask!=null && Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) && supplyTask.ownsMenu(c)))){KitClient.emergencyStop("托管技能交还控制");return true;}
         if(survivalArmed && c.player!=null && (KitKeys.manualMovementDown(c) || !survivalBackground && !c.isWindowActive() || !survivalMenu(c))){KitClient.emergencyStop("生存试运行交还控制");return true;}
-        if(active!=null && Set.of("build_supply","collect_supply","approach_block","collect_item").contains(op) && supplyTask!=null){supplyTask.input(c);return true;}
+        if(active!=null && Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) && supplyTask!=null){supplyTask.input(c);return true;}
         if(active==null || !Set.of("walk","walk_path","mine_block","use_item").contains(op) || c.player==null || c.level==null)return false;
         if(survival(active))try{survivalGuard(c,active);}catch(Exception e){KitClient.emergencyStop(e.getMessage());return true;}
         if(op.equals("use_item")){c.options.keyUse.setDown(true);return true;}
@@ -274,7 +278,7 @@ public final class AutomationBridge {
         double dy=p.get(1).getAsDouble()-c.player.getY();c.options.keyJump.setDown(c.player.onGround() && dy>.5 && dy<1.3);
         return true;
     }
-    private static void releaseWalk(Minecraft c){if(op.equals("use_item")){c.options.keyUse.setDown(false);if(c.gameMode!=null && c.player!=null)c.gameMode.releaseUsingItem(c.player);return;}if(!Set.of("walk","walk_path","mine_block").contains(op))return;if(c.options!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);c.options.keyAttack.setDown(false);}if(op.equals("mine_block") && c.gameMode!=null)c.gameMode.stopDestroyBlock();if(restoreFlight){MeteorModules.enable(MeteorModules.FLIGHT);restoreFlight=false;}}
+    private static void releaseWalk(Minecraft c){if(op.equals("use_item")){c.options.keyUse.setDown(false);if(c.gameMode!=null && c.player!=null)c.gameMode.releaseUsingItem(c.player);if(c.player!=null && foodOriginalSlot>=0 && c.player.getInventory().getSelectedSlot()==foodUseSlot)c.player.getInventory().setSelectedSlot(foodOriginalSlot);foodOriginalSlot=foodUseSlot=-1;return;}if(!Set.of("walk","walk_path","mine_block").contains(op))return;if(c.options!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);c.options.keyAttack.setDown(false);}if(op.equals("mine_block") && c.gameMode!=null)c.gameMode.stopDestroyBlock();if(restoreFlight){MeteorModules.enable(MeteorModules.FLIGHT);restoreFlight=false;}}
     public static void tick(Minecraft c){
         if(!initialized){initialized=true;try{Path old=root(c).resolve("request.json");if(Files.isRegularFile(old))lastId=str(JsonParser.parseString(Files.readString(old)).getAsJsonObject(),"id");}catch(Exception ignored){}}
         if(guiRequested){guiRequested=false;if(c.player!=null)KitClient.openGui(c);}
@@ -321,7 +325,46 @@ public final class AutomationBridge {
                     if(!guardBusy && (c.player.getHealth()<14 || !MeteorModules.isActive(MeteorModules.KILL_AURA) || !MeteorModules.isActive(MeteorModules.AUTO_LOG))){finish(c,"waiting","health or defense requires attention");}
                     else if(ticks>=deadline)finish(c,"done","printer interval ended; verify actual block states");
                 }else if(op.equals("use_item")){
-                    if(count(c,str(active,"item"))<useCount)finish(c,"done","item consumed; verify food and inventory");
+                    if(c.player.getHealth()<14 || hostileNearby(c))finish(c,"waiting","food interrupted by health or nearby enemy");
+                    else if(count(c,str(active,"item"))<useCount)finish(c,"done","item consumed; verify food and inventory");
+                    else c.options.keyUse.setDown(true);
+                }else if(op.equals("concrete_batch")){
+                    var maker=KitClient.concrete();var progress=maker.snapshot();
+                    int completed=progress.get("completed").getAsInt(),target=active.get("target_count").getAsInt();
+                    if(guardBusy)deadline++;
+                    if(c.player.getHealth()<14 || hostileNearby(c)){maker.stop(c,"防护接管");finish(c,"waiting","concrete paused for health or nearby hostile");}
+                    else if(!maker.isActive()){
+                        if(completed<target)finish(c,"waiting",maker.status());
+                        else if(supplyTask!=null){
+                            try{supplyTask.tick(c);}catch(Exception e){supplyTask.fail(c,e.getMessage());}
+                            if(!supplyTask.failure().isEmpty())finish(c,"waiting","concrete drop recovery: "+supplyTask.failure());
+                            else if(supplyTask.done())supplyTask=null;
+                        }else if(count(c,str(active,"solid_item"))>=active.get("solid_before").getAsInt()+target)finish(c,"done","concrete hardened, mined and recovered in inventory");
+                        else if(concretePickupDeadline==0)concretePickupDeadline=ticks+400;
+                        else if(ticks>=concretePickupDeadline)finish(c,"waiting","concrete mined but drops were not all recovered");
+                        else{
+                            int missing=active.get("solid_before").getAsInt()+target-count(c,str(active,"solid_item"));
+                            BlockPos cell=new BlockPos(active.getAsJsonArray("support").get(0).getAsInt(),active.getAsJsonArray("support").get(1).getAsInt()+1,active.getAsJsonArray("support").get(2).getAsInt());
+                            var drop=java.util.stream.StreamSupport.stream(c.level.entitiesForRendering().spliterator(),false).filter(e->e instanceof net.minecraft.world.entity.item.ItemEntity)
+                                .map(e->(net.minecraft.world.entity.item.ItemEntity)e)
+                                .filter(e->ConcreteDropPolicy.eligible(e.isAlive(),concretePreexistingDrops.contains(e.getUUID()),itemId(e.getItem()).equals(str(active,"solid_item")),
+                                    e.getItem().getCount(),missing,e.position().distanceToSqr(Vec3.atCenterOf(cell)),e.distanceTo(c.player)))
+                                .min(Comparator.comparingDouble(e->e.distanceToSqr(c.player))).orElse(null);
+                            if(drop!=null){
+                                boolean same=drop.getUUID().equals(concreteRetryUuid);
+                                double moved=concreteRetryPos==null?Double.POSITIVE_INFINITY:drop.position().distanceToSqr(concreteRetryPos);
+                                if(ConcreteDropPolicy.shouldRetry(same,moved,ticks-concreteRetryTick)){
+                                    var pickup=new JsonObject();pickup.addProperty("expected_uuid",drop.getUUID().toString());pickup.addProperty("expected_item",str(active,"solid_item"));pickup.addProperty("expected_count",drop.getItem().getCount());
+                                    try{supplyTask=BuildSupplyTask.pickup(c,pickup);concretePickupDeadline=ticks+600;detail="collecting concrete drops from verified batch";}
+                                    catch(Exception e){
+                                        if(Set.of("No visible collision-free depot approach","No collision-free start for depot path","Drop is no longer loaded; observe again").contains(e.getMessage())){
+                                            concreteRetryUuid=drop.getUUID();concreteRetryPos=drop.position();concreteRetryTick=ticks;detail="waiting for drifting concrete drop to reach a safe pickup pose";
+                                        }else finish(c,"waiting","concrete drop pickup could not start: "+e.getMessage());
+                                    }
+                                }
+                            }
+                        }
+                    }else detail=maker.status();
                 }else if(op.equals("mine_block")){
                     JsonArray p=active.getAsJsonArray("pos");BlockPos target=new BlockPos(p.get(0).getAsInt(),p.get(1).getAsInt(),p.get(2).getAsInt());if(c.level.isEmptyBlock(target))finish(c,"done","target removed");
                 }else if(op.equals("walk") || op.equals("walk_path")){
@@ -387,7 +430,7 @@ public final class AutomationBridge {
             save(root(c).resolve("reply-"+safeId(lastId)+".json"),out);writeStatus(c);return;
         }
         if(dev.twob2tkit.combat.EmergencyExit.held(c))throw new IllegalStateException("Safety lock: manual in-game acknowledgement required; do not reconnect automatically");
-        if(guardBusy && !command.equals("guard"))throw new IllegalStateException("Construction guard is defending or eating; wait before changing items or starting work");
+        if(guardBusy && !command.equals("guard") && !command.equals("use_item"))throw new IllegalStateException("Construction guard is defending or eating; wait before changing items or starting work");
         statusId=lastId;
         if(command.equals("material_session")){
             long expiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
@@ -412,6 +455,18 @@ public final class AutomationBridge {
         }else if(command.equals("collect_supply")){
             if(supervisionLease==null||!str(supervisionLease,"kind").equals("materials")||!str(supervisionLease,"job_session").equals(str(r,"task_session")))throw new IllegalStateException("Material session required");
             supplyTask=BuildSupplyTask.collect(c,r);active=r.deepCopy();op=command;phase="running";detail="collecting approved material stock";deadline=ticks+3600;
+        }else if(command.equals("concrete_batch")){
+            if(supervisionLease==null||!str(supervisionLease,"kind").equals("materials")||!str(supervisionLease,"job_session").equals(str(r,"task_session")))throw new IllegalStateException("Material session required for concrete");
+            JsonArray p=r.getAsJsonArray("support");checkSiteTarget(r,p);
+            BlockPos support=new BlockPos(p.get(0).getAsInt(),p.get(1).getAsInt(),p.get(2).getAsInt());
+            if(!c.level.hasChunkAt(support)||!state(c,support).equals(str(r,"expected_state")))throw new IllegalStateException("Concrete support changed");
+            int target=r.get("target_count").getAsInt();if(target<1||target>4096)throw new IllegalArgumentException("Concrete batch must be 1..4096");
+            String powder=str(r,"powder"),solid=dev.twob2tkit.concrete.ConcretePolicy.solidId(powder);
+            if(solid==null||!itemId(c.player.getMainHandItem()).equals(powder))throw new IllegalStateException("Hold the expected concrete powder before starting");
+            if(!KitClient.concrete().startAt(c,support,target))throw new IllegalStateException(KitClient.concrete().status());
+            active=r.deepCopy();active.addProperty("solid_item",solid);active.addProperty("solid_before",count(c,solid));op=command;phase="running";detail="concrete batch under material lease";
+            concretePreexistingDrops.clear();for(var entity:c.level.entitiesForRendering())if(entity instanceof net.minecraft.world.entity.item.ItemEntity drop && itemId(drop.getItem()).equals(solid)&&drop.position().distanceToSqr(Vec3.atCenterOf(support.above()))<100)concretePreexistingDrops.add(drop.getUUID());
+            supplyTask=null;concretePickupDeadline=0;concreteRetryUuid=null;concreteRetryPos=null;concreteRetryTick=0;deadline=ticks+20*Math.max(20,Math.min(600,r.has("seconds")?r.get("seconds").getAsInt():180));
         }else if(command.equals("supervision_attach")){
             long expiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
             if(expiry<0 || expiry>15000 || str(r,"job_session").isEmpty())throw new IllegalStateException("Supervisor attachment expired or has no job");
@@ -551,10 +606,14 @@ public final class AutomationBridge {
             KitClient.stopWork("切换到指定方块修正");active=r.deepCopy();op="mine_block";phase="running";detail="mining the verified target";mineStarted=false;deadline=ticks+20*Math.min(20,r.has("seconds")?r.get("seconds").getAsInt():10);
         }else if(command.equals("use_item")){
             String item=str(r,"item");
-            if(!survival(r) || !itemId(c.player.getMainHandItem()).equals(item) || c.player.getMainHandItem().get(net.minecraft.core.component.DataComponents.FOOD)==null)
-                throw new IllegalStateException("Expected edible held item required");
+            boolean ownedMaterials=supervisionLease!=null && str(supervisionLease,"kind").equals("materials") && r.has("task_session");
+            if(!AutomationFoodPolicy.allow(survival(r),ownedMaterials,hostileNearby(c),c.screen!=null,KitKeys.manualMovementDown(c),c.player.getHealth(),c.player.getFoodData().getFoodLevel()))
+                throw new IllegalStateException("Food use requires a safe local world or owned material session");
+            int found=-1;for(int i=0;i<9;i++)if(itemId(c.player.getInventory().getItem(i)).equals(item) && c.player.getInventory().getItem(i).get(net.minecraft.core.component.DataComponents.FOOD)!=null){found=i;break;}
+            if(found<0)throw new IllegalStateException("Expected edible item in hotbar");
+            foodOriginalSlot=c.player.getInventory().getSelectedSlot();foodUseSlot=found;c.player.getInventory().setSelectedSlot(found);
             useCount=count(c,item);active=r.deepCopy();op="use_item";phase="running";deadline=ticks+80;
-            c.gameMode.useItem(c.player,InteractionHand.MAIN_HAND);
+            c.options.keyUse.setDown(true);c.gameMode.useItem(c.player,InteractionHand.MAIN_HAND);
         }else if(command.equals("attack_passive")){
             var entity=c.level.getEntity(r.get("entity_id").getAsInt());
             if(!survival(r) || entity==null || !entity.getUUID().toString().equals(str(r,"expected_uuid"))
@@ -578,7 +637,7 @@ public final class AutomationBridge {
         writeStatus(c);
     }
     private static void settle(JsonObject r,int wait){active=r.deepCopy();op="settle";phase="running";detail="awaiting server acknowledgement";deadline=ticks+wait;}
-    private static void finish(Minecraft c,String p,String text){ProfessionalPrinter.stop(c,false);restoreArrival();releaseWalk(c);active=null;phase=p;detail=text;writeStatus(c);}
+    private static void finish(Minecraft c,String p,String text){if(op.equals("concrete_batch")){if(KitClient.concrete().isActive())KitClient.concrete().stop(c,"批次结束");if(supplyTask!=null){supplyTask.close(c);supplyTask=null;}concretePreexistingDrops.clear();concreteRetryUuid=null;concreteRetryPos=null;}ProfessionalPrinter.stop(c,false);restoreArrival();releaseWalk(c);active=null;phase=p;detail=text;writeStatus(c);}
     private static void restoreArrival(){if(Double.isFinite(savedArrival)){if(KitClient.config().arrivalRadius==temporaryArrival){KitClient.config().arrivalRadius=savedArrival;KitClient.config().save();}savedArrival=Double.NaN;}}
     private static void checkSiteTarget(JsonObject r,JsonArray p){JsonArray s=r.getAsJsonArray("site");if(p==null || p.size()!=3 || !Double.isFinite(p.get(1).getAsDouble()) || !AutomationScope.nearSite(p.get(0).getAsDouble()-s.get(0).getAsDouble(),p.get(2).getAsDouble()-s.get(2).getAsDouble()))throw new IllegalArgumentException("Target outside worksite");}
     private static JsonArray scan(Minecraft c,JsonObject r){
@@ -601,6 +660,7 @@ public final class AutomationBridge {
         return Vec3.atCenterOf(p).add(face.getStepX()*.499,face.getStepY()*.499,face.getStepZ()*.499);
     }
     private static String state(Minecraft c,BlockPos p){return c.level.getBlockState(p).toString();}
+    private static boolean hostileNearby(Minecraft c){return c.level.getEntities(c.player,c.player.getBoundingBox().inflate(16)).stream().anyMatch(e->e instanceof net.minecraft.world.entity.monster.Enemy && e.isAlive() && c.player.hasLineOfSight(e));}
     private static String itemId(ItemStack s){return s.isEmpty()?"minecraft:air":BuiltInRegistries.ITEM.getKey(s.getItem()).toString();}
     private static int count(Minecraft c,String id){int n=0;for(int i=0;i<c.player.getInventory().getContainerSize();i++){ItemStack s=c.player.getInventory().getItem(i);if(itemId(s).equals(id))n+=s.getCount();}return n;}
     private static JsonObject stack(ItemStack s){

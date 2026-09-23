@@ -3,6 +3,23 @@ import math,time,json
 k=None
 from craft_grid import checked,click,take_portion,wait_for_recipe,count,compact_once,output_room,InventoryCapacity
 
+def pin_chest_planks(plan, item):
+    """Pin every tag-resolved chest cell to one ample plank type, without losing cells."""
+    cells=sorted(slot for ingredient,positions in plan['ingredients'].items() for slot in positions)
+    if plan['output']!='minecraft:chest' or not item.startswith('minecraft:') or not item.endswith('_planks') \
+       or any(not ingredient.startswith('minecraft:') or not ingredient.endswith('_planks') for ingredient in plan['ingredients']) \
+       or cells!=[1,2,3,4,6,7,8,9]:
+        raise ValueError('Not an ordinary eight-plank chest recipe')
+    return {**plan,'ingredients':{item:cells}}
+
+def pin_furnace_cobblestone(plan):
+    """Use a full cobblestone stack for all eight furnace cells when available."""
+    cells=sorted(slot for positions in plan['ingredients'].values() for slot in positions)
+    allowed={'minecraft:cobblestone','minecraft:cobbled_deepslate','minecraft:blackstone'}
+    if plan['output']!='minecraft:furnace' or not set(plan['ingredients'])<=allowed or cells!=[1,2,3,4,6,7,8,9]:
+        raise ValueError('Not an ordinary eight-stone furnace recipe')
+    return {**plan,'ingredients':{'minecraft:cobblestone':cells}}
+
 def mixed(recipe,output,output_per_recipe,target_total):
     """recipe maps item IDs to their 1-based crafting-grid slots."""
     while True:
@@ -10,6 +27,8 @@ def mixed(recipe,output,output_per_recipe,target_total):
         remaining=target_total-count(s,output)
         if remaining<=0:return s
         if m['type'] not in ('CraftingMenu','InventoryMenu') or m['cursor']['item']!='minecraft:air':raise RuntimeError('Expected clear workbench cursor')
+        if m['type']=='InventoryMenu' and s.get('screen')!='InventoryScreen':
+            raise RuntimeError('Open the inventory screen or a verified workbench before clicking its crafting grid')
         if any(m['slots'][i]['item']!='minecraft:air' for i in range(1,10 if m['type']=='CraftingMenu' else 5)):raise RuntimeError('Crafting grid occupied')
         known=next((v['max_stack'] for v in s['inventory'] if v.get('slot',99)<36 and v['item']==output and v['count']),None)
         room=output_room(s,output,known or output_per_recipe)

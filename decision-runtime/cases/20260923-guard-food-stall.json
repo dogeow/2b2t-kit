@@ -1,0 +1,8 @@
+{
+  "case": "guard-food-request-stalls-material-session",
+  "date": "2026-09-23",
+  "environment": "Simpcraft survival, Kit 1.9.67 / Meteor AutoEat",
+  "observed": "At full armor and 19.5 health, hunger remained 17 then 14 with food in the hotbar. The independent guard stayed busy, so the material controller waited 60 seconds and could not withdraw the first white-concrete supply. No chest item was moved.",
+  "fix": "A materials lease may request one expected edible hotbar item even during an eating-only guard hold. Native code keeps use pressed until the server confirms item consumption, restores the original hotbar slot, and refuses the action near a visible hostile, during manual input, or below the health floor.",
+  "status": "live-verified on Simpcraft: one golden carrot raised hunger 14 to 20, count decreased by one, and the original hotbar layout was restored; the following approved 64-powder depot withdrawal succeeded"
+}
