@@ -13,6 +13,9 @@ class GravelHarvestTest(unittest.TestCase):
         self.assertTrue(dry_top_gravel(rows,p))
         self.assertFalse(dry_top_gravel(rows+[block([10,64,20],'Block{minecraft:gravel}')],p))
         self.assertFalse(dry_top_gravel(rows+[block([11,63,20],'Block{minecraft:water}[level=0]')],p))
+        self.assertFalse(dry_top_gravel(rows+[block([13,63,20],'Block{minecraft:water}[level=0]')],p))
+        self.assertFalse(dry_top_gravel(rows+[block([13,65,20],'Block{minecraft:water}[level=0]')],p))
+        self.assertTrue(dry_top_gravel(rows+[block([14,63,20],'Block{minecraft:water}[level=0]')],p))
         waterlogged=block([11,63,20],'Block{minecraft:seagrass}')
         waterlogged['fluid']=True
         self.assertFalse(dry_top_gravel(rows+[waterlogged],p))

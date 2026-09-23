@@ -1,4 +1,4 @@
-"""Mine only exposed, dry gravel in a bounded, observed multiplayer work area.
+"""Mine only exposed gravel away from water in a bounded work area.
 
 Uses ordinary shovel mining and verifies each target and pickup. A falling-stack
 torch shortcut is deliberately excluded until server timing can be verified.
@@ -15,16 +15,18 @@ from shore_concrete import block_state, item_count
 
 GRAVEL = 'minecraft:gravel'
 FLINT = 'minecraft:flint'
+WATER_BUFFER = 3
 
 
 def dry_top_gravel(rows, pos):
     x, y, z = pos
     if block_state(rows, pos) != 'Block{minecraft:gravel}' or block_state(rows, [x, y+1, z]) != 'Block{minecraft:air}':
         return False
-    observed={tuple(row['pos']):row for row in rows}
-    return all(not observed.get(tuple(neighbor),{}).get('fluid',False)
-               and not block_state(rows, neighbor).startswith('Block{minecraft:water}')
-               for neighbor in ([x+1,y,z], [x-1,y,z], [x,y,z+1], [x,y,z-1], [x,y-1,z]))
+    # Include diagonals and flowing/waterlogged blocks. Mining a shoreline
+    # block can release water and wash the next drop away.
+    return not any((row.get('fluid',False) or row['state'].startswith('Block{minecraft:water}'))
+                   and max(abs(row['pos'][0]-x),abs(row['pos'][2]-z))<=WATER_BUFFER
+                   and abs(row['pos'][1]-y)<=2 for row in rows)
 
 
 def fresh_drops(before, after, pos):
@@ -45,8 +47,8 @@ def harvest(client, low, high, target_count, out):
     result = {'bounds': [list(low), list(high)], 'gravel_before': item_count(start, GRAVEL), 'blocks': []}
     blocked = set()
     while item_count(client.status(), GRAVEL) - result['gravel_before'] < target_count:
-        scan = client.request('scan', min=[low[0]-1, low[1]-1, low[2]-1],
-                              max=[high[0]+1, high[1]+1, high[2]+1], details=True)
+        scan = client.request('scan', min=[low[0]-WATER_BUFFER, low[1]-2, low[2]-WATER_BUFFER],
+                              max=[high[0]+WATER_BUFFER, high[1]+2, high[2]+WATER_BUFFER], details=True)
         rows = scan['blocks']
         current = client.status()
         candidates = [(x,y,z) for x in range(low[0],high[0]+1) for y in range(high[1],low[1]-1,-1)
@@ -61,9 +63,13 @@ def harvest(client, low, high, target_count, out):
         before=client.status()
         fluid_veto=False
         for attempt in range(3):
-            state=block_state(client.request('scan',min=p,max=p)['blocks'],p)
+            fresh=client.request('scan',min=[p[0]-WATER_BUFFER,p[1]-2,p[2]-WATER_BUFFER],
+                                 max=[p[0]+WATER_BUFFER,p[1]+2,p[2]+WATER_BUFFER],details=True)['blocks']
+            state=block_state(fresh,p)
             if state!='Block{minecraft:gravel}':
                 raise RuntimeError('Gravel changed before a confirmed mine; stop without replay')
+            if not dry_top_gravel(fresh,p):
+                fluid_veto=True;record['skipped']='water buffer changed before mining';break
             mined=client.request('mine_block',pos=p,face='up',expected_state=state,seconds=20)
             record['mine_phase']=mined.get('phase');record['mine_detail']=mined.get('detail')
             if mined.get('phase')=='done':break
@@ -77,7 +83,7 @@ def harvest(client, low, high, target_count, out):
             if again.get('phase')!='done':raise RuntimeError('Could not return to the gravel target after defense')
             client.checked('select_item',item='minecraft:diamond_shovel')
         if fluid_veto:
-            blocked.add(tuple(p));record['skipped']='fluid protection';result['blocks'].append(record)
+            blocked.add(tuple(p));record.setdefault('skipped','fluid protection');result['blocks'].append(record)
             Path(out).mkdir(parents=True,exist_ok=True)
             (Path(out)/'progress.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
             continue

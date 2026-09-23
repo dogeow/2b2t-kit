@@ -15,6 +15,8 @@ class SurfaceGravelExpeditionTest(unittest.TestCase):
         waterlogged={'pos':[11,63,20],'state':'Block{minecraft:seagrass}','fluid':True}
         self.assertEqual([[10,63,20]],candidates([block],[10,63,20],[10,63,20]))
         self.assertEqual([],candidates([block,waterlogged],[10,63,20],[10,63,20]))
+        waterlogged['pos']=[13,63,20]
+        self.assertEqual([],candidates([block,waterlogged],[10,63,20],[10,63,20]))
 
     def test_search_tiles_are_bounded_and_choose_the_densest_surface_layer(self):
         tiles=search_tiles([0,0,31,15],[58,88])

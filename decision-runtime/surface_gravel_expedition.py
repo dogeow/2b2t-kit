@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from build_supervisor import stocks
-from gravel_harvest import dry_top_gravel, harvest
+from gravel_harvest import WATER_BUFFER,dry_top_gravel, harvest
 from fast_descent import descend_if_clear
 from material_client import MaterialClient
 
@@ -71,10 +71,11 @@ def expedition(client, regions, target, cruise_y, out, search=False):
         flight = client.request('navigate', target=site, arrival=2, seconds=120)
         if flight.get('phase') != 'done' or client.status()['health'] < 18:
             raise RuntimeError('High approach to surface patch did not complete')
-        observed = client.request('scan', min=[low[0]-1,low[1]-1,low[2]-1],
-                                  max=[high[0]+1,high[1]+1,high[2]+1], details=True)
+        observed = client.request('scan', min=[low[0]-WATER_BUFFER,low[1]-2,low[2]-WATER_BUFFER],
+                                  max=[high[0]+WATER_BUFFER,high[1]+2,high[2]+WATER_BUFFER], details=True)
         dry = candidates(observed['blocks'],low,high)
         entry = {'bounds': [low,high], 'high_arrival': client.status()['pos'],
+                 'water_buffer_blocks': WATER_BUFFER,
                  'dry_candidates': len(dry), 'examples': dry[:8]}
         result['regions'].append(entry)
         if search and dry:
