@@ -25,6 +25,8 @@ class BuildMovementTest {
             }
             assertTrue(arrived(x,0,0));assertTrue(arrived(0,y,0));assertTrue(x<.006&&y<.006);
         }
-        assertEquals(.012,horizontalSpeed(10));assertEquals(.024,verticalSpeed(-10));
+        assertEquals(.024,horizontalSpeed(10));assertEquals(.024,verticalSpeed(-10));
+        assertTrue(horizontalSpeed(1)>horizontalSpeed(.2));
+        assertEquals(.01,horizontalSpeed(.2),1e-9);
     }
 }

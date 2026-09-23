@@ -22,6 +22,7 @@ public enum OreTarget {
 	EMERALD("绿宝石"),
 	QUARTZ("下界石英"),
 	ANCIENT_DEBRIS("远古残骸"),
+	GRAVEL("沙砾"),
 	ANY("任意矿石");
 
 	public final String label;
@@ -94,7 +95,7 @@ public enum OreTarget {
 		for (OreTarget target : parseList(value)) {
 			if (target == ANY) {
 				for (OreTarget concrete : values()) {
-					if (concrete != ANY && concrete.matches(state)) return concrete;
+					if (concrete != ANY && concrete != GRAVEL && concrete.matches(state)) return concrete;
 				}
 				continue;
 			}
@@ -116,6 +117,7 @@ public enum OreTarget {
 			case EMERALD -> state.is(Blocks.EMERALD_ORE) || state.is(Blocks.DEEPSLATE_EMERALD_ORE);
 			case QUARTZ -> state.is(Blocks.NETHER_QUARTZ_ORE);
 			case ANCIENT_DEBRIS -> state.is(Blocks.ANCIENT_DEBRIS);
+			case GRAVEL -> state.is(Blocks.GRAVEL);
 			case ANY -> isAnyOre(state);
 		};
 	}
@@ -139,6 +141,7 @@ public enum OreTarget {
 			case EMERALD -> item == Items.EMERALD || item == Items.EMERALD_ORE || item == Items.DEEPSLATE_EMERALD_ORE;
 			case QUARTZ -> item == Items.QUARTZ || item == Items.NETHER_QUARTZ_ORE;
 			case ANCIENT_DEBRIS -> item == Items.ANCIENT_DEBRIS || item == Items.NETHERITE_SCRAP;
+			case GRAVEL -> item == Items.GRAVEL;
 			case ANY -> isAnyOreDropItem(item);
 		};
 	}
@@ -146,7 +149,7 @@ public enum OreTarget {
 	/** 是否为任意已登记矿石方块。 */
 	private static boolean isAnyOre(BlockState state) {
 		for (OreTarget target : values()) {
-			if (target != ANY && target.matches(state)) return true;
+			if (target != ANY && target != GRAVEL && target.matches(state)) return true;
 		}
 		return false;
 	}
@@ -154,7 +157,7 @@ public enum OreTarget {
 	/** 是否为任意已登记矿石掉落物。 */
 	private static boolean isAnyOreDrop(ItemStack stack) {
 		for (OreTarget target : values()) {
-			if (target != ANY && target.matchesDrop(stack)) return true;
+			if (target != ANY && target != GRAVEL && target.matchesDrop(stack)) return true;
 		}
 		return false;
 	}
@@ -162,7 +165,7 @@ public enum OreTarget {
 	/** 是否为任一常见矿石掉落物。 */
 	private static boolean isAnyOreDropItem(Item item) {
 		for (OreTarget target : values()) {
-			if (target != ANY && target.matchesDropItem(item)) return true;
+			if (target != ANY && target != GRAVEL && target.matchesDropItem(item)) return true;
 		}
 		return false;
 	}

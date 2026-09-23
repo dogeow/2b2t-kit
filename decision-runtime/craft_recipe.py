@@ -3,6 +3,46 @@ import math,time,json
 k=None
 from craft_grid import checked,click,take_portion,wait_for_recipe,count,compact_once,output_room,InventoryCapacity
 
+
+def wait_clear_cursor(state, menu_id):
+    """A click reply may precede the server's cursor update; observe, never re-click."""
+    deadline=time.monotonic()+6
+    while state['menu']['cursor']['count']:
+        if state['menu']['id']!=menu_id:
+            raise RuntimeError('Crafting menu changed before cursor was returned')
+        if time.monotonic()>=deadline:
+            raise RuntimeError('Distribution did not clear cursor')
+        time.sleep(.15);state=k.status()
+    return state
+
+
+def wait_cursor_count(state, menu_id, item, count):
+    deadline=time.monotonic()+6
+    while True:
+        menu=state['menu'];cursor=menu['cursor']
+        if menu['id']!=menu_id:raise RuntimeError('Crafting menu changed while returning ingredient')
+        if cursor['item']==item and cursor['count']==count:return state
+        if time.monotonic()>=deadline:raise RuntimeError('Ingredient cursor was not confirmed; no duplicate click')
+        time.sleep(.15);state=k.status()
+
+
+def wait_grid_placed(state, menu_id, item, slots, count_each):
+    deadline=time.monotonic()+6
+    confirmations=0
+    while True:
+        menu=state['menu']
+        if menu['id']!=menu_id:raise RuntimeError('Crafting menu changed during ingredient distribution')
+        if not menu['cursor']['count'] and all(menu['slots'][i]['item']==item and menu['slots'][i]['count']==count_each for i in slots):
+            confirmations+=1
+            if confirmations>=2:return state
+        else:confirmations=0
+        if time.monotonic()>=deadline:raise RuntimeError('Ingredient grid was not confirmed; no repeated distribution')
+        time.sleep(.2);state=k.status()
+
+
+def bounded_rounds(output, proposed):
+    return min(proposed, 1) if output.endswith('_concrete_powder') else proposed
+
 def pin_chest_planks(plan, item):
     """Pin every tag-resolved chest cell to one ample plank type, without losing cells."""
     cells=sorted(slot for ingredient,positions in plan['ingredients'].items() for slot in positions)
@@ -40,6 +80,10 @@ def mixed(recipe,output,output_per_recipe,target_total):
         sources={item:sorted((x for x in m['slots'][start:start+36] if x['item']==item),key=lambda x:-x['count']) for item in recipe}
         if any(not v for v in sources.values()):raise RuntimeError('Missing recipe ingredient')
         rounds=min(math.ceil(remaining/output_per_recipe),room//output_per_recipe,1 if known is None else 64,*(sources[i][0]['count']//len(v) for i,v in recipe.items()))
+        # Mixed concrete inputs use four separate gravel and sand cells. A
+        # single ordinary recipe per transaction avoids optimistic multi-stack
+        # QUICK_CRAFT acknowledgements being mistaken for server confirmation.
+        rounds=bounded_rounds(output,rounds)
         if rounds<1:
             # Combine only matching item stacks, verifying the result before retrying the recipe.
             short=next(i for i,cells in recipe.items() if sources[i][0]['count']<len(cells))
@@ -50,18 +94,37 @@ def mixed(recipe,output,output_per_recipe,target_total):
         before={i:count(s,i) for i in recipe};old_output=count(s,output)
         for item,slots in recipe.items():
             amount=rounds*len(slots);source=next(v for v in s['menu']['slots'][start:start+36] if v['item']==item and v['count']>=amount)
+            if len(slots)==1 and rounds==1:
+                # A one-cell ingredient needs no half-stack split. Split loops
+                # can race the server on successive right-clicks; place one
+                # directly, then return the verified remainder to its source.
+                s=click(s,source['slot'])
+                s=wait_cursor_count(s,m['id'],item,source['count'])
+                cell=s['menu']['slots'][slots[0]]
+                s=checked('slot_click',menu_id=m['id'],slot=slots[0],expected_item=cell['item'],
+                          expected_count=cell['count'],kind='pickup',button=1)
+                if source['count']>1:
+                    s=wait_cursor_count(s,m['id'],item,source['count']-1)
+                    s=click(s,source['slot'])
+                s=wait_clear_cursor(s,m['id'])
+                s=wait_grid_placed(s,m['id'],item,slots,rounds)
+                continue
             pickup=(source['count']+1)//2 if amount<source['count'] and amount<=(source['count']+1)//2 else source['count']
-            if amount+2 < pickup-amount+2:
+            if output.endswith('_concrete_powder') or amount+2 < pickup-amount+2:
                 s=click(s,source['slot'])
                 for cell_id in slots:
                     for _ in range(rounds):
                         cell=s['menu']['slots'][cell_id]
                         s=checked('slot_click',menu_id=m['id'],slot=cell_id,expected_item=cell['item'],expected_count=cell['count'],kind='pickup',button=1)
-                if s['menu']['cursor']['count']:s=click(s,source['slot'])
+                remaining=source['count']-amount
+                if remaining:
+                    s=wait_cursor_count(s,m['id'],item,remaining)
+                    s=click(s,source['slot'])
             else:
                 s=take_portion(s,source,amount)
                 s=checked('distribute',menu_id=m['id'],slots=slots,expected_cursor=item,expected_cursor_count=amount)
-            if s['menu']['cursor']['item']!='minecraft:air':raise RuntimeError('Distribution did not clear cursor')
+            s=wait_clear_cursor(s,m['id'])
+            s=wait_grid_placed(s,m['id'],item,slots,rounds)
         s=wait_for_recipe(s,output);s=click(s,0,'quick_move')
         until=time.monotonic()+8
         while count(s,output)-old_output<rounds*output_per_recipe and time.monotonic()<until:

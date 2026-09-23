@@ -30,6 +30,21 @@ class Tests(unittest.TestCase):
   c=C()
   with patch('drop_collection.time.sleep'):self.assertTrue(collect_drop(c,DROP,observation=c.status()))
   self.assertEqual([v['expected_uuid'] for v in c.calls],['same','merged']);self.assertEqual(c.calls[-1]['expected_count'],3)
+ def test_white_concrete_merge_refreshes_to_new_uuid_with_exact_count(self):
+  original=copy.deepcopy(DROP);original['stack']['item']='minecraft:white_concrete'
+  class C:
+   old=True;calls=[]
+   def status(self):
+    d=copy.deepcopy(original)
+    if not self.old:d['uuid']='merged';d['stack']['count']=2
+    return {'time':1000,'inventory':[],'entities':[d]}
+   def request(self,op,**args):
+    self.calls.append(args)
+    if self.old:self.old=False;return {'phase':'error','detail':'Drop is no longer loaded; observe again'}
+    return {'phase':'done'}
+  c=C()
+  with patch('drop_collection.time.sleep'):self.assertTrue(collect_drop(c,original,observation=c.status()))
+  self.assertEqual([v['expected_uuid'] for v in c.calls],['same','merged'])
  def test_unconfirmed_movement_is_never_replayed(self):
   class C:
    calls=0

@@ -119,6 +119,7 @@ final class BorerPlace {
 			int fortune = BorerItems.fortuneLevel(stack);
 			if (fortune > 0) speed += 1000.0F + fortune * 10.0F;
 		}
+		if (state.is(net.minecraft.world.level.block.Blocks.GRAVEL) && BorerItems.hasSilkTouch(stack)) speed += 1000.0F;
 		return speed;
 	}
 

@@ -162,6 +162,15 @@ public final class BorerItems {
 		return 0;
 	}
 
+	/** 沙砾目标优先精准采集，以免随机变成燧石。 */
+	public static boolean hasSilkTouch(ItemStack stack) {
+		if (stack.isEmpty()) return false;
+		for (Holder<Enchantment> holder : stack.getEnchantments().keySet()) {
+			if (holder.is(Enchantments.SILK_TOUCH)) return true;
+		}
+		return false;
+	}
+
 	/** 被怪打时把最好的剑切到主手；主手已是剑就不动。true 表示主手现在有剑。 */
 	public static boolean selectWeapon(Minecraft client, LocalPlayer player) {
 		if (player == null || client.gameMode == null) return false;

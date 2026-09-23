@@ -64,7 +64,7 @@ public final class TunnelBorer {
 	public enum OreTarget {
 		DIAMOND("钻石"), COAL("煤矿"), IRON("铁矿"), GOLD("金矿"), REDSTONE("红石"),
 		LAPIS("青金石"), COPPER("铜矿"), EMERALD("绿宝石"), QUARTZ("石英"),
-		ANCIENT_DEBRIS("残骸"), ANY("全选");
+		ANCIENT_DEBRIS("残骸"), GRAVEL("沙砾"), ANY("全选");
 
 		public final String label;
 
@@ -85,6 +85,7 @@ public final class TunnelBorer {
 				case EMERALD -> Items.EMERALD;
 				case QUARTZ -> Items.QUARTZ;
 				case ANCIENT_DEBRIS -> Items.ANCIENT_DEBRIS;
+				case GRAVEL -> Items.GRAVEL;
 				case ANY -> Items.COMPASS;
 			};
 		}

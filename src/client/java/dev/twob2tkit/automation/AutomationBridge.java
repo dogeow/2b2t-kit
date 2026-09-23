@@ -93,6 +93,16 @@ public final class AutomationBridge {
     public static void userTaskStarting(Minecraft c){
         if(!dispatching&&supervisionLease!=null&&Set.of("materials","parking").contains(str(supervisionLease,"kind"))){supervisionLease=null;cancelWork(c,"用户切换自动任务");}
     }
+    private static boolean highGuardPark(Minecraft c,JsonObject lease){
+        if(c.player==null||c.level==null||!lease.has("park_target"))return false;
+        JsonArray target=lease.getAsJsonArray("park_target");if(target==null||target.size()!=3)return false;
+        double x=target.get(0).getAsDouble(),y=target.get(1).getAsDouble(),z=target.get(2).getAsDouble();
+        if(!Double.isFinite(x)||!Double.isFinite(y)||!Double.isFinite(z))return false;
+        BlockPos at=BlockPos.containing(x,y,z);if(!c.level.hasChunkAt(at))return false;
+        int ground=c.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,at.getX(),at.getZ());
+        return GuardParkingPolicy.ready(c.player.getX(),c.player.getY(),c.player.getZ(),x,y,z,ground,
+            c.player.getHealth(),MeteorModules.isActive(MeteorModules.FLIGHT),guardScope!=null);
+    }
     private static void tickSupervision(Minecraft c) {
         confirmSafety(c);
         if(supervisionLease==null || c.player==null || c.level==null)return;
@@ -123,7 +133,8 @@ public final class AutomationBridge {
             boolean local=c.getSingleplayerServer()!=null && !c.getSingleplayerServer().isPublished();
             boolean nearThreat=c.level.getEntities(c.player,c.player.getBoundingBox().inflate(16)).stream().anyMatch(e->e instanceof net.minecraft.world.entity.monster.Enemy&&e.isAlive()&&c.player.hasLineOfSight(e));
             boolean quiet=logoutQuiet.ready(now,guardBusy||c.player.isUsingItem()||nearThreat,KitClient.config().lastAttackTimeEpochMillis);
-            var action=dev.twob2tkit.builder.BuildSupervisorSafety.decide(same,KitKeys.manualMovementDown(c),local,lowHealth || controllerFinished || now-lastSupervisionHeartbeat>15000,complete,!str(lease,"remote_finish").equals("guard"));
+            boolean keepGuard=str(lease,"remote_finish").equals("guard")&&!lowHealth&&(!material||highGuardPark(c,lease));
+            var action=dev.twob2tkit.builder.BuildSupervisorSafety.decide(same,KitKeys.manualMovementDown(c),local,lowHealth || controllerFinished || now-lastSupervisionHeartbeat>15000,complete,!keepGuard);
             if(action==dev.twob2tkit.builder.BuildSupervisorSafety.Action.LOGOUT&&!lowHealth&&!quiet){
                 if(!str(lease,"kind").equals("parking")){
                     KitClient.stopWork("托管收尾，等待脱离战斗");armPveGuard(c);
@@ -436,10 +447,12 @@ public final class AutomationBridge {
             long expiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
             boolean resumePark=supervisionLease!=null&&str(supervisionLease,"kind").equals("parking")&&str(r,"replace_parking_lease").equals(str(supervisionLease,"id"));
             if(expiry<0||expiry>15000||!r.has("expected_revision")||r.get("expected_revision").getAsLong()!=controlRevision||!str(r,"world_session").equals(session(c))||supervisionLease!=null&&!resumePark||KitClient.anyAfkAuto()||c.screen!=null||KitKeys.manualMovementDown(c)||c.player.getHealth()<14)throw new IllegalStateException("Material session cannot acquire control");
+            boolean guardFinish=str(r,"remote_finish").equals("guard");
+            if(guardFinish){JsonArray park=r.getAsJsonArray("park_target");if(park==null||park.size()!=3)throw new IllegalArgumentException("High guard finish requires a park target");for(var value:park)if(!Double.isFinite(value.getAsDouble()))throw new IllegalArgumentException("Invalid park target");}
             CraftingCompatibility.requireReady();
             ProfessionalPrinter.stop(c,true); // Inventory/crafting ownership excludes an externally enabled printer.
             if(resumePark)supervisionLease=null;
-            String leaseId=safeId(str(r,"supervision_lease")),taskId=safeId(str(r,"task_session"));supervisionLease=new JsonObject();supervisionLease.addProperty("id",leaseId);supervisionLease.addProperty("world_session",session(c));supervisionLease.addProperty("job_session",taskId);supervisionLease.addProperty("kind","materials");supervisionLease.addProperty("revision",controlRevision);supervisionLease.addProperty("remote_finish","disconnect");lastSupervisionHeartbeat=System.currentTimeMillis();logoutQuiet.reset(lastSupervisionHeartbeat);armPveGuard(c);phase="done";detail="material session protected";
+            String leaseId=safeId(str(r,"supervision_lease")),taskId=safeId(str(r,"task_session"));supervisionLease=new JsonObject();supervisionLease.addProperty("id",leaseId);supervisionLease.addProperty("world_session",session(c));supervisionLease.addProperty("job_session",taskId);supervisionLease.addProperty("kind","materials");supervisionLease.addProperty("revision",controlRevision);supervisionLease.addProperty("remote_finish",guardFinish?"guard":"disconnect");if(guardFinish)supervisionLease.add("park_target",r.getAsJsonArray("park_target").deepCopy());lastSupervisionHeartbeat=System.currentTimeMillis();logoutQuiet.reset(lastSupervisionHeartbeat);armPveGuard(c);phase="done";detail="material session protected";
         }else if(command.equals("runtime_reload")){
             if(supervisionLease==null||!str(supervisionLease,"kind").equals("materials")||!str(supervisionLease,"job_session").equals(str(r,"task_session")))throw new IllegalStateException("Material session required for managed hot update");
             if(c.screen!=null||supplyTask!=null&&!supplyTask.done()||KitClient.borer().isActive()||KitClient.chopper().isActive()||KitClient.controller().isActive())throw new IllegalStateException("Wait for the current movement or inventory operation to finish before hot update");

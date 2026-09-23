@@ -44,4 +44,14 @@ final class OreTargetTest {
 		assertTrue(OreTarget.firstMatching("COAL,DIAMOND", Blocks.COAL_ORE.defaultBlockState()) == OreTarget.COAL);
 		assertTrue(OreTarget.firstMatching("COAL,DIAMOND", Blocks.DIAMOND_ORE.defaultBlockState()) == OreTarget.DIAMOND);
 	}
+
+	@Test
+	void gravelIsAnExplicitMaterialTargetRatherThanPartOfAnyOre() {
+		assertTrue(OreTarget.selectedMatches("GRAVEL", Blocks.GRAVEL.defaultBlockState()));
+		assertTrue(OreTarget.selectedMatchesDropItem("GRAVEL", Items.GRAVEL));
+		assertTrue(OreTarget.firstMatching("GRAVEL", Blocks.GRAVEL.defaultBlockState()) == OreTarget.GRAVEL);
+		assertFalse(OreTarget.selectedMatches("ANY", Blocks.GRAVEL.defaultBlockState()));
+		assertFalse(OreTarget.selectedMatchesDropItem("ANY", Items.GRAVEL));
+		assertFalse(OreTarget.fortuneApplies(Blocks.GRAVEL.defaultBlockState()));
+	}
 }

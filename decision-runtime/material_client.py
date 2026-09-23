@@ -113,7 +113,9 @@ class Client:
    time.sleep(.2)
   raise RuntimeError('Chest was not opened')
 class MaterialClient(Client):
- def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None):
+ def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None,remote_finish='disconnect',park_target=None):
+  if remote_finish not in ('disconnect','guard') or remote_finish=='guard' and (not isinstance(park_target,(list,tuple)) or len(park_target)!=3):raise ValueError('Guard finish requires a high park target')
+  self.remote_finish=remote_finish;self.park_target=list(park_target) if park_target is not None else None
   self.heartbeat=None;self.owned_material_menu=None
   super().__init__(root,out,server,min_health=18)
   self.record_experience=record_experience;self.experience_state=experience_state
@@ -131,7 +133,9 @@ class MaterialClient(Client):
   write_manifest(self.out,self.task,s)
   self.heartbeat=SafetyHeartbeat(self.root,self.world);self.heartbeat.start()
   try:
-   self.checked('material_session',supervision_lease=self.heartbeat.id,**({'replace_parking_lease':replace} if replace else {}))
+   self.checked('material_session',supervision_lease=self.heartbeat.id,remote_finish=self.remote_finish,
+                **({'park_target':self.park_target} if self.park_target is not None else {}),
+                **({'replace_parking_lease':replace} if replace else {}))
    self.heartbeat.attached=True
   except BaseException:self.heartbeat.close();raise
  def raw(self):
@@ -160,12 +164,34 @@ class MaterialClient(Client):
    if self.owned_material_menu==m.get('id') and (clean_workbench or storage or furnace) and not m['cursor']['count']:
     self.checked('close_menu')
   except (Handoff,RuntimeError,KeyError):pass
+  if self.remote_finish=='guard':
+   try:
+    s=self.status()
+    if s['health']<18 or not s.get('guard_armed'):raise RuntimeError('High parking needs full health and PvE guard')
+    if sum((a-b)**2 for a,b in zip(s['pos'],self.park_target))>2*2:
+     r=self.request('navigate',target=self.park_target,arrival=2,seconds=120)
+     if r.get('phase')!='done':raise RuntimeError('High parking route did not finish: '+str(r.get('detail')))
+    s=self.status()
+    if s['health']<18 or not s.get('guard_armed') or sum((a-b)**2 for a,b in zip(s['pos'],self.park_target))>2*2:
+     raise RuntimeError('High parking position or guard not verified')
+   except Handoff:
+    self.heartbeat.close();return
+   except (RuntimeError,KeyError) as error:
+    (self.out/'park-fallback.json').write_text(json.dumps({'reason':str(error),'action':'safe_logout'},ensure_ascii=False))
+    try:self.request('safe_logout')
+    except (Handoff,RuntimeError):pass
+    self.heartbeat.close();return
   self.heartbeat.close()
   p=self.root/('supervision-receipt-'+self.heartbeat.id+'.json')
-  for _ in range(600):
+  for _ in range(200 if self.remote_finish=='guard' else 600):
    pending_disconnect=False
    if p.exists():
     d=json.loads(p.read_text())
+    if self.remote_finish=='guard' and d.get('action')=='KEEP_PVE_GUARD':
+     try:s=self.raw()
+     except RuntimeError:break
+     if s.get('connected') and s.get('guard_armed') and s.get('health',0)>=18 and s.get('pos') and sum((a-b)**2 for a,b in zip(s['pos'],self.park_target))<=2*2:
+      (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('HIGH_GUARD_CONFIRMED',flush=True);return
     pending_disconnect=d.get('action')=='LOGOUT' and not d.get('confirmed')
     if d.get('confirmed'):
      (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('DISCONNECT_CONFIRMED',d['action'],d['cause'],flush=True);return
@@ -177,6 +203,10 @@ class MaterialClient(Client):
    if s.get('world_session')!=self.world or s.get('manual_movement') or s.get('control_revision')!=self.rev and not pending_disconnect:return
    if lease and lease.get('id')!=self.heartbeat.id:return
    time.sleep(.15)
+  if self.remote_finish=='guard':
+   try:self.request('safe_logout')
+   except (Handoff,RuntimeError):pass
+   print('High hover was not confirmed; requested safe logout',flush=True)
  def fetch(self,pos,materials):
   r=self.request('collect_supply',source_key='minecraft:overworld:'+':'.join(map(str,pos)),materials={'minecraft:'+k:v for k,v in materials.items()},seconds=180)
   print('FETCH',pos,r.get('phase'),r.get('detail'),r.get('build_supply'),flush=True)

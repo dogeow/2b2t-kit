@@ -17,7 +17,7 @@ def collect_drop(client,drop,observation=None,seconds=90):
             # Stack merges can also retire the source UUID. For ordinary building
             # materials, select a fresh nearby stack as a new pickup, never pretend
             # that the vanished identity itself was confirmed collected.
-            ordinary=item in {'minecraft:dirt','minecraft:cobblestone','minecraft:stone','minecraft:coal'} or item.endswith('_planks')
+            ordinary=item in {'minecraft:dirt','minecraft:cobblestone','minecraft:stone','minecraft:coal'} or item.endswith(('_planks','_concrete'))
             recent=original.get('time') is not None and 0<=state.get('time',0)-original['time']<=2500
             nearby=[e for e in state.get('entities',[]) if e.get('type')=='minecraft:item'
                     and e.get('stack',{}).get('item')==item and e['stack'].get('count',0)>=drop['stack']['count']
