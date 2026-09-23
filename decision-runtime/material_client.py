@@ -49,7 +49,11 @@ class Client:
    terminal=result.get('id')==rid and result.get('phase') in ('done','stopped','error','waiting')
    lease=current.get('supervision_lease',{})
    native_stop=terminal and current.get('last_request')==rid and lease.get('job_session')==getattr(self,'task',None) and lease.get('revision')==current['control_revision'] and lease.get('kind')=='materials'
-   if current.get('manual_movement') or current['control_revision'] not in (self.rev,expected) and not native_stop:raise Handoff('Control revision changed outside the owned request')
+   # safe_logout may stop several client controllers before the disconnect
+   # snapshot appears. The issued request ID proves this transition belongs to
+   # our one-shot logout; do not retry or mistake its revision jump for a handoff.
+   owned_logout=op=='safe_logout' and current.get('last_request')==rid
+   if current.get('manual_movement') or current['control_revision'] not in (self.rev,expected) and not native_stop and not owned_logout:raise Handoff('Control revision changed outside the owned request')
    if reply.exists() or current.get('last_request')==rid and current.get('id')==rid and current.get('phase') in ('done','stopped','error','waiting'):
     self.rev=current['control_revision']
     with (self.out/'events.jsonl').open('a') as f:f.write(json.dumps({'time':time.time(),'request_id':rid,'world_session':self.world,'op':op,'params':params,'phase':result.get('phase'),'detail':result.get('detail'),'pos':current.get('pos'),'health':current.get('health'),'duration_ms':round((time.monotonic()-request_started)*1000),'evidence_scope':'native_operation_reply_not_goal_completion',**observed_delta(evidence_before,current)},ensure_ascii=False)+'\n')

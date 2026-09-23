@@ -80,4 +80,11 @@ class BorerDefensePolicyTest {
 		assertFalse(BorerDefensePolicy.releaseArrow(30, false, true));
 		assertFalse(BorerDefensePolicy.releaseArrow(30, true, false));
 	}
+	@Test void mayAbandonAnUnconfirmedFightOnlyAfterHorizontalRelocation() {
+		assertFalse(BorerDefensePolicy.encounterLeftBehind(0, 0));
+		assertFalse(BorerDefensePolicy.encounterLeftBehind(48, 0));
+		assertTrue(BorerDefensePolicy.encounterLeftBehind(48, 1));
+		assertTrue(BorerDefensePolicy.encounterLeftBehind(-100, 0));
+		assertFalse(BorerDefensePolicy.encounterLeftBehind(Double.NaN, 100));
+	}
 }

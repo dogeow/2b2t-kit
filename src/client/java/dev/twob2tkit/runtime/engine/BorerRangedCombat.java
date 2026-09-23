@@ -56,6 +56,16 @@ final class BorerRangedCombat {
 		}
 		continuation.save(c,session);
 		if(missingRestored){engine.pauseGuardMovement(c);engine.status="等待重新观察热加载前的敌对生物，施工保持暂停";return true;}
+		// A controller may have flown away from an unfinished fight to a different
+		// work area. Keeping that old UUID pending forever blocks safe inventory
+		// work even when every hostile is over 48 blocks behind us. Record an
+		// explicit disengagement, never a fabricated kill; fresh nearby threats
+		// are observed again when the player returns.
+		if(engine.standaloneGuard && session.pending() && session.targets().stream()
+			.allMatch(e -> BorerDefensePolicy.encounterLeftBehind(p.getX()-e.getX(),p.getZ()-e.getZ()))) {
+			engine.fileLog(c,"area-defense-disengage-relocated unresolved="+session.targets().size()+" confirmed_deaths=0");
+			end(c);return false;
+		}
 		if (passive > 0 && ++passiveTicks >= 100) {
 			engine.fileLog(c, "area-defense-ignore-passive count=" + passive); passiveTicks = 0;
 		}

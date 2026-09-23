@@ -14,6 +14,11 @@ final class BorerDefensePolicy {
 		return best.id;
 	}
 	static int priority(boolean creeper, boolean ranged) { return creeper ? 0 : ranged ? 1 : 2; }
+	/** A remote encounter can be explicitly abandoned after leaving its entire area.
+	 * This is not a kill confirmation; returning requires a fresh threat scan. */
+	static boolean encounterLeftBehind(double dx,double dz) {
+		return Double.isFinite(dx) && Double.isFinite(dz) && Math.hypot(dx,dz)>48;
+	}
 	/** Seeing an idle mob is not aggression. Only observable threats interrupt work. */
 	static boolean engaged(boolean visible, boolean recentAttacker, boolean targetingOther,
 		boolean targetingPlayer, boolean approaching, boolean attackingPose, boolean imminentBlast,
