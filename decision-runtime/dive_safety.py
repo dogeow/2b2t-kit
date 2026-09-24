@@ -36,6 +36,6 @@ def ready_for_gravel_dive(state):
 
 def must_surface(state):
     return (not state.get('connected') or state.get('health', 0) < 18
-            or state.get('air_supply', 0) < 150 and not (
+            or state.get('air_supply', 0) < 240 and not (
                 state.get('water_breathing_effect') or state.get('conduit_power_effect'))
             or state.get('manual_movement') or state.get('screen'))

@@ -11,6 +11,14 @@ def high_park_clearance(rows,target_y):
   ground=[row['pos'][1]+1 for row in rows if row.get('fluid') or not row.get('passable',True)]
   if not ground:raise Handoff('High guard park has no verified ground column')
   return target_y-max(ground)
+def underwater_action_allowed(state,op,params):
+ if not state.get('under_water') or state.get('water_breathing_effect') or state.get('conduit_power_effect') or state.get('air_supply',0)>=240:return True
+ if op not in ('navigate','walk','collect_item','approach_block','mine_block'):return True
+ target=params.get('target')
+ if op=='navigate' and isinstance(target,(list,tuple)) and len(target)==3:
+  p=state.get('pos') or [0,0,0]
+  if target[1]>=p[1]+2 and math.hypot(target[0]-p[0],target[2]-p[2])<=2:return True
+ return False
 class Client:
  def __init__(self,root,out,server,min_health=18):
   self.root=Path(root);self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True);self.server=server
@@ -38,6 +46,7 @@ class Client:
    if time.monotonic()>until:raise RuntimeError('Defense remains busy')
    time.sleep(.25)
   if op!='safe_logout' and s.get('health',0)<14:raise RuntimeError('Low health')
+  if not underwater_action_allowed(s,op,params):raise RuntimeError('Low oxygen: only a near-vertical surface ascent is allowed')
   path=self.root/'request.json'
   if path.exists() and json.loads(path.read_text()).get('id')!=s.get('last_request'):raise Handoff('Another controller has a pending request')
   rid='materials-'+uuid.uuid4().hex[:12]
@@ -60,11 +69,17 @@ class Client:
    terminal=result.get('id')==rid and result.get('phase') in ('done','stopped','error','waiting')
    lease=current.get('supervision_lease',{})
    native_stop=terminal and current.get('last_request')==rid and lease.get('job_session')==getattr(self,'task',None) and lease.get('revision')==current['control_revision'] and lease.get('kind')=='materials'
+   # A native movement timeout may abort its own controller and advance the
+   # revision twice before returning "waiting". The exact request ID and the
+   # matching terminal snapshot prove this is our operation, so return that
+   # result and let the caller surface; treating it as a foreign handoff left
+   # an underwater player waiting for the heartbeat logout.
+   owned_terminal=terminal and current.get('last_request')==rid and result.get('control_revision')==current['control_revision'] and result.get('world_session')==self.world
    # safe_logout may stop several client controllers before the disconnect
    # snapshot appears. The issued request ID proves this transition belongs to
    # our one-shot logout; do not retry or mistake its revision jump for a handoff.
    owned_logout=op=='safe_logout' and current.get('last_request')==rid
-   if current.get('manual_movement') or current['control_revision'] not in (self.rev,expected) and not native_stop and not owned_logout:raise Handoff('Control revision changed outside the owned request')
+   if current.get('manual_movement') or current['control_revision'] not in (self.rev,expected) and not native_stop and not owned_terminal and not owned_logout:raise Handoff('Control revision changed outside the owned request')
    if reply.exists() or current.get('last_request')==rid and current.get('id')==rid and current.get('phase') in ('done','stopped','error','waiting'):
     self.rev=current['control_revision']
     with (self.out/'events.jsonl').open('a') as f:f.write(json.dumps({'time':time.time(),'request_id':rid,'world_session':self.world,'op':op,'params':params,'phase':result.get('phase'),'detail':result.get('detail'),'pos':current.get('pos'),'health':current.get('health'),'duration_ms':round((time.monotonic()-request_started)*1000),'guard_pause_ms':round(guard_pause*1000),'evidence_scope':'native_operation_reply_not_goal_completion',**observed_delta(evidence_before,current)},ensure_ascii=False)+'\n')
