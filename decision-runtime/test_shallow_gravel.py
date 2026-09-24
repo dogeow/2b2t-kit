@@ -35,6 +35,8 @@ class ShallowGravelTest(unittest.TestCase):
     def test_new_water_near_cover_stops_before_any_mining_action(self):
         class Client:
             calls=[]
+            def status(self):
+                return {'inventory':[{'item':'minecraft:diamond_shovel','count':1,'durability':500}]}
             def request(self,op,**params):
                 self.calls.append(op)
                 if op!='scan':raise AssertionError('No approach or mining when water appeared')
@@ -54,7 +56,7 @@ class ShallowGravelTest(unittest.TestCase):
             mine_calls=0
             def status(self):
                 inventory=[{'slot':i,'item':'minecraft:air','count':0} for i in range(36)]
-                inventory[0]={'slot':0,'item':'minecraft:diamond_shovel','count':1}
+                inventory[0]={'slot':0,'item':'minecraft:diamond_shovel','count':1,'durability':500}
                 if self.mined:inventory[1]={'slot':1,'item':'minecraft:dirt','count':1}
                 return {'inventory':inventory,'entities':[]}
             def request(self,op,**params):

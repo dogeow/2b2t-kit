@@ -1,4 +1,4 @@
-"""Reach gravel under at most two natural soil blocks from directly above."""
+"""Reach gravel through one verified vertical column of natural blocks."""
 
 import json
 import time
@@ -9,11 +9,25 @@ from drop_collection import collect_drop
 from gravel_harvest import WATER_BUFFER, dry_top_gravel, harvest, water_buffer_clear
 from shore_concrete import block_state
 
-SOIL_DROPS = {
+COVER_DROPS = {
     'Block{minecraft:grass_block}': {'minecraft:dirt', 'minecraft:grass_block'},
     'Block{minecraft:dirt}': {'minecraft:dirt'},
     'Block{minecraft:coarse_dirt}': {'minecraft:coarse_dirt'},
     'Block{minecraft:podzol}': {'minecraft:dirt', 'minecraft:podzol'},
+    'Block{minecraft:stone}': {'minecraft:stone', 'minecraft:cobblestone'},
+    'Block{minecraft:andesite}': {'minecraft:andesite'},
+    'Block{minecraft:diorite}': {'minecraft:diorite'},
+    'Block{minecraft:granite}': {'minecraft:granite'},
+    'Block{minecraft:tuff}': {'minecraft:tuff'},
+    'Block{minecraft:deepslate}': {'minecraft:deepslate', 'minecraft:cobbled_deepslate'},
+    'Block{minecraft:cobbled_deepslate}': {'minecraft:cobbled_deepslate'},
+    'Block{minecraft:gravel}': {'minecraft:gravel', 'minecraft:flint'},
+}
+PICKAXE_BLOCKS = {
+    'Block{minecraft:stone}', 'Block{minecraft:andesite}',
+    'Block{minecraft:diorite}', 'Block{minecraft:granite}',
+    'Block{minecraft:tuff}', 'Block{minecraft:deepslate}',
+    'Block{minecraft:cobbled_deepslate}',
 }
 
 
@@ -36,7 +50,7 @@ def shallow_candidates(rows, low, high, max_cover, scan_ceiling):
                 continue
             cover = [{'pos':[x,h,z], 'state':block_state(rows,[x,h,z])}
                      for h in range(surface_y,y,-1)]
-            if any(layer['state'] not in SOIL_DROPS for layer in cover):
+            if any(layer['state'] not in COVER_DROPS for layer in cover):
                 continue
             if any(block_state(rows,[x,h,z])!='Block{minecraft:air}'
                    for h in range(surface_y+1,scan_ceiling+1)):
@@ -65,8 +79,15 @@ def open_and_harvest(client, candidate, out):
     """One exact vertical column; any ambiguous break or pickup stops the run."""
     out=Path(out);out.mkdir(parents=True,exist_ok=True)
     position=candidate['pos'];result={'gravel':position,'cover':[]}
+    if not 1<=len(candidate['cover'])<=20:
+        raise ValueError('Vertical gravel shaft depth must be 1..20')
+    tools={row['item']:row for row in client.status().get('inventory',[]) if row.get('count',0)}
+    for tool,needed in (('minecraft:diamond_pickaxe',sum(layer['state'] in PICKAXE_BLOCKS for layer in candidate['cover'])),
+                        ('minecraft:diamond_shovel',sum(layer['state'] not in PICKAXE_BLOCKS for layer in candidate['cover'])+1)):
+        if needed and tools.get(tool,{}).get('durability',0)<needed+50:
+            raise RuntimeError('Tool durability is too low for a guarded vertical shaft')
     for layer in candidate['cover']:
-        p=layer['pos'];expected=layer['state'];allowed=SOIL_DROPS[expected]
+        p=layer['pos'];expected=layer['state'];allowed=COVER_DROPS[expected]
         rows=client.request('scan',min=[p[0]-WATER_BUFFER,position[1]-2,p[2]-WATER_BUFFER],
                             max=[p[0]+WATER_BUFFER,p[1]+2,p[2]+WATER_BUFFER],details=True)['blocks']
         if (block_state(rows,p)!=expected or not water_buffer_clear(rows,position)
@@ -80,7 +101,8 @@ def open_and_harvest(client, candidate, out):
         if approached.get('phase')!='done':
             result['stopped']='Natural cover cannot be reached from above'
             return result
-        client.checked('select_item',item='minecraft:diamond_shovel')
+        client.checked('select_item',item='minecraft:diamond_pickaxe' if expected in PICKAXE_BLOCKS
+                       else 'minecraft:diamond_shovel')
         before=client.status()
         mined=client.request('mine_block',pos=p,face='up',expected_state=expected,seconds=20)
         if mined.get('phase')!='done':
