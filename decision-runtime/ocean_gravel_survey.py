@@ -8,10 +8,14 @@ from gravel_harvest import block_kind
 
 GRAVEL = 'Block{minecraft:gravel}'
 LAVA = 'Block{minecraft:lava}'
+SOURCE_WATER = 'Block{minecraft:water}[level=0]'
 
 
 def _surface_water(row):
-    return row is not None and row.get('fluid') and block_kind(row['state']) != LAVA
+    # Kelp, seagrass and bubble columns also contain water, but their outline
+    # can intercept the mining ray before it reaches gravel. Flowing water can
+    # carry the player off the selected column. Require a clear source column.
+    return row is not None and row.get('fluid') and row['state'] == SOURCE_WATER
 
 
 def exposed_ocean_gravel(rows, low, high, min_depth=2, max_depth=12):

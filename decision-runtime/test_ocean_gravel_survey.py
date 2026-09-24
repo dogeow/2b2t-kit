@@ -31,5 +31,14 @@ class OceanGravelSurveyTest(unittest.TestCase):
         lava=self.sea_column()+[row(11,59,20,'Block{minecraft:lava}[level=0]',False,True)]
         self.assertEqual([],exposed_ocean_gravel(lava,[10,40,20],[10,70,20]))
 
+    def test_waterlogged_plants_and_flow_are_not_clear_mining_columns(self):
+        for obstructing in ('Block{minecraft:kelp_plant}',
+                            'Block{minecraft:seagrass}',
+                            'Block{minecraft:water}[level=1]'):
+            with self.subTest(obstructing=obstructing):
+                rows=self.sea_column()
+                next(row for row in rows if row['pos']==[10,60,20])['state']=obstructing
+                self.assertEqual([],exposed_ocean_gravel(rows,[10,40,20],[10,70,20]))
+
 
 if __name__=='__main__':unittest.main()
