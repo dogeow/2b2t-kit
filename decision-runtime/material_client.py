@@ -27,7 +27,7 @@ class Client:
  def status(self):
   s=self.raw()
   if not s.get('connected') or s.get('world_session')!=self.world or s.get('control_revision')!=self.rev or s.get('manual_movement'):raise Handoff('Control or world changed; no more commands')
-  if s.get('screen') not in ('','ContainerScreen','InventoryScreen','CraftingScreen','ShulkerBoxScreen','FurnaceScreen','BlastFurnaceScreen','SmokerScreen'):raise Handoff('User opened a different interface')
+  if s.get('screen') not in ('','ContainerScreen','InventoryScreen','CraftingScreen','ShulkerBoxScreen','FurnaceScreen','BlastFurnaceScreen','SmokerScreen','AnvilScreen'):raise Handoff('User opened a different interface')
   return s
  def request(self,op,**params):
   until=time.monotonic()+60
@@ -180,9 +180,10 @@ class MaterialClient(Client):
    clear_owned_workbench(self)
    s=self.status();m=s.get('menu',{})
    clean_workbench=m.get('type')=='CraftingMenu' and all(not v['count'] for v in m['slots'][:10])
+   clean_anvil=m.get('type')=='AnvilMenu' and all(not v['count'] for v in m['slots'][:3])
    storage=m.get('type') in ('ChestMenu','ShulkerBoxMenu')
    furnace=m.get('type') in ('FurnaceMenu','BlastFurnaceMenu','SmokerMenu')
-   if self.owned_material_menu==m.get('id') and (clean_workbench or storage or furnace) and not m['cursor']['count']:
+   if self.owned_material_menu==m.get('id') and (clean_workbench or clean_anvil or storage or furnace) and not m['cursor']['count']:
     self.checked('close_menu')
   except (Handoff,RuntimeError,KeyError):pass
   if self.remote_finish=='guard':

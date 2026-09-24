@@ -19,6 +19,13 @@ def contents(rows):
     for row in rows:
         if row.get('count') and row['item']!='minecraft:air':result[row['item']]+=row['count']
     return dict(result)
+def matching_source(rows,material,required_stored_enchantments=None):
+    required=(required_stored_enchantments or {}).get(material,{})
+    for row in rows:
+        if row['item']!=material or not row['count']:continue
+        actual={v['id']:v['level'] for v in row.get('stored_enchantments',[])}
+        if all(actual.get(name,0)>=level for name,level in required.items()):return row
+    return None
 def choose_box(slots,targets,carried):
     candidates=[]
     for row in slots:
@@ -88,7 +95,7 @@ def recover_and_return(client,record,ender,journal):
     with (client.out/'packed-transfers.jsonl').open('a') as stream:stream.write(json.dumps(record,ensure_ascii=False)+'\n')
     print('PACKED_RETURNED',slot,record.get('taken',{}),flush=True)
 
-def take_box(client,ender,pad,slot,targets):
+def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None):
     journal=client.out/'packed-transfer-active.json'
     if journal.exists() and json.loads(journal.read_text()).get('stage')!='returned':
         raise RuntimeError('An earlier portable box needs inspected recovery before another withdrawal')
@@ -120,11 +127,26 @@ def take_box(client,ender,pad,slot,targets):
         for _ in range(8):
             live=client.status();need=target-inventory_counts(live)[material]
             if need<=0:break
-            src=next((v for v in live['menu']['slots'][:27] if v['item']==material and v['count']),None)
+            src=matching_source(live['menu']['slots'][:27],material,
+                                required_stored_enchantments)
             if src is None:break
             free=sum(v['slot']<36 and not v['count'] for v in live['inventory'])
             if free<=1:record.setdefault('deferred',{})[material]='Reserve a free slot for the intact box';break
-            if material in VALUABLE:take_exact(client,src['slot'],min(need,src['count'],16),reserve_empty=1)
+            if material in VALUABLE or (required_stored_enchantments or {}).get(material):
+                if src.get('max_stack',64)==1 and src['count']==1 and need==1:
+                    # A uniquely identified unstackable item is already an
+                    # exact one-item transfer; inventory_exact intentionally
+                    # handles ordinary stackable ingredients only.
+                    client.checked('slot_click',menu_id=live['menu']['id'],slot=src['slot'],
+                                   expected_item=material,expected_count=1,kind='quick_move')
+                    selected=(required_stored_enchantments or {}).get(material,{})
+                    if selected and not any(v['item']==material and v['count']==1 and
+                                            all({e['id']:e['level'] for e in v.get('stored_enchantments',[])}.get(k,0)>=n
+                                                for k,n in selected.items())
+                                            for v in client.status()['inventory']):
+                        raise RuntimeError('Selected unstackable enchantment was not confirmed in inventory')
+                else:
+                    take_exact(client,src['slot'],min(need,src['count'],16),reserve_empty=1)
             else:client.transfer(material,target)
     s=client.status();remaining=contents(s['menu']['slots'][:27]);after=inventory_counts(s)
     taken={i:after[i]-before[i] for i in initial}

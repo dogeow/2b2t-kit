@@ -1,6 +1,16 @@
 import unittest
 from packed_supplies import contents,choose_box
 class PackedTest(unittest.TestCase):
+ def test_selects_exact_enchanted_book_in_mixed_box(self):
+  from packed_supplies import matching_source
+  rows=[{'slot':0,'item':'minecraft:enchanted_book','count':1,
+         'stored_enchantments':[{'id':'minecraft:efficiency','level':5}]},
+        {'slot':1,'item':'minecraft:enchanted_book','count':1,
+         'stored_enchantments':[{'id':'minecraft:silk_touch','level':1}]}]
+  required={'minecraft:enchanted_book':{'minecraft:silk_touch':1}}
+  self.assertEqual(matching_source(rows,'minecraft:enchanted_book',required)['slot'],1)
+  self.assertIsNone(matching_source(rows,'minecraft:enchanted_book',
+                    {'minecraft:enchanted_book':{'minecraft:respiration':3}}))
  def test_duplicate_stacks_are_summed_not_overwritten(self):
   self.assertEqual(contents([{'item':'minecraft:paper','count':64},{'item':'minecraft:paper','count':16}]),{'minecraft:paper':80})
  def test_only_observed_useful_box_is_selected_and_existing_stock_is_subtracted(self):

@@ -290,7 +290,7 @@ public final class AutomationBridge {
         if(command.equals("slot_click"))return active.has("menu_id")&&menu.containerId==active.get("menu_id").getAsInt();
         // An interact request is waiting for the server-opened container, so no menu id exists yet.
         if(command.equals("interact")){
-            boolean owned=menu instanceof net.minecraft.world.inventory.ChestMenu||menu instanceof net.minecraft.world.inventory.ShulkerBoxMenu||menu instanceof net.minecraft.world.inventory.CraftingMenu||menu instanceof net.minecraft.world.inventory.AbstractFurnaceMenu;
+            boolean owned=menu instanceof net.minecraft.world.inventory.ChestMenu||menu instanceof net.minecraft.world.inventory.ShulkerBoxMenu||menu instanceof net.minecraft.world.inventory.CraftingMenu||menu instanceof net.minecraft.world.inventory.AbstractFurnaceMenu||menu instanceof net.minecraft.world.inventory.AnvilMenu;
             if(owned)ownedMaterialMenu=menu.containerId;return owned;
         }
         return false;
