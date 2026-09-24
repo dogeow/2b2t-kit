@@ -1,6 +1,6 @@
 import unittest
 
-from ocean_pickup import pickup_pose
+from ocean_pickup import pickup_pose, supported_drop_neighborhood
 
 
 class Tests(unittest.TestCase):
@@ -20,6 +20,13 @@ class Tests(unittest.TestCase):
         self.assertIsNone(pickup_pose([1.2,50,2.2],[]))
         rows=[{'pos':[1,45,2], 'solid':True}]
         self.assertIsNone(pickup_pose([1.2,50,2.2],rows))
+
+    def test_neighborhood_rejects_a_neighboring_cave_drop(self):
+        target=[10,52,20]
+        floor=[{'pos':[10+dx,51,20+dz],'solid':True}
+               for dx in (-1,0,1) for dz in (-1,0,1)]
+        self.assertTrue(supported_drop_neighborhood(floor,target))
+        self.assertFalse(supported_drop_neighborhood(floor[:-1],target))
 
 
 if __name__ == '__main__':

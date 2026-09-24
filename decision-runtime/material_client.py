@@ -25,6 +25,10 @@ def vertical_surface_escape(state,op,params):
  if not isinstance(target,(list,tuple)) or len(target)!=3:return False
  pos=state.get('pos') or [0,0,0]
  return target[1]>=pos[1]+2 and math.hypot(target[0]-pos[0],target[2]-pos[2])<=2
+def pending_request_state(request,last_request,owned_last,world):
+ if request.get('id')==last_request:return 'clear'
+ if request.get('id')==owned_last and request.get('world_session')==world:return 'wait_owned'
+ return 'foreign'
 class Client:
  def __init__(self,root,out,server,min_health=18):
   self.root=Path(root);self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True);self.server=server
@@ -47,7 +51,7 @@ class Client:
   until=time.monotonic()+60
   while True:
    s=self.status()
-   if op!='safe_logout' and s.get('health',0)<14:raise RuntimeError('Low health')
+   if op!='safe_logout' and s.get('health',0)<14 and not vertical_surface_escape(s,op,params):raise RuntimeError('Low health')
    if op in ('guard','snapshot','scan','scan_trees','safe_logout','use_item') or not s.get('guard_busy'):break
    vertical_escape=vertical_surface_escape(s,op,params)
    if s.get('under_water') and not vertical_escape:
@@ -55,10 +59,20 @@ class Client:
    if vertical_escape:break
    if time.monotonic()>until:raise RuntimeError('Defense remains busy')
    time.sleep(.25)
-  if op!='safe_logout' and s.get('health',0)<14:raise RuntimeError('Low health')
+  if op!='safe_logout' and s.get('health',0)<14 and not vertical_surface_escape(s,op,params):raise RuntimeError('Low health')
   if not underwater_action_allowed(s,op,params):raise RuntimeError('Low oxygen: only a near-vertical surface ascent is allowed')
   path=self.root/'request.json'
-  if path.exists() and json.loads(path.read_text()).get('id')!=s.get('last_request'):raise Handoff('Another controller has a pending request')
+  if path.exists():
+   pending=json.loads(path.read_text())
+   ownership=pending_request_state(pending,s.get('last_request'),self.last,self.world)
+   if ownership=='foreign':raise Handoff('Another controller has a pending request')
+   if ownership=='wait_owned':
+    until_pending=time.monotonic()+1.5
+    while time.monotonic()<until_pending:
+     s=self.status()
+     if s.get('last_request')==pending.get('id'):break
+     time.sleep(.05)
+    else:raise Handoff('Previous owned request was not acknowledged')
   rid='materials-'+uuid.uuid4().hex[:12]
   req={'id':rid,'op':op,'server':s['server'],'dimension':s['dimension'],'site':self.anchor,
        'world_session':self.world,'expected_revision':self.rev,'expires_at':int(time.time()*1000)+5000,**params}
@@ -218,15 +232,22 @@ class MaterialClient(Client):
   if self.remote_finish=='guard':
    try:
     s=self.status()
-    if s['health']<18 or not s.get('guard_armed'):raise RuntimeError('High parking needs full health and PvE guard')
+    if not s.get('guard_armed'):raise RuntimeError('High parking needs PvE guard')
+    if s['health']<19:
+     if s['pos'][1]<self.park_target[1]-2:
+      rise=[s['pos'][0],self.park_target[1],s['pos'][2]]
+      self.request('navigate',target=rise,arrival=1,seconds=8)
+     raise RuntimeError('Health fell below 19; rise before safety logout')
     if not self.park_near(s):
      deadline=time.monotonic()+12
      while True:
       s=self.status()
-      if s['health']<18:
+      if s['health']<19:
+       if s['pos'][1]<self.park_target[1]-2:
+        rise=[s['pos'][0],self.park_target[1],s['pos'][2]]
+        self.request('navigate',target=rise,arrival=1,seconds=8)
        raise RuntimeError('High parking wait lost health clearance')
       if s.get('under_water') or s['pos'][1]<64:
-       if s.get('guard_busy'):raise RuntimeError('Defense busy before local water exit')
        up=[s['pos'][0],70,s['pos'][2]]
        climb=self.request('navigate',target=up,arrival=1,seconds=8)
        if climb.get('phase')!='done':raise RuntimeError('Local water exit did not finish')
@@ -235,6 +256,10 @@ class MaterialClient(Client):
        if time.monotonic()>=deadline:raise RuntimeError('Air did not recover before high parking')
        time.sleep(.25);continue
       if s.get('guard_busy'):
+       if s['pos'][1]<self.park_target[1]-2:
+        rise=[s['pos'][0],self.park_target[1],s['pos'][2]]
+        climb=self.request('navigate',target=rise,arrival=1,seconds=8)
+        if climb.get('phase')=='done':continue
        if time.monotonic()>=deadline:raise RuntimeError('Defense stayed busy before high parking')
        time.sleep(.25);continue
       r=self.request('navigate',target=self.park_target,arrival=2,seconds=120)

@@ -526,7 +526,15 @@ public final class AutomationBridge {
             save(root(c).resolve("reply-"+safeId(lastId)+".json"),out);writeStatus(c);return;
         }
         if(dev.twob2tkit.combat.EmergencyExit.held(c))throw new IllegalStateException("Safety lock: manual in-game acknowledgement required; do not reconnect automatically");
-        if(guardBusy && !command.equals("guard") && !command.equals("use_item"))throw new IllegalStateException("Construction guard is defending or eating; wait before changing items or starting work");
+        boolean defensiveRise=false;
+        if(guardBusy && command.equals("navigate") && r.has("task_session") && r.has("target")
+                && supervisionLease!=null && str(supervisionLease,"kind").equals("materials")){
+            JsonArray point=r.getAsJsonArray("target");
+            if(point!=null && point.size()==3)defensiveRise=GuardEscapePolicy.allowed(true,guardScope!=null,
+                c.player.getX(),c.player.getY(),c.player.getZ(),
+                point.get(0).getAsDouble(),point.get(1).getAsDouble(),point.get(2).getAsDouble());
+        }
+        if(guardBusy && !command.equals("guard") && !command.equals("use_item") && !defensiveRise)throw new IllegalStateException("Construction guard is defending or eating; wait before changing items or starting work");
         statusId=lastId;
         if(command.equals("material_session")){
             long expiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;

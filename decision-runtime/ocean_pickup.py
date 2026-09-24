@@ -19,3 +19,11 @@ def pickup_pose(drop_pos, column_rows):
     return {'cell': [cell_x, cell_y, cell_z],
             'floor_y': feet_y - 1,
             'target': [cell_x + .5, feet_y, cell_z + .5]}
+
+
+def supported_drop_neighborhood(rows, target):
+    """Require a 3x3 solid floor so currents cannot sweep a new drop into a cave."""
+    x, y, z = target
+    solid = {tuple(row['pos']) for row in rows if row.get('solid')}
+    return all((x+dx, y-1, z+dz) in solid
+               for dx in (-1, 0, 1) for dz in (-1, 0, 1))
