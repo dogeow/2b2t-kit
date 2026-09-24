@@ -201,12 +201,15 @@ public final class BorerHazards {
 	/** 挖掉 target 后，上方沙子/沙砾会掉进玩家所在列。 */
 	public static boolean wouldCrushPlayer(Minecraft client, LocalPlayer player, BlockPos target) {
 		if (client.level == null || player == null || target == null) return false;
-		BlockPos feet = player.blockPosition();
-		int px = feet.getX();
-		int pz = feet.getZ();
-		if (Math.abs(target.getX() - px) > 1 || Math.abs(target.getZ() - pz) > 1) return false;
 		BlockPos above = target.above();
-		return isFallingType(client, above);
+		return fallingColumnIntersectsPlayer(player.getBoundingBox(), above) && isFallingType(client, above);
+	}
+
+	/** An adjacent falling column is dangerous only if its horizontal footprint overlaps the player. */
+	static boolean fallingColumnIntersectsPlayer(AABB box, BlockPos column) {
+		final double margin = 0.05;
+		return box.maxX + margin > column.getX() && box.minX - margin < column.getX() + 1
+			&& box.maxZ + margin > column.getZ() && box.minZ - margin < column.getZ() + 1;
 	}
 
 	/** 从 pos 往上走到沙子/沙砾柱的最高一块。 */
@@ -230,6 +233,7 @@ public final class BorerHazards {
 			for (int dx = -1; dx <= 1; dx++) {
 				for (int dz = -1; dz <= 1; dz++) {
 					BlockPos pos = feet.offset(dx, dy, dz);
+					if (!fallingColumnIntersectsPlayer(player.getBoundingBox(), pos)) continue;
 					if (!isFallingType(client, pos)) continue;
 					BlockPos below = pos.below();
 					BlockState under = client.level.getBlockState(below);

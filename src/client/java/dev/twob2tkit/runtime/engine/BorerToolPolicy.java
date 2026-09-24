@@ -34,5 +34,9 @@ record BorerToolPolicy(boolean antiBreak, int percentage, String listMode, Set<?
 		}
 		return best;
 	}
+	/** A fast shovel beats a Silk Touch axe on gravel; Silk Touch only breaks ties between shovels. */
+	static float gravelScoreBonus(boolean shovel, boolean silkTouch) {
+		return shovel ? 1000.0F + (silkTouch ? 0.5F : 0.0F) : 0.0F;
+	}
 	String describe() { return "antiBreak=" + antiBreak + " percentage=" + percentage + " list=" + listMode; }
 }

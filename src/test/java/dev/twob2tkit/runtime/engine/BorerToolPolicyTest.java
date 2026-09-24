@@ -48,6 +48,15 @@ class BorerToolPolicyTest {
 		assertFalse(BorerToolPolicy.exhausted(List.of()));
 		assertFalse(BorerToolPolicy.exhausted(List.of(candidate(0, false, 100, 1, 8))));
 	}
+	@Test void gravelPrefersFastShovelOverSlowSilkTouchAxe() {
+		float shovel = 8.0F + BorerToolPolicy.gravelScoreBonus(true, false);
+		float silkAxe = 2.0F + BorerToolPolicy.gravelScoreBonus(false, true);
+		assertEquals(2, BorerToolPolicy.choose(List.of(
+			new BorerToolPolicy.Candidate(2, false, true, shovel),
+			new BorerToolPolicy.Candidate(7, false, true, silkAxe)), 7));
+		assertTrue(BorerToolPolicy.gravelScoreBonus(true, true)
+			> BorerToolPolicy.gravelScoreBonus(true, false));
+	}
 	private BorerToolPolicy.Candidate candidate(int slot, boolean pickaxe, int max, int left, float score) {
 		return new BorerToolPolicy.Candidate(slot, pickaxe, tenPercent.allows("tool", true, max, left), score);
 	}

@@ -2610,7 +2610,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		BlockPos loose = BorerHazards.unsupportedFallingAbove(client, player, currentTarget);
 		if (loose == null) return false;
 		if (canPlanMine(client, loose) && inMiningReach(player, loose)
-			&& (canSeeBlock(client, player, loose) || playerTouchesBlock(player, loose) || hasCollision(client, loose))) {
+			&& canSeeBlock(client, player, loose)) {
 			replaceMiningTarget(client, loose, "falling-block-threat");
 			client.options.keyUp.setDown(false);
 			return false;
@@ -2635,11 +2635,12 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		BlockPos top = BorerHazards.topFallingBlock(client, pos, 8);
 		if (top == null) top = BorerHazards.topFallingBlock(client, pos.above(), 8);
 		if (top == null || top.equals(pos)) return null;
+		if (!BorerHazards.fallingColumnIntersectsPlayer(player.getBoundingBox(), top)) return null;
 		BlockPos feet = standingColumn(client, player);
 		int dist = Math.abs(top.getX() - feet.getX()) + Math.abs(top.getZ() - feet.getZ());
 		int dy = top.getY() - feet.getY();
 		if (BorerStairPolicy.ignoreOverheadFalling(dist, dy, effectiveHeight())) return null;
-		if (canPlanMine(client, top) && inMiningReach(player, top)) return top;
+		if (canPlanMine(client, top) && inMiningReach(player, top) && canSeeBlock(client, player, top)) return top;
 		return null;
 	}
 

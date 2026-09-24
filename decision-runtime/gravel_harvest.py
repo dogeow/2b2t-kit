@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from drop_collection import collect_drop
-from material_client import MaterialClient
+from material_client import Handoff, MaterialClient
 from shore_concrete import block_state, item_count
 
 GRAVEL = 'minecraft:gravel'
@@ -63,6 +63,8 @@ def harvest(client, low, high, target_count, out):
         p=list(candidates[0]);record={'pos':p}
         approach=client.request('approach_block',pos=p,face='up',expected_state='Block{minecraft:gravel}',seconds=120)
         if approach.get('phase')!='done':
+            if approach.get('phase')=='waiting' or 'Manual menu' in str(approach.get('detail','')):
+                raise Handoff('Gravel approach yielded to player control: '+str(approach.get('detail')))
             record['approach']=approach.get('detail');blocked.add(tuple(p));result['blocks'].append(record);continue
         client.checked('select_item',item='minecraft:diamond_shovel')
         before=client.status()
