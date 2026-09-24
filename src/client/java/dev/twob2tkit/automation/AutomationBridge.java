@@ -319,6 +319,14 @@ public final class AutomationBridge {
         if(c.screen!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyAttack.setDown(false);return true;}
         if(op.equals("mine_block")){
             try{guard(c,active);}catch(Exception e){finish(c,"stopped",e.getMessage());return true;}
+            if(active.has("underwater_gravel")&&active.get("underwater_gravel").getAsBoolean()){
+                boolean breathing=c.player.hasEffect(net.minecraft.world.effect.MobEffects.WATER_BREATHING)
+                    ||c.player.hasEffect(net.minecraft.world.effect.MobEffects.CONDUIT_POWER);
+                if(!UnderwaterGravelPolicy.continueMining(c.player.isUnderWater(),c.player.getHealth(),
+                        c.player.getAirSupply(),breathing)){
+                    finish(c,"waiting","Underwater oxygen or health changed; surface before mining more");return true;
+                }
+            }
             JsonArray a=active.getAsJsonArray("pos");BlockPos target=new BlockPos(a.get(0).getAsInt(),a.get(1).getAsInt(),a.get(2).getAsInt());
             if(c.level.isEmptyBlock(target)){finish(c,"done","target removed");return true;}
             if(!state(c,target).equals(str(active,"expected_state"))){finish(c,"error","mining target changed");return true;}
@@ -707,12 +715,29 @@ public final class AutomationBridge {
             JsonArray p=r.getAsJsonArray("pos");checkSiteTarget(r,p);BlockPos pos=new BlockPos(p.get(0).getAsInt(),p.get(1).getAsInt(),p.get(2).getAsInt());
             if(!state(c,pos).equals(str(r,"expected_state")))throw new IllegalStateException("Mining target changed");
             boolean recovery=command.equals("recover_shulker");
+            boolean underwater=r.has("underwater_gravel")&&r.get("underwater_gravel").getAsBoolean();
+            if(underwater){
+                if(supervisionLease==null||!str(supervisionLease,"kind").equals("materials")
+                    ||!str(supervisionLease,"job_session").equals(str(r,"task_session")))
+                    throw new IllegalStateException("Guarded material session required for underwater gravel");
+                boolean lavaNear=false;
+                for(Direction direction:Direction.values())if(c.level.getFluidState(pos.relative(direction)).is(net.minecraft.world.level.material.Fluids.LAVA))lavaNear=true;
+                ItemStack held=c.player.getMainHandItem();
+                boolean breathing=c.player.hasEffect(net.minecraft.world.effect.MobEffects.WATER_BREATHING)
+                    ||c.player.hasEffect(net.minecraft.world.effect.MobEffects.CONDUIT_POWER);
+                String rejection=UnderwaterGravelPolicy.startRejection(
+                    c.level.getBlockState(pos).is(net.minecraft.world.level.block.Blocks.GRAVEL),
+                    c.level.getFluidState(pos.above()).is(net.minecraft.world.level.material.Fluids.WATER),
+                    lavaNear,c.player.isUnderWater(),c.player.getHealth(),c.player.getAirSupply(),breathing,
+                    held.is(net.minecraft.tags.ItemTags.SHOVELS),held.isDamageableItem()?held.getMaxDamage()-held.getDamageValue():0);
+                if(rejection!=null)throw new IllegalStateException(rejection);
+            }
             boolean allowed=ContainerRecoveryPolicy.allowed(BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(pos).getBlock()).toString(),recovery,c.player.getInventory().getFreeSlot()>=0?1:0);
             if(recovery && !allowed)throw new IllegalStateException("Shulker retrieval requires an actual shulker box and a free inventory slot");
             if(c.level.getBlockEntity(pos)!=null && !allowed)throw new IllegalStateException("Block entities and containers are protected");
             if(c.level.getBlockState(pos).getDestroySpeed(c.level,pos)<0 || c.level.isEmptyBlock(pos))throw new IllegalStateException("Target is not mineable");
             if(c.player.onGround() && c.player.blockPosition().below().equals(pos))throw new IllegalStateException("Current footing is protected");
-            for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
+            if(!underwater)for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
             if(c.player.getEyePosition().distanceTo(blockAim(pos,r))>c.player.blockInteractionRange()-.2)throw new IllegalStateException("Mining target out of reach");
             KitClient.stopWork("切换到指定方块修正");active=r.deepCopy();op="mine_block";phase="running";detail="mining the verified target";mineStarted=false;deadline=ticks+20*Math.min(20,r.has("seconds")?r.get("seconds").getAsInt():10);
         }else if(command.equals("use_item")){
