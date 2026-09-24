@@ -893,7 +893,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		}
 		engagement.update(c);
 		var meal = meteorAutomation.meal();
-		if (!rangedCombat.hasCreeperEmergency(c) && (meal.requested() || meal.eating() || c.player.isUsingItem() && c.player.getUseItem().has(DataComponents.FOOD))) {
+		if (!rangedCombat.hasCreeperEmergency(c) && !rangedCombat.hasImmediateHostileThreat(c)
+			&& (meal.requested() || meal.eating() || c.player.isUsingItem() && c.player.getUseItem().has(DataComponents.FOOD))) {
 			if (standaloneGuard) rangedCombat.pauseForEating(c);
 			standaloneGuard = true; pauseGuardMovement(c); return true;
 		}

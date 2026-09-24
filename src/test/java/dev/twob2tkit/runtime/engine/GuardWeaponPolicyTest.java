@@ -17,4 +17,15 @@ class GuardWeaponPolicyTest {
   assertTrue(GuardWeaponPolicy.needsRise(64,64));assertTrue(GuardWeaponPolicy.needsRise(66.9,64));
   assertFalse(GuardWeaponPolicy.needsRise(67,64));assertFalse(GuardWeaponPolicy.needsRise(70,64));
  }
+	@Test void aSkeletonTargetDoesNotSuppressAscentWhenZombieIsAlsoNearby(){
+		var threats = java.util.List.of(new GuardWeaponPolicy.Threat(74, false, 3),
+			new GuardWeaponPolicy.Threat(75, true, 8));
+		assertEquals(7.0, GuardWeaponPolicy.combatRise(74, threats));
+		assertEquals(0.0, GuardWeaponPolicy.combatRise(82, threats));
+	}
+	@Test void distantHostilesDoNotTriggerAnUnnecessaryAscent(){
+		assertEquals(0.0, GuardWeaponPolicy.combatRise(74,
+			java.util.List.of(new GuardWeaponPolicy.Threat(74, false, 10),
+				new GuardWeaponPolicy.Threat(74, true, 13))));
+	}
 }

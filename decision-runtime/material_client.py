@@ -1,9 +1,13 @@
 """Shared native material client. Every action is scoped to a live world, revision and safety lease."""
-import json,time,uuid
+import json,math,time,uuid
 from pathlib import Path
 from build_supervisor import SafetyHeartbeat,stocks
 from run_evidence import observed_delta,write_manifest
 class Handoff(Exception):pass
+def high_park_clearance(rows,target_y):
+  ground=[row['pos'][1]+1 for row in rows if row.get('fluid') or not row.get('passable',True)]
+  if not ground:raise Handoff('High guard park has no verified ground column')
+  return target_y-max(ground)
 class Client:
  def __init__(self,root,out,server,min_health=18):
   self.root=Path(root);self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True);self.server=server
@@ -125,6 +129,11 @@ class MaterialClient(Client):
   super().__init__(root,out,server,min_health=18)
   self.record_experience=record_experience;self.experience_state=experience_state
   s=self.raw()
+  if remote_finish=='guard' and math.hypot(s['pos'][0]-self.park_target[0],s['pos'][2]-self.park_target[2])<=32:
+   px,pz=math.floor(self.park_target[0]),math.floor(self.park_target[2])
+   observed=Client.request(self,'scan',min=[px,-64,pz],max=[px,320,pz],details=True)
+   if 'blocks' not in observed or high_park_clearance(observed['blocks'],self.park_target[1])<20:
+    raise Handoff('High guard park must be at least 20 blocks above verified ground')
   if s.get('material_protocol',0)<2 or not s.get('inventory_isolation',{}).get('supported'):raise Handoff('Restart into Kit with verified inventory isolation before crafting')
   if not allow_empty_inventory and not any(v.get('count',0)>0 for v in s.get('inventory',[])):
    raise Handoff('Inventory is empty or not synchronized; material work cannot start')

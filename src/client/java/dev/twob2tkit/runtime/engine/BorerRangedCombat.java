@@ -112,6 +112,7 @@ final class BorerRangedCombat {
 			engine.fileLog(c, "area-defense-target id=" + next.getId() + " rank=" + rank(next) + " name=" + next.getName().getString()
 				+ " engaged=true recentAttacker=" + engine.engagement.recentAttacker(p, next));
 		}
+		if (engine.standaloneGuard && elevateBeforeCombat(c, threats)) return true;
 		if(engine.standaloneGuard && target instanceof net.minecraft.world.entity.monster.zombie.Zombie && p.distanceTo(target)<9 && hoverZombie(c))return true;
         if (escaping) { releaseEscape(c); engine.status="已拉开距离，建造保持停止"; }
 		if (p.distanceTo(target) < 3 && p.hasLineOfSight(target)) {
@@ -189,12 +190,60 @@ final class BorerRangedCombat {
 		return StandaloneCreeperPolicy.alert(c.player.hasLineOfSight(e),swelling(creeper),creeper.isPowered(),d)
 			|| escaping && e==target && StandaloneCreeperPolicy.evade(swelling(creeper),creeper.isPowered(),d,true);
 	}
+	/** Clear the whole ascent before borrowing Flight; combat only resumes above nearby hostiles. */
+	private boolean elevateBeforeCombat(Minecraft c, java.util.List<LivingEntity> threats) {
+		var p = c.player;
+		double rise = GuardWeaponPolicy.combatRise(p.getY(), threats.stream()
+			.map(e -> new GuardWeaponPolicy.Threat(e.getY(),
+				e.getMainHandItem().is(Items.BOW) || e.getMainHandItem().is(Items.CROSSBOW), p.distanceTo(e)))
+			.toList());
+		if (rise <= .25) return false;
+		cancelDraw(c);rangedMode(false);engine.pauseGuardMovement(c);
+		if (!clearWholeRise(c, rise)) {
+			releaseEscape(c);
+			engine.mobs.raiseShield(c, p);
+			engine.status = "头顶没有安全升空通道，已停止攻击与施工";
+			if (p.getHealth() < 14) engine.host.requestEmergencyExit(c, "遇敌且无法安全升空");
+			return true;
+		}
+		try {
+			escapeFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/guard-hover-flight.bak"));
+			if (escapeFlight.acquire(p) != null) {
+				releaseEscape(c);
+				engine.mobs.raiseShield(c, p);
+				engine.status = "无法启飞，已停止攻击与施工";
+				if (p.getHealth() < 14) engine.host.requestEmergencyExit(c, "遇敌且飞行不可用");
+				return true;
+			}
+			escaping = true;
+			if (!hoverMelee) { engine.host.enablePveMelee(); hoverMelee = true; }
+			escapeFlight.speed(.16);
+			c.options.keyJump.setDown(true);
+			look = RotationAim.lookAt(p, target.getEyePosition());lookTick = p.tickCount;RotationAim.apply(p, look);
+			engine.status = "先升空避敌，再反击 " + target.getName().getString();
+			return true;
+		} catch (IllegalStateException unavailable) {
+			releaseEscape(c);engine.mobs.raiseShield(c, p);
+			engine.status = "升空失败，已停止攻击与施工";
+			if (p.getHealth() < 14) engine.host.requestEmergencyExit(c, "遇敌且升空失败");
+			return true;
+		}
+	}
 	/** Emergency motion must outrank the ordinary food pause, without changing ordinary mob engagement. */
 	boolean hasCreeperEmergency(Minecraft c) {
 		if(c.player==null||c.level==null)return false;
 		for(var e:c.level.getEntitiesOfClass(Creeper.class,c.player.getBoundingBox().inflate(14)))
 			if(e.isAlive() && creeperAlert(c,e) && StandaloneCreeperPolicy.evade(swelling(e),e.isPowered(),c.player.distanceTo(e),escaping&&e==target))return true;
 		return false;
+	}
+	boolean hasImmediateHostileThreat(Minecraft c) {
+		if (c.player == null || c.level == null) return false;
+		var p = c.player;
+		return c.level.getEntities(p, p.getBoundingBox().inflate(12)).stream()
+			.anyMatch(e -> e instanceof Enemy && e instanceof LivingEntity living && living.isAlive()
+				&& p.distanceTo(e) <= (living.getMainHandItem().is(Items.BOW)
+					|| living.getMainHandItem().is(Items.CROSSBOW) ? 12 : 9)
+				&& (p.hasLineOfSight(e) || p.distanceTo(e) < 3));
 	}
 	private boolean evadeCreeper(Minecraft c,Creeper creeper) {
         hoverMelee=false;

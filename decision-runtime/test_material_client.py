@@ -1,8 +1,13 @@
 import unittest
 from unittest.mock import patch
-from material_client import Client,MaterialClient
+from material_client import Client,MaterialClient,high_park_clearance,Handoff
 BUSY='Construction guard is defending or eating; wait before changing items or starting work'
 class Tests(unittest.TestCase):
+ def test_ground_level_park_is_rejected_before_material_control(self):
+  rows=[{'pos':[10,73,20],'passable':False,'fluid':False}]
+  self.assertEqual(1,high_park_clearance(rows,75))
+  self.assertEqual(20,high_park_clearance(rows,94))
+  with self.assertRaises(Handoff):high_park_clearance([],120)
  def test_high_parking_checks_height_and_horizontal_drift_separately(self):
   c=MaterialClient.__new__(MaterialClient);c.park_target=[100.5,95,200.5]
   self.assertTrue(c.park_near({'pos':[107.5,95,200.5]}))
