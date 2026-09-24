@@ -45,6 +45,26 @@ def wait(client,predicate):
 def block(client,pos):
     rows=client.request('scan',min=pos,max=pos)['blocks'];return rows[0]['state'] if rows else None
 
+def player_intersects_pad(player_pos,pad):
+    return (abs(player_pos[0]-(pad[0]+.5))<.81
+            and abs(player_pos[2]-(pad[2]+.5))<.81
+            and player_pos[1]<pad[1]+1
+            and player_pos[1]+1.8>pad[1])
+
+def clear_player_from_pad(client,pad):
+    if not player_intersects_pad(client.status()['pos'],pad):return
+    for dx,dz in ((2,0),(-2,0),(0,2),(0,-2)):
+        x,z=pad[0]+dx,pad[2]+dz
+        rows=client.request('scan',min=[x,pad[1]-1,z],max=[x,pad[1]+2,z],details=True)['blocks']
+        observed={tuple(v['pos']):v for v in rows}
+        floor=observed.get((x,pad[1]-1,z))
+        if (floor is None or not floor.get('solid') or floor.get('fluid')
+                or any((x,y,z) in observed for y in (pad[1],pad[1]+1,pad[1]+2))):
+            continue
+        moved=client.request('navigate',target=[x+.5,pad[1]+.02,z+.5],arrival=1,seconds=20)
+        if moved.get('phase')=='done' and not player_intersects_pad(client.status()['pos'],pad):return
+    raise RuntimeError('No verified player-clear position for temporary shulker placement')
+
 def open_box(client,pos,kind):
     state=block(client,pos)
     allowed='minecraft:ender_chest' in (state or '') if kind=='ChestMenu' else 'shulker_box' in (state or '')
@@ -117,6 +137,7 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
     client.checked('slot_click',menu_id=s['menu']['id'],slot=slot,expected_item=item,expected_count=1,kind='quick_move')
     wait(client,lambda s:any(v.get('count')==1 and v['item']==item and contents(v.get('contains',[]))==initial for v in s['inventory']))
     save('carried');register_cleanup(client,str(journal),lambda:recover_and_return(client,record,ender,journal));client.checked('close_menu');client.checked('select_item',item=item)
+    clear_player_from_pad(client,pad)
     def pad_empty():
         if block(client,pad) is not None or block(client,ground)!=ground_state:raise RuntimeError('Temporary pad changed before box placement')
     use_with_margin(client,ground,ground_state,item,('up',),pad_empty)

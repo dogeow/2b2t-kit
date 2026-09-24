@@ -23,6 +23,7 @@
     "ConcreteBlockUpdatesMixin",
     "PrinterProposalMixin",
     "InventoryProfilesCraftingGuardMixin",
+    "KeyboardHandlerMixin",
     "PrinterCandidateMixin",
     "PrinterToolPreparationMixin"
   ],

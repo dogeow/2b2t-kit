@@ -8,9 +8,11 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.resources.Identifier;
 import org.lwjgl.glfw.GLFW;
+import dev.twob2tkit.automation.ManualInputPolicy;
 
 /** twob2tkit 热键：注册、匹配、物理按下检测与绑定改写。 */
 public final class KitKeys {
+	private static volatile long lastPhysicalInputAt;
 	private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(KitClient.MOD_ID, "controls"));
 
 	public static final KeyMapping OPEN_GUI = new KeyMapping("key.twob2tkit.open_gui", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_U, CATEGORY);
@@ -96,7 +98,20 @@ public final class KitKeys {
 	public static boolean manualMovementDown(Minecraft client) {
 		if(client==null || client.player==null || client.screen!=null || !client.isWindowActive())return false;
 		for(KeyMapping key:movementKeys(client))if(isPhysicallyDown(client,key))return true;
-		return false;
+		long window=client.getWindow().handle();
+		if(GLFW.glfwGetMouseButton(window,GLFW.GLFW_MOUSE_BUTTON_LEFT)==GLFW.GLFW_PRESS
+			||GLFW.glfwGetMouseButton(window,GLFW.GLFW_MOUSE_BUTTON_RIGHT)==GLFW.GLFW_PRESS
+			||GLFW.glfwGetMouseButton(window,GLFW.GLFW_MOUSE_BUTTON_MIDDLE)==GLFW.GLFW_PRESS)return true;
+		return ManualInputPolicy.recent(System.currentTimeMillis(),lastPhysicalInputAt,true,false);
+	}
+	public static void notePhysicalKey(Minecraft client,int key,int action){
+		if(client!=null&&client.player!=null&&client.screen==null&&client.isWindowActive()
+			&&key!=GLFW.GLFW_KEY_UNKNOWN&&(action==GLFW.GLFW_PRESS||action==GLFW.GLFW_REPEAT))
+			lastPhysicalInputAt=System.currentTimeMillis();
+	}
+	public static void notePhysicalMouse(Minecraft client,double dx,double dy){
+		if(client!=null&&client.player!=null&&client.screen==null&&client.isWindowActive()
+			&&ManualInputPolicy.mouseMoved(dx,dy))lastPhysicalInputAt=System.currentTimeMillis();
 	}
 	public static KeyMapping[] movementKeys(Minecraft client){
 		var o=client.options;

@@ -1,6 +1,7 @@
 package dev.twob2tkit.mixin;
 
 import dev.twob2tkit.KitClient;
+import dev.twob2tkit.KitKeys;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.MouseHandler;
 import org.spongepowered.asm.mixin.Final;
@@ -26,12 +27,20 @@ public abstract class MouseHandlerMixin {
 	@Shadow
 	@Final
 	private Minecraft minecraft;
+	@Shadow private double accumulatedDX;
+	@Shadow private double accumulatedDY;
 
 	/** 无界面时把滚轮交给全息预览调距离；成功则取消原版滚动。 */
 	@Inject(method = "onScroll", at = @At("HEAD"), cancellable = true)
 	private void kit$previewDistance(long handle, double xoffset, double yoffset, CallbackInfo info) {
 		if (this.minecraft.screen != null || this.minecraft.player == null) return;
+		KitKeys.notePhysicalMouse(this.minecraft,xoffset,yoffset);
 		if (KitClient.handlePreviewScroll(yoffset)) info.cancel();
+	}
+
+	@Inject(method = "turnPlayer", at = @At("HEAD"))
+	private void kit$notePhysicalMouseLook(double mousea, CallbackInfo info) {
+		KitKeys.notePhysicalMouse(this.minecraft,accumulatedDX,accumulatedDY);
 	}
 
 	/** 玩家用鼠标转视角之后，重新施加巡航/盾构锁定的朝向。 */

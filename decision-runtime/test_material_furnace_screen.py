@@ -15,6 +15,7 @@ class FurnaceScreenTest(unittest.TestCase):
         self.assertEqual(self.client('BlastFurnaceScreen').status()['screen'], 'BlastFurnaceScreen')
         self.assertEqual(self.client('FurnaceScreen').status()['screen'], 'FurnaceScreen')
         self.assertEqual(self.client('AnvilScreen').status()['screen'], 'AnvilScreen')
+        self.assertEqual(self.client('BrewingStandScreen').status()['screen'], 'BrewingStandScreen')
 
     def test_unrelated_ui_still_hands_back_control(self):
         with self.assertRaises(Handoff): self.client('GrindstoneScreen').status()

@@ -1,6 +1,6 @@
 import unittest
 
-from dive_safety import ready_for_gravel_dive, must_surface
+from dive_safety import ready_for_gravel_dive, must_surface, ascent_air_floor
 from material_client import underwater_action_allowed
 
 
@@ -47,6 +47,14 @@ class DiveSafetyTest(unittest.TestCase):
         self.assertTrue(underwater_action_allowed(state, 'navigate', {'target':[10.5,70,20.5]}))
         state['water_breathing_effect'] = True
         self.assertTrue(underwater_action_allowed(state, 'walk', {'target':[11,51,20]}))
+
+    def test_ascent_budget_grows_with_depth_and_keeps_reserve(self):
+        state=self.state();state['pos']=[10.5,52,20.5]
+        self.assertEqual(240,ascent_air_floor(state))
+        state['pos']=[10.5,45,20.5]
+        self.assertEqual(260,ascent_air_floor(state))
+        state['pos']=[10.5,35,20.5]
+        self.assertEqual(340,ascent_air_floor(state))
 
 
 if __name__ == '__main__': unittest.main()

@@ -1,6 +1,17 @@
 """Preflight for bounded shallow-seafloor gravel dives using Kit 1.9.73 state."""
 
+import math
 from dive_gear_plan import enchantments
+
+
+def ascent_air_floor(state, surface_y=65, min_climb_blocks_per_second=2.5,
+                     reserve_seconds=5):
+    """Worst-case air for a vertical Flight return plus a full reserve."""
+    position=state.get('pos')
+    if not position or len(position)!=3:
+        return 280
+    climb=max(0,surface_y-position[1])
+    return max(240,math.ceil(20*(climb/min_climb_blocks_per_second+reserve_seconds)))
 
 
 def ready_for_gravel_dive(state):
@@ -29,13 +40,13 @@ def ready_for_gravel_dive(state):
     if enchantments(shovel).get('fortune', 0):
         return 'Fortune shovel would turn gravel into flint'
     if (not state.get('water_breathing_effect') and not state.get('conduit_power_effect')
-            and state.get('air_supply', 0) < 240):
+            and state.get('air_supply', 0) < max(260,ascent_air_floor(state)+20)):
         return 'Restore air before starting the dive'
     return None
 
 
 def must_surface(state):
     return (not state.get('connected') or state.get('health', 0) < 18
-            or state.get('air_supply', 0) < 240 and not (
+            or state.get('air_supply', 0) < ascent_air_floor(state) and not (
                 state.get('water_breathing_effect') or state.get('conduit_power_effect'))
             or state.get('manual_movement') or state.get('screen'))

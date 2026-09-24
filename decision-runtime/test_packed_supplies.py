@@ -1,6 +1,12 @@
 import unittest
 from packed_supplies import contents,choose_box
 class PackedTest(unittest.TestCase):
+ def test_player_must_step_off_temporary_shulker_pad(self):
+  from packed_supplies import player_intersects_pad
+  pad=[10,64,20]
+  self.assertTrue(player_intersects_pad([10.5,64.87,20.5],pad))
+  self.assertFalse(player_intersects_pad([12.5,65,20.5],pad))
+  self.assertFalse(player_intersects_pad([10.5,65.1,20.5],pad))
  def test_selects_exact_enchanted_book_in_mixed_box(self):
   from packed_supplies import matching_source
   rows=[{'slot':0,'item':'minecraft:enchanted_book','count':1,
