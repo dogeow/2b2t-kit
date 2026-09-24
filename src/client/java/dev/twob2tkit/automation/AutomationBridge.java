@@ -811,6 +811,8 @@ public final class AutomationBridge {
         j.addProperty("game_mode",c.gameMode.getPlayerMode().getName());j.addProperty("world_name",c.getSingleplayerServer()==null?"":c.getSingleplayerServer().getWorldData().getLevelName());
         j.addProperty("server",c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip);j.addProperty("dimension",c.level.dimension().identifier().toString());
         j.add("pos",JSON.toJsonTree(new double[]{c.player.getX(),c.player.getY(),c.player.getZ()}));j.addProperty("yaw",c.player.getYRot());j.addProperty("pitch",c.player.getXRot());j.addProperty("health",c.player.getHealth());j.addProperty("food",c.player.getFoodData().getFoodLevel());
+        j.addProperty("air_supply",c.player.getAirSupply());j.addProperty("max_air_supply",c.player.getMaxAirSupply());j.addProperty("under_water",c.player.isUnderWater());
+        j.addProperty("water_breathing_effect",c.player.hasEffect(net.minecraft.world.effect.MobEffects.WATER_BREATHING));j.addProperty("conduit_power_effect",c.player.hasEffect(net.minecraft.world.effect.MobEffects.CONDUIT_POWER));
         j.addProperty("on_ground",c.player.onGround());j.addProperty("horizontal_collision",c.player.horizontalCollision);j.add("velocity",JSON.toJsonTree(new double[]{c.player.getDeltaMovement().x,c.player.getDeltaMovement().y,c.player.getDeltaMovement().z}));
         j.addProperty("world_generator",c.getSingleplayerServer()==null?"":c.getSingleplayerServer().overworld().getChunkSource().getGenerator().getClass().getSimpleName());j.addProperty("day_time",c.level.getOverworldClockTime());j.addProperty("difficulty",c.level.getDifficulty().getSerializedName());
         if(craftTask!=null)j.add("native_skill",craftTask.progress());
