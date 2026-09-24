@@ -73,8 +73,8 @@ def frontier_tiles(origin, height_band, minimum_radius, maximum_radius, limit, l
 
 def best_surface_layer(dry):
     if not dry:return None
-    base=max((p[1] for p in dry),key=lambda y:sum(y<=p[1]<=y+2 for p in dry))
-    return base,base+2
+    top=max((p[1] for p in dry),key=lambda y:sum(y-2<=p[1]<=y for p in dry))
+    return top-2,top
 
 
 def expedition(client, regions, target, cruise_y, out, search=False, ledger=None, shallow_depth=0):

@@ -22,7 +22,7 @@ class SurfaceGravelExpeditionTest(unittest.TestCase):
         tiles=search_tiles([0,0,31,15],[58,88])
         self.assertEqual(2,len(tiles))
         self.assertEqual(([0,58,0],[15,88,15]),tiles[0])
-        self.assertEqual((62,64),best_surface_layer([[1,62,1],[2,63,2],[3,75,3]]))
+        self.assertEqual((61,63),best_surface_layer([[1,62,1],[2,63,2],[3,75,3]]))
         self.assertEqual(2,len(search_tiles([0,0,31,15],[58,118])))
         with self.assertRaises(ValueError):search_tiles([0,0,999,999],[58,88])
 
