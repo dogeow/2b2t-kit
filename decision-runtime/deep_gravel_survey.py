@@ -14,10 +14,28 @@ NATURAL_COVER = {
 }
 
 
+def observed_gravel_components(rows):
+    """Size of each six-connected gravel patch in the loaded scan, not a yield guarantee."""
+    gravel={tuple(row['pos']) for row in rows if row['state']=='Block{minecraft:gravel}'}
+    sizes={}
+    while gravel:
+        first=gravel.pop()
+        component=[first]
+        for x,y,z in component:
+            for neighbor in ((x+1,y,z),(x-1,y,z),(x,y+1,z),(x,y-1,z),
+                             (x,y,z+1),(x,y,z-1)):
+                if neighbor in gravel:
+                    gravel.remove(neighbor)
+                    component.append(neighbor)
+        for position in component:sizes[position]=len(component)
+    return sizes
+
+
 def deep_candidates(rows, low, high, min_depth=0, max_depth=20):
     if min_depth < 0 or max_depth < min_depth or max_depth > 20:
         raise ValueError('Gravel survey is limited to 0..20 blocks below the surface')
     blocks={tuple(row['pos']):row for row in rows}
+    component_sizes=observed_gravel_components(rows)
     columns=defaultdict(list)
     fluids=[];protected=[]
     for row in rows:
@@ -54,6 +72,7 @@ def deep_candidates(rows, low, high, min_depth=0, max_depth=20):
                        for px,py,pz in protected):
                     continue
                 found.append({'pos':[x,y,z],'surface_y':surface_y,'depth':depth,
+                              'observed_component_size':component_sizes.get((x,y,z),1),
                               'cover':[{'pos':row['pos'],'state':row['state']}
                                        for row in cover]})
                 break

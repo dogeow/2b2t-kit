@@ -1,6 +1,6 @@
 import unittest
 
-from deep_gravel_survey import deep_candidates,terrain_summary
+from deep_gravel_survey import deep_candidates,observed_gravel_components,terrain_summary
 
 
 def row(x,y,z,state,solid=True,fluid=False,block_entity=False):
@@ -49,6 +49,16 @@ class DeepGravelSurveyTest(unittest.TestCase):
               row(11,65,20,'Block{minecraft:grass_block}')]
         self.assertEqual({'land_columns':1,'water_columns':1,'other_columns':0,'unloaded_columns':0},
                          terrain_summary(rows,[10,40,20],[11,100,20]))
+
+    def test_entry_reports_observed_connected_vein_without_claiming_remote_yield(self):
+        rows=self.column()+[row(11,58,20,'Block{minecraft:gravel}'),
+                            row(11,57,20,'Block{minecraft:gravel}'),
+                            row(20,40,30,'Block{minecraft:gravel}')]
+        sizes=observed_gravel_components(rows)
+        self.assertEqual(3,sizes[(10,58,20)])
+        self.assertEqual(1,sizes[(20,40,30)])
+        found=deep_candidates(rows,[10,40,20],[10,90,20])
+        self.assertEqual(3,found[0]['observed_component_size'])
 
 
 if __name__=='__main__':unittest.main()
