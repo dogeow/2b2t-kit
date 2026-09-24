@@ -220,8 +220,29 @@ class MaterialClient(Client):
     s=self.status()
     if s['health']<18 or not s.get('guard_armed'):raise RuntimeError('High parking needs full health and PvE guard')
     if not self.park_near(s):
-     r=self.request('navigate',target=self.park_target,arrival=2,seconds=120)
-     if r.get('phase')!='done':raise RuntimeError('High parking route did not finish: '+str(r.get('detail')))
+     deadline=time.monotonic()+12
+     while True:
+      s=self.status()
+      if s['health']<18:
+       raise RuntimeError('High parking wait lost health clearance')
+      if s.get('under_water') or s['pos'][1]<64:
+       if s.get('guard_busy'):raise RuntimeError('Defense busy before local water exit')
+       up=[s['pos'][0],70,s['pos'][2]]
+       climb=self.request('navigate',target=up,arrival=1,seconds=8)
+       if climb.get('phase')!='done':raise RuntimeError('Local water exit did not finish')
+       continue
+      if s.get('air_supply',0)<280:
+       if time.monotonic()>=deadline:raise RuntimeError('Air did not recover before high parking')
+       time.sleep(.25);continue
+      if s.get('guard_busy'):
+       if time.monotonic()>=deadline:raise RuntimeError('Defense stayed busy before high parking')
+       time.sleep(.25);continue
+      r=self.request('navigate',target=self.park_target,arrival=2,seconds=120)
+      if r.get('phase')=='done':break
+      if (r.get('phase')=='error' and r.get('detail')=='Construction guard is defending or eating; wait before changing items or starting work'
+          and time.monotonic()<deadline):
+       time.sleep(.25);continue
+      raise RuntimeError('High parking route did not finish: '+str(r.get('detail')))
     s=self.status()
     if s['health']<18 or not s.get('guard_armed') or not self.park_near(s):
      raise RuntimeError('High parking position or guard not verified')
