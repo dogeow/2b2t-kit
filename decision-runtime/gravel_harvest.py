@@ -22,6 +22,11 @@ def dry_top_gravel(rows, pos):
     x, y, z = pos
     if block_state(rows, pos) != 'Block{minecraft:gravel}' or block_state(rows, [x, y+1, z]) != 'Block{minecraft:air}':
         return False
+    return water_buffer_clear(rows,pos)
+
+
+def water_buffer_clear(rows, pos):
+    x, y, z = pos
     # Include diagonals and flowing/waterlogged blocks. Mining a shoreline
     # block can release water and wash the next drop away.
     return not any((row.get('fluid',False) or row['state'].startswith('Block{minecraft:water}'))
