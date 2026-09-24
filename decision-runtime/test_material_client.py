@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from material_client import Client,MaterialClient,high_park_clearance,credit_guard_pause,Handoff
+from material_client import Client,MaterialClient,high_park_clearance,credit_guard_pause,vertical_surface_escape,Handoff
 BUSY='Construction guard is defending or eating; wait before changing items or starting work'
 class Tests(unittest.TestCase):
  def test_combat_pause_extends_only_guarded_native_wait_with_a_cap(self):
@@ -8,6 +8,12 @@ class Tests(unittest.TestCase):
   self.assertEqual((135,35),(deadline,paused))
   self.assertEqual((135,35),credit_guard_pause(deadline,paused,20,False))
   self.assertEqual((280,180),credit_guard_pause(deadline,paused,200,True))
+ def test_underwater_guard_wait_allows_only_vertical_surface_escape(self):
+  state={'pos':[10,52,20]}
+  self.assertTrue(vertical_surface_escape(state,'navigate',{'target':[10.5,66,20.5]}))
+  self.assertFalse(vertical_surface_escape(state,'navigate',{'target':[13,66,20]}))
+  self.assertFalse(vertical_surface_escape(state,'navigate',{'target':[10,53,20]}))
+  self.assertFalse(vertical_surface_escape(state,'mine_block',{'target':[10,66,20]}))
  def test_ground_level_park_is_rejected_before_material_control(self):
   rows=[{'pos':[10,73,20],'passable':False,'fluid':False}]
   self.assertEqual(1,high_park_clearance(rows,75))

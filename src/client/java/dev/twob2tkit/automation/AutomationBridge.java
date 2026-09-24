@@ -315,6 +315,18 @@ public final class AutomationBridge {
             }else{c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);}
             return true;
         }
+        if(op.equals("walk")&&active.has("water_descend")&&active.get("water_descend").getAsBoolean()){
+            if(!WaterDescentPolicy.continueDescent(c.player.isUnderWater(),c.player.getHealth(),c.player.getAirSupply())){
+                finish(c,"waiting","water descent stopped for surface air or health");return true;
+            }
+            JsonArray target=active.getAsJsonArray("target");
+            double dx=target.get(0).getAsDouble()-c.player.getX(),dz=target.get(2).getAsDouble()-c.player.getZ();
+            boolean align=WaterDescentPolicy.align(Math.hypot(dx,dz));
+            if(align)RotationAim.apply(c.player,RotationAim.yawToward(dx,dz),10);
+            c.options.keyUp.setDown(align);c.options.keyJump.setDown(false);
+            c.options.keyShift.setDown(!align&&WaterDescentPolicy.sink(c.player.getY(),target.get(1).getAsDouble()));
+            return true;
+        }
         if(op.equals("use_item")){c.options.keyUse.setDown(true);return true;}
         if(c.screen!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyAttack.setDown(false);return true;}
         if(op.equals("mine_block")){
@@ -453,7 +465,8 @@ public final class AutomationBridge {
                 }else if(op.equals("walk") || op.equals("walk_path")){
                     JsonArray p=active.getAsJsonArray("target");double dx=c.player.getX()-p.get(0).getAsDouble(),dz=c.player.getZ()-p.get(2).getAsDouble();
                     double arrival=active.has("arrival")?active.get("arrival").getAsDouble():.65;
-                    boolean vertical=survival(active)?c.player.onGround() && Math.abs(c.player.getY()-p.get(1).getAsDouble())<=.2:Math.abs(c.player.getY()-p.get(1).getAsDouble())<=1.2;
+                    boolean waterDescend=op.equals("walk")&&active.has("water_descend")&&active.get("water_descend").getAsBoolean();
+                    boolean vertical=survival(active)?c.player.onGround() && Math.abs(c.player.getY()-p.get(1).getAsDouble())<=.2:waterDescend?WaterDescentPolicy.atTarget(c.player.getY(),p.get(1).getAsDouble()):Math.abs(c.player.getY()-p.get(1).getAsDouble())<=1.2;
                     if(Math.hypot(dx,dz)<=arrival && vertical){
                         if(op.equals("walk_path") && ++pathIndex<active.getAsJsonArray("path").size())active.add("target",active.getAsJsonArray("path").get(pathIndex).deepCopy());
                         else finish(c,"done","walk target reached");
@@ -632,6 +645,11 @@ public final class AutomationBridge {
             }else if(command.equals("walk")){
                 JsonArray p=r.getAsJsonArray("target");checkSiteTarget(r,p);
                 double d=Math.hypot(p.get(0).getAsDouble()-c.player.getX(),p.get(2).getAsDouble()-c.player.getZ());if(d>32)throw new IllegalArgumentException("Walking waypoint must be within 32 blocks");
+                if(r.has("water_descend")&&r.get("water_descend").getAsBoolean()&&
+                    !WaterDescentPolicy.allowed(r.has("task_session"),guardScope!=null,
+                     c.player.isUnderWater(),c.player.getHealth(),c.player.getAirSupply(),
+                     d,c.player.getY()-p.get(1).getAsDouble()))
+                    throw new IllegalStateException("Guarded water descent needs clear vertical pickup and full reserve");
                 if(r.has("freefall_brake_y")){
                     double brakeY=r.get("freefall_brake_y").getAsDouble();
                     if(!r.has("task_session")||d>.5||!FreefallPolicy.eligible(c.player.getY(),brakeY,c.player.getHealth(),guardScope!=null,MeteorModules.isActive(MeteorModules.FLIGHT))

@@ -19,6 +19,12 @@ def underwater_action_allowed(state,op,params):
   p=state.get('pos') or [0,0,0]
   if target[1]>=p[1]+2 and math.hypot(target[0]-p[0],target[2]-p[2])<=2:return True
  return False
+def vertical_surface_escape(state,op,params):
+ if op!='navigate':return False
+ target=params.get('target')
+ if not isinstance(target,(list,tuple)) or len(target)!=3:return False
+ pos=state.get('pos') or [0,0,0]
+ return target[1]>=pos[1]+2 and math.hypot(target[0]-pos[0],target[2]-pos[2])<=2
 class Client:
  def __init__(self,root,out,server,min_health=18):
   self.root=Path(root);self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True);self.server=server
@@ -43,6 +49,10 @@ class Client:
    s=self.status()
    if op!='safe_logout' and s.get('health',0)<14:raise RuntimeError('Low health')
    if op in ('guard','snapshot','scan','scan_trees','safe_logout','use_item') or not s.get('guard_busy'):break
+   vertical_escape=vertical_surface_escape(s,op,params)
+   if s.get('under_water') and not vertical_escape:
+    raise RuntimeError('Defense is busy underwater; surface before another action')
+   if vertical_escape:break
    if time.monotonic()>until:raise RuntimeError('Defense remains busy')
    time.sleep(.25)
   if op!='safe_logout' and s.get('health',0)<14:raise RuntimeError('Low health')
