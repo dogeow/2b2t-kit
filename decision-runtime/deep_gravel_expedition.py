@@ -12,7 +12,9 @@ from surface_gravel_expedition import frontier_tiles, centre
 from surface_gravel_ledger import SurfaceGravelLedger
 
 ROOT='/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation'
-DEFAULT_LEDGER=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/deep-gravel-visited-0-20.json')
+# The previous ledger's empty tiles were produced by exact-state matching,
+# which missed grass_block[snowy=false]. Keep that history but resurvey it.
+DEFAULT_LEDGER=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/deep-gravel-visited-0-20-v2.json')
 
 
 def survey(client,regions,ledger,out,cruise_y=150,min_vein_blocks=16):
@@ -46,7 +48,8 @@ def survey(client,regions,ledger,out,cruise_y=150,min_vein_blocks=16):
                'examples':ranked[:3]}
         report['regions'].append(entry)
         ledger.record(actual_low,actual_high,WATER_BUFFER,'partial' if found else 'empty',
-                      deep_candidates=len(found),survey_depth=[0,20],terrain=entry['terrain'],
+                      deep_candidates=len(found),survey_depth=[0,20],survey_policy_version=2,
+                      terrain=entry['terrain'],
                       high_arrival=entry['high_arrival'])
         Path(out).mkdir(parents=True,exist_ok=True)
         (Path(out)/'progress.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))

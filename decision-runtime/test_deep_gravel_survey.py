@@ -50,6 +50,17 @@ class DeepGravelSurveyTest(unittest.TestCase):
         self.assertEqual({'land_columns':1,'water_columns':1,'other_columns':0,'unloaded_columns':0},
                          terrain_summary(rows,[10,40,20],[11,100,20]))
 
+    def test_stateful_grass_and_passable_vegetation_do_not_hide_safe_gravel(self):
+        rows=self.column()
+        rows[0]['state']='Block{minecraft:grass_block}[snowy=false]'
+        rows.append(row(10,71,20,'Block{minecraft:short_grass}',solid=False))
+        found=deep_candidates(rows,[10,40,20],[10,90,20])
+        self.assertEqual(1,len(found))
+        self.assertEqual(12,found[0]['depth'])
+        self.assertEqual(1,terrain_summary(rows,[10,40,20],[10,90,20])['land_columns'])
+        rows.append(row(10,72,20,'Block{minecraft:water}[level=0]',solid=False,fluid=True))
+        self.assertEqual([],deep_candidates(rows,[10,40,20],[10,90,20]))
+
     def test_entry_reports_observed_connected_vein_without_claiming_remote_yield(self):
         rows=self.column()+[row(11,58,20,'Block{minecraft:gravel}'),
                             row(11,57,20,'Block{minecraft:gravel}'),

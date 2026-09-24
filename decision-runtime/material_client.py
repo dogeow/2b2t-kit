@@ -4,6 +4,9 @@ from pathlib import Path
 from build_supervisor import SafetyHeartbeat,stocks
 from run_evidence import observed_delta,write_manifest
 class Handoff(Exception):pass
+def credit_guard_pause(deadline,paused,elapsed,busy,max_pause=180):
+  credit=min(max(0,elapsed),max(0,max_pause-paused)) if busy else 0
+  return deadline+credit,paused+credit
 def high_park_clearance(rows,target_y):
   ground=[row['pos'][1]+1 for row in rows if row.get('fluid') or not row.get('passable',True)]
   if not ground:raise Handoff('High guard park has no verified ground column')
@@ -42,10 +45,14 @@ class Client:
        'world_session':self.world,'expected_revision':self.rev,'expires_at':int(time.time()*1000)+5000,**params}
   evidence_before=s;request_started=time.monotonic()
   tmp=path.with_suffix('.materials.tmp');tmp.write_text(json.dumps(req));tmp.replace(path);self.last=rid
-  expected=self.rev+(2 if op in ('stop','safe_logout') else 1 if op in ('navigate','chop','walk','walk_path','print','mine_block','recover_shulker','professional_print','projection_start') else 0)
+  expected=self.rev+(2 if op in ('stop','safe_logout') else 1 if op in ('navigate','chop','walk','walk_path','print','mine_block','recover_shulker','professional_print','projection_start','borer_start') else 0)
   end=time.monotonic()+params.get('seconds',20)+15
+  last_poll=time.monotonic();guard_pause=0
   while time.monotonic()<end:
    current=self.raw()
+   now=time.monotonic()
+   end,guard_pause=credit_guard_pause(end,guard_pause,now-last_poll,current.get('guard_busy',False))
+   last_poll=now
    if current.get('world_session')!=self.world or not current.get('connected'):
     if op=='safe_logout':return current
     raise Handoff('World disconnected')
@@ -60,7 +67,7 @@ class Client:
    if current.get('manual_movement') or current['control_revision'] not in (self.rev,expected) and not native_stop and not owned_logout:raise Handoff('Control revision changed outside the owned request')
    if reply.exists() or current.get('last_request')==rid and current.get('id')==rid and current.get('phase') in ('done','stopped','error','waiting'):
     self.rev=current['control_revision']
-    with (self.out/'events.jsonl').open('a') as f:f.write(json.dumps({'time':time.time(),'request_id':rid,'world_session':self.world,'op':op,'params':params,'phase':result.get('phase'),'detail':result.get('detail'),'pos':current.get('pos'),'health':current.get('health'),'duration_ms':round((time.monotonic()-request_started)*1000),'evidence_scope':'native_operation_reply_not_goal_completion',**observed_delta(evidence_before,current)},ensure_ascii=False)+'\n')
+    with (self.out/'events.jsonl').open('a') as f:f.write(json.dumps({'time':time.time(),'request_id':rid,'world_session':self.world,'op':op,'params':params,'phase':result.get('phase'),'detail':result.get('detail'),'pos':current.get('pos'),'health':current.get('health'),'duration_ms':round((time.monotonic()-request_started)*1000),'guard_pause_ms':round(guard_pause*1000),'evidence_scope':'native_operation_reply_not_goal_completion',**observed_delta(evidence_before,current)},ensure_ascii=False)+'\n')
     try:
      from experience_recording import record_native_transaction
      if getattr(self,'record_experience',False):record_native_transaction(req,evidence_before,result,getattr(self,'experience_state',None))

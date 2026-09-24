@@ -104,6 +104,7 @@ public final class KitClient implements ClientModInitializer {
 		net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			dev.twob2tkit.automation.AutomationBridge.disconnected(client);
 			emergencyStop("离开世界");
+			dev.twob2tkit.automation.AutomationBridge.afterDisconnectCleanup();
 		});
 		net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
 			emergencyStop("退出游戏");

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from gravel_harvest import WATER_BUFFER
+from gravel_harvest import WATER_BUFFER,block_kind
 
 NATURAL_COVER = {
     'Block{minecraft:grass_block}', 'Block{minecraft:dirt}',
@@ -49,9 +49,12 @@ def deep_candidates(rows, low, high, min_depth=0, max_depth=20):
         for z in range(low[2],high[2]+1):
             column=columns.get((x,z),[])
             if not column:continue
-            surface=max(column,key=lambda row:row['pos'][1])
+            solid=[row for row in column if row.get('solid') and not row.get('fluid')]
+            if not solid:continue
+            surface=max(solid,key=lambda row:row['pos'][1])
             surface_y=surface['pos'][1]
-            if surface['state'] not in NATURAL_COVER or not surface.get('solid'):
+            if block_kind(surface['state']) not in NATURAL_COVER or any(
+                    row.get('fluid') and row['pos'][1]>=surface_y for row in column):
                 continue
             for depth in range(min_depth,max_depth+1):
                 y=surface_y-depth
@@ -62,7 +65,7 @@ def deep_candidates(rows, low, high, min_depth=0, max_depth=20):
                         or support is None or not support.get('solid') or support.get('fluid')):
                     continue
                 cover=[blocks.get((x,h,z)) for h in range(surface_y,y,-1)]
-                if any(row is None or row['state'] not in NATURAL_COVER
+                if any(row is None or block_kind(row['state']) not in NATURAL_COVER
                        or not row.get('solid') or row.get('fluid') for row in cover):
                     continue
                 if any(max(abs(px-x),abs(pz-z))<=WATER_BUFFER and y-2<=py<=surface_y+2
@@ -81,19 +84,22 @@ def deep_candidates(rows, low, high, min_depth=0, max_depth=20):
 
 def terrain_summary(rows, low, high):
     """Classify observed surface columns so scouting can prefer land to ocean."""
-    top={}
+    top={};solid={}
     for row in rows:
         x,y,z=row['pos']
         if not (low[0]<=x<=high[0] and low[2]<=z<=high[2]):continue
         key=(x,z)
         if key not in top or y>top[key]['pos'][1]:top[key]=row
+        if row.get('solid') and (key not in solid or y>solid[key]['pos'][1]):solid[key]=row
     result={'land_columns':0,'water_columns':0,'other_columns':0,'unloaded_columns':0}
     for x in range(low[0],high[0]+1):
         for z in range(low[2],high[2]+1):
             surface=top.get((x,z))
+            ground=solid.get((x,z))
             if surface is None:result['unloaded_columns']+=1
-            elif surface.get('fluid') or surface['state'].startswith('Block{minecraft:water}'):
+            elif (surface.get('fluid') or surface['state'].startswith('Block{minecraft:water}')) \
+                    and (ground is None or surface['pos'][1]>=ground['pos'][1]):
                 result['water_columns']+=1
-            elif surface.get('solid'):result['land_columns']+=1
+            elif ground is not None:result['land_columns']+=1
             else:result['other_columns']+=1
     return result

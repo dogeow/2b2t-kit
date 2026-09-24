@@ -18,6 +18,11 @@ FLINT = 'minecraft:flint'
 WATER_BUFFER = 3
 
 
+def block_kind(state):
+    """Compare a block's ID while retaining its full state for native actions."""
+    return state.split('}', 1)[0] + '}' if state.startswith('Block{') and '}' in state else state
+
+
 def dry_top_gravel(rows, pos):
     x, y, z = pos
     if block_state(rows, pos) != 'Block{minecraft:gravel}' or block_state(rows, [x, y+1, z]) != 'Block{minecraft:air}':

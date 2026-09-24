@@ -1,8 +1,13 @@
 import unittest
 from unittest.mock import patch
-from material_client import Client,MaterialClient,high_park_clearance,Handoff
+from material_client import Client,MaterialClient,high_park_clearance,credit_guard_pause,Handoff
 BUSY='Construction guard is defending or eating; wait before changing items or starting work'
 class Tests(unittest.TestCase):
+ def test_combat_pause_extends_only_guarded_native_wait_with_a_cap(self):
+  deadline,paused=credit_guard_pause(100,0,35,True)
+  self.assertEqual((135,35),(deadline,paused))
+  self.assertEqual((135,35),credit_guard_pause(deadline,paused,20,False))
+  self.assertEqual((280,180),credit_guard_pause(deadline,paused,200,True))
  def test_ground_level_park_is_rejected_before_material_control(self):
   rows=[{'pos':[10,73,20],'passable':False,'fluid':False}]
   self.assertEqual(1,high_park_clearance(rows,75))

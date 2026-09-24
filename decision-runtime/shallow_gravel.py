@@ -6,7 +6,7 @@ from pathlib import Path
 
 from build_supervisor import room_for, stocks
 from drop_collection import collect_drop
-from gravel_harvest import WATER_BUFFER, dry_top_gravel, harvest, water_buffer_clear
+from gravel_harvest import WATER_BUFFER, block_kind, dry_top_gravel, harvest, water_buffer_clear
 from shore_concrete import block_state
 
 COVER_DROPS = {
@@ -50,9 +50,10 @@ def shallow_candidates(rows, low, high, max_cover, scan_ceiling):
                 continue
             cover = [{'pos':[x,h,z], 'state':block_state(rows,[x,h,z])}
                      for h in range(surface_y,y,-1)]
-            if any(layer['state'] not in COVER_DROPS for layer in cover):
+            if any(block_kind(layer['state']) not in COVER_DROPS for layer in cover):
                 continue
-            if any(block_state(rows,[x,h,z])!='Block{minecraft:air}'
+            if any((above:=observed.get((x,h,z))) is not None
+                   and (not above.get('passable',False) or above.get('fluid'))
                    for h in range(surface_y+1,scan_ceiling+1)):
                 continue
             if not water_buffer_clear(rows,p) or not water_buffer_clear(rows,[x,surface_y,z]):
@@ -82,12 +83,12 @@ def open_and_harvest(client, candidate, out):
     if not 1<=len(candidate['cover'])<=20:
         raise ValueError('Vertical gravel shaft depth must be 1..20')
     tools={row['item']:row for row in client.status().get('inventory',[]) if row.get('count',0)}
-    for tool,needed in (('minecraft:diamond_pickaxe',sum(layer['state'] in PICKAXE_BLOCKS for layer in candidate['cover'])),
-                        ('minecraft:diamond_shovel',sum(layer['state'] not in PICKAXE_BLOCKS for layer in candidate['cover'])+1)):
+    for tool,needed in (('minecraft:diamond_pickaxe',sum(block_kind(layer['state']) in PICKAXE_BLOCKS for layer in candidate['cover'])),
+                        ('minecraft:diamond_shovel',sum(block_kind(layer['state']) not in PICKAXE_BLOCKS for layer in candidate['cover'])+1)):
         if needed and tools.get(tool,{}).get('durability',0)<needed+50:
             raise RuntimeError('Tool durability is too low for a guarded vertical shaft')
     for layer in candidate['cover']:
-        p=layer['pos'];expected=layer['state'];allowed=COVER_DROPS[expected]
+        p=layer['pos'];expected=layer['state'];kind=block_kind(expected);allowed=COVER_DROPS[kind]
         rows=client.request('scan',min=[p[0]-WATER_BUFFER,position[1]-2,p[2]-WATER_BUFFER],
                             max=[p[0]+WATER_BUFFER,p[1]+2,p[2]+WATER_BUFFER],details=True)['blocks']
         if (block_state(rows,p)!=expected or not water_buffer_clear(rows,position)
@@ -101,7 +102,7 @@ def open_and_harvest(client, candidate, out):
         if approached.get('phase')!='done':
             result['stopped']='Natural cover cannot be reached from above'
             return result
-        client.checked('select_item',item='minecraft:diamond_pickaxe' if expected in PICKAXE_BLOCKS
+        client.checked('select_item',item='minecraft:diamond_pickaxe' if kind in PICKAXE_BLOCKS
                        else 'minecraft:diamond_shovel')
         before=client.status()
         mined=client.request('mine_block',pos=p,face='up',expected_state=expected,seconds=20)

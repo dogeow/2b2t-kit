@@ -11,16 +11,21 @@ class GuardFoodLeaseTest {
   private final Setting thresholdMode=new Setting(Mode.Both),healthThreshold=new Setting(10.0),hungerThreshold=new Setting(16),searchInventory=new Setting(false);
  }
  @AfterEach void release(){GuardFoodLease.release();}
- @Test void ownedWorkEatsEarlyAndRestoresManualSettings(){
+ @Test void ownedWorkLetsMeteorKeepTheUsersFoodSettings(){
   var m=new Module();var p=dir.resolve("lease.json");GuardFoodLease.acquire(m,p);
-  assertEquals(Mode.Any,m.thresholdMode.get());assertEquals(19.0,m.healthThreshold.get());assertEquals(19,m.hungerThreshold.get());assertEquals(true,m.searchInventory.get());
+  assertEquals(Mode.Both,m.thresholdMode.get());assertEquals(10.0,m.healthThreshold.get());assertEquals(16,m.hungerThreshold.get());assertEquals(false,m.searchInventory.get());
+  assertFalse(Files.exists(p));
   GuardFoodLease.release();assertEquals(Mode.Both,m.thresholdMode.get());assertEquals(10.0,m.healthThreshold.get());assertEquals(16,m.hungerThreshold.get());assertEquals(false,m.searchInventory.get());
  }
  @Test void laterUserEditsAreNotOverwritten(){
   var m=new Module();GuardFoodLease.acquire(m,dir.resolve("lease.json"));m.healthThreshold.set(17.0);GuardFoodLease.release();assertEquals(17.0,m.healthThreshold.get());
  }
- @Test void receiptRecoversTemporaryValuesSavedBeforeRelease(){
-  var m=new Module();var p=dir.resolve("lease.json");GuardFoodLease.acquire(m,p);GuardFoodLease.release();
+ @Test void oldReceiptStillRecoversTemporaryValuesSavedBeforeThisVersion()throws Exception{
+  var p=dir.resolve("lease.json");
+  Files.writeString(p,"{\"thresholdMode\":{\"original\":\"Both\",\"written\":\"Any\"},"
+   +"\"healthThreshold\":{\"original\":10.0,\"written\":19.0},"
+   +"\"hungerThreshold\":{\"original\":16,\"written\":19},"
+   +"\"searchInventory\":{\"original\":false,\"written\":true}}");
   var loaded=new Module();loaded.thresholdMode.set(Mode.Any);loaded.healthThreshold.set(19.0);loaded.hungerThreshold.set(19);loaded.searchInventory.set(true);
   GuardFoodLease.recover(loaded,p);assertEquals(10.0,loaded.healthThreshold.get());assertEquals(Mode.Both,loaded.thresholdMode.get());assertFalse(Files.exists(p));
  }

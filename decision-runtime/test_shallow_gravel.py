@@ -17,8 +17,10 @@ class ShallowGravelTest(unittest.TestCase):
         dirt=row([10,63,20],'Block{minecraft:dirt}')
         found=shallow_candidates([support,gravel,dirt],[10,62,20],[10,62,20],2,70)
         self.assertEqual(1,len(found));self.assertEqual([dirt['pos']], [x['pos'] for x in found[0]['cover']])
-        grass=row([10,64,20],'Block{minecraft:grass_block}')
-        found=shallow_candidates([support,gravel,dirt,grass],[10,62,20],[10,62,20],2,70)
+        grass=row([10,64,20],'Block{minecraft:grass_block}[snowy=false]')
+        plant=row([10,65,20],'Block{minecraft:short_grass}',solid=False)
+        plant['passable']=True
+        found=shallow_candidates([support,gravel,dirt,grass,plant],[10,62,20],[10,62,20],2,70)
         self.assertEqual([grass['pos'],dirt['pos']],[x['pos'] for x in found[0]['cover']])
 
     def test_water_covered_cave_or_player_block_is_not_shallow_surface(self):
