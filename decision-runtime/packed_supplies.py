@@ -19,10 +19,12 @@ def contents(rows):
     for row in rows:
         if row.get('count') and row['item']!='minecraft:air':result[row['item']]+=row['count']
     return dict(result)
-def matching_source(rows,material,required_stored_enchantments=None):
+def matching_source(rows,material,required_stored_enchantments=None,minimum_durability=None):
     required=(required_stored_enchantments or {}).get(material,{})
+    minimum=(minimum_durability or {}).get(material,0)
     for row in rows:
         if row['item']!=material or not row['count']:continue
+        if row.get('durability',0)<minimum:continue
         actual={v['id']:v['level'] for v in row.get('stored_enchantments',[])}
         if all(actual.get(name,0)>=level for name,level in required.items()):return row
     return None
@@ -95,7 +97,7 @@ def recover_and_return(client,record,ender,journal):
     with (client.out/'packed-transfers.jsonl').open('a') as stream:stream.write(json.dumps(record,ensure_ascii=False)+'\n')
     print('PACKED_RETURNED',slot,record.get('taken',{}),flush=True)
 
-def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None):
+def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,minimum_durability=None):
     journal=client.out/'packed-transfer-active.json'
     if journal.exists() and json.loads(journal.read_text()).get('stage')!='returned':
         raise RuntimeError('An earlier portable box needs inspected recovery before another withdrawal')
@@ -128,11 +130,12 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None):
             live=client.status();need=target-inventory_counts(live)[material]
             if need<=0:break
             src=matching_source(live['menu']['slots'][:27],material,
-                                required_stored_enchantments)
+                                required_stored_enchantments,minimum_durability)
             if src is None:break
             free=sum(v['slot']<36 and not v['count'] for v in live['inventory'])
             if free<=1:record.setdefault('deferred',{})[material]='Reserve a free slot for the intact box';break
-            if material in VALUABLE or (required_stored_enchantments or {}).get(material):
+            if (material in VALUABLE or (required_stored_enchantments or {}).get(material)
+                    or (minimum_durability or {}).get(material)):
                 if src.get('max_stack',64)==1 and src['count']==1 and need==1:
                     # A uniquely identified unstackable item is already an
                     # exact one-item transfer; inventory_exact intentionally
@@ -145,6 +148,11 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None):
                                                 for k,n in selected.items())
                                             for v in client.status()['inventory']):
                         raise RuntimeError('Selected unstackable enchantment was not confirmed in inventory')
+                    minimum=(minimum_durability or {}).get(material,0)
+                    if minimum and not any(v['item']==material and v['count']==1 and
+                                           v.get('durability',0)>=minimum
+                                           for v in client.status()['inventory']):
+                        raise RuntimeError('Selected durable unstackable item was not confirmed in inventory')
                 else:
                     take_exact(client,src['slot'],min(need,src['count'],16),reserve_empty=1)
             else:client.transfer(material,target)

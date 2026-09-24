@@ -28,12 +28,32 @@ class FastDescentTest(unittest.TestCase):
                 return {'pos':[10.5,100,20.5],'velocity':[0,0,0],
                         'health':20,'guard_armed':True,'freefall_protocol':1}
             def request(self,op,**params):
+                if op=='snapshot':return self.status()
                 self.scan_min=params['min']
                 return {'blocks':[{'state':'Block{minecraft:stone}'}]}
         client=Client()
         result=descend_if_clear(client,65,0)
         self.assertFalse(result['used'])
         self.assertEqual([9,63,19],client.scan_min)
+
+    def test_uses_fresh_position_after_flight_momentum_settles(self):
+        class Client:
+            index=0
+            scan_min=None
+            def status(self):
+                return {'pos':[10.5,100,20.5],'velocity':[0,0,0],
+                        'health':20,'guard_armed':True,'freefall_protocol':1}
+            def request(self,op,**params):
+                if op=='snapshot':
+                    positions=[10.5,10.8,11.2,11.2,11.2,11.2]
+                    x=positions[min(self.index,len(positions)-1)];self.index+=1
+                    return {**self.status(),'pos':[x,100,20.5]}
+                self.scan_min=params['min']
+                return {'blocks':[{'state':'Block{minecraft:stone}'}]}
+        client=Client()
+        result=descend_if_clear(client,65,0)
+        self.assertFalse(result['used'])
+        self.assertEqual([10,63,19],client.scan_min)
 
 
 if __name__=='__main__':unittest.main()

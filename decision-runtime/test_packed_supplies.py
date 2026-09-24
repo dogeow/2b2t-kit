@@ -11,6 +11,12 @@ class PackedTest(unittest.TestCase):
   self.assertEqual(matching_source(rows,'minecraft:enchanted_book',required)['slot'],1)
   self.assertIsNone(matching_source(rows,'minecraft:enchanted_book',
                     {'minecraft:enchanted_book':{'minecraft:respiration':3}}))
+ def test_skips_nearly_broken_fishing_rods(self):
+  from packed_supplies import matching_source
+  rows=[{'slot':0,'item':'minecraft:fishing_rod','count':1,'durability':6},
+        {'slot':1,'item':'minecraft:fishing_rod','count':1,'durability':47}]
+  self.assertEqual(matching_source(rows,'minecraft:fishing_rod',
+                    minimum_durability={'minecraft:fishing_rod':24})['slot'],1)
  def test_duplicate_stacks_are_summed_not_overwritten(self):
   self.assertEqual(contents([{'item':'minecraft:paper','count':64},{'item':'minecraft:paper','count':16}]),{'minecraft:paper':80})
  def test_only_observed_useful_box_is_selected_and_existing_stock_is_subtracted(self):
