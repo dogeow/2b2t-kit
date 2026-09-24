@@ -24,9 +24,12 @@ def score(row, kind):
                + (2 if row['item'] in ('minecraft:turtle_helmet', 'minecraft:turtle_shell') else 0) \
                + (1 if durable else -10)
     if kind == 'boots':
-        return 5*ench.get('depth_strider', 0) + (1 if durable else -10)
+        return 5*ench.get('depth_strider', 0) \
+               + (2 if row['item'] == 'minecraft:netherite_boots' else 0) \
+               + (1 if durable else -10)
     if kind == 'shovel':
-        return 3*ench.get('efficiency', 0) + (7 if ench.get('silk_touch') else 0) \
+        return 3*ench.get('efficiency', 0) + (30 if ench.get('silk_touch') else 0) \
+               - (100 if ench.get('fortune') else 0) \
                + (1 if durable else -10)
     raise ValueError('Unknown underwater gear type')
 
@@ -41,6 +44,8 @@ def candidates(ender_slots, inventory=(), equipment=None):
         if row.get('count', 0) and row.get('slot', 100) < 36:
             found.append({'source': 'inventory', 'slot': row['slot'], 'item': row})
     for outer in ender_slots:
+        if outer.get('count', 0) and not outer.get('item', '').endswith('shulker_box'):
+            found.append({'source': 'ender_chest', 'ender_slot': outer['slot'], 'item': outer})
         if outer.get('count') != 1 or not outer.get('item', '').endswith('shulker_box'):
             continue
         for index, item in enumerate(outer.get('contains', [])):

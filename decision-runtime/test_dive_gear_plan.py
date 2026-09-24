@@ -33,5 +33,18 @@ class DiveGearPlanTest(unittest.TestCase):
         self.assertEqual(3, result['turtle_scutes_observed'])
         self.assertEqual({}, result['books'])
 
+    def test_direct_netherite_gear_wins_and_fortune_shovel_is_rejected_for_gravel(self):
+        ender = [{'slot': 8, **item('minecraft:netherite_boots', [('depth_strider', 3)])},
+                 {'slot': 9, **item('minecraft:netherite_helmet',
+                                  [('respiration', 3), ('aqua_affinity', 1)])},
+                 {'slot': 24, 'item': 'minecraft:shulker_box', 'count': 1,
+                  'contains': [item('minecraft:diamond_shovel', [('efficiency', 5), ('fortune', 3)]),
+                               item('minecraft:diamond_shovel')]}]
+        result = plan(ender)
+        self.assertEqual('ender_chest', result['best']['helmet']['source'])
+        self.assertEqual(9, result['best']['helmet']['ender_slot'])
+        self.assertEqual('minecraft:netherite_boots', result['best']['boots']['item']['item'])
+        self.assertEqual([], result['best']['shovel']['item']['enchantments'])
+
 
 if __name__ == '__main__': unittest.main()
