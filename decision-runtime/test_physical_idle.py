@@ -23,6 +23,18 @@ class Tests(unittest.TestCase):
         self.assertFalse(resume_ready({**state, 'safety_hold': {'active': True}},
                                       'same', 5.1, 5.2, bounds))
 
+    def test_background_game_can_resume_while_user_uses_another_app(self):
+        state = {'connected': True, 'world_session': 'same',
+                 'pos': [100.5, 85, 200.5], 'health': 20,
+                 'air_supply': 300, 'under_water': False,
+                 'screen': '', 'manual_movement': False,
+                 'window_active': False, 'safety_hold': {'active': False}}
+        bounds = [[90, 110], [190, 210]]
+        self.assertTrue(resume_ready(state, 'same', .1, 5.2, bounds))
+        self.assertFalse(resume_ready(state, 'same', .1, 4.9, bounds))
+        self.assertFalse(resume_ready({**state, 'manual_movement': True},
+                                      'same', .1, 5.2, bounds))
+
 
 if __name__ == '__main__':
     unittest.main()

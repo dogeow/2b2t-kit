@@ -31,7 +31,8 @@ def resume_ready(state, expected_world, idle_seconds, stable_seconds, bounds):
                 and not state.get('screen')
                 and not state.get('manual_movement')
                 and not state.get('safety_hold', {}).get('active')
-                and idle_seconds is not None and idle_seconds >= 5
+                and (state.get('window_active') is False
+                     or idle_seconds is not None and idle_seconds >= 5)
                 and stable_seconds >= 5)
 
 
