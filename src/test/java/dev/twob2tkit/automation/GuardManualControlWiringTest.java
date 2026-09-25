@@ -41,6 +41,18 @@ class GuardManualControlWiringTest {
         assertTrue(c.containsAll(List.of("isWindowActive","isPhysicallyDown")));
         assertFalse(c.contains("isDown"),"Synthesized navigation keys must not trigger manual takeover");
     }
+    @Test void appSwitchAndMouseDoNotTakeOverDirectionOnlyMaterialWork()throws Exception{
+        var fields=new HashSet<String>();
+        for(var n:method("KitKeys","takeoverKeys").instructions)if(n instanceof FieldInsnNode f)fields.add(f.name);
+        assertTrue(fields.containsAll(Set.of("keyUp","keyDown","keyLeft","keyRight")));
+        assertFalse(fields.contains("keyJump")||fields.contains("keyShift")||fields.contains("keySprint"));
+        var manual=calls(method("KitKeys","manualMovementDown"));
+        assertTrue(manual.contains("takeoverKeys"));
+        assertFalse(manual.contains("glfwGetMouseButton"));
+        assertTrue(calls(method("KitKeys","notePhysicalKey")).contains("takeoverKeys"));
+        assertTrue(clazz("mixin/MouseHandlerMixin").methods.stream()
+            .noneMatch(m->calls(m).contains("notePhysicalMouse")));
+    }
     @Test void heldSpaceIsRestoredAfterAllTaskStopMethodsReleaseTheirInputs()throws Exception{
         assertEquals(List.of("stopAll"),calls(method("KitClient","emergencyStop")));
         var c=calls(method("KitClient","stopAll"));

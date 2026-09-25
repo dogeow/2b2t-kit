@@ -94,24 +94,27 @@ public final class KitKeys {
 		return InputConstants.isKeyDown(client.getWindow(), bound.getValue());
 	}
 
-	/** Physical movement takes precedence over a guard-owned key state. Never treat synthesized input as user input. */
+	/** Only physical directional movement takes over a guarded task. App switching and camera input do not. */
 	public static boolean manualMovementDown(Minecraft client) {
 		if(client==null || client.player==null || client.screen!=null || !client.isWindowActive())return false;
-		for(KeyMapping key:movementKeys(client))if(isPhysicallyDown(client,key))return true;
-		long window=client.getWindow().handle();
-		if(GLFW.glfwGetMouseButton(window,GLFW.GLFW_MOUSE_BUTTON_LEFT)==GLFW.GLFW_PRESS
-			||GLFW.glfwGetMouseButton(window,GLFW.GLFW_MOUSE_BUTTON_RIGHT)==GLFW.GLFW_PRESS
-			||GLFW.glfwGetMouseButton(window,GLFW.GLFW_MOUSE_BUTTON_MIDDLE)==GLFW.GLFW_PRESS)return true;
+		for(KeyMapping key:takeoverKeys(client))if(isPhysicallyDown(client,key))return true;
 		return ManualInputPolicy.recent(System.currentTimeMillis(),lastPhysicalInputAt,true,false);
 	}
 	public static void notePhysicalKey(Minecraft client,int key,int action){
 		if(client!=null&&client.player!=null&&client.screen==null&&client.isWindowActive()
-			&&key!=GLFW.GLFW_KEY_UNKNOWN&&(action==GLFW.GLFW_PRESS||action==GLFW.GLFW_REPEAT))
-			lastPhysicalInputAt=System.currentTimeMillis();
+			&&key!=GLFW.GLFW_KEY_UNKNOWN&&(action==GLFW.GLFW_PRESS||action==GLFW.GLFW_REPEAT)){
+			for(KeyMapping movement:takeoverKeys(client)){
+				InputConstants.Key bound=KeyMappingHelper.getBoundKeyOf(movement);
+				if(bound.getType()==InputConstants.Type.KEYSYM&&bound.getValue()==key){
+					lastPhysicalInputAt=System.currentTimeMillis();return;
+				}
+			}
+		}
 	}
-	public static void notePhysicalMouse(Minecraft client,double dx,double dy){
-		if(client!=null&&client.player!=null&&client.screen==null&&client.isWindowActive()
-			&&ManualInputPolicy.mouseMoved(dx,dy))lastPhysicalInputAt=System.currentTimeMillis();
+	/** Movement takeover follows the four player direction bindings (normally WASD). */
+	public static KeyMapping[] takeoverKeys(Minecraft client){
+		var o=client.options;
+		return new KeyMapping[]{o.keyUp,o.keyDown,o.keyLeft,o.keyRight};
 	}
 	public static KeyMapping[] movementKeys(Minecraft client){
 		var o=client.options;
