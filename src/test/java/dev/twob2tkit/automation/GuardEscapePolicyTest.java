@@ -24,8 +24,8 @@ class GuardEscapePolicyTest {
     @Test void underwaterAirReturnPreemptsCombatOnlyInAProvenColumn() {
         assertTrue(GuardEscapePolicy.underwaterAirReturn(
             true,true,true,true,10.5,52,20.5,10.5,65,20.5,63));
-        assertTrue(GuardEscapePolicy.underwaterAirReturn(
-            true,true,true,true,10.5,65,20.5,10.5,85,20.5,63));
+        assertFalse(GuardEscapePolicy.underwaterAirReturn(
+            true,true,false,true,10.5,65,20.5,10.5,85,20.5,63));
         assertFalse(GuardEscapePolicy.underwaterAirReturn(
             true,true,true,false,10.5,52,20.5,10.5,65,20.5,63));
         assertFalse(GuardEscapePolicy.underwaterAirReturn(

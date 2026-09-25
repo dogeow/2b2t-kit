@@ -26,11 +26,11 @@ final class GuardEscapePolicy {
     }
 
     static boolean underwaterAirReturn(boolean materialLease, boolean guardArmed,
-                                       boolean waterThreatZone, boolean clearColumn,
+                                       boolean underwater, boolean clearColumn,
                                        double x, double y, double z,
                                        double targetX, double targetY, double targetZ,
                                        double seaLevel) {
-        return waterThreatZone && clearColumn && targetY>=seaLevel+1
+        return underwater && clearColumn && targetY>=seaLevel+1
             && Math.hypot(targetX-x,targetZ-z)<=.2
             && allowed(materialLease,guardArmed,x,y,z,targetX,targetY,targetZ);
     }

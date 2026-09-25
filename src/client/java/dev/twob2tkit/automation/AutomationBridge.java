@@ -248,8 +248,7 @@ public final class AutomationBridge {
         MeteorModules.enable("meteordevelopment.meteorclient.systems.modules.player.AutoEat");
     }
     private static boolean ownedUnderwaterAirReturn(Minecraft c){
-        if(c.player==null||c.level==null
-                ||!(c.player.isUnderWater()||c.player.getY()<c.level.getSeaLevel()+25)
+        if(c.player==null||c.level==null||!c.player.isUnderWater()
                 ||active==null
                 ||!op.equals("navigate")||!active.has("task_session")||guardScope==null
                 ||supervisionLease==null||!str(supervisionLease,"kind").equals("materials")
@@ -292,8 +291,8 @@ public final class AutomationBridge {
         if(enabled&&c.player!=null){lastGuardHealth=c.player.getHealth();lastGuardX=c.player.getX();lastGuardZ=c.player.getZ();}
         if(enabled)try{guard(c,guardScope);}catch(Exception changed){guardScope=null;enabled=false;dev.twob2tkit.combat.GuardFoodLease.release();}
         if(enabled&&ownedUnderwaterAirReturn(c)){
-            // Reaching air and the nearby high park outranks ranged combat.
-            // Keep guard armed; PvE defense resumes when the owned rise ends.
+            // Reaching air from underwater outranks ranged combat. Keep guard
+            // armed; PvE defense resumes immediately after leaving the water.
             if(KitClient.borer().suspendStandaloneCombatForAirReturn(c)){
                 guardBusy=false;
                 healthRecoveryHold=healthRecovery.hold(false,c.player.getHealth(),false);
