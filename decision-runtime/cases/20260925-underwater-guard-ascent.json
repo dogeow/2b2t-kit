@@ -1,0 +1,20 @@
+{
+  "incident": "A guarded material ascent from seafloor Y52 to open air Y65 took 18.2 seconds while a drowned was engaged.",
+  "scope": "Simpcraft overworld shallow-ocean gravel, Kit 1.9.79 / engine 1.7.62",
+  "evidence": {
+    "navigation_receipt": "outputs/starship/work/starship-ocean-batch-1790288343/trial-03/events.jsonl",
+    "trial_receipt": "outputs/starship/work/starship-ocean-batch-1790288343/trial-03/progress.json",
+    "combat_log": "/Applications/.minecraft/versions/26.1.2/config/twob2tkit/borer.log",
+    "timestamps_local": "2026-09-25 06:19:46-06:20:05 Asia/Shanghai",
+    "drowned_engaged": "06:19:47",
+    "drowned_death_confirmed": "06:20:04",
+    "ascent_duration_ms": 18202,
+    "air_after_ascent": 195,
+    "health_after_ascent": 20
+  },
+  "cause": "The native materials bridge allowed an owned vertical escape request while PvE guard was busy, but beforeGuard still advanced ranged combat and returned early before navigation input. The player did not complete ascent until combat ended.",
+  "fix": "For the current world's exact material lease and revision, a near-vertical owned navigate to verified open air checks the entire loaded block path, suspends standalone ranged combat without invoking a legacy recovery-ascent command, and lets navigation run. The guard scope remains armed and combat resumes after surfacing.",
+  "unchanged_safety": "Do not lower the existing 240-air generic surface trigger merely from this incident; reject stale leases, blocked columns, underwater destinations and nonvertical targets. Native emergency exit still preempts below 14 health.",
+  "validation": "GuardEscapePolicy and wiring tests plus test jar verifyRuntimeEngineJar passed offline. Not yet live-tested because the current game has an active player-only low-health safety lock.",
+  "different_incident": "The 2026-09-25 18:11 low-health hold followed drowned attacks while idle; it is not evidence that this 06:19 ascent caused damage."
+}

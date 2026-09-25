@@ -47,6 +47,9 @@ public interface BorerEngine {
 	/** Reuse mining combat while another task is running, without starting mining or moving. */
 	default boolean tickStandaloneGuard(Minecraft client, boolean enabled) { return false; }
 
+	/** Release guard-owned combat input for an already verified material air return. */
+	default boolean suspendStandaloneCombatForAirReturn(Minecraft client) { return false; }
+
 	/** 世界每帧收集 gizmo 时画回家箭头。不要在 tick 里画，否则会闪。 */
 	default void emitFrameGizmos(Minecraft client) {
 	}

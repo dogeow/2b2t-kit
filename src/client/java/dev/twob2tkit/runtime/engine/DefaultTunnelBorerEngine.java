@@ -878,6 +878,19 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	}
 
 	@Override
+	public boolean suspendStandaloneCombatForAirReturn(Minecraft c) {
+		if (active || c.player == null || c.level == null) return false;
+		// This owned ascent supersedes an older local recovery-ascent command.
+		// Do not call tickStandaloneGuard(false): that method may run the old
+		// recovery controller and block the new material navigator again.
+		recoveryAscent.cancel(c,"superseded_by_owned_air_return");
+		rangedCombat.end(c);
+		if (standaloneGuard) { mobs.lowerShield(c); engagement.clear(); }
+		standaloneGuard = false;
+		return true;
+	}
+
+	@Override
 	public boolean tickStandaloneGuard(Minecraft c, boolean enabled) {
         if(!active && !enabled && recoveryAscent.tick(c))return true;
 		if (active) return false; // The running mining engine already owns this same combat object.

@@ -247,10 +247,59 @@ public final class AutomationBridge {
         if(pveOnly)MeteorModules.enablePveAura();else MeteorModules.enable(MeteorModules.KILL_AURA);MeteorModules.enable(MeteorModules.AUTO_LOG);
         MeteorModules.enable("meteordevelopment.meteorclient.systems.modules.player.AutoEat");
     }
+    private static boolean ownedUnderwaterAirReturn(Minecraft c){
+        if(c.player==null||c.level==null
+                ||!(c.player.isUnderWater()||c.player.getY()<c.level.getSeaLevel()+25)
+                ||active==null
+                ||!op.equals("navigate")||!active.has("task_session")||guardScope==null
+                ||supervisionLease==null||!str(supervisionLease,"kind").equals("materials")
+                ||!supervisionLease.has("revision")||!active.has("expected_revision")
+                ||!GuardEscapePolicy.currentLease(session(c),controlRevision,
+                    str(supervisionLease,"world_session"),supervisionLease.get("revision").getAsLong(),
+                    str(active,"world_session"),active.get("expected_revision").getAsLong(),
+                    str(supervisionLease,"job_session"),str(active,"task_session")))
+            return false;
+        JsonArray target=active.getAsJsonArray("target");
+        if(target==null||target.size()!=3)return false;
+        double x=target.get(0).getAsDouble(),y=target.get(1).getAsDouble(),z=target.get(2).getAsDouble();
+        if(!GuardEscapePolicy.underwaterAirReturn(true,true,true,true,
+                c.player.getX(),c.player.getY(),c.player.getZ(),x,y,z,c.level.getSeaLevel()))return false;
+        BlockPos breathingFeet=BlockPos.containing(x,y,z);
+        BlockPos breathingHead=BlockPos.containing(x,y+1.6,z);
+        if(!c.level.hasChunkAt(breathingFeet)||!c.level.hasChunkAt(breathingHead)
+                ||!c.level.getFluidState(breathingFeet).isEmpty()
+                ||!c.level.getFluidState(breathingHead).isEmpty())return false;
+        int steps=(int)Math.ceil(y-c.player.getY());
+        if(steps<2||steps>64)return false;
+        for(int step=1;step<=steps;step++){
+            for(int sample=0;sample<=1;sample++){
+                var body=c.player.getBoundingBox().move((x-c.player.getX())*sample,step,
+                                                        (z-c.player.getZ())*sample);
+                for(int xx=(int)Math.floor(body.minX);xx<=Math.floor(body.maxX-1e-6);xx++)
+                    for(int yy=(int)Math.floor(body.minY);yy<=Math.floor(body.maxY-1e-6);yy++)
+                        for(int zz=(int)Math.floor(body.minZ);zz<=Math.floor(body.maxZ-1e-6);zz++){
+                            BlockPos p=new BlockPos(xx,yy,zz);
+                            if(!c.level.hasChunkAt(p)
+                                    ||c.level.getFluidState(p).is(net.minecraft.world.level.material.Fluids.LAVA)
+                                    ||!c.level.getBlockState(p).getCollisionShape(c.level,p).isEmpty())return false;
+                        }
+            }
+        }
+        return true;
+    }
     public static boolean beforeGuard(Minecraft c){
         boolean enabled=guardScope!=null;
         if(enabled&&c.player!=null){lastGuardHealth=c.player.getHealth();lastGuardX=c.player.getX();lastGuardZ=c.player.getZ();}
         if(enabled)try{guard(c,guardScope);}catch(Exception changed){guardScope=null;enabled=false;dev.twob2tkit.combat.GuardFoodLease.release();}
+        if(enabled&&ownedUnderwaterAirReturn(c)){
+            // Reaching air and the nearby high park outranks ranged combat.
+            // Keep guard armed; PvE defense resumes when the owned rise ends.
+            if(KitClient.borer().suspendStandaloneCombatForAirReturn(c)){
+                guardBusy=false;
+                healthRecoveryHold=healthRecovery.hold(false,c.player.getHealth(),false);
+                return false;
+            }
+        }
         guardBusy=KitClient.borer().tickStandaloneGuard(c,enabled);
         healthRecoveryHold=healthRecovery.hold(enabled,c.player==null?20:c.player.getHealth(),guardBusy);
         if(healthRecoveryHold){

@@ -34,6 +34,17 @@ class GuardManualControlWiringTest {
         var m=calls(method("automation/AutomationBridge","yieldGuardToManualInput"));
         assertTrue(m.indexOf("manualMovementDown")<m.indexOf("emergencyStop"));
     }
+    @Test void verifiedUnderwaterAirReturnPreemptsCombatBeforeNavigationInput()throws Exception{
+        var guard=calls(method("automation/AutomationBridge","beforeGuard"));
+        assertTrue(guard.indexOf("ownedUnderwaterAirReturn")>=0
+            &&guard.indexOf("ownedUnderwaterAirReturn")<guard.indexOf("tickStandaloneGuard"));
+        assertTrue(guard.contains("suspendStandaloneCombatForAirReturn"));
+        var escape=calls(method("automation/AutomationBridge","ownedUnderwaterAirReturn"));
+        assertTrue(escape.containsAll(List.of("currentLease","underwaterAirReturn","getCollisionShape","getFluidState")));
+        var suspension=calls(method("runtime/engine/DefaultTunnelBorerEngine","suspendStandaloneCombatForAirReturn"));
+        assertTrue(suspension.containsAll(List.of("cancel","end")));
+        assertFalse(suspension.contains("tickStandaloneGuard"));
+    }
     @Test void jumpAndAllMovementBindingsParticipateWithoutHardcodedWasd()throws Exception{
         var fields=new HashSet<String>();for(var n:method("KitKeys","movementKeys").instructions)if(n instanceof FieldInsnNode f)fields.add(f.name);
         assertTrue(fields.containsAll(List.of("keyJump","keyUp","keyDown","keyLeft","keyRight","keyShift","keySprint")));

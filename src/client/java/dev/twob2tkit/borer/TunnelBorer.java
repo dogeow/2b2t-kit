@@ -333,6 +333,9 @@ public final class TunnelBorer {
 	public boolean prepareBowRelease(Minecraft client) { return engine.prepareBowRelease(client); }
 
 	public boolean tickStandaloneGuard(Minecraft client, boolean enabled) { return engine.tickStandaloneGuard(client, enabled); }
+	public boolean suspendStandaloneCombatForAirReturn(Minecraft client) {
+		return engine.suspendStandaloneCombatForAirReturn(client);
+	}
 
 	/** 每拍交给引擎。 */
 	public void tick(Minecraft client) {
