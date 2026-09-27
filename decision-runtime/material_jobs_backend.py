@@ -15,6 +15,7 @@ from live_snapshot import read_fresh
 from material_client import MaterialClient, Handoff
 from material_plan import inventory_counts, quantities
 from projection_material_plan import ProcessingCatalog
+from projection_wood import POST_ITEM, POST_RAW, finish_beams, post_work
 from recipe_catalog import RecipeCatalog
 from safety_interlock import require_unlocked
 from kit_runtime.journal import write_json
@@ -166,13 +167,33 @@ def next_sequence(out):
     return max(values, default=0)
 
 
-def next_build_supply(audit, held):
-    missing=[(count-held.get(item,0),item,count) for item,count in audit.get('replacement_items',{}).items()
+def split_post_supply(audit, state=None):
+    """Keep finished stock for cells the in-place post worker cannot repair."""
+    needed=dict(quantities(audit.get('replacement_items',{})))
+    posts=None
+    if state is not None and needed.get(POST_ITEM):
+        posts=post_work(audit,state)
+        if posts['eligible']>needed[POST_ITEM]:
+            raise JobBlocked('木柱审计可修格数超过差料数；停止补料')
+        remaining=needed[POST_ITEM]-posts['eligible']
+        if remaining:
+            needed[POST_ITEM]=remaining
+        else:
+            needed.pop(POST_ITEM)
+    return needed,posts
+
+
+def next_build_supply(audit, held, state=None):
+    needed,posts=split_post_supply(audit,state)
+    if posts and posts['raw_needed']:
+        needed[POST_RAW]=needed.get(POST_RAW,0)+posts['raw_needed']
+    missing=[(count-held.get(item,0),item,count) for item,count in needed.items()
              if count>held.get(item,0)]
     if not missing:
         return {}
     _,item,count=max(missing)
-    batch=256 if item.endswith('_concrete') else 128
+    batch=(16 if item==POST_RAW and posts and posts['raw_needed']
+           else 256 if item.endswith('_concrete') else 128)
     return {item:min(count,held.get(item,0)+batch)}
 
 
@@ -485,7 +506,9 @@ class Backend:
         if (audit.get('placement_key')!=key or not audit.get('loaded_chunks_verified')
                 or audit.get('kinds',{}).get('unloaded')):
             raise JobBlocked('当前投影缺料尚未完整核验，不能按旧记录批量取料')
-        needed=dict(quantities(audit.get('replacement_items',{})))
+        # The in-place worker supplies only repairable vertical cells. Finished
+        # stock remains useful for other axes and occupied cells.
+        needed,_=split_post_supply(audit,c.status())
         token=fingerprint({'world_session':c.world,'projection_key':key,'needed':needed})
         record_path=self.out/'finished-supply-pass.json'
         if record_path.is_file():
@@ -917,7 +940,9 @@ class Backend:
         with self.action('build') as (c,out):
             from goal_workflow import build_phase
             self.prepare_travel()
-            selection=c.status().get('projection_selection',{})
+            state=c.status()
+            require_scope(state,self.request['context'])
+            selection=state.get('projection_selection',{})
             if selection.get('key')!=projection_key:
                 raise JobBlocked('投影已改变')
             from material_jobs.acquisition import _travel
@@ -926,6 +951,31 @@ class Backend:
             _travel(c,staging,self.checkpoint,[])
             outside_station(c,selection)
             before=self.refresh_audit()
+            if before.get('replacement_items',{}).get(POST_ITEM):
+                posts=post_work(before,c.status())
+                if posts['eligible']:
+                    beams=finish_beams(c,limit=16,expected_key=projection_key,
+                                       expected_world=self.request['context']['world_session'],
+                                       expected_server=self.request['context']['server'],
+                                       expected_dimension=self.request['context']['dimension'],
+                                       target_item=POST_ITEM,target_axis='y')
+                    if beams['completed']:
+                        after=self.refresh_audit()
+                        post_work(after,c.status())  # validates live server, world, selection and complete coverage
+                        gained=after['matched']-before['matched']
+                        remaining={tuple(row['pos']) for row in after['mismatches']}
+                        if (type(after.get('observed_at')) is not int
+                                or after['observed_at']<=before['observed_at']
+                                or gained<len(beams['completed'])
+                                or any(tuple(receipt['pos']) in remaining for receipt in beams['completed'])):
+                            raise JobBlocked('木柱逐格回执与完整投影复核不一致；停止重复施工')
+                        write_json(out/'stripped-posts.json',{'placement_key':projection_key,
+                                   'world_session':c.world,'before_matched':before['matched'],
+                                   'after_matched':after['matched'],'completed':beams['completed'],
+                                   'deferred':beams['deferred']})
+                        leave_projection(c)
+                        return {'phase':'done','detail':'木柱原位剥皮并通过投影复核',
+                                'placed':len(beams['completed']),'post_scan_receipts':beams['completed']}
             after=build_phase(c,projection_key,seconds=240,stall_seconds=45,background=True)
             self.audit,self.audit_dirty=after,False
             leave_projection(c)
@@ -951,14 +1001,14 @@ class Backend:
                 if access is not None:
                     return access
             if gained==0 and (route_budget or route_unreachable) and fresh_missing:
-                requirements=next_build_supply(after,self.stock())
+                requirements=next_build_supply(after,self.stock(),c.status())
                 return {'phase':'waiting' if requirements else 'blocked',
                         'detail':'当前材料没有已确认可达施工点；先补新的缺料批次，再核验施工' if requirements else '所需材料已在背包，需要检查入口或支撑',
                         'requirements':requirements,'placed':0,'route_budget_exhausted':route_budget,
                         'route_unreachable':route_unreachable,
                         'navigation':navigation}
             if gained<=0 and state.get('outcome')=='missing_materials':
-                requirements=next_build_supply(after,self.stock())
+                requirements=next_build_supply(after,self.stock(),c.status())
                 return {'phase':'waiting' if requirements else 'blocked',
                         'detail':'先补可推进施工的下一批材料' if requirements else '背包已有差料，原生建造仍请求补料；保留现场待核对',
                         'requirements':requirements,'placed':0}

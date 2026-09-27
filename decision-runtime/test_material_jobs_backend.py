@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 import material_jobs_backend as backend
 from material_jobs.protocol import JobBlocked, JobPaused
+from projection_wood import POST_ITEM, POST_RAW
 
 
 def state():
@@ -98,6 +99,98 @@ class BackendTest(unittest.TestCase):
         self.assertEqual({'minecraft:deepslate_tiles':128},backend.next_build_supply(audit,{'minecraft:white_concrete':32,'minecraft:hopper':6}))
         self.assertEqual({'minecraft:deepslate_tiles':256},backend.next_build_supply(audit,{'minecraft:white_concrete':32,'minecraft:hopper':6,'minecraft:deepslate_tiles':128}))
         self.assertFalse(backend.next_build_supply(audit,{'minecraft:white_concrete':32,'minecraft:hopper':6,'minecraft:deepslate_tiles':625}))
+
+    def post_audits(self,actual='Block{minecraft:short_grass}'):
+        row={'pos':[1,65,1],'expected':'Block{minecraft:stripped_oak_log}[axis=y]',
+             'actual':actual,'kind':'missing' if actual.endswith('short_grass}') or actual.endswith('air}') else 'occupied',
+             'fluid':False,'adjacent_fluid':False,'block_entity':False,'neighbors_loaded':True}
+        before={'placement_key':'ship','server':'simpcraft.com','dimension':'minecraft:overworld',
+                'observed_at':1000,'loaded_chunks_verified':True,'matched':0,'total':1,
+                'mismatches':[row],'replacement_items':{'minecraft:stripped_oak_log':1},
+                'kinds':{'missing':1}}
+        after={**before,'observed_at':1001,'matched':1,'mismatches':[],
+               'replacement_items':{},'kinds':{'missing':0}}
+        self.current['projection_selection']={'key':'ship','min':[0,64,0],'max':[10,70,10]}
+        return before,after
+
+    def test_post_supply_maps_audited_stripped_log_to_raw_input(self):
+        before,_=self.post_audits()
+        self.assertEqual({'minecraft:oak_log':1},backend.next_build_supply(before,{},self.current))
+        self.assertEqual({},backend.next_build_supply(before,{'minecraft:oak_log':1},self.current))
+        before['mismatches'][0]['actual']='Block{minecraft:oak_log}[axis=y]'
+        before['mismatches'][0]['kind']='occupied'
+        self.assertEqual({},backend.next_build_supply(before,{},self.current))
+
+    def test_mixed_axis_supply_keeps_finished_stock_for_unhandled_cells(self):
+        before,_=self.post_audits()
+        before['mismatches'].append({'pos':[2,65,1],
+            'expected':'Block{minecraft:stripped_oak_log}[axis=x]',
+            'actual':'Block{minecraft:air}','kind':'missing',
+            'fluid':False,'adjacent_fluid':False,'block_entity':False,
+            'neighbors_loaded':True})
+        before['total']=2
+        before['replacement_items'][POST_ITEM]=2
+        needed,posts=backend.split_post_supply(before,self.current)
+        self.assertEqual({POST_ITEM:1},needed)
+        self.assertEqual((1,1),(posts['eligible'],posts['raw_needed']))
+        self.assertEqual({'minecraft:oak_log':1},backend.next_build_supply(before,{POST_ITEM:1},self.current))
+        self.assertEqual({POST_ITEM:1},backend.next_build_supply(before,{'minecraft:oak_log':1},self.current))
+        before['mismatches']=before['mismatches'][1:]
+        before['total']=1
+        before['replacement_items'][POST_ITEM]=1
+        self.assertEqual({POST_ITEM:1},backend.next_build_supply(before,{},self.current))
+
+    def test_post_raw_supply_adds_other_oak_needs_and_stays_within_sixteen(self):
+        before,_=self.post_audits()
+        before['mismatches'].append({'pos':[2,65,1],
+            'expected':'Block{minecraft:oak_log}[axis=y]',
+            'actual':'Block{minecraft:air}','kind':'missing',
+            'fluid':False,'adjacent_fluid':False,'block_entity':False,
+            'neighbors_loaded':True})
+        before['total']=2
+        before['replacement_items'][POST_RAW]=1
+        self.assertEqual({POST_RAW:2},backend.next_build_supply(before,{POST_RAW:1},self.current))
+        before['mismatches']=[copy.deepcopy(before['mismatches'][0]) for _ in range(20)]
+        for x,row in enumerate(before['mismatches'],1):
+            row['pos']=[x,65,1]
+        before['total']=20
+        before['replacement_items']={POST_ITEM:20}
+        self.current['projection_selection']['max']=[20,70,10]
+        self.assertEqual({POST_RAW:16},backend.next_build_supply(before,{},self.current))
+
+    def test_post_builder_precedes_native_printer_and_requires_full_fresh_audit(self):
+        before,after=self.post_audits()
+        self.job.request.update(mode='projection',projection_key='ship')
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
+        self.job.prepare_travel=Mock();self.job.refresh_audit=Mock(side_effect=[before,after])
+        receipt={'pos':[1,65,1],'expected':'Block{minecraft:stripped_oak_log}[axis=y]',
+                 'post_scan_state':'Block{minecraft:stripped_oak_log}[axis=y]'}
+        with patch('material_jobs.acquisition._travel'),patch.object(backend,'outside_station'), \
+             patch.object(backend,'finish_beams',return_value={'completed':[receipt],'deferred':[]}) as posts, \
+             patch('goal_workflow.build_phase') as printer,patch.object(backend,'leave_projection') as exit:
+            result=self.job.build('ship')
+        self.assertEqual(('done',1),(result['phase'],result['placed']))
+        posts.assert_called_once();printer.assert_not_called();exit.assert_called_once()
+        self.assertEqual(1,json.loads((self.root/'stripped-posts.json').read_text())['after_matched'])
+
+    def test_post_scan_receipt_without_matching_full_audit_blocks_replay(self):
+        before,_=self.post_audits()
+        other={'pos':[2,65,1],'expected':'Block{minecraft:stone}',
+               'actual':'Block{minecraft:air}','kind':'missing','neighbors_loaded':True}
+        before['total']=2;before['mismatches'].append(other)
+        before['replacement_items']['minecraft:stone']=1
+        after={**before,'observed_at':1001,'matched':1,
+               'mismatches':[before['mismatches'][0]],
+               'replacement_items':{'minecraft:stripped_oak_log':1}}
+        self.job.request.update(mode='projection',projection_key='ship')
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
+        self.job.prepare_travel=Mock();self.job.refresh_audit=Mock(side_effect=[before,after])
+        with patch('material_jobs.acquisition._travel'),patch.object(backend,'outside_station'), \
+             patch.object(backend,'finish_beams',return_value={'completed':[{'pos':[1,65,1]}],'deferred':[]}), \
+             patch('goal_workflow.build_phase') as printer:
+            with self.assertRaisesRegex(JobBlocked,'回执与完整投影复核不一致'):
+                self.job.build('ship')
+        printer.assert_not_called()
 
     def test_projection_preparation_checkpoint_cannot_reenter_audit_travel(self):
         self.job.request.update(mode='projection',projection_key='ship')

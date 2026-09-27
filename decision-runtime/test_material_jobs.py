@@ -13,6 +13,7 @@ from material_jobs.protocol import JobBlocked
 from material_jobs.planning import plan
 from material_jobs_cli import serve
 from projection_material_plan import ProcessingCatalog
+from projection_wood import POST_ITEM, POST_RAW, post_work
 
 
 class FakeBackend:
@@ -127,6 +128,75 @@ class FakeBackend:
         self.finish_count += 1
         if self.on_finish:
             self.on_finish()
+
+
+class PostBackend(FakeBackend):
+    """Forty-four audited yard cells; only raw logs can finish the posts."""
+    def __init__(self,catalog):
+        super().__init__(catalog, projection={POST_ITEM:44}, depot={POST_RAW:10})
+        self.selection='ship';self.positions=[[n//2,1+n%2,0] for n in range(44)]
+
+    def observe(self):
+        state=super().observe()
+        rows=[]
+        for index,pos in enumerate(self.positions[self.matched:],self.matched):
+            actual=('Block{minecraft:oak_log}[axis=y]' if index==0 else
+                    'Block{minecraft:short_grass}' if index==1 else 'Block{minecraft:air}')
+            rows.append({'pos':pos,'expected':'Block{'+POST_ITEM+'}[axis=y]',
+                         'actual':actual,'kind':'missing' if index else 'occupied',
+                         'fluid':False,'adjacent_fluid':False,'block_entity':False,
+                         'neighbors_loaded':True})
+        state['projection_selection']={'key':self.selection,'min':[0,0,0],'max':[21,2,0]}
+        state['projection_audit'].update(server=state['server'],dimension=state['dimension'],
+                                         observed_at=1000+self.matched,mismatches=rows,
+                                         kinds={'missing':len(rows)})
+        return state
+
+    def build(self,key):
+        work=post_work(self.observe()['projection_audit'],self.observe())
+        amount=min(16,work['strip_ready']+self.held[POST_RAW])
+        consumed=amount-min(amount,work['strip_ready'])
+        self.held[POST_RAW]-=consumed
+        self.projection[POST_ITEM]-=amount;self.matched+=amount
+        self.calls.append(('build',key,amount))
+        return {'phase':'done','placed':amount}
+
+
+class MixedPostBackend(FakeBackend):
+    """An installed vertical raw log followed by finished-stock-only cells."""
+    def __init__(self,catalog,axes=('y','x')):
+        super().__init__(catalog,projection={POST_ITEM:len(axes)},depot={POST_ITEM:len(axes)})
+        self.axes=axes
+        self.stack_sizes[POST_ITEM]=64
+
+    def observe(self):
+        state=super().observe()
+        rows=[]
+        for index in range(self.matched,len(self.axes)):
+            axis=self.axes[index]
+            raw=index==0 and axis=='y'
+            rows.append({'pos':[index,1,0],
+                         'expected':'Block{'+POST_ITEM+'}[axis='+axis+']',
+                         'actual':'Block{minecraft:oak_log}[axis=y]' if raw else 'Block{minecraft:air}',
+                         'kind':'occupied' if raw else 'missing',
+                         'fluid':False,'adjacent_fluid':False,'block_entity':False,
+                         'neighbors_loaded':True})
+        state['projection_selection']={'key':'ship','min':[0,0,0],
+                                       'max':[len(self.axes)-1,2,0]}
+        state['projection_audit'].update(server=state['server'],dimension=state['dimension'],
+                                         observed_at=1000+self.matched,mismatches=rows,
+                                         kinds={'missing':sum(row['kind']=='missing' for row in rows)})
+        return state
+
+    def build(self,key):
+        axis=self.axes[self.matched]
+        amount=1 if axis=='y' else min(1,self.held[POST_ITEM])
+        if axis!='y':
+            self.held[POST_ITEM]-=amount
+        self.projection[POST_ITEM]-=amount
+        self.matched+=amount
+        self.calls.append(('build',key,amount))
+        return {'phase':'done','placed':amount}
 
 
 class MaterialJobsTest(unittest.TestCase):
@@ -339,6 +409,40 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertEqual([256,128],[c[2] for c in b.calls if c[0]=='build'])
         self.assertEqual((384,384),(result['done'],result['total']))
         self.assertLessEqual(max(c[1].get('minecraft:white_concrete_powder',0) for c in b.calls if c[0]=='fetch'),256)
+
+    def test_stripped_oak_posts_first_strip_installed_log_then_fetch_or_gather_raw(self):
+        b=PostBackend(self.catalog)
+        result=self.job(b,self.request(item='stripped_oak_log',count=44,projection=True)).run()
+        self.assertEqual('completed',result['state'],result)
+        self.assertEqual((44,44),(result['done'],result['total']))
+        self.assertEqual(('build','ship',1),b.calls[0])
+        self.assertTrue(any(call[0]=='fetch' and POST_RAW in call[1] for call in b.calls))
+        self.assertTrue(any(call[0]=='acquire' and call[1]==POST_RAW for call in b.calls))
+        self.assertFalse(any(call[0]=='acquire' and call[1]==POST_ITEM for call in b.calls))
+        self.assertEqual(44,sum(call[2] for call in b.calls if call[0]=='build'))
+
+    def test_other_selection_cannot_use_yard_post_material_plan(self):
+        b=PostBackend(self.catalog);b.selection='house'
+        result=self.job(b,self.request(item='stripped_oak_log',count=44,projection=True)).run()
+        self.assertEqual('blocked',result['state'])
+        self.assertFalse(b.calls)
+
+    def test_mixed_axis_posts_strip_vertical_then_use_finished_stock(self):
+        b=MixedPostBackend(self.catalog)
+        result=self.job(b,self.request(item='stripped_oak_log',count=2,projection=True)).run()
+        self.assertEqual('completed',result['state'],result)
+        self.assertEqual((2,2),(result['done'],result['total']))
+        self.assertEqual(('build','ship',1),b.calls[0])
+        self.assertTrue(any(call[0]=='fetch' and POST_ITEM in call[1] for call in b.calls))
+        self.assertFalse(any(call[0]=='acquire' and call[1]==POST_RAW for call in b.calls))
+        self.assertEqual(2,sum(call[2] for call in b.calls if call[0]=='build'))
+
+    def test_horizontal_only_posts_still_use_finished_stock(self):
+        b=MixedPostBackend(self.catalog,axes=('x',))
+        result=self.job(b,self.request(item='stripped_oak_log',count=1,projection=True)).run()
+        self.assertEqual('completed',result['state'],result)
+        self.assertTrue(any(call[0]=='fetch' and POST_ITEM in call[1] for call in b.calls))
+        self.assertEqual(1,sum(call[2] for call in b.calls if call[0]=='build'))
 
     def test_verified_finished_depot_materials_build_before_old_mining_prerequisite(self):
         deep, smooth, polished = ('minecraft:'+name for name in ('cobbled_deepslate','smooth_stone','polished_andesite'))

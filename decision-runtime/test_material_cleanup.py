@@ -12,6 +12,6 @@ class CleanupTest(unittest.TestCase):
  def test_material_finish_runs_owned_cleanup_before_stopping_heartbeat(self):
   import ast
   source=(Path(__file__).parent/'material_client.py').read_text();tree=ast.parse(source)
-  cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MaterialClient');finish=next(n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name=='finish');text=ast.get_source_segment(source,finish)
+  cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MaterialClient');finish=next(n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name=='_finish');text=ast.get_source_segment(source,finish)
   self.assertLess(text.index('cleanup_resources(self)'),text.index('self.heartbeat.close()'))
 if __name__=='__main__':unittest.main()

@@ -9,6 +9,7 @@ from kit_runtime.journal import write_json
 from material_plan import quantities, inventory_counts
 from .planning import plan
 from .protocol import JobBlocked, JobCancelled, JobPaused, fingerprint, server_key, validate_request
+from projection_wood import POST_ITEM, POST_RAW, post_work
 
 STATES = {'queued', 'planning', 'fetching', 'gathering', 'crafting', 'smelting',
           'hardening', 'building', 'paused', 'completed', 'blocked', 'failed', 'cancelled'}
@@ -222,6 +223,10 @@ class MaterialJob:
         known += [row['max_stack'] for row in self.snapshot.get('inventory', [])
                   if row.get('item') == item and row.get('count') and type(row.get('max_stack')) is int]
         if not known:
+            # The selected projection advertises the finished post, not its
+            # vanilla raw log prerequisite. Oak logs are always 64 per stack.
+            if item == POST_RAW and self.request['mode'] == 'projection':
+                return 64
             return None
         if len(set(known)) != 1 or not 1 <= known[0] <= 99:
             raise JobBlocked('物品堆叠上限记录冲突：' + item)
@@ -522,12 +527,32 @@ class MaterialJob:
         return False
 
     def _step(self, targets):
-        if self._consume_ready_build(targets):
+        post=None
+        if self.request['mode']=='projection' and targets.get(POST_ITEM):
+            try:
+                available=post_work(self.snapshot['projection_audit'],self.snapshot)
+            except RuntimeError as error:
+                raise JobBlocked('去皮橡木柱需要完整的当前投影审计：'+str(error)) from error
+            # Other axes and occupied cells still need the ordinary finished-
+            # item builder. Only divert while the audit has repairable posts.
+            if available['eligible']:
+                post=available
+        if post is None and self._consume_ready_build(targets):
             return
         self.prerequisites = {item: count for item, count in self.prerequisites.items()
                               if self.held.get(item, 0) < count}
+        if post is not None:
+            self.prerequisites.pop(POST_ITEM,None)
+            self.prerequisites.pop(POST_RAW,None)
         self._write(requirements=self.prerequisites)
-        if self.prerequisites:
+        if post is not None:
+            if post['strip_ready'] or self.held.get(POST_RAW,0):
+                self._build_batch()
+                return
+            # At most one 16-cell work batch; already installed raw logs do
+            # not trigger a second item pickup or an impossible stripped-log hunt.
+            targets={POST_RAW:min(16,post['raw_needed'])}
+        elif self.prerequisites:
             item, count = next(iter(self.prerequisites.items()))
             targets = {item: self._fit_batch(item, count)}
         elif self.request['mode'] == 'projection':
