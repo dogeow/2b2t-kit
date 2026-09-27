@@ -16,6 +16,15 @@ class PrinterStateConfirmationTest {
   assertTrue(PrinterStateConfirmation.matches(expected,expected.setValue(StairBlock.SHAPE,StairsShape.STRAIGHT)));
   assertFalse(PrinterStateConfirmation.matches(expected,expected.setValue(StairBlock.FACING,Direction.SOUTH)));
  }
+ @Test void leafDistanceMayChangeUntilNeighboringLogsArePlaced(){
+  var expected=Blocks.OAK_LEAVES.defaultBlockState().setValue(LeavesBlock.DISTANCE,3).setValue(LeavesBlock.PERSISTENT,true);
+  var observed=expected.setValue(LeavesBlock.DISTANCE,5);
+  assertTrue(PrinterStateConfirmation.matches(expected,observed));
+  assertNotEquals(expected,observed);
+  assertFalse(PrinterStateConfirmation.matches(expected,observed.setValue(LeavesBlock.PERSISTENT,false)));
+  var natural=Blocks.OAK_LEAVES.defaultBlockState().setValue(LeavesBlock.DISTANCE,3);
+  assertFalse(PrinterStateConfirmation.matches(natural,natural.setValue(LeavesBlock.DISTANCE,5)));
+ }
  @Test void aWrongMaterialNeverCountsAsConfirmation(){assertFalse(PrinterStateConfirmation.matches(Blocks.BARREL.defaultBlockState(),Blocks.OAK_PLANKS.defaultBlockState()));}
  @Test void knownPlaceThenInteractStepsCanBeConfirmedWithoutAcceptingWrongOrientation(){
   var open=Blocks.OAK_TRAPDOOR.defaultBlockState().setValue(TrapDoorBlock.OPEN,true);var closed=open.setValue(TrapDoorBlock.OPEN,false);

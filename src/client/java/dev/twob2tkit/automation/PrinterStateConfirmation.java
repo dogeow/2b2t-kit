@@ -9,9 +9,14 @@ public final class PrinterStateConfirmation {
     public static boolean matches(BlockState expected,BlockState actual){
         if(expected.getBlock()!=actual.getBlock())return false;
         boolean connections=expected.getBlock() instanceof FenceBlock||expected.getBlock() instanceof WallBlock||expected.getBlock() instanceof IronBarsBlock;
+        boolean persistentLeaves=expected.getBlock() instanceof LeavesBlock
+            && expected.getValue(LeavesBlock.PERSISTENT)&&actual.getValue(LeavesBlock.PERSISTENT);
         for(var property:expected.getProperties()){
             String name=property.getName();
             if(connections&&Set.of("north","south","east","west","up").contains(name))continue;
+            // Leaf distance is recomputed from neighboring logs after placement;
+            // it can legitimately change as the rest of the projection is built.
+            if(persistentLeaves&&name.equals("distance"))continue;
             if(expected.getBlock() instanceof StairBlock&&name.equals("shape"))continue;
             if(!actual.hasProperty(property)||!Objects.equals(expected.getValue(property),actual.getValue(property)))return false;
         }

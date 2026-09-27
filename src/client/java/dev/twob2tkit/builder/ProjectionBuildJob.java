@@ -256,6 +256,11 @@ public final class ProjectionBuildJob {
         for(int y=0;y<2;y++){var s=c.level.getBlockState(p.above(y));if(!s.getFluidState().isEmpty()||s.is(Blocks.FIRE)||s.is(Blocks.LAVA)||s.is(Blocks.COBWEB)||s.is(Blocks.POWDER_SNOW))return false;}
         return true;
     }
+    static List<BlockPos> startCandidates(BlockPos center){
+        var result=new ArrayList<BlockPos>(245);
+        for(int y=-2;y<=2;y++)for(int x=-3;x<=3;x++)for(int z=-3;z<=3;z++)result.add(center.offset(x,y,z));
+        return result;
+    }
     private void plan(Minecraft c){
         release(c);flight.hover();flight.allowPlacementSneak(false);look=null;phase="规划走位";reason="寻找有支撑且可接近的施工位置";
         var targets=available(c);navigationDebug=new JsonObject();navigationDebug.addProperty("targets",targets.size());navigationDebug.addProperty("player",c.player.position().toString());if(targets.isEmpty()){finishJob(c,missing.isBlank()?"剩余方块需要支撑面或已有方块需要人工修正":missing,missing.isBlank()?"blocked":"missing_materials");return;}
@@ -265,12 +270,12 @@ public final class ProjectionBuildJob {
             if(reachable(c,feet(q),List.of(p),true)>0)goals.add(q);
         }
         BlockPos start=null;double distance=Double.POSITIVE_INFINITY;
-        for(var p:BlockPos.betweenClosed(c.player.blockPosition().offset(-1,-1,-1),c.player.blockPosition().offset(1,1,1))){var q=p.immutable();if(!clearCache.computeIfAbsent(q,k->clear(c,k)))continue;
+        for(var q:startCandidates(c.player.blockPosition())){if(!clearCache.computeIfAbsent(q,k->clear(c,k)))continue;
             var delta=feet(q).subtract(c.player.position());if(!c.level.noCollision(c.player,c.player.getBoundingBox().expandTowards(delta)))continue;
             if(delta.lengthSqr()<distance){distance=delta.lengthSqr();start=q;}
         }
         navigationDebug.addProperty("goals",goals.size());navigationDebug.addProperty("start",start==null?"none":start.toShortString());
-        if(start==null){finishJob(c,"当前站位太窄，请移到通道中间再开始","blocked");return;}
+        if(start==null){finishJob(c,"附近 3 格内都没有安全施工起点；请移到开阔通道后再开始","blocked");return;}
         pathSearch=navigation.search(new BuildNavigation.World(){public boolean clear(BlockPos p){return clearCache.computeIfAbsent(p,k->ProjectionBuildJob.this.clear(c,k));}public boolean edge(BlockPos a,BlockPos b){return c.level.noCollision(c.player,body(feet(a)).expandTowards(feet(b).subtract(feet(a))));}},start,goals);
         searchOrigin=c.player.position();advanceSearch(c);
     }
