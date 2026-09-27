@@ -24,7 +24,7 @@ class EmergencyExitWiringTest {
   var c=calls("KitClient","stopAll");assertTrue(c.contains("dev/twob2tkit/combat/EmergencyExit.cancel"));assertTrue(c.contains("dev/twob2tkit/KitController.cancelPendingLogout"));
  }
  @Test void blockedZombieAscentFallsThroughToCombatRatherThanDisconnecting()throws Exception{
-  var c=calls("runtime/engine/BorerRangedCombat","hoverZombie");
+  var c=calls("runtime/engine/BorerRangedCombat","swordZombieFromHover");
   assertTrue(c.indexOf("dev/twob2tkit/runtime/engine/BorerRangedCombat.clearWholeRise")<c.indexOf("dev/twob2tkit/runtime/engine/BorerAreaFlightSession.acquire"));
   assertFalse(c.stream().anyMatch(x->x.endsWith(".requestEmergencyExit")));
  }

@@ -1,7 +1,13 @@
 package dev.twob2tkit.runtime.engine;
 import java.util.List;
 final class GuardWeaponPolicy {
+    static final int SWORD_RESERVE=32;
+    static boolean usableSword(boolean sword,int remaining){return usableSword(sword,remaining,SWORD_RESERVE);}
+    static boolean usableSword(boolean sword,int remaining,int minimum){return sword&&remaining>=minimum;}
     static boolean usableBow(boolean bow,boolean damageable,int remaining){return bow&&(!damageable||remaining>=8);}
+    static boolean groundSwordAllowed(boolean standaloneGuard,boolean onlyZombies){
+        return !standaloneGuard||!onlyZombies;
+    }
     static boolean needsRise(double feet,double mobFeet){return feet<mobFeet+3.0;}
     enum Hover{RISE,HOLD,FALLBACK}
     static Hover hover(double feet,double mobFeet,boolean wholeColumnClear){
@@ -9,6 +15,17 @@ final class GuardWeaponPolicy {
         if(needsRise(feet,mobFeet))return wholeColumnClear?Hover.RISE:Hover.FALLBACK;
         return Hover.HOLD;
     }
+	/** A sword swing is allowed only from a stable, flying hover above every nearby zombie. */
+	static boolean swordHoverReady(boolean onlyZombies,boolean flight,boolean usableSword,
+	                                double feet,double projectedFeet,double highestMobFeet,
+	                                double eyeToTarget,double attackRange){
+		return onlyZombies&&usableSword&&safeHoverHeight(flight,feet,projectedFeet,highestMobFeet)
+			&&eyeToTarget<=attackRange-.2;
+	}
+	static boolean safeHoverHeight(boolean flight,double feet,double projectedFeet,double highestMobFeet){
+		return flight&&feet>=highestMobFeet+3.0&&projectedFeet>=highestMobFeet+3.0
+			&&feet<=highestMobFeet+3.4;
+	}
 	/** Rise before fighting a nearby ranged mob, even when a zombie is also engaged. */
 	record Threat(double feetY, boolean ranged, double distance) {}
 	static double combatRise(double playerY, List<Threat> threats) {

@@ -83,6 +83,26 @@ class BorerBowWiringTest {
         assertFalse(pause.contains("acquire"));
         assertFalse(pause.contains("start"));
     }
+    @Test void isolatedZombieSwordWaitsForSafeHoverAndLeavesRangedDefenseAvailable() throws Exception {
+        var tick = calls(method(ROOT + "runtime/engine/BorerRangedCombat", "tick"));
+        assertTrue(tick.indexOf("onlyZombiesNearby") < tick.indexOf("swordZombieFromHover"));
+        assertTrue(tick.indexOf("swordZombieFromHover") < tick.indexOf("elevateBeforeCombat"));
+        assertTrue(tick.indexOf("groundSwordAllowed") < tick.indexOf("attack"));
+        assertTrue(tick.indexOf("elevateBeforeCombat") < tick.indexOf("selectBow"));
+        var sword = calls(method(ROOT + "runtime/engine/BorerRangedCombat", "swordZombieFromHover"));
+        assertTrue(sword.indexOf("hover") < sword.indexOf("swordHoverReady"));
+        assertTrue(sword.indexOf("swordHoverReady") < sword.indexOf("attack"));
+        assertTrue(sword.containsAll(List.of("clearWholeRise", "pauseGuardMovement", "selectWeapon")));
+        assertTrue(sword.indexOf("clearZombieApproachStep") < sword.lastIndexOf("step"));
+        assertTrue(sword.lastIndexOf("step") < sword.lastIndexOf("speed"));
+        assertTrue(sword.indexOf("sprintSafeSpeed") < sword.lastIndexOf("speed"));
+        assertFalse(sword.contains("enablePveMelee"), "Kit must be the sole sword attack owner");
+        assertFalse(sword.contains("navigate"), "Guard must not start a competing material route");
+        var isolation = calls(method(ROOT + "runtime/engine/BorerRangedCombat", "onlyZombiesNearby"));
+        assertTrue(isolation.contains("isRangedCombatThreat"));
+        assertTrue(calls(method(ROOT + "runtime/engine/BorerRangedCombat", "clearZombieApproachStep"))
+            .containsAll(List.of("noCollision", "safeAir")));
+    }
     @Test void combatOwnsInputBeforeWalkingMiningAndPrintProposals() throws Exception {
         var order = calls(method(ROOT + "KitClient", "tickNavigation"));
         assertTrue(order.indexOf("beforeGuard") < order.indexOf("beforeInput"));

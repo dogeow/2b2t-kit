@@ -18,6 +18,7 @@ final class BorerRangedCombat {
 	private final BorerCombatPeek peek;
 	private final BorerCombatContinuation continuation=new BorerCombatContinuation();
     private final BorerCombatSeparation separation=new BorerCombatSeparation();
+    private final GuardZombieApproach zombieApproach=new GuardZombieApproach();
     private Object combatWorld;
 	private String holdReason = "";
 	private boolean drawing;
@@ -141,10 +142,14 @@ final class BorerRangedCombat {
 			engine.fileLog(c, "area-defense-target id=" + next.getId() + " rank=" + rank(next) + " name=" + next.getName().getString()
 				+ " engaged=true recentAttacker=" + engine.engagement.recentAttacker(p, next));
 		}
+		boolean zombieOnly=engine.standaloneGuard
+			&&target instanceof net.minecraft.world.entity.monster.zombie.Zombie&&onlyZombiesNearby(c,nearby);
+		if(zombieOnly){if(swordZombieFromHover(c,nearby))return true;}
+		else zombieApproach.reset();
 		if (engine.standaloneGuard && elevateBeforeCombat(c, threats)) return true;
-		if(engine.standaloneGuard && target instanceof net.minecraft.world.entity.monster.zombie.Zombie && p.distanceTo(target)<9 && hoverZombie(c))return true;
         if (escaping) { releaseEscape(c); engine.status="已拉开距离，建造保持停止"; }
-		if (p.distanceTo(target) < 3 && p.hasLineOfSight(target)) {
+		if (GuardWeaponPolicy.groundSwordAllowed(engine.standaloneGuard,zombieOnly)
+				&&p.distanceTo(target) < 3 && p.hasLineOfSight(target)) {
 			cancelDraw(c);
 			rangedMode(true);
 			BorerItems.selectWeapon(c, p);
@@ -357,27 +362,106 @@ final class BorerRangedCombat {
 		}
 		if(flying)escapeFlight.hover();engine.mobs.raiseShield(c,p);engine.status="苦力怕逼近，撤离通道被挡，请立即接管";return true;
 	}
-    private boolean hoverZombie(Minecraft c){
+    private boolean onlyZombiesNearby(Minecraft c,java.util.List<LivingEntity> nearby){
+        boolean found=false;
+        for(var mob:nearby){
+            if(!mob.isAlive()||c.level.getEntity(mob.getId())!=mob)continue;
+            if(BorerThreats.isRangedCombatThreat(mob)
+                    ||mob.getMainHandItem().is(Items.BOW)||mob.getMainHandItem().is(Items.CROSSBOW)
+                    ||mob.getMainHandItem().is(Items.TRIDENT))return false;
+            if(c.player.distanceTo(mob)>12)continue;
+            if(!(mob instanceof net.minecraft.world.entity.monster.zombie.Zombie))return false;
+            found=true;
+        }
+        return found;
+    }
+    private boolean durableSwordAvailable(Minecraft c){
+        for(int slot=0;slot<36;slot++){
+            var stack=c.player.getInventory().getItem(slot);
+            if(BorerItems.isSwordWithReserve(stack,GuardWeaponPolicy.SWORD_RESERVE))return true;
+        }
+        return false;
+    }
+    /** Move at most a few collision-checked hover steps; never borrow material navigation. */
+    private boolean swordZombieFromHover(Minecraft c,java.util.List<LivingEntity> nearby){
         var p=c.player;
-        double rise=target.getY()+3.0-p.getY();
-        // Check the whole ascent before borrowing movement. A low ceiling is not a logout reason.
-        var choice=GuardWeaponPolicy.hover(p.getY(),target.getY(),rise<=0||clearWholeRise(c,rise));
-        if(choice==GuardWeaponPolicy.Hover.FALLBACK)return false;
+        if(p.getHealth()<19||p.hurtTime>0||p.isInWater()||p.isInLava()||p.isOnFire()
+                ||!durableSwordAvailable(c)||p.distanceTo(target)>=9||!p.hasLineOfSight(target)){
+            zombieApproach.reset();return false;
+        }
+        double highest=nearby.stream().filter(e->e instanceof net.minecraft.world.entity.monster.zombie.Zombie
+                &&e.isAlive()&&p.distanceTo(e)<=12).mapToDouble(LivingEntity::getY).max().orElse(target.getY());
+        double safeFeet=highest+3.0;
+        double horizontal=Math.hypot(target.getX()-p.getX(),target.getZ()-p.getZ());
+        if(horizontal>3.6){
+            var unavailable=zombieApproach.step(target.getUUID(),p.tickCount,p.getX(),p.getZ(),
+                target.getX(),target.getZ(),false,true,false);
+            if(!unavailable.reason().equals("retry_cooldown"))engine.fileLog(c,"guard-zombie-approach-unavailable reason="+unavailable.reason());
+            return false;
+        }
+        double projectedFeet=p.getY()+Math.min(0,p.getDeltaMovement().y)*10;
+        double rise=Math.max(0,safeFeet-p.getY());
+        var choice=GuardWeaponPolicy.hover(projectedFeet,highest,rise<=0||clearWholeRise(c,rise));
+        if(choice==GuardWeaponPolicy.Hover.FALLBACK){zombieApproach.reset();return false;}
         try{
             escapeFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/guard-hover-flight.bak"));
             if(escapeFlight.acquire(p)!=null)return false;
             escaping=true;
-            cancelDraw(c);rangedMode(false);
-            if(!hoverMelee){engine.host.enablePveMelee();hoverMelee=true;escaping=true;escapeFlightFailed=false;}
-            engine.pauseGuardMovement(c);
+            hoverMelee=false;cancelDraw(c);rangedMode(true);engine.pauseGuardMovement(c);
+            look=RotationAim.lookAt(p,target.getEyePosition());lookTick=p.tickCount;RotationAim.apply(p,look);
             if(choice==GuardWeaponPolicy.Hover.RISE){
                 escapeFlight.speed(.04);c.options.keyJump.setDown(true);
-                engine.status="升高避开僵尸，保留杀戮光环";
-            }else{escapeFlight.hover();engine.status="高处反击僵尸，确认击杀后继续";}
-            if(!p.isUsingItem())BorerItems.selectWeapon(c,p);
-            look=RotationAim.lookAt(p,target.getEyePosition());lookTick=p.tickCount;RotationAim.apply(p,look);
+                engine.status="先升高避开僵尸，再用剑反击";return true;
+            }
+            escapeFlight.hover();
+            if(!BorerItems.selectWeapon(c,p,GuardWeaponPolicy.SWORD_RESERVE)
+                    ||c.level.getEntity(target.getId())!=target||!target.isAlive()||!p.hasLineOfSight(target)){
+                releaseEscape(c);return false;
+            }
+            boolean safeHover=GuardWeaponPolicy.safeHoverHeight(
+                Boolean.TRUE.equals(BorerFlight.meteorFlightActive()),p.getY(),projectedFeet,highest);
+            double reach=Math.sqrt(target.getBoundingBox().distanceToSqr(p.getEyePosition()));
+            boolean attackReach=GuardWeaponPolicy.swordHoverReady(true,
+                Boolean.TRUE.equals(BorerFlight.meteorFlightActive()),
+                BorerItems.isSwordWithReserve(p.getMainHandItem(),GuardWeaponPolicy.SWORD_RESERVE),
+                p.getY(),projectedFeet,highest,reach,p.entityInteractionRange());
+            double dx=target.getX()-p.getX(),dz=target.getZ()-p.getZ();
+            double distance=Math.hypot(dx,dz);
+            Vec3 destination=distance<.001?p.position():new Vec3(
+                target.getX()-dx/distance*.7,p.getY(),target.getZ()-dz/distance*.7);
+            var input=BorerFlyPath.input(p.position(),destination,p.getYRot());
+            boolean clearStep=input.forward()&&clearZombieApproachStep(c,input.delta());
+            var step=zombieApproach.step(target.getUUID(),p.tickCount,p.getX(),p.getZ(),
+                target.getX(),target.getZ(),attackReach,safeHover,clearStep);
+            if(step.decision()==GuardZombieApproach.Decision.UNAVAILABLE){
+                if(!step.reason().equals("retry_cooldown"))
+                    engine.fileLog(c,"guard-zombie-approach-unavailable reason="+step.reason());
+                releaseEscape(c);return false;
+            }
+            if(step.decision()==GuardZombieApproach.Decision.MOVE){
+                escapeFlight.speed(GuardZombieApproach.sprintSafeSpeed(input.speed()));
+                look=new RotationAim.Look(input.yaw(),0);lookTick=p.tickCount;RotationAim.apply(p,look);
+                c.options.keyUp.setDown(true);
+                engine.status="安全悬停靠近僵尸，路径逐格核验";return true;
+            }
+            if(p.getAttackStrengthScale(0)>=.95F){
+                engine.mobs.lowerShield(c);
+                if(p.isUsingItem()&&p.getUseItem().is(Items.SHIELD))p.stopUsingItem();
+                c.gameMode.attack(p,target);p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+            }
+            engine.status="安全悬停，用剑反击 "+target.getName().getString();
             return true;
         }catch(IllegalStateException unavailable){releaseEscape(c);return false;}
+    }
+    private boolean clearZombieApproachStep(Minecraft c,Vec3 delta){
+        if(Math.abs(delta.y)>1e-6||delta.horizontalDistanceSqr()>.201*.201)return false;
+        var swept=c.player.getBoundingBox().expandTowards(delta).inflate(.02);
+        if(!c.level.noCollision(c.player,swept))return false;
+        for(var pos:net.minecraft.core.BlockPos.betweenClosed(
+                net.minecraft.core.BlockPos.containing(swept.minX,swept.minY,swept.minZ),
+                net.minecraft.core.BlockPos.containing(swept.maxX,swept.maxY,swept.maxZ)))
+            if(!safeAir(c,pos))return false;
+        return true;
     }
     private boolean clearWholeRise(Minecraft c,double rise){
         if(!c.level.noCollision(c.player,c.player.getBoundingBox().expandTowards(0,rise+.15,0)))return false;
@@ -444,6 +528,7 @@ final class BorerRangedCombat {
 		releaseControls(c);
 	}
 	private void releaseControls(Minecraft c) {
+		zombieApproach.reset();
 		peek.close(c);
 		if (target == null && !drawing && previousSlot < 0 && !escaping) return;
 		releaseEscape(c);

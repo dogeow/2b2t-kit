@@ -173,13 +173,19 @@ public final class BorerItems {
 
 	/** 被怪打时把最好的剑切到主手；主手已是剑就不动。true 表示主手现在有剑。 */
 	public static boolean selectWeapon(Minecraft client, LocalPlayer player) {
+		return selectWeapon(client, player, MIN_TOOL_REMAINING + 1);
+	}
+
+	/** 独立防护可以要求更高的剑耐久余量，避免刚切剑就耗尽。 */
+	static boolean selectWeapon(Minecraft client, LocalPlayer player, int minimumRemaining) {
 		if (player == null || client.gameMode == null) return false;
-		if (isSword(player.getMainHandItem())) return true;
+		if (isSwordWithReserve(player.getMainHandItem(), minimumRemaining)) return true;
 		Inventory inventory = player.getInventory();
 		int bestSlot = -1;
 		int bestScore = 0;
 		for (int slot = 0; slot < 36; slot++) {
-			int score = swordScore(inventory.getItem(slot));
+			ItemStack stack = inventory.getItem(slot);
+			int score = isSwordWithReserve(stack, minimumRemaining) ? swordScore(stack) : 0;
 			if (score > bestScore) {
 				bestScore = score;
 				bestSlot = slot;
@@ -199,6 +205,10 @@ public final class BorerItems {
 	/** 物品是否为剑。 */
 	public static boolean isSword(ItemStack stack) {
 		return !stack.isEmpty() && stack.is(ItemTags.SWORDS) && !isTooWorn(stack);
+	}
+
+	static boolean isSwordWithReserve(ItemStack stack, int minimumRemaining) {
+		return GuardWeaponPolicy.usableSword(isSword(stack),remainingDurability(stack),minimumRemaining);
 	}
 
 	/** 剑品质分。 */
