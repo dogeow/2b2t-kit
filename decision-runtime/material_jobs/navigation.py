@@ -217,34 +217,49 @@ def _below_vertical_start(row, position):
 
 
 def leave_projection(client):
-    state = client.status()
+    # A completed ground walk can still be coasting or falling. Anchor the
+    # clearance scan to an actual rest, not just the walk acknowledgement.
+    state = settled_state(client)
     selection = state.get('projection_selection', {})
     low, high, p = selection.get('min'), selection.get('max'), state['pos']
     if not low or not high or not all(low[i]-1 <= p[i] <= high[i]+1 for i in (0, 2)) or p[1] > high[1]+2:
         return
+    low,high=list(low),list(high)
+    scope=(state.get('world_session'),state.get('control_revision'),selection.get('key'))
     if state.get('air_only_navigation_protocol',0)<2:
         raise JobBlocked('当前 Kit 尚不支持精确空气导航，不能核验投影退出')
     # A union/AABB of courtyard subregions also contains outdoor protection
     # holes. Prove open sky before treating those positions as an interior.
     if high[1]+3<=317:
-        column_low,column_high=_body_sweep(p,p);column_high[1]=319
-        column=_air_scan(client,column_low,column_high)
-        if not any(not _below_vertical_start(row,p) for row in column):
-            fresh=client.status();actual=fresh['pos']
-            actual_low,actual_high=_body_sweep(actual,actual)
-            if (fresh.get('projection_selection',{}).get('key')!=selection.get('key')
-                    or math.dist(actual,p)>.15 or actual_low[1]<column_low[1]
-                    or any(actual_low[i]<column_low[i] or actual_high[i]>column_high[i] for i in (0,2))
-                    or any(not _below_vertical_start(row,actual) for row in column)):
+        for attempt in range(2):
+            column_low,column_high=_body_sweep(p,p);column_high[1]=319
+            column=_air_scan(client,column_low,column_high)
+            fresh=settled_state(client);actual=fresh['pos']
+            current_selection=fresh.get('projection_selection',{})
+            if ((fresh.get('world_session'),fresh.get('control_revision'),current_selection.get('key'))!=scope
+                    or current_selection.get('min')!=low or current_selection.get('max')!=high):
                 raise JobBlocked('露天退出核验期间位置或投影改变，保持当前位置')
-            target=[actual[0],max(actual[1]+1,high[1]+3.0),actual[2]]
-            _air_move(client,target,90)
-            final=client.status()['pos']
-            if final[1]<=high[1]+2:
-                raise JobBlocked('实际位置尚未升出投影高度，不继续移动')
-            write_json(client.out/('exit-%d.json'%time.time_ns()),{'mode':'verified_open_sky_column',
-                       'world_session':client.world,'from':p,'waypoints':[target],'actual':final,'confirmed':True})
-            return
+            actual_low,actual_high=_body_sweep(actual,actual)
+            moved=(math.dist(actual,p)>.15 or actual_low[1]<column_low[1]
+                   or any(actual_low[i]<column_low[i] or actual_high[i]>column_high[i] for i in (0,2)))
+            if moved:
+                if attempt:
+                    raise JobBlocked('露天退出核验期间位置或投影改变，保持当前位置')
+                # Never use the old column after crossing its body footprint.
+                p=actual
+                if (not all(low[i]-1<=p[i]<=high[i]+1 for i in (0,2)) or p[1]>high[1]+2):
+                    raise JobBlocked('露天退出核验期间位置或投影改变，保持当前位置')
+                continue
+            p=actual
+            if not any(not _below_vertical_start(row,p) for row in column):
+                target=[actual[0],max(actual[1]+1,high[1]+3.0),actual[2]]
+                _air_move(client,target,90)
+                final=client.status()['pos']
+                if final[1]<=high[1]+2:
+                    raise JobBlocked('实际位置尚未升出投影高度，不继续移动')
+                write_json(client.out/('exit-%d.json'%time.time_ns()),{'mode':'verified_open_sky_column',
+                           'world_session':client.world,'from':p,'waypoints':[target],'actual':final,'confirmed':True})
+                return
     floor, head = math.floor(p[1]), math.floor(p[1]+1.8-1e-7)
     lo, hi = [low[0]-4, floor, low[2]-4], [high[0]+4, head, high[2]+4]
     if math.prod(hi[i]-lo[i]+1 for i in range(3)) > 50000:

@@ -329,6 +329,74 @@ class ProjectionExitTest(unittest.TestCase):
         self.assertEqual([.5,73.,.5],self.client.pos)
         self.assertEqual(319,self.client.calls[0][1]['max'][1])
 
+    def test_open_sky_scan_starts_from_settled_position(self):
+        waits=[]
+        def settle(client,*args,**kwargs):
+            waits.append(list(client.pos))
+            if len(waits)==1:client.pos=[1.5,64.,.5]
+            return client.status()
+        with patch('material_jobs.navigation.settled_state',side_effect=settle):
+            leave_projection(self.client)
+        scans=[params for op,params in self.client.calls if op=='scan']
+        self.assertEqual([1,64,0],scans[0]['min'])
+        self.assertEqual([1.5,73.,.5],self.client.pos)
+
+    def test_open_sky_drift_rescans_new_body_column_before_rising(self):
+        self.selection['max'][0]=5
+        original=self.client.request;columns=[]
+        def request(op,**params):
+            reply=original(op,**params)
+            if op=='scan' and params['max'][1]==319:
+                columns.append(params['min'])
+                if len(columns)==1:self.client.pos=[1.5,64.,.5]
+            return reply
+        self.client.request=request
+        leave_projection(self.client)
+        self.assertEqual([[0,64,0],[1,64,0]],columns)
+        moves=[params['target'] for op,params in self.client.calls if op=='navigate']
+        self.assertEqual([[1.5,73.,.5]],moves)
+
+    def test_open_sky_repeated_drift_stops_without_ascent(self):
+        self.selection['max'][0]=5
+        original=self.client.request;columns=[]
+        def request(op,**params):
+            reply=original(op,**params)
+            if op=='scan' and params['max'][1]==319:
+                columns.append(params['min'])
+                self.client.pos=[len(columns)+.5,64.,.5]
+            return reply
+        self.client.request=request
+        with self.assertRaisesRegex(JobBlocked,'露天退出核验期间位置或投影改变'):
+            leave_projection(self.client)
+        self.assertEqual([[0,64,0],[1,64,0]],columns)
+        self.assertFalse(any(op=='navigate' for op,_ in self.client.calls))
+
+    def test_open_sky_projection_change_during_scan_stops_without_retry(self):
+        original=self.client.request
+        def request(op,**params):
+            reply=original(op,**params)
+            if op=='scan':self.selection['key']='another-projection'
+            return reply
+        self.client.request=request
+        with self.assertRaisesRegex(JobBlocked,'露天退出核验期间位置或投影改变'):
+            leave_projection(self.client)
+        self.assertEqual(1,sum(op=='scan' for op,_ in self.client.calls))
+        self.assertFalse(any(op=='navigate' for op,_ in self.client.calls))
+
+    def test_open_sky_control_change_during_scan_stops_without_retry(self):
+        original_status=self.client.status;revision=[7]
+        self.client.status=lambda:{**original_status(),'control_revision':revision[0]}
+        original_request=self.client.request
+        def request(op,**params):
+            reply=original_request(op,**params)
+            if op=='scan':revision[0]=8
+            return reply
+        self.client.request=request
+        with self.assertRaisesRegex(JobBlocked,'露天退出核验期间位置或投影改变'):
+            leave_projection(self.client)
+        self.assertEqual(1,sum(op=='scan' for op,_ in self.client.calls))
+        self.assertFalse(any(op=='navigate' for op,_ in self.client.calls))
+
     def test_real_roof_even_above_projection_height_uses_horizontal_exit_and_sealed_room_stays_blocked(self):
         from hull_escape import horizontal_exit
         for roof_y,sealed in ((68,False),(80,False),(68,True)):
