@@ -666,8 +666,10 @@ class Backend:
             open_workbench(c,pos)
             result = manufacture(c,self.crafting_catalog,targets)
             self.close_owned_menu()
-            self.route('workbench_exit')
+            # The crafted stock is already verified. Preserve its receipt even
+            # if the subsequent door exit cannot be confirmed.
             write_json(out/'result.json',result)
+            self.route('workbench_exit')
             return {'phase':'done' if result['complete'] else 'waiting', 'detail':'合成结果已核对', **result}
 
     def make_room(self, targets, keep_items):
@@ -791,19 +793,73 @@ class Backend:
                     if math.dist(c.status()['pos'],step['target'])<=.4:continue
                 c.checked('walk',target=step['target'],arrival=.4,restore_flight=False,seconds=45)
             elif step.get('kind')=='door':
-                pos=step['pos']; rows=c.request('scan',min=pos,max=pos)['blocks']
-                row=next((r for r in rows if r['pos']==pos),None)
-                if row is None or not row['state'].startswith('Block{'+step['item']+'}'):
-                    raise JobBlocked('已登记的门改变了，保留现场')
-                wanted='open='+str(step.get('open',True)).lower()
-                if wanted not in row['state']:
-                    c.checked('select_item',item='minecraft:diamond_sword')
-                    c.checked('interact',pos=pos,face=step['face'],expected_state=row['state'],expected_hand='minecraft:diamond_sword')
-                    fresh=c.request('scan',min=pos,max=pos)['blocks']
-                    if not any(wanted in r['state'] for r in fresh):
-                        raise JobBlocked('门状态没有得到服务器确认')
+                self.route_door(c,step)
             else:
                 raise JobBlocked('工位路线包含不支持的动作')
+
+    def route_door(self, c, step):
+        """Approach one registered door face before one state-checked toggle."""
+        from door_access import WOOD_DOORS
+        from projection_completion import block_state
+        pos,face,item=step.get('pos'),step.get('face'),step.get('item')
+        if (not isinstance(pos,list) or len(pos)!=3 or any(type(v) is not int for v in pos)
+                or face not in ('north','south','east','west','up','down')
+                or item not in WOOD_DOORS or type(step.get('open',True)) is not bool):
+            raise JobBlocked('登记门的坐标、门面或状态无效')
+
+        def observed():
+            reply=c.request('scan',min=pos,max=pos,details=True)
+            if (reply.get('phase') not in (None,'done') or reply.get('world_session')!=c.world
+                    or not isinstance(reply.get('blocks'),list) or len(reply['blocks'])!=1
+                    or reply['blocks'][0].get('pos')!=pos):
+                raise JobBlocked('登记门的最新扫描未完整确认，保留现场')
+            row=reply['blocks'][0]
+            try:
+                name,properties=block_state(row['state'])
+            except (KeyError,TypeError,ValueError) as error:
+                raise JobBlocked('登记门状态无法解析，保留现场') from error
+            if (name!=item or properties.get('half')!='lower'
+                    or properties.get('powered')!='false'
+                    or properties.get('open') not in ('true','false') or row.get('fluid') is not False):
+                raise JobBlocked('已登记的门改变了，保留现场')
+            return row,properties
+
+        row,properties=observed()
+        wanted='true' if step.get('open',True) else 'false'
+        if properties['open']==wanted:
+            return
+        current=c.status()['pos']
+        if math.dist(current,[v+.5 for v in pos])>12:
+            raise JobBlocked('登记门超出本地接近范围，停止门交互')
+        # The native approach checks a visible face and a collision-free path.
+        # A failed or uncertain approach never authorizes an interaction.
+        c.checked('approach_block',pos=pos,face=face,expected_state=row['state'],
+                  stand_distance=3,seconds=45)
+        self.checkpoint()
+        if math.dist(c.status()['pos'],[v+.5 for v in pos])>4.5:
+            raise JobBlocked('登记门接近后的实际位置未确认，不发送门交互')
+        fresh,_=observed()
+        if fresh['state']!=row['state']:
+            raise JobBlocked('接近时登记门状态改变，保留现场；不重复开关')
+        c.checked('select_item',item='minecraft:diamond_sword')
+        fresh,_=observed()
+        if fresh['state']!=row['state']:
+            raise JobBlocked('门交互前状态改变，保留现场；不重复开关')
+        # The native interaction verifies reach and visibility again after
+        # rotation. Its result may be ambiguous, so never resend this toggle.
+        c.checked('interact',pos=pos,face=face,expected_state=fresh['state'],
+                  expected_hand='minecraft:diamond_sword')
+        deadline=time.monotonic()+2
+        while True:
+            after,after_properties=observed()
+            if {key:value for key,value in after_properties.items() if key!='open'} != {
+                    key:value for key,value in properties.items() if key!='open'}:
+                raise JobBlocked('交互后登记门其他属性改变，保留现场；不重复开关')
+            if after_properties['open']==wanted:
+                return
+            if after['state']!=row['state'] or time.monotonic()>=deadline:
+                raise JobBlocked('门状态没有得到服务器确认；不重复开关')
+            time.sleep(.1)
 
     def acquire(self, item, count):
         if item=='minecraft:gravel':
@@ -812,8 +868,13 @@ class Backend:
         from material_jobs.discovery import discover
         with self.action('acquire') as (c,out):
             self.prepare_travel()
-            if item not in ROCK_SOURCES and item not in LOGS and item!='minecraft:sand':
+            if item not in ROCK_SOURCES and item not in LOGS and item not in ('minecraft:sand','minecraft:dirt'):
                 return {'phase':'blocked','detail':'此原料尚未提供自动采集方式：'+item}
+            if item=='minecraft:dirt':
+                from material_jobs.dirt_harvest import _box
+                protected=self.profile.get('protected_regions')
+                if not isinstance(protected,list) or not protected or any(_box(box) is None for box in protected):
+                    return {'phase':'blocked','detail':'泥土采集需要先登记有效的建造保护区域'}
             from material_jobs.equipment import prepare
             prepared=prepare(c,item,count,self.profile,self.out/'equipment',self.checkpoint)
             if prepared.get('phase')!='done':
@@ -962,11 +1023,9 @@ class Backend:
                     if beams['completed']:
                         after=self.refresh_audit()
                         post_work(after,c.status())  # validates live server, world, selection and complete coverage
-                        gained=after['matched']-before['matched']
                         remaining={tuple(row['pos']) for row in after['mismatches']}
                         if (type(after.get('observed_at')) is not int
                                 or after['observed_at']<=before['observed_at']
-                                or gained<len(beams['completed'])
                                 or any(tuple(receipt['pos']) in remaining for receipt in beams['completed'])):
                             raise JobBlocked('木柱逐格回执与完整投影复核不一致；停止重复施工')
                         write_json(out/'stripped-posts.json',{'placement_key':projection_key,

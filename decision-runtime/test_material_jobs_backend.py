@@ -173,6 +173,36 @@ class BackendTest(unittest.TestCase):
         posts.assert_called_once();printer.assert_not_called();exit.assert_called_once()
         self.assertEqual(1,json.loads((self.root/'stripped-posts.json').read_text())['after_matched'])
 
+    def test_completed_posts_survive_unrelated_audit_drift_of_two_cells(self):
+        def mismatch(x,item):
+            return {'pos':[x,65,1],'expected':'Block{'+item+'}[axis=y]' if item==POST_ITEM
+                    else 'Block{minecraft:stone}', 'actual':'Block{minecraft:air}',
+                    'kind':'missing','fluid':False,'adjacent_fluid':False,
+                    'block_entity':False,'neighbors_loaded':True}
+        posts=[mismatch(x,POST_ITEM) for x in range(1,17)]
+        unrelated=[mismatch(x,'minecraft:stone') for x in range(20,77)]
+        drift=[mismatch(x,'minecraft:stone') for x in (90,91)]
+        before={'placement_key':'ship','server':'simpcraft.com','dimension':'minecraft:overworld',
+                'observed_at':1000,'loaded_chunks_verified':True,'matched':1527,'total':1600,
+                'mismatches':posts+unrelated,'replacement_items':{POST_ITEM:16,'minecraft:stone':57},
+                'kinds':{'missing':73}}
+        after={**before,'observed_at':1001,'matched':1541,'mismatches':unrelated+drift,
+               'replacement_items':{'minecraft:stone':59},'kinds':{'missing':59}}
+        self.current['projection_selection']={'key':'ship','min':[0,64,0],'max':[100,70,10]}
+        self.job.request.update(mode='projection',projection_key='ship')
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
+        self.job.prepare_travel=Mock();self.job.refresh_audit=Mock(side_effect=[before,after])
+        receipts=[{'pos':row['pos'],'expected':row['expected'],'post_scan_state':row['expected']}
+                  for row in posts]
+        with patch('material_jobs.acquisition._travel'),patch.object(backend,'outside_station'), \
+             patch.object(backend,'finish_beams',return_value={'completed':receipts,'deferred':[]}), \
+             patch('goal_workflow.build_phase') as printer,patch.object(backend,'leave_projection') as exit:
+            result=self.job.build('ship')
+        self.assertEqual(('done',16),(result['phase'],result['placed']))
+        self.assertEqual(14,after['matched']-before['matched'])
+        self.assertEqual(16,len(json.loads((self.root/'stripped-posts.json').read_text())['completed']))
+        printer.assert_not_called();exit.assert_called_once()
+
     def test_post_scan_receipt_without_matching_full_audit_blocks_replay(self):
         before,_=self.post_audits()
         other={'pos':[2,65,1],'expected':'Block{minecraft:stone}',
@@ -347,6 +377,134 @@ class BackendTest(unittest.TestCase):
             self.job.route('workbench_exit')
         movement.assert_not_called()
         self.client.checked.assert_called_once_with('walk',target=[1.5,65,.5],arrival=.4,restore_flight=False,seconds=45)
+
+    def exit_door_scene(self):
+        pos=[761014,65,797840]
+        self.current['pos']=[761014.5,70.58,797839.5]
+        self.job.profile={'workbench_exit':[{'kind':'door','pos':pos,'item':'minecraft:birch_door',
+                                             'face':'north','open':False}]}
+        door={'state':'Block{minecraft:birch_door}[facing=north,half=lower,hinge=left,open=true,powered=false]'}
+        calls=[]
+        def request(op,**params):
+            self.assertEqual('scan',op)
+            self.assertEqual(pos,params['min']);self.assertEqual(pos,params['max'])
+            self.assertTrue(params['details'])
+            calls.append(('scan',door['state']))
+            return {'world_session':'w','blocks':[{'pos':pos,'state':door['state'],'fluid':False}]}
+        def checked(op,**params):
+            calls.append((op,dict(params)))
+            if op=='approach_block':self.current['pos']=[761014.5,65,797839.5]
+            if op=='interact':door['state']=door['state'].replace('open=true','open=false')
+            return {'phase':'done'}
+        self.client.request=Mock(side_effect=request);self.client.checked=Mock(side_effect=checked)
+        return pos,door,calls
+
+    def test_exit_door_above_reach_approaches_registered_face_before_single_toggle(self):
+        pos,door,calls=self.exit_door_scene()
+        self.job.route('workbench_exit')
+        operations=[entry[0] for entry in calls]
+        self.assertEqual(['scan','approach_block','scan','select_item','scan','interact','scan'],operations)
+        self.assertEqual('minecraft:diamond_sword',calls[3][1]['item'])
+        self.assertEqual({'pos':pos,'face':'north','expected_state':calls[0][1],
+                          'stand_distance':3,'seconds':45},calls[1][1])
+        self.assertEqual(calls[0][1],calls[5][1]['expected_state'])
+        self.assertIn('open=false',door['state'])
+
+    def test_exit_door_changed_during_approach_never_selects_or_toggles(self):
+        _,door,calls=self.exit_door_scene()
+        original=self.client.checked.side_effect
+        def changed(op,**params):
+            reply=original(op,**params)
+            if op=='approach_block':door['state']=door['state'].replace('hinge=left','hinge=right')
+            return reply
+        self.client.checked.side_effect=changed
+        with self.assertRaisesRegex(JobBlocked,'状态改变'):
+            self.job.route('workbench_exit')
+        self.assertEqual(['scan','approach_block','scan'],[entry[0] for entry in calls])
+
+    def test_exit_door_unconfirmed_approach_pose_never_toggles(self):
+        _,_,calls=self.exit_door_scene()
+        original=self.client.checked.side_effect
+        def did_not_move(op,**params):
+            if op=='approach_block':
+                calls.append((op,dict(params)))
+                return {'phase':'done'}
+            return original(op,**params)
+        self.client.checked.side_effect=did_not_move
+        with self.assertRaisesRegex(JobBlocked,'实际位置未确认'):
+            self.job.route('workbench_exit')
+        self.assertEqual(['scan','approach_block'],[entry[0] for entry in calls])
+
+    def test_exit_door_other_properties_changed_after_toggle_never_count_as_success(self):
+        _,door,calls=self.exit_door_scene()
+        original=self.client.checked.side_effect
+        def changed(op,**params):
+            reply=original(op,**params)
+            if op=='interact':door['state']=door['state'].replace('hinge=left','hinge=right')
+            return reply
+        self.client.checked.side_effect=changed
+        with self.assertRaisesRegex(JobBlocked,'其他属性改变'):
+            self.job.route('workbench_exit')
+        self.assertEqual(1,[entry[0] for entry in calls].count('interact'))
+
+    def test_exit_door_without_post_toggle_confirmation_never_repeats_interaction(self):
+        _,_,calls=self.exit_door_scene()
+        original=self.client.checked.side_effect
+        def no_change(op,**params):
+            if op=='interact':
+                calls.append((op,dict(params)))
+                return {'phase':'done'}
+            return original(op,**params)
+        self.client.checked.side_effect=no_change
+        with patch.object(backend.time,'monotonic',side_effect=[0,3]):
+            with self.assertRaisesRegex(JobBlocked,'没有得到服务器确认'):
+                self.job.route('workbench_exit')
+        self.assertEqual(1,[entry[0] for entry in calls].count('interact'))
+
+    def test_exit_door_already_in_requested_state_never_approaches_or_toggles(self):
+        _,door,calls=self.exit_door_scene()
+        door['state']=door['state'].replace('open=true','open=false')
+        self.job.route('workbench_exit')
+        self.assertEqual(['scan'],[entry[0] for entry in calls])
+
+    def test_exit_door_uncertain_approach_or_toggle_is_never_retried(self):
+        for failing in ('approach_block','interact'):
+            with self.subTest(failing=failing):
+                _,_,calls=self.exit_door_scene()
+                original=self.client.checked.side_effect
+                def fail(op,**params):
+                    if op==failing:
+                        calls.append((op,dict(params)))
+                        raise RuntimeError('native result uncertain')
+                    return original(op,**params)
+                self.client.checked.side_effect=fail
+                with self.assertRaisesRegex(RuntimeError,'uncertain'):
+                    self.job.route('workbench_exit')
+                self.assertEqual(1,[entry[0] for entry in calls].count(failing))
+                self.assertEqual(0 if failing=='approach_block' else 1,
+                                 [entry[0] for entry in calls].count('interact'))
+
+    def test_exit_door_far_from_registered_position_never_starts_approach(self):
+        _,_,calls=self.exit_door_scene()
+        self.current['pos']=[761014.5,85,797839.5]
+        with self.assertRaisesRegex(JobBlocked,'本地接近范围'):
+            self.job.route('workbench_exit')
+        self.assertEqual(['scan'],[entry[0] for entry in calls])
+
+    def test_verified_craft_result_is_recorded_before_uncertain_exit(self):
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
+        self.job.prepare_travel=Mock();self.job.profile={'workbench':[1,65,1]}
+        self.job.crafting_catalog=object();self.current['inventory']=[]
+        self.job.route=Mock(side_effect=lambda name: (_ for _ in ()).throw(JobBlocked('exit uncertain'))
+                            if name=='workbench_exit' else None)
+        result={'complete':True,'remaining_targets':{},'steps':[{'item':'minecraft:oak_trapdoor','produced':248}]}
+        with patch('material_manufacture.inventory_plan',return_value=None),\
+             patch('goal_workflow.open_workbench'),\
+             patch('material_manufacture.manufacture',return_value=result):
+            with self.assertRaisesRegex(JobBlocked,'exit uncertain'):
+                self.job.craft({'minecraft:oak_trapdoor':247})
+        self.job.close_owned_menu.assert_called_once()
+        self.assertEqual(result,json.loads((self.root/'result.json').read_text()))
 
     def test_ui_start_waits_for_post_click_snapshot_instead_of_old_menu(self):
         old={'time':99,'screen':'KitFormScreen'};fresh={'time':101,'screen':''}

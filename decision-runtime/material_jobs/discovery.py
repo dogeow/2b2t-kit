@@ -7,6 +7,7 @@ from pathlib import Path
 
 from kit_runtime.journal import write_json
 from .acquisition import ROCK_SOURCES, LOGS, NATURAL, AIR, LIGHTS, FALLING, block_id, rock_choice, _rock_observation, _travel
+from .dirt_harvest import candidates as dirt_candidates
 from native_sand_quarry import choose_quarry
 from .protocol import server_key
 
@@ -129,6 +130,19 @@ def choose_region(rows, item, x, z, player, checkpoint=lambda:None, diagnostics=
     diag=diagnostics if diagnostics is not None else {}
     rejected=Counter();diag.update(target_blocks=0,seed_buckets=0,seeds_tried=0,quarries_tried=0,entrances_tried=0)
     diag['reject_reasons']=rejected
+    if item == 'minecraft:dirt':
+        # Discovery proposes only an exposed dirt patch. The acquisition
+        # adapter rechecks its site buffer and each block immediately before
+        # native movement and mining; it never opens a shaft.
+        found=dirt_candidates(rows,[x,58,z],[x+15,160,z+15],player)
+        diag['target_blocks']=len(found)
+        if not found:
+            rejected['no_safe_surface_dirt']+=1
+            return None
+        y=found[0][1]
+        return {'item':item,'min':[x,max(58,y-7),z],
+                'max':[x+15,min(160,y+8),z+15],
+                'source':'natural_survey','surface_y':y}
     if item=='minecraft:sand':
         diag['target_blocks']=sum(block_id(row)==item and x<=row['pos'][0]<=x+15 and z<=row['pos'][2]<=z+15 for row in rows)
         choice=choose_quarry(rows,[x,64,z],[x+15,120,z+15],player)
@@ -286,7 +300,7 @@ def _extend_known_shaft(c,item,profile,ledger,path,checkpoint,origin,selection,m
 
 def discover(c,item,profile,directory,checkpoint,max_tiles=8):
     c.material_search_progress={'new_tiles':0,'scanned_total':0,'has_more':False,'ledger':None}
-    if item not in ROCK_SOURCES and item not in LOGS and item!='minecraft:sand':
+    if item not in ROCK_SOURCES and item not in LOGS and item not in ('minecraft:sand','minecraft:dirt'):
         return None
     directory=Path(directory); directory.mkdir(parents=True,exist_ok=True)
     scope=hashlib.sha256((profile['server']+'|'+profile['dimension']+'|'+item).encode()).hexdigest()[:20]
