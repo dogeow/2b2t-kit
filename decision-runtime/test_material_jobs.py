@@ -164,6 +164,17 @@ class MaterialJobsTest(unittest.TestCase):
                 'result':{'id':'minecraft:bone_block','count':1}}))
         self.catalog=ProcessingCatalog(self.catalog.jar)
 
+    def add_oak_trapdoor_recipes(self):
+        with zipfile.ZipFile(self.catalog.jar,'a') as archive:
+            archive.writestr('data/minecraft/recipe/oak_planks.json',json.dumps({
+                'type':'minecraft:crafting_shapeless','ingredients':['minecraft:oak_log'],
+                'result':{'id':'minecraft:oak_planks','count':4}}))
+            archive.writestr('data/minecraft/recipe/oak_trapdoor.json',json.dumps({
+                'type':'minecraft:crafting_shaped','pattern':['###','###'],
+                'key':{'#':'minecraft:oak_planks'},
+                'result':{'id':'minecraft:oak_trapdoor','count':2}}))
+        self.catalog=ProcessingCatalog(self.catalog.jar)
+
     def request(self, item='white_concrete', count=64, *, projection=False):
         return {'schema':1, 'id':'test-job', 'mode':'projection' if projection else 'item',
                 'targets':{'minecraft:'+item:count}, 'projection_key':'ship' if projection else None,
@@ -488,6 +499,34 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertTrue(all(c[2] <= 256 for c in b.calls if c[0]=='harden'))
         self.assertTrue(all(c[2] <= 128 for c in b.calls if c[0]=='acquire' and c[1] in ('minecraft:sand','minecraft:gravel')))
         self.assertEqual([], [c for c in b.calls if c[0]=='build'])
+
+    def test_oak_trapdoor_batches_craft_on_hand_logs_after_first_depot_pass(self):
+        self.add_oak_trapdoor_recipes()
+        log,planks,door='minecraft:oak_log','minecraft:oak_planks','minecraft:oak_trapdoor'
+        # Five free slots force the same 64-door first batch as the live job.
+        held={log:241,**{'minecraft:filler_'+str(i):1 for i in range(27)}}
+        b=FakeBackend(self.catalog,held=held)
+        b.stack_sizes.update({log:64,planks:64,door:64})
+        result=self.job(b,self.request('oak_trapdoor',247)).run()
+        self.assertEqual('completed',result['state'],result)
+        self.assertEqual([(door,64)],
+                         [(item,count) for call in b.calls if call[0]=='fetch'
+                          for item,count in call[1].items()])
+        self.assertEqual(248,b.held[door])
+        self.assertEqual(55,b.held[log])
+        self.assertEqual(0,b.held[planks])
+
+    def test_local_craft_priority_does_not_skip_larger_fetch_without_inputs(self):
+        self.add_oak_trapdoor_recipes()
+        door='minecraft:oak_trapdoor'
+        # The first batch consumes all acquired logs; the next one must still
+        # check the depot because it has no on-hand crafting inputs.
+        b=FakeBackend(self.catalog,held={'minecraft:filler_'+str(i):1 for i in range(31)})
+        b.stack_sizes.update({'minecraft:oak_log':64,'minecraft:oak_planks':64,door:64})
+        result=self.job(b,self.request('oak_trapdoor',128)).run()
+        self.assertEqual('completed',result['state'],result)
+        self.assertEqual([64,128],[call[1][door] for call in b.calls
+                                   if call[0]=='fetch' and door in call[1]])
 
     def test_capacity_shortfall_stores_job_byproducts_then_continues(self):
         b=FakeBackend(self.catalog,held={'minecraft:stone':34*64});room=[]

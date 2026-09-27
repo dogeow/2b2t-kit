@@ -544,12 +544,25 @@ class MaterialJob:
         planned = self._plan(targets)
         write_json(self.out / 'plan.json', planned)
         wanted = {item: count for item, count in targets.items() if self.held.get(item, 0) < count}
-        if self._fetch(wanted):
-            return
-        if self._fetch_intermediates(targets, planned):
-            return
+        # Once an item output has had a depot pass, a later batch can use a
+        # complete craft-only plan from fresh backpack stock. Its larger
+        # absolute target must not send us back through the same chests first.
+        local_craft = (self.request['mode'] == 'item' and not self.prerequisites
+                       and bool(wanted) and all(item in self.fetch_tried for item in wanted)
+                       and not planned['missing_supplies']
+                       and any(step['kind'] == 'craft' for step in planned['steps'])
+                       and all(step['kind'] in ('craft', 'reserve') for step in planned['steps']))
+        peak_slots = self._peak_slots(planned) if local_craft else None
+        local_craft = local_craft and peak_slots <= 35
+        if not local_craft:
+            if self._fetch(wanted):
+                return
+            if self._fetch_intermediates(targets, planned):
+                return
         workspace = any(step['kind'] in ('craft', 'smelt', 'harden') for step in planned['steps'])
-        if self._peak_slots(planned) > (35 if workspace else 36):
+        if peak_slots is None:
+            peak_slots = self._peak_slots(planned)
+        if peak_slots > (35 if workspace else 36):
             self._make_room(targets, planned, '最小加工批次仍缺少背包周转空间，请先腾出位置')
             return
         for step in planned['steps']:
