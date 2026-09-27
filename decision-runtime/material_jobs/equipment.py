@@ -24,8 +24,13 @@ def identity(row):
 
 
 def is_silk(row):
-    return row.get('count',0)>0 and row.get('item','').endswith('_pickaxe') and any(
-        e['id']=='minecraft:silk_touch' and e['level']>0 for e in row.get('enchantments',[]))
+    return row.get('count',0)>0 and row.get('item','').endswith('_pickaxe') and has_silk_touch(row)
+
+
+def has_silk_touch(row):
+    return any(isinstance(e,dict) and e.get('id')=='minecraft:silk_touch'
+               and type(e.get('level')) is int and e['level']>0
+               for e in row.get('enchantments',[]))
 
 
 def needs_pickaxe_storage(row,minimum=0):
@@ -207,10 +212,12 @@ def prepare(c,item,target,profile,out,checkpoint):
     out=Path(out);out.mkdir(parents=True,exist_ok=True)
     kind='pickaxe' if item in ROCK_SOURCES else 'axe' if item in LOGS else 'shovel'
     minimum=700 if kind=='pickaxe' else min(512,max(96,target-inventory_counts(c.status()).get(item,0)+32))
+    grass=item=='minecraft:grass_block'
     def eligible(rows):
         return [r for r in rows if 0<=r.get('slot',-1)<36 and r.get('count')
                 and r.get('item') in ('minecraft:diamond_'+kind,'minecraft:netherite_'+kind)
-                and r.get('durability',0)>=minimum and (kind!='pickaxe' or not is_silk(r))]
+                and r.get('durability',0)>=minimum and (kind!='pickaxe' or not is_silk(r))
+                and (not grass or has_silk_touch(r))]
     checkpoint()
     if not eligible(c.status()['inventory']):
         ender,pad=profile.get('ender_chest'),profile.get('shulker_pad')
@@ -222,7 +229,8 @@ def prepare(c,item,target,profile,out,checkpoint):
                     continue
                 for tool in box.get('contains',[]):
                     if (tool.get('item') in ('minecraft:diamond_'+kind,'minecraft:netherite_'+kind)
-                            and tool.get('durability',0)>=minimum and not is_silk(tool)):
+                            and tool.get('durability',0)>=minimum and not is_silk(tool)
+                            and (not grass or has_silk_touch(tool))):
                         if any(r.get('item')==tool['item'] and r.get('durability',0)>=minimum and is_silk(r)
                                for r in box.get('contains',[])):
                             continue
@@ -233,9 +241,11 @@ def prepare(c,item,target,profile,out,checkpoint):
             if candidate:
                 slot,tool=candidate
                 take_box(c,ender,pad,slot,{tool:inventory_counts(c.status()).get(tool,0)+1},
-                         minimum_durability={tool:minimum})
+                         minimum_durability={tool:minimum},
+                         required_enchantments={tool:{'minecraft:silk_touch':1}} if grass else None)
     if not eligible(c.status()['inventory']):
-        return {'phase':'blocked','detail':f'需要剩余耐久至少 {minimum} 的钻石或下界合金{kind}；仓库未找到符合条件的现有工具'}
+        return {'phase':'blocked','detail':f'需要剩余耐久至少 {minimum} 的钻石或下界合金{kind}'
+                + ('并带精准采集' if grass else '') + '；仓库未找到符合条件的现有工具'}
     if kind=='pickaxe':
         # Native AREA and Meteor AutoTool may both reselect a quicker worn
         # pickaxe. Keep only qualified candidates in the actor's inventory;

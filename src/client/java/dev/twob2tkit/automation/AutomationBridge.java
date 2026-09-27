@@ -927,6 +927,10 @@ public final class AutomationBridge {
         if(c.screen!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyAttack.setDown(false);return true;}
         if(op.equals("mine_block")){
             try{guard(c,active);}catch(Exception e){finish(c,"stopped",e.getMessage());return true;}
+            if(active.has("required_silk_shovel")&&active.get("required_silk_shovel").getAsBoolean()
+                    &&!grassBlockToolReady(c,active)){
+                finish(c,"waiting","Silk Touch shovel or selected slot changed; grass block mining stopped");return true;
+            }
             if(active.has("underwater_gravel")&&active.get("underwater_gravel").getAsBoolean()){
                 var air=airEstimate(c);
                 boolean breathing=c.player.hasEffect(net.minecraft.world.effect.MobEffects.WATER_BREATHING)
@@ -943,6 +947,10 @@ public final class AutomationBridge {
                 finish(c,"waiting","Safe gravel footing changed");return true;
             }
             if(c.level.isEmptyBlock(target)){finish(c,"done","target removed");return true;}
+            if(active.has("dry_paving_guard")&&active.get("dry_paving_guard").getAsBoolean()){
+                try{dryPavingMiningGuard(c,target,str(active,"expected_state"));}
+                catch(Exception e){finish(c,"waiting",e.getMessage());return true;}
+            }
             if(!state(c,target).equals(str(active,"expected_state"))){finish(c,"error","mining target changed");return true;}
             Vec3 aim=blockAim(target,active);if(c.player.getEyePosition().distanceTo(aim)>c.player.blockInteractionRange()-.2){finish(c,"waiting","mining target moved out of reach");return true;}RotationAim.Look look=RotationAim.lookAt(c.player,aim);RotationAim.apply(c.player,look);
             BlockHitResult hit=c.level.clip(new ClipContext(c.player.getEyePosition(),aim,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,c.player));
@@ -1542,6 +1550,10 @@ public final class AutomationBridge {
             if(!state(c,pos).equals(str(r,"expected_state")))throw new IllegalStateException("Target block changed");
             if(!itemId(c.player.getMainHandItem()).equals(str(r,"expected_hand")))throw new IllegalStateException("Held item changed");
             Direction face=Direction.valueOf(str(r,"face").toUpperCase(Locale.ROOT));
+            if(r.has("dry_paving_guard")&&(!r.get("dry_paving_guard").isJsonPrimitive()||!r.getAsJsonPrimitive("dry_paving_guard").isBoolean()))
+                throw new IllegalArgumentException("Dry paving guard must be boolean");
+            boolean dryPaving=r.has("dry_paving_guard")&&r.get("dry_paving_guard").getAsBoolean();
+            if(dryPaving)dryPavingPlacementGuard(c,pos,face);
             var visible=BlockFaceTarget.visible(c,c.player.getEyePosition(),pos,face,c.player.blockInteractionRange());
             // The material client opens containers with a sword. That empty-hand-like
             // block use can target any visible face; placements still require the requested face.
@@ -1555,12 +1567,25 @@ public final class AutomationBridge {
                     if(c.player.getEyePosition().distanceTo(aim)>c.player.blockInteractionRange())throw new IllegalStateException("Target moved out of reach");
                     var checkedHit=c.level.clip(new ClipContext(c.player.getEyePosition(),aim,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,c.player));
                     if(!BlockFaceTarget.matches(checkedHit,pos,usedFace))throw new IllegalStateException("Interaction became occluded while rotating");
+                    if(dryPaving)dryPavingPlacementGuard(c,pos,usedFace);
                     c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,checkedHit);settle(r,8);
                 }catch(Exception e){finish(c,"error",e.getMessage());}
             });
         }else if(command.equals("mine_block") || command.equals("recover_shulker")){
             JsonArray p=r.getAsJsonArray("pos");checkSiteTarget(r,p);BlockPos pos=new BlockPos(p.get(0).getAsInt(),p.get(1).getAsInt(),p.get(2).getAsInt());
             if(!state(c,pos).equals(str(r,"expected_state")))throw new IllegalStateException("Mining target changed");
+            if(r.has("dry_paving_guard")&&(!r.get("dry_paving_guard").isJsonPrimitive()||!r.getAsJsonPrimitive("dry_paving_guard").isBoolean()))
+                throw new IllegalArgumentException("Dry paving guard must be boolean");
+            boolean dryPaving=r.has("dry_paving_guard")&&r.get("dry_paving_guard").getAsBoolean();
+            if(dryPaving){
+                if(!command.equals("mine_block"))throw new IllegalArgumentException("Dry paving guard requires mine_block");
+                dryPavingMiningGuard(c,pos,str(r,"expected_state"));
+            }
+            if(r.has("required_silk_shovel")&&r.get("required_silk_shovel").getAsBoolean()){
+                if(!command.equals("mine_block") || !BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(pos).getBlock()).toString().equals("minecraft:grass_block")
+                        || !grassBlockToolReady(c,r))
+                    throw new IllegalStateException("Grass block requires the selected Silk Touch diamond or netherite shovel with 33 durability");
+            }
             boolean recovery=command.equals("recover_shulker");
             boolean underwater=r.has("underwater_gravel")&&r.get("underwater_gravel").getAsBoolean();
             if(underwater){
@@ -1753,6 +1778,13 @@ public final class AutomationBridge {
                     &&item.getEnchantments().getLevel(enchantment)>0)return true;
         return false;
     }
+    private static boolean grassBlockToolReady(Minecraft c,JsonObject request){
+        if(!request.has("expected_tool_slot")||!request.has("expected_tool_item")||c.player==null)return false;
+        ItemStack held=c.player.getMainHandItem();
+        return GrassBlockToolPolicy.ready(str(request,"expected_tool_item"),itemId(held),
+            request.get("expected_tool_slot").getAsInt(),c.player.getInventory().getSelectedSlot(),
+            silk(held),held.isDamageableItem()?held.getMaxDamage()-held.getDamageValue():0);
+    }
     private static int rockFreeSlots(Minecraft c){int n=0;for(int i=0;i<36;i++)if(c.player.getInventory().getItem(i).isEmpty())n++;return n;}
     private static int rockCapacity(Minecraft c,String item){
         int n=0;for(int i=0;i<36;i++){ItemStack stack=c.player.getInventory().getItem(i);
@@ -1896,6 +1928,39 @@ public final class AutomationBridge {
         }
     }
     private static void checkSiteTarget(JsonObject r,JsonArray p){JsonArray s=r.getAsJsonArray("site");if(p==null || p.size()!=3 || !Double.isFinite(p.get(1).getAsDouble()) || !AutomationScope.nearSite(p.get(0).getAsDouble()-s.get(0).getAsDouble(),p.get(2).getAsDouble()-s.get(2).getAsDouble()))throw new IllegalArgumentException("Target outside worksite");}
+    private static DryPavingMiningPolicy.World dryPavingWorld(Minecraft c){
+        return new DryPavingMiningPolicy.World(){
+            public boolean loaded(BlockPos p){return c.level.hasChunkAt(p);}
+            public boolean air(BlockPos p){return c.level.isEmptyBlock(p);}
+            public boolean fluid(BlockPos p){return !c.level.getFluidState(p).isEmpty();}
+            public boolean blockEntity(BlockPos p){return c.level.getBlockEntity(p)!=null;}
+            public boolean solid(BlockPos p){return c.level.getBlockState(p).isCollisionShapeFullBlock(c.level,p);}
+            public String state(BlockPos p){return AutomationBridge.state(c,p);}
+            public boolean naturalSurface(BlockPos p){
+                return Set.of("minecraft:stone","minecraft:andesite","minecraft:grass_block","minecraft:dirt")
+                    .contains(BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(p).getBlock()).toString());
+            }
+            public boolean naturalSupport(BlockPos p){
+                return naturalSurface(p)&&solid(p);
+            }
+            public boolean playerStandingOn(BlockPos p){return c.player.onGround()&&c.player.blockPosition().below().equals(p);}
+            public Iterable<Vec3> nearbyEntities(BlockPos destination){
+                var positions=new ArrayList<Vec3>();
+                for(var entity:c.level.getEntities(c.player,new net.minecraft.world.phys.AABB(destination).inflate(4)))
+                    positions.add(entity.position());
+                return positions;
+            }
+            public net.minecraft.world.phys.AABB playerBody(){return c.player.getBoundingBox();}
+        };
+    }
+    private static void dryPavingPlacementGuard(Minecraft c,BlockPos support,Direction face){
+        String rejection=DryPavingPlacementPolicy.rejection(dryPavingWorld(c),support,face);
+        if(rejection!=null)throw new IllegalStateException(rejection);
+    }
+    private static void dryPavingMiningGuard(Minecraft c,BlockPos target,String expectedState){
+        String rejection=DryPavingMiningPolicy.rejection(dryPavingWorld(c),target,expectedState);
+        if(rejection!=null)throw new IllegalStateException(rejection);
+    }
     private static JsonArray scan(Minecraft c,JsonObject r){
         JsonArray a=r.getAsJsonArray("min"),b=r.getAsJsonArray("max");checkSiteTarget(r,a);checkSiteTarget(r,b);
         int x1=a.get(0).getAsInt(),y1=a.get(1).getAsInt(),z1=a.get(2).getAsInt(),x2=b.get(0).getAsInt(),y2=b.get(1).getAsInt(),z2=b.get(2).getAsInt();
@@ -1972,7 +2037,7 @@ public final class AutomationBridge {
         j.addProperty("material_job_control_protocol",1);
         j.addProperty("material_task_api_protocol",dev.twob2tkit.material.MaterialTaskProtocol.VERSION);j.add("material_task",dev.twob2tkit.material.MaterialJobs.snapshot());
         j.addProperty("projection_load_protocol",1);
-        j.addProperty("projection_batch_protocol",ProjectionBatchScope.PROTOCOL);j.addProperty("projection_model_protocol",1);j.add("projection_batch",projectionBatchSnapshot());
+        j.addProperty("projection_batch_protocol",ProjectionBatchScope.PROTOCOL);j.addProperty("projection_model_protocol",1);j.addProperty("dry_paving_protocol",1);j.add("projection_batch",projectionBatchSnapshot());
         if(rockQuarryProgress!=null&&str(rockQuarryProgress,"world_session").equals(session(c)))
             j.add("rock_quarry",rockQuarryProgress.deepCopy());
         if(c.player==null || c.level==null)return j;
@@ -2011,6 +2076,7 @@ public final class AutomationBridge {
         j.add("supply_candidates",BuildSupplyTask.candidates(c));
         if(op.equals("walk_path") && active!=null){j.addProperty("path_index",pathIndex);j.addProperty("path_size",active.getAsJsonArray("path").size());}
         j.addProperty("selected_slot",c.player.getInventory().getSelectedSlot());JsonObject keys=new JsonObject();keys.addProperty("forward",c.options.keyUp.isDown());keys.addProperty("back",c.options.keyDown.isDown());keys.addProperty("jump",c.options.keyJump.isDown());keys.addProperty("sneak",c.options.keyShift.isDown());j.add("movement_keys",keys);
+        j.addProperty("grass_block_tool_protocol",1);
         j.add("hand",stack(c.player.getMainHandItem()));JsonArray inventory=new JsonArray();
         for(int i=0;i<c.player.getInventory().getContainerSize();i++){JsonObject s=stack(c.player.getInventory().getItem(i));s.addProperty("slot",i);inventory.add(s);}j.add("inventory",inventory);
         JsonObject equipment=new JsonObject();equipment.add("head",stack(c.player.getItemBySlot(EquipmentSlot.HEAD)));equipment.add("chest",stack(c.player.getItemBySlot(EquipmentSlot.CHEST)));equipment.add("legs",stack(c.player.getItemBySlot(EquipmentSlot.LEGS)));equipment.add("feet",stack(c.player.getItemBySlot(EquipmentSlot.FEET)));j.add("equipment",equipment);

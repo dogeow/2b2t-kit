@@ -217,6 +217,22 @@ class DirtAcquisitionTest(unittest.TestCase):
             self.assertEqual('waiting', result['phase'])
             self.assertFalse(any(op in ('navigate', 'mine_block') for op, _ in c.actions))
 
+    def test_tool_selection_rescans_dirt_buffer_before_mining(self):
+        class ChangedAfterSelection(FakeClient):
+            def request(self, op, **params):
+                reply = super().request(op, **params)
+                if op == 'select_item':
+                    for row in self.rows:
+                        if row['pos'] == [5, 64, 3]:
+                            row.update(state='Block{minecraft:chest}', block_entity=True)
+                return reply
+
+        with tempfile.TemporaryDirectory() as directory:
+            c = ChangedAfterSelection()
+            result = acquire(c, 'minecraft:dirt', 1, profile(), directory, lambda: None)
+            self.assertEqual('waiting', result['phase'])
+            self.assertFalse(any(op == 'mine_block' for op, _ in c.actions))
+
     def test_benign_native_rejection_is_skipped_without_replay(self):
         with tempfile.TemporaryDirectory() as directory:
             c = FakeClient(); c.mine_reply = {'phase': 'error', 'detail': 'Mining target out of reach'}

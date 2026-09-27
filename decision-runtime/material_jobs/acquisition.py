@@ -561,8 +561,11 @@ def acquire(c, item, target_count, profile, out, checkpoint):
         raise ValueError('Acquisition target must be an absolute inventory total from 1 to 2304')
     checkpoint(); initial = c.status(); before = carried(initial, item)
     if before >= target_count:return {'phase': 'done', 'detail': '背包现物已经达到目标', 'before': before, 'after': before}
-    if item not in ROCK_SOURCES and item not in LOGS and item not in ('minecraft:sand', 'minecraft:dirt'):
+    if item not in ROCK_SOURCES and item not in LOGS and item not in ('minecraft:sand', 'minecraft:dirt', 'minecraft:grass_block'):
         return {'phase': 'blocked', 'detail': '此原料尚无直接采集适配器：' + item}
+    if item == 'minecraft:grass_block' and (type(initial.get('grass_block_tool_protocol')) is not int
+                                             or initial['grass_block_tool_protocol'] < 1):
+        return {'phase': 'blocked', 'detail': '当前 Kit 主包缺少草方块精准采集工具核验；请先更新主包'}
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
     path = out / ('acquisition-' + item.split(':')[-1] + '.json')
     ledger = json.loads(path.read_text()) if path.exists() else {'schema': 1, 'world_session': c.world, 'item': item, 'visited': {}}
@@ -581,9 +584,9 @@ def acquire(c, item, target_count, profile, out, checkpoint):
                                     ('item','min','max','source','surface_y','access_shaft') if key in region}
                                    for region in regions]
         write_json(path,ledger)
-        if item == 'minecraft:dirt':
-            from .dirt_harvest import acquire_dirt
-            return acquire_dirt(c, target_count, profile, regions, path, ledger, checkpoint)
+        if item in ('minecraft:dirt', 'minecraft:grass_block'):
+            from .dirt_harvest import acquire_surface_soil
+            return acquire_surface_soil(c, item, target_count, profile, regions, path, ledger, checkpoint)
         if item in LOGS:
             return _wood(c, item, target_count, regions, out, path, ledger, checkpoint)
         sand = item == 'minecraft:sand'

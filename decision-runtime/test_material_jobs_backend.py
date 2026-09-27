@@ -31,6 +31,23 @@ def inventory_rows(counts):
 
 
 class BackendTest(unittest.TestCase):
+    def test_old_host_rejects_grass_before_action_travel_or_tool_withdrawal(self):
+        self.current.pop('grass_block_tool_protocol',None)
+        self.job.action=Mock(side_effect=AssertionError('must not acquire the controller'))
+        self.job.prepare_travel=Mock(side_effect=AssertionError('must not travel'))
+        with patch.object(backend,'read_fresh',return_value=copy.deepcopy(self.current)) as fresh, \
+             patch('material_jobs.equipment.prepare',side_effect=AssertionError('must not withdraw tools')) as tools:
+            result=self.job.acquire('minecraft:grass_block',199)
+        self.assertEqual('blocked',result['phase'])
+        self.assertIn('主包',result['detail'])
+        fresh.assert_called_once_with(self.root)
+        self.job.action.assert_not_called()
+        self.job.prepare_travel.assert_not_called()
+        self.job.checkpoint.assert_not_called()
+        tools.assert_not_called()
+        self.client.checked.assert_not_called()
+        self.client.request.assert_not_called()
+
     def stopped_build(self,*,outcome='needs_review',budget=True,held=None,alter=None,native=None):
         audit={'placement_key':'ship','observed_at':2000,'loaded_chunks_verified':True,
                'matched':2762,'total':3407,'kinds':{'missing':645},

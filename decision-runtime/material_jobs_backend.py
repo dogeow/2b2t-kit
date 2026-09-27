@@ -862,19 +862,29 @@ class Backend:
             time.sleep(.1)
 
     def acquire(self, item, count):
+        if item=='minecraft:grass_block':
+            # Reject an older main package before acquiring a client, traveling,
+            # or withdrawing equipment. Its mine_block would ignore our tool gate.
+            state=read_fresh(self.root)
+            require_unlocked(self.root,state)
+            require_scope(state,self.request['context'])
+            self.latest=state
+            if (type(state.get('grass_block_tool_protocol')) is not int
+                    or state['grass_block_tool_protocol']<1):
+                return {'phase':'blocked','detail':'当前 Kit 主包缺少草方块精准采集工具核验；请先更新主包'}
         if item=='minecraft:gravel':
             return self.acquire_gravel(count)
         from material_jobs.acquisition import acquire, ROCK_SOURCES, LOGS
         from material_jobs.discovery import discover
         with self.action('acquire') as (c,out):
             self.prepare_travel()
-            if item not in ROCK_SOURCES and item not in LOGS and item not in ('minecraft:sand','minecraft:dirt'):
+            if item not in ROCK_SOURCES and item not in LOGS and item not in ('minecraft:sand','minecraft:dirt','minecraft:grass_block'):
                 return {'phase':'blocked','detail':'此原料尚未提供自动采集方式：'+item}
-            if item=='minecraft:dirt':
+            if item in ('minecraft:dirt','minecraft:grass_block'):
                 from material_jobs.dirt_harvest import _box
                 protected=self.profile.get('protected_regions')
                 if not isinstance(protected,list) or not protected or any(_box(box) is None for box in protected):
-                    return {'phase':'blocked','detail':'泥土采集需要先登记有效的建造保护区域'}
+                    return {'phase':'blocked','detail':'表层土方采集需要先登记有效的建造保护区域'}
             from material_jobs.equipment import prepare
             prepared=prepare(c,item,count,self.profile,self.out/'equipment',self.checkpoint)
             if prepared.get('phase')!='done':
