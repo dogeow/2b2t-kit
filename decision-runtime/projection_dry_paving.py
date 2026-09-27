@@ -454,7 +454,7 @@ def _one(client, site, pos, *, settle):
     return _place(client, site, pos, path, record, settle=settle)
 
 
-def pave_batch(client, positions, *, settle=time.sleep):
+def pave_batch(client, positions, *, settle=time.sleep, on_cell_complete=None):
     """Run only explicitly named cells; never discover or expand a clearing area.
 
     This function is intentionally unused by the current material backend.
@@ -467,4 +467,12 @@ def pave_batch(client, positions, *, settle=time.sleep):
     if len(set(points)) != len(points):
         raise PavingBlocked('Repeated cell in a paving batch')
     with _batch_lock(client):
-        return [_one(client, SITE, pos, settle=settle) for pos in points]
+        results = []
+        for pos in points:
+            result = _one(client, SITE, pos, settle=settle)
+            if on_cell_complete is not None:
+                # The caller can durably publish this one confirmed cell before
+                # a later cell in the same batch encounters a handoff or hold.
+                on_cell_complete(result)
+            results.append(result)
+        return results

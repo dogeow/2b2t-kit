@@ -81,6 +81,56 @@ class GrassAcquisitionTest(unittest.TestCase):
             self.assertEqual(('collected', 2, 3, 1),
                              (receipt['state'], receipt['before'], receipt['after'], receipt['gained']))
 
+    def test_four_grass_cells_each_have_silk_guard_and_inventory_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            c = GrassClient(slot=20, before=2)
+            result = acquire(c, GRASS, 6, grass_profile(), directory, lambda: None)
+            self.assertEqual(('done', 2, 6, 4, 4),
+                             (result['phase'], result['before'], result['after'],
+                              result['gained'], result['collected_cells']))
+            mines = [p for op, p in c.actions if op == 'mine_block']
+            selections = [p for op, p in c.actions if op == 'select_item']
+            self.assertEqual(4, len(mines))
+            self.assertEqual(4, len(selections))
+            self.assertTrue(all(p['required_silk_shovel'] and p['expected_tool_slot'] == 5
+                                and p['expected_tool_item'] == 'minecraft:diamond_shovel'
+                                for p in mines))
+            self.assertTrue(all(p['item'] == 'minecraft:diamond_shovel' for p in selections))
+            ledger = json.loads((Path(directory) / 'acquisition-grass_block.json').read_text())
+            receipts = [v for k, v in ledger['visited'].items()
+                        if k.startswith('grass_block-block-')]
+            self.assertEqual(4, len(receipts))
+            self.assertEqual([2, 3, 4, 5], sorted(v['before'] for v in receipts))
+            self.assertTrue(all(v['state'] == 'collected' and v['gained'] == 1
+                                for v in receipts))
+
+    def test_second_grass_cell_rechecks_selection_safety_and_tool(self):
+        changes = (
+            lambda s: s.update(projection_selection={
+                'key': 'new-build', 'min': [0, 50, 0], 'max': [6, 95, 6]}),
+            lambda s: s.update(flight=False),
+            lambda s: s['inventory'][0].update(durability=32),
+        )
+
+        for change in changes:
+            class ChangedAfterFirst(GrassClient):
+                def request(self, op, **params):
+                    reply = super().request(op, **params)
+                    if op == 'mine_block':
+                        change(self.state)
+                    return reply
+
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                c = ChangedAfterFirst()
+                result = acquire(c, GRASS, 4, grass_profile(), directory, lambda: None)
+                self.assertEqual('blocked', result['phase'])
+                self.assertEqual(1, sum(op == 'mine_block' for op, _ in c.actions))
+                ledger = json.loads((Path(directory) / 'acquisition-grass_block.json').read_text())
+                receipts = [v for k, v in ledger['visited'].items()
+                            if k.startswith('grass_block-block-')]
+                self.assertEqual(1, len(receipts))
+                self.assertEqual('collected', receipts[0]['state'])
+
     def test_plain_stored_only_worn_or_wrong_shovel_never_mines(self):
         for silk, durability, replacement in (
                 (False, 600, None),

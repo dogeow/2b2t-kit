@@ -1,7 +1,7 @@
 """Conservative, one-layer surface soil acquisition for material jobs.
 
-Only the requested exposed soil is taken, one exact block per worker call. A
-verified inventory receipt is required before another block may be mined.
+Only the requested exposed soil is taken. A verified block and inventory
+receipt is required before the next cell in a bounded local batch may be mined.
 """
 from __future__ import annotations
 
@@ -29,6 +29,10 @@ UNSTARTED = {'Mining target out of reach', 'mining target moved out of reach',
              'mining target is occluded', 'Current footing is protected'}
 BUFFER = 3
 MAX_SCANS = 12
+LOCAL_BATCH = 4
+LOCAL_RADIUS = 4
+LOCAL_ASCENT = 5
+BATCH_SECONDS = 60
 
 
 def _name(row):
@@ -181,8 +185,76 @@ def _shovel(state, item=ITEM):
     return max(eligible, key=lambda row: row['durability'])
 
 
+def _local_batch(available, limit):
+    """Reuse one window survey without walking to another part of the patch."""
+    anchor = available[0]
+    chosen = [anchor]
+    for pos in available[1:]:
+        if len(chosen) >= limit:
+            break
+        if (abs(pos[1] - anchor[1]) > 1
+                or (pos[0] - anchor[0]) ** 2 + (pos[2] - anchor[2]) ** 2 > LOCAL_RADIUS ** 2
+                or (pos[0] - chosen[-1][0]) ** 2
+                + (pos[2] - chosen[-1][2]) ** 2 > LOCAL_RADIUS ** 2):
+            continue
+        # Removing a cardinal neighbour would invalidate the next topsoil
+        # cell's required ground support. The fresh scan remains authoritative.
+        if any(abs(pos[0] - old[0]) + abs(pos[2] - old[2]) <= 1 for old in chosen):
+            continue
+        chosen.append(pos)
+    return chosen
+
+
+def _nearby_hover(c, target, checkpoint, trace):
+    """Fly only a freshly checked short air corridor from the prior cell."""
+    from .acquisition import Unavailable, _safe, _scan, blocks_route
+    from .navigation import settled_state
+
+    state = c.status(); _safe(state)
+    here = state['pos']
+    if state.get('flight') is not True:
+        raise Unavailable('表层挖掘需要已确认飞行状态，避免失去脚下支撑')
+    if (state.get('air_only_navigation_protocol', 0) < 2
+            or here[1] - target[1] > .25
+            or target[1] - here[1] > LOCAL_ASCENT
+            or math.hypot(target[0] - here[0], target[2] - here[2]) > LOCAL_RADIUS + 1):
+        return False
+    # Picking up a drop can leave the player at ground level. Ascend only
+    # through the freshly scanned current air column before the short hop.
+    points = ([here[0], target[1], here[2]],
+              [target[0], target[1], here[2]], list(target))
+    for point in points:
+        checkpoint(); state = c.status(); _safe(state)
+        if state.get('flight') is not True:
+            raise Unavailable('表层挖掘需要已确认飞行状态，避免失去脚下支撑')
+        start = state['pos']
+        if math.dist(start, point) <= .3:
+            continue
+        low = [math.floor(min(start[0], point[0]) - .32),
+               math.floor(min(start[1], point[1])),
+               math.floor(min(start[2], point[2]) - .32)]
+        high = [math.floor(max(start[0], point[0]) + .32),
+                math.floor(max(start[1], point[1]) + 1.81),
+                math.floor(max(start[2], point[2]) + .32)]
+        observed = _scan(c, low, high, checkpoint)
+        if any(blocks_route(row, state, point) for row in observed):
+            raise Unavailable('资源区入口或航线仍有障碍；不会穿越地层或挖开区域外建筑')
+        checkpoint()
+        current = c.status(); _safe(current)
+        if current.get('flight') is not True:
+            raise Unavailable('表层挖掘需要已确认飞行状态，避免失去脚下支撑')
+        if math.dist(current['pos'], start) > .3:
+            raise Unavailable('前往资源区的安全路线没有到达，保留本次位置', 'waiting')
+        reply = c.request('navigate', target=point, arrival=.25, air_only=True, seconds=20)
+        actual = settled_state(c, point, .55); _safe(actual)
+        trace.append({'target': point, 'actual': actual['pos'], 'phase': reply.get('phase')})
+        if reply.get('phase') != 'done' or math.dist(actual['pos'], point) > .55:
+            raise Unavailable('前往资源区的安全路线没有到达，保留本次位置', 'waiting')
+    return True
+
+
 def acquire_surface_soil(c, item, target, profile, regions, path, ledger, checkpoint):
-    """Mine one exact source block and persist its server/inventory receipt."""
+    """Mine up to four nearby cells, persisting each server/inventory receipt."""
     from .acquisition import Unavailable, _safe, _scan, _choose_tool, _travel
 
     if item not in SOURCES:
@@ -206,6 +278,130 @@ def acquire_surface_soil(c, item, target, profile, regions, path, ledger, checkp
         except ValueError as error:
             raise Unavailable(str(error)) from error
 
+    def harvest_cell(pos, region, local):
+        checkpoint()
+        state = c.status(); _safe(state); verify_selection(state, region)
+        if state.get('flight') is not True:
+            raise Unavailable('表层挖掘需要已确认飞行状态，避免失去脚下支撑')
+        if carried(state, item) >= target:
+            return {'phase': 'done', 'gained': 0}
+        key = prefix + '-block-' + ':'.join(map(str, pos))
+        fresh = _local_scan(c, pos, checkpoint)
+        if not candidate(fresh, pos, item=item):
+            ledger['visited'][key] = {'state': 'skipped', 'pos': pos,
+                                      'reason': 'source_or_buffer_changed'}
+            write_json(path, ledger)
+            return {'phase': 'waiting', 'detail': f'{label}候选在操作前改变，已跳过该列'}
+        tool = _shovel(state, item)
+        trace = []
+        try:
+            destination = [pos[0] + .5, pos[1] + 3.1, pos[2] + .5]
+            if not local or not _nearby_hover(c, destination, checkpoint, trace):
+                _travel(c, destination, checkpoint, trace)
+        except Unavailable as error:
+            if error.detail not in ('资源区入口或航线仍有障碍；不会穿越地层或挖开区域外建筑',
+                                    '前往资源区的安全路线没有到达，保留本次位置'):
+                raise
+            ledger['visited'][key] = {'state': 'skipped', 'pos': pos,
+                                      'reason': 'safe_route_unavailable', 'route': trace}
+            write_json(path, ledger)
+            return {'phase': 'waiting', 'detail': f'{label}候选无法沿已核验空气航线抵达，已跳过该列'}
+        state = c.status(); _safe(state); verify_selection(state, region)
+        if state.get('flight') is not True:
+            raise Unavailable('表层挖掘需要已确认飞行状态，避免失去脚下支撑')
+        if carried(state, item) >= target:
+            return {'phase': 'done', 'gained': 0}
+        if room_for_item(state, item) < 1:
+            raise Unavailable(f'{label}背包空间已耗尽，请先存放本批物资', 'waiting')
+        tool = _shovel(state, item)
+        fresh = _local_scan(c, pos, checkpoint)
+        if not candidate(fresh, pos, item=item):
+            ledger['visited'][key] = {'state': 'skipped', 'pos': pos,
+                                      'reason': 'source_changed_after_travel'}
+            write_json(path, ledger)
+            return {'phase': 'waiting', 'detail': f'接近后{label}或保护缓冲区改变，已跳过该列'}
+        _choose_tool(c, tool, checkpoint)
+        fresh = _local_scan(c, pos, checkpoint)
+        if not candidate(fresh, pos, item=item):
+            ledger['visited'][key] = {'state': 'skipped', 'pos': pos,
+                                      'reason': 'source_or_buffer_changed_after_tool_selection'}
+            write_json(path, ledger)
+            return {'phase': 'waiting', 'detail': f'选取铲后{label}或保护缓冲区改变，已跳过该列'}
+        before = c.status(); _safe(before); verify_selection(before, region)
+        if before.get('flight') is not True:
+            raise Unavailable('表层挖掘需要已确认飞行状态，避免失去脚下支撑')
+        if carried(before, item) >= target:
+            return {'phase': 'done', 'gained': 0}
+        if room_for_item(before, item) < 1:
+            raise Unavailable(f'{label}背包空间已耗尽，请先存放本批物资', 'waiting')
+        if item == GRASS:
+            hand = before.get('hand') or {}
+            selected = before.get('selected_slot')
+            held = next((row for row in before.get('inventory', [])
+                         if row.get('slot') == selected), None)
+            if (type(selected) is not int or not 0 <= selected < 9
+                    or held is None or held.get('item') != hand.get('item')
+                    or hand.get('item') != tool['item'] or hand.get('count') != 1
+                    or hand.get('durability') != tool['durability']
+                    or hand.get('enchantments', []) != tool.get('enchantments', [])
+                    or not _silk(hand)
+                    or hand.get('durability', 0) < 33
+                    or held.get('durability') != hand.get('durability')
+                    or held.get('enchantments', []) != hand.get('enchantments', [])
+                    or not _silk(held)):
+                raise Unavailable('精准采集铲的实际手持槽位或属性未核实；不挖草方块')
+        expected = next(row['state'] for row in fresh if row['pos'] == pos)
+        entry = {'state': 'inflight', 'pos': pos, 'expected_state': expected,
+                 'before': carried(before, item), 'route': trace,
+                 'world_session': c.world, 'observed_at': before.get('time')}
+        ledger['visited'][key] = entry; write_json(path, ledger)
+        checkpoint()
+        verify_selection(c.status(), region)
+        tool_guard = ({'required_silk_shovel': True, 'expected_tool_slot': selected,
+                       'expected_tool_item': tool['item']} if item == GRASS else {})
+        reply = c.request('mine_block', pos=pos, face='up', expected_state=expected,
+                          seconds=20, **tool_guard)
+        native_id = getattr(c, 'last', None)
+        after = c.status(); _safe(after)
+        if reply.get('phase') != 'done':
+            if (reply.get('detail') in UNSTARTED
+                    and carried(after, item) == entry['before']
+                    and any(row['pos'] == pos and row['state'] == expected
+                            for row in _local_scan(c, pos, checkpoint))):
+                entry.update(state='skipped', reason=reply['detail'],
+                             native_phase=reply.get('phase'))
+                write_json(path, ledger)
+                return {'phase': 'waiting', 'detail': '原生接口未开始挖掘，已跳过此列'}
+            return {'phase': 'blocked', 'code': 'native_uncertain',
+                    'detail': f'{label}挖掘回执不确定，保留在途记录且不重放'}
+        # A native success is still not proof that the server removed the
+        # exact block, or that the requested dirt reached the main bag.
+        if any(row['pos'] == pos for row in _scan(c, pos, pos, checkpoint)):
+            return {'phase': 'blocked', 'code': 'block_unconfirmed',
+                    'detail': f'{label}仍占据原位置，保留在途记录且不重放'}
+        attempted = set()
+        deadline = time.monotonic() + 12
+        while True:
+            checkpoint(); after = c.status(); _safe(after)
+            amount = carried(after, item) - entry['before']
+            if amount > 0:
+                entry.update(state='collected', after=carried(after, item), gained=amount,
+                             native_phase='done', native_id=native_id,
+                             observed_at=after.get('time'))
+                write_json(path, ledger)
+                return {'phase': 'done' if carried(after, item) >= target else 'waiting',
+                        'detail': f'{label}逐块回收已核验，背包 {carried(after, item)}/{target}',
+                        'before': entry['before'], 'after': carried(after, item), 'gained': amount}
+            for drop in _fresh_drops(before, after, pos, item):
+                if drop.get('uuid') in attempted:
+                    continue
+                attempted.add(drop.get('uuid'))
+                collect_drop(c, drop, observation=after)
+            if time.monotonic() >= deadline:
+                return {'phase': 'blocked', 'code': 'drop_unconfirmed',
+                        'detail': f'{label}已挖但背包增量未确认，保留在途记录且不挖下一块'}
+            time.sleep(.2)
+
     scans = 0
     for region in regions:
         low, high = region['min'], region['max']
@@ -228,114 +424,33 @@ def acquire_surface_soil(c, item, target, profile, regions, path, ledger, checkp
                                                    'max': hi, 'observed_at': state.get('time')}
                 write_json(path, ledger)
                 continue
-            pos = available[0]
-            key = prefix + '-block-' + ':'.join(map(str, pos))
-            fresh = _local_scan(c, pos, checkpoint)
-            if not candidate(fresh, pos, item=item):
-                ledger['visited'][key] = {'state': 'skipped', 'pos': pos,
-                                          'reason': 'source_or_buffer_changed'}
-                write_json(path, ledger)
-                return {'phase': 'waiting', 'detail': f'{label}候选在操作前改变，已跳过该列'}
-            if state.get('flight') is not True:
-                raise Unavailable('表层挖掘需要已确认飞行状态，避免失去脚下支撑')
-            tool = _shovel(state, item)
-            trace = []
-            try:
-                _travel(c, [pos[0] + .5, pos[1] + 3.1, pos[2] + .5], checkpoint, trace)
-            except Unavailable as error:
-                if error.detail not in ('资源区入口或航线仍有障碍；不会穿越地层或挖开区域外建筑',
-                                        '前往资源区的安全路线没有到达，保留本次位置'):
-                    raise
-                ledger['visited'][key] = {'state': 'skipped', 'pos': pos,
-                                          'reason': 'safe_route_unavailable', 'route': trace}
-                write_json(path, ledger)
-                return {'phase': 'waiting', 'detail': f'{label}候选无法沿已核验空气航线抵达，已跳过该列'}
-            state = c.status(); _safe(state); verify_selection(state, region)
-            if state.get('flight') is not True:
-                raise Unavailable('表层挖掘需要已确认飞行状态，避免失去脚下支撑')
-            if room_for_item(state, item) < 1:
-                raise Unavailable(f'{label}背包空间已耗尽，请先存放本批物资', 'waiting')
-            fresh = _local_scan(c, pos, checkpoint)
-            if not candidate(fresh, pos, item=item):
-                ledger['visited'][key] = {'state': 'skipped', 'pos': pos,
-                                          'reason': 'source_changed_after_travel'}
-                write_json(path, ledger)
-                return {'phase': 'waiting', 'detail': f'接近后{label}或保护缓冲区改变，已跳过该列'}
-            _choose_tool(c, tool, checkpoint)
-            fresh = _local_scan(c, pos, checkpoint)
-            if not candidate(fresh, pos, item=item):
-                ledger['visited'][key] = {'state': 'skipped', 'pos': pos,
-                                          'reason': 'source_or_buffer_changed_after_tool_selection'}
-                write_json(path, ledger)
-                return {'phase': 'waiting', 'detail': f'选取铲后{label}或保护缓冲区改变，已跳过该列'}
-            before = c.status(); _safe(before); verify_selection(before, region)
-            if item == GRASS:
-                hand = before.get('hand') or {}
-                selected = before.get('selected_slot')
-                held = next((row for row in before.get('inventory', [])
-                             if row.get('slot') == selected), None)
-                if (type(selected) is not int or not 0 <= selected < 9
-                        or held is None or held.get('item') != hand.get('item')
-                        or hand.get('item') != tool['item'] or hand.get('count') != 1
-                        or hand.get('durability') != tool['durability']
-                        or hand.get('enchantments', []) != tool.get('enchantments', [])
-                        or not _silk(hand)
-                        or hand.get('durability', 0) < 33
-                        or held.get('durability') != hand.get('durability')
-                        or held.get('enchantments', []) != hand.get('enchantments', [])
-                        or not _silk(held)):
-                    raise Unavailable('精准采集铲的实际手持槽位或属性未核实；不挖草方块')
-            expected = next(row['state'] for row in fresh if row['pos'] == pos)
-            entry = {'state': 'inflight', 'pos': pos, 'expected_state': expected,
-                     'before': carried(before, item), 'route': trace,
-                     'world_session': c.world, 'observed_at': before.get('time')}
-            ledger['visited'][key] = entry; write_json(path, ledger)
-            checkpoint()
-            verify_selection(c.status(), region)
-            tool_guard = ({'required_silk_shovel': True, 'expected_tool_slot': selected,
-                           'expected_tool_item': tool['item']} if item == GRASS else {})
-            reply = c.request('mine_block', pos=pos, face='up', expected_state=expected,
-                              seconds=20, **tool_guard)
-            native_id = getattr(c, 'last', None)
-            after = c.status(); _safe(after)
-            if reply.get('phase') != 'done':
-                if (reply.get('detail') in UNSTARTED
-                        and carried(after, item) == entry['before']
-                        and any(row['pos'] == pos and row['state'] == expected
-                                for row in _local_scan(c, pos, checkpoint))):
-                    entry.update(state='skipped', reason=reply['detail'],
-                                 native_phase=reply.get('phase'))
-                    write_json(path, ledger)
-                    return {'phase': 'waiting', 'detail': '原生接口未开始挖掘，已跳过此列'}
-                return {'phase': 'blocked', 'code': 'native_uncertain',
-                        'detail': f'{label}挖掘回执不确定，保留在途记录且不重放'}
-            # A native success is still not proof that the server removed the
-            # exact block, or that the requested dirt reached the main bag.
-            if any(row['pos'] == pos for row in _scan(c, pos, pos, checkpoint)):
-                return {'phase': 'blocked', 'code': 'block_unconfirmed',
-                        'detail': f'{label}仍占据原位置，保留在途记录且不重放'}
-            attempted = set()
-            deadline = time.monotonic() + 12
-            while True:
-                checkpoint(); after = c.status(); _safe(after)
-                amount = carried(after, item) - entry['before']
-                if amount > 0:
-                    entry.update(state='collected', after=carried(after, item), gained=amount,
-                                 native_phase='done', native_id=native_id,
-                                 observed_at=after.get('time'))
-                    write_json(path, ledger)
-                    return {'phase': 'done' if carried(after, item) >= target else 'waiting',
-                            'detail': f'{label}逐块回收已核验，背包 {carried(after, item)}/{target}',
-                            'before': entry['before'], 'after': carried(after, item), 'gained': amount}
-                for drop in _fresh_drops(before, after, pos, item):
-                    if drop.get('uuid') in attempted:
-                        continue
-                    attempted.add(drop.get('uuid'))
-                    collect_drop(c, drop, observation=after)
-                if time.monotonic() >= deadline:
-                    return {'phase': 'blocked', 'code': 'drop_unconfirmed',
-                            'detail': f'{label}已挖但背包增量未确认，保留在途记录且不挖下一块'}
-                time.sleep(.2)
+            batch_before = carried(state, item)
+            if batch_before >= target:
+                return {'phase': 'done', 'detail': f'{label}背包现物已经达到目标',
+                        'before': batch_before, 'after': batch_before, 'gained': 0}
+            batch = _local_batch(available, min(LOCAL_BATCH, target - batch_before))
+            collected = 0
+            started = time.monotonic()
+            budget_exhausted = False
+            for pos in batch:
+                if collected and time.monotonic() - started >= BATCH_SECONDS:
+                    budget_exhausted = True
+                    break
+                result = harvest_cell(pos, region, collected > 0)
+                if result['phase'] == 'done' and result.get('gained', 0) == 0:
+                    break
+                if result.get('gained', 0) <= 0:
+                    return result
+                collected += 1
+                if result['phase'] == 'done':
+                    break
+            checkpoint(); final = c.status(); _safe(final)
+            after = carried(final, item)
+            return {'phase': 'done' if after >= target else 'waiting',
+                    'detail': (f'{label}本轮逐块回收 {collected} 格，背包 {after}/{target}'
+                               + ('；已达本轮时限' if budget_exhausted else '')),
+                    'before': batch_before, 'after': after,
+                    'gained': after - batch_before, 'collected_cells': collected}
     return {'phase': 'blocked', 'code': 'no_safe_candidate',
             'detail': f'已授权野外区域没有新的安全表层{label}；已记录且不扩挖'}
 
