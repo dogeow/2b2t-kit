@@ -66,11 +66,12 @@ public final class BuildSupplyTask {
     private static String server(Minecraft c){return c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip;}
     private static String worldId(Minecraft c){return c.getSingleplayerServer()==null?"":c.getSingleplayerServer().getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).toAbsolutePath().normalize().toString();}
     public static boolean sourceEnabled(Minecraft c,KitConfig.StorageSnapshot record){
+        if(!dev.twob2tkit.storage.StorageLifecycle.usable(c,record))return false;
         var sources=KitClient.config().projectionSupplySources;
         return sources!=null && sources.stream().anyMatch(s->AutomationScope.sameServer(server(c),s.server)&&worldId(c).equals(s.worldId)&&s.dimension.equals(record.dimension)&&s.x==record.x&&s.y==record.y&&s.z==record.z);
     }
     public static void toggleSource(Minecraft c,KitConfig.StorageSnapshot record){
-        if(c.player==null||c.level==null||!record.dimension.equals(c.level.dimension().identifier().toString()))throw new IllegalStateException("请先进入这个仓库所在的世界");
+        if(c.player==null||c.level==null||!record.dimension.equals(c.level.dimension().identifier().toString())||!dev.twob2tkit.storage.StorageLifecycle.usable(c,record))throw new IllegalStateException("请先进入这个仓库所在的世界");
         var config=KitClient.config();if(config.projectionSupplySources==null)config.projectionSupplySources=new ArrayList<>();
         boolean exists=sourceEnabled(c,record);
         config.projectionSupplySources.removeIf(s->AutomationScope.sameServer(server(c),s.server)&&worldId(c).equals(s.worldId)&&s.dimension.equals(record.dimension)&&s.x==record.x&&s.y==record.y&&s.z==record.z);
@@ -94,7 +95,7 @@ public final class BuildSupplyTask {
                 if(visits.getOrDefault(key,0)>=1)continue;
                 var pos=new BlockPos(allowed.x,allowed.y,allowed.z);double distance=c.player.position().distanceTo(Vec3.atCenterOf(pos));
                 if(distance>128 || !c.level.hasChunkAt(pos))continue;
-                var record=config.storageSnapshots.stream().filter(r->r.key().equals(key)).findFirst().orElse(null);
+                var record=config.storageSnapshots.stream().filter(r->r.key().equals(key)&&dev.twob2tkit.storage.StorageLifecycle.usable(c,r)).findFirst().orElse(null);
                 if(record==null || record.items==null || record.items.stream().noneMatch(i->i.count>0 && wanted.containsKey(i.id) && room(c,i.id)>0))continue;
                 String actual=BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(pos).getBlock()).toString();
                 if(!actual.equals(record.blockId) || !(actual.equals("minecraft:chest") || actual.equals("minecraft:trapped_chest") || actual.equals("minecraft:barrel") || actual.endsWith("shulker_box")))continue;
@@ -140,7 +141,7 @@ public final class BuildSupplyTask {
     }
     static boolean pickupIntersects(AABB playerBody,AABB itemBody){return playerBody.inflate(1,.5,1).deflate(.15).intersects(itemBody);}
     private static Source approvedSource(Minecraft c,String key){
-        var record=KitClient.config().storageSnapshots.stream().filter(r->r.key().equals(key)).findFirst().orElseThrow(()->new IllegalStateException("Depot has no record"));
+        var record=KitClient.config().storageSnapshots.stream().filter(r->r.key().equals(key)&&dev.twob2tkit.storage.StorageLifecycle.usable(c,r)).findFirst().orElseThrow(()->new IllegalStateException("Depot has no record"));
         if(!sourceEnabled(c,record)||!record.dimension.equals(c.level.dimension().identifier().toString()))throw new IllegalStateException("Depot is not approved in this world");
         var pos=new BlockPos(record.x,record.y,record.z);double distance=c.player.position().distanceTo(Vec3.atCenterOf(pos));
         String actual=BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(pos).getBlock()).toString();

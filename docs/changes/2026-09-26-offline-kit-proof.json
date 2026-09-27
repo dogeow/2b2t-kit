@@ -1,0 +1,25 @@
+{
+  "time": 1790415284985,
+  "host": "1.9.101",
+  "engine": "1.7.66",
+  "installation": {
+    "installed": "/Applications/.minecraft/versions/26.1.2/mods/twob2tkit-1.9.101.jar",
+    "sha256": "d1067acb1e35e74ddaaedfca62d22d031669d4898e50f8cf3caefb6f6508d4f5",
+    "runtime": "/Applications/.minecraft/versions/26.1.2/config/twob2tkit/runtime/twob2tkit-engine.jar",
+    "runtime_sha256": "4fd527d2b68c18a13c365cccb76c85a4f9fcddb3e83c8a1dea15bf2fa5e28bc2",
+    "backup": "/Applications/.minecraft/versions/26.1.2/config/twob2tkit/backups/before-1.9.101-20260926-173444-852683"
+  },
+  "java_tests": {
+    "tests": 1025,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "python_tests": 113,
+  "python_failures": 0,
+  "assistant_offline_only": true,
+  "last_probe_precedes_offline_hold": true,
+  "game_launched": false,
+  "multiplayer_validation": "pending user authorization",
+  "working_tree_preserved": true
+}

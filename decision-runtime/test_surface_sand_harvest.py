@@ -2,6 +2,7 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from surface_sand_harvest import (SAND, SAND_STATE, candidates, harvest,
                                   merge_local, mine_one, safe_state, sand_candidate)
@@ -113,6 +114,55 @@ class SurfaceSandHarvestTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'not confirmed'):
             mine_one(client, [10, 64, 20])
         self.assertEqual(1, client.actions.count('mine_block'))
+
+    def test_occluded_top_face_is_reapproached_before_one_verified_retry(self):
+        class OccludedOnce(FakeClient):
+            rejected=False
+            def request(self,op,**params):
+                if op=='mine_block' and not self.rejected:
+                    self.rejected=True;self.actions.append(op)
+                    return {'phase':'waiting','detail':'mining target is occluded'}
+                return super().request(op,**params)
+        client=OccludedOnce([[10,64,20]])
+        self.assertEqual(1,mine_one(client,[10,64,20])['sand_gain'])
+        self.assertEqual(2,client.actions.count('mine_block'))
+        self.assertEqual(1,client.actions.count('approach_block'))
+
+    def test_persistent_occlusion_skips_unchanged_target_instead_of_ending_quarry(self):
+        class OccludedAlways(FakeClient):
+            def request(self,op,**params):
+                if op=='mine_block':
+                    self.actions.append(op)
+                    return {'phase':'waiting','detail':'mining target is occluded'}
+                return super().request(op,**params)
+        client=OccludedAlways([[10,64,20]])
+        self.assertIn('skipped',mine_one(client,[10,64,20]))
+        self.assertEqual(2,client.actions.count('mine_block'))
+        self.assertIn((10,64,20),client.world)
+
+    def test_late_inventory_packet_after_pickup_wait_is_still_credited(self):
+        class DelayedPickup(FakeClient):
+            removed=False
+            def request(self,op,**params):
+                if op=='mine_block':
+                    self.actions.append(op);self.world.pop(tuple(params['pos']));self.removed=True
+                    return {'phase':'done'}
+                return super().request(op,**params)
+            def status(self):
+                result=super().status()
+                if self.removed and not self.inventory[1]['count']:
+                    result['entities']=[{'type':'minecraft:item','uuid':'sand-drop','pos':[10.5,64.5,20.5],
+                                         'stack':{'item':SAND,'count':1}}]
+                return result
+        client=DelayedPickup([[10,64,20]])
+        def late_packet(*args,**kwargs):
+            client.inventory[1]={'slot':1,'item':SAND,'count':1,'max_stack':64}
+            return False
+        with patch('surface_sand_harvest.collect_drop',side_effect=late_packet):
+            result=mine_one(client,[10,64,20])
+        self.assertEqual(1,result['sand_gain'])
+        self.assertEqual('late_inventory',result['pickup'])
+        self.assertEqual(1,client.actions.count('mine_block'))
 
     def test_local_cache_replacement_discovers_new_layer(self):
         original = {(10, 64, 20): block([10, 64, 20], SAND_STATE),

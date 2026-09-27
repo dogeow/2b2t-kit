@@ -1,0 +1,40 @@
+{
+  "time": 1790420914896,
+  "scope": "offline Python-only material workflow improvements",
+  "python_tests": 158,
+  "task_tests": {
+    "detail_resume": 7,
+    "smelting_resume": 8
+  },
+  "java_changed": false,
+  "java_tests_rerun": false,
+  "minecraft_started": false,
+  "server_probed": false,
+  "real_jev_calls": false,
+  "assistant_offline_hold_active": true,
+  "game_process_observed_running": false,
+  "installed_host": "1.9.102",
+  "installed_engine": "1.7.67",
+  "starship_world_progress_not_reaudited": true,
+  "resume_scope": "same world_session, acknowledged bank and fully loaded batch; uncertain operations require inspection",
+  "source_sha256": {
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/furnace_bank.py": "fcc821a6c89ef7162aa2b3fab16d3f79bb655192198bfc73be22cbb8b70cdbdd",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/furnace_batches.py": "bde92af7ae09ed28e040fbff16697f17dcb2207149946940cfcfad6beae01fa3",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/smelting_workflow.py": "1e938444847e09cc3b23ac8321aa419dd331e96033aed4732cc390b7f692ffbf",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/kit_runtime/inventory.py": "b4d128c92ebe41b1aa247b5bb596ca2affb7e0658ddbf0b4302ea257ba41eb9b",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/kit_runtime/journal.py": "3fc5e5eca7b27114e0b2cde9735fe3b429335f6120d68e2d27fa2a5d620357c8",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/material_depots.py": "6ad004f28e1b4f2cbf0b6faae4b565dd783cd4ee26fa4c3f82d2831c63deff71",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/check_offline.py": "008a4291bb58c1ae2fa543bc9034712c27063dd5d1bef7eeb8f530b3e72f724b",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/run_evidence.py": "32b3241bbc7c20d0ec94244bb81ba7d1d960411e1f6321bbc48c69a01d9358aa",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/test_furnace_bank.py": "38f5814899c99e7903c8efe419a5c10dc8a79fdf913231d2eea7a0f741373880",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/test_furnace_batches.py": "932792f37e15c22ca99f177c188416c0f4f8329a7da80afd55b569fff555ac16",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/test_smelting_workflow.py": "c70ddac3e430aab7db06cc9d2a06b97565969d7b28ed62c42097469e1ad5b274",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/test_inventory_session.py": "2af9c1f19c044fe5054bc8b6c5485fc4eacb0b53e9b43604f5ef7087bbc9fa09",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/test_journal.py": "a9ed5708675787575798be9fa1f4fcf15df70d26cc198fbe065e534b850b8049",
+    "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/decision-runtime/test_material_depots.py": "de4eeb151b89ce6568e55b9f2eb2a8b7a645ed38778b2eb998a3b283f1094586",
+    "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/starship/work/goal-current/prepare-smelting-bank.py": "ba100820ff45cbe01e39643c08e335ec4167cff68daa41e6d6b9c18931fb9eba",
+    "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/starship/work/goal-current/prep-detail-materials.py": "7178bb6c9b75246a337716599cdadd7ac875080839dfe38fe75d087835d08cad",
+    "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/starship/work/goal-current/test_smelting_resume.py": "a3976b0becdc031e563027ef09a9c5804db1db8dd699843476405d9dc10a7662",
+    "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/starship/work/goal-current/test_detail_resume.py": "0ad20f519acc15358797d69b2f946dca29c291dc609cef52aca73643795fe3a9"
+  }
+}

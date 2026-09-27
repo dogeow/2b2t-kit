@@ -1,0 +1,23 @@
+{
+  "case": "Batch concrete production and an enclosed shoreline station",
+  "date": "2026-09-26",
+  "observed": [
+    "256 and then 512 white concrete powder were crafted with exact whole-batch input/output balances.",
+    "The first open-shore run recovered 47 from 48 processed powder; missing material was not credited. Later production was paused near a hostile while health stayed 20.",
+    "A waterlogged oak leaf and a small cobblestone enclosure were built using ordinary client interactions; interior light and an owned removable roof hatch were verified.",
+    "Dry block approach refuses a fluid-containing anchor, including a full waterlogged leaf, with the misleading message Work block state changed. The placement adapter now chooses a dry supporting block instead.",
+    "Cruise arrival can leave lateral momentum. Precision placement uses the bounded route and confirmed grounded footing before interacting.",
+    "The observed route stalled on a 0.00510634 vertical residual before any horizontal motion. Runtime 1.7.65 accepts a 2.5 cm vertical settling band while retaining millimeter horizontal alignment and all host collision checks.",
+    "A pilot converted and recovered 8 concrete inside the enclosure at 20 health. Its older exit routine tried to rise from the pickup pit under a closed adjacent roof; Kit disconnected for a ceiling stall after 30 seconds, still at 20 health. Native and script health locks remained inactive; reconnection was then authorized under the user rule.",
+    "The corrected exit first returns to the dry stand and then rises through the owned hatch; this was live-verified at full health after reconnect.",
+    "Carried quantities are re-read before resuming. The next run started with 335 powder and 9 concrete, whose sum matched the earlier 344 material balance, rather than replaying a stale 336-item expectation."
+  ],
+  "runtime": {
+    "host": "1.9.97",
+    "engine": "1.7.65",
+    "same_world_hot_reload": true,
+    "java_tests": 1008,
+    "failures": 0
+  },
+  "remaining": "The Starship is not finished. Material production is ongoing; this case does not prove the entire build, long-term immunity from death, or automatic reconnection after a health exit."
+}

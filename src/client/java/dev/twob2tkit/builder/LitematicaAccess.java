@@ -69,6 +69,17 @@ public final class LitematicaAccess {
         }catch(ReflectiveOperationException e){throw new IllegalStateException("无法读取投影范围："+e.getMessage(),e);}
     }
 
+    /** Material jobs require the explicitly selected locked placement, never a fallback first item. */
+    public static BuildSelection lockedBuildSelection(){
+        BuildSelection selection=buildSelection();
+        try{
+            Object selected=getSelectedPlacement.invoke(getPlacementManager.invoke(null));
+            if(!isUsable(selected)||!Boolean.TRUE.equals(selected.getClass().getMethod("isLocked").invoke(selected)))
+                throw new IllegalStateException("请先选中并锁定本次要施工的投影");
+            return selection;
+        }catch(ReflectiveOperationException failure){throw new IllegalStateException("无法确认投影已锁定",failure);}
+    }
+
     /** Client terrain readiness is not schematic readiness; an unfilled schematic chunk reads as air. */
     public static String loadingReason(BuildSelection selection){
         try{

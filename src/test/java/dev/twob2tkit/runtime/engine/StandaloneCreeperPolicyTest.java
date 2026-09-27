@@ -2,6 +2,12 @@ package dev.twob2tkit.runtime.engine;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class StandaloneCreeperPolicyTest {
+    @Test void activeAreaMiningUsesTheSameCreeperEvasionScope(){
+        assertTrue(StandaloneCreeperPolicy.flightDefenseScope(false,true,true));
+        assertTrue(StandaloneCreeperPolicy.flightDefenseScope(true,false,false));
+        assertFalse(StandaloneCreeperPolicy.flightDefenseScope(false,false,true));
+        assertFalse(StandaloneCreeperPolicy.flightDefenseScope(false,true,false));
+    }
     @Test void hoveringDoesNotHideANearbyCreeperBehindTheGenericHeightGate(){
         assertTrue(StandaloneCreeperPolicy.alert(true,false,false,7));
         assertFalse(StandaloneCreeperPolicy.alert(true,false,false,9));

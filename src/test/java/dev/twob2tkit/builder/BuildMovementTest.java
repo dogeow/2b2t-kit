@@ -23,7 +23,9 @@ class BuildMovementTest {
                 double dx=horizontalSpeed(x)*10,dy=verticalSpeed(y)*5;
                 assertTrue(dx<=x&&dy<=y);x-=dx;y-=dy;
             }
-            assertTrue(arrived(x,0,0));assertTrue(arrived(0,y,0));assertTrue(x<.006&&y<.006);
+            assertTrue(arrived(x,0,0));assertTrue(arrived(0,y,0));// The feet waypoint is 2 cm above a full collision block. Vertical
+            // settling may accept that real floor; narrow horizontal placement remains precise.
+            assertTrue(x<.006&&y<.026);
         }
         assertEquals(.024,horizontalSpeed(10));assertEquals(.024,verticalSpeed(-10));
         assertTrue(horizontalSpeed(1)>horizontalSpeed(.2));

@@ -1,0 +1,27 @@
+{
+  "case": "Minor injury recovery, shared Jev choices, and low-altitude dry quarry transitions",
+  "date": "2026-09-26",
+  "observed": [
+    "A script used the 19 HP work reserve as a logout trigger after a hit to 18.92263 HP despite available food and successful ascent. The player manually returned at full health and explicitly handed control back.",
+    "The script now reserves immediate health logout for critical HP under 14; noncritical injury at verified high guarded parking can eat and recover. A bounded recovery that remains under the native 18 HP parking minimum still exits with the manual recovery hold.",
+    "Engine 1.7.64 hot reload was confirmed in the same live world, generation 0 to 1.",
+    "Jev 1.13.0 selected adjacent_beach over a depleted one-block remnant: 479.707 ms, 708 input and 46 output tokens; the bounded native quarry then collected 44 sand in 35.88 seconds at 20 HP.",
+    "Preparation climbs previously targeted scan maximum Y + 25 on every small batch. They now use actual box height and local obstacle clearance, with allowance for the cruise arrival radius."
+  ],
+  "implementation": [
+    "material_client.py",
+    "decision_advisor.py",
+    "native_sand_quarry.py"
+  ],
+  "verification": [
+    "52 material tests, 7 advisor tests and 8 native sand tests passed",
+    "Model timeout, stale inventory, manual input, emergency bypass, shared hourly budget and unoffered actions tested",
+    "Live raw material audit: 837 sand and 946 gravel combined across inventory and approved chests"
+  ],
+  "limits": [
+    "The Starship is not finished; last complete block audit remains 741/3407.",
+    "Creeper escape in the hot-loaded engine has not been live re-triggered.",
+    "Advisor is wired into material recovery and exposed for quarry selection and CLI planning. It is not yet wired into every native Kit module.",
+    "High parking remains a separate unattended protection step; lower quarry travel does not remove it."
+  ]
+}

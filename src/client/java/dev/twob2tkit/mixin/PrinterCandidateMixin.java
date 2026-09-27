@@ -8,8 +8,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Pseudo
 @Mixin(targets="me.aleksilassila.litematica.printer.guides.Guides",remap=false)
 public abstract class PrinterCandidateMixin implements dev.twob2tkit.automation.PrinterCandidateGateInstalled {
-    @Inject(method="getInteractionGuides",at=@At("HEAD"),remap=false)
+    @Inject(method="getInteractionGuides",at=@At("HEAD"),cancellable=true,remap=false)
     private void kit$candidate(@Coerce Object state,CallbackInfoReturnable<Object> info){
-        if(ProfessionalPrinter.owned())ProfessionalPrinter.observeCandidate(state);
+        if(ProfessionalPrinter.owned()&&!ProfessionalPrinter.observeCandidate(state))info.setReturnValue(ProfessionalPrinter.emptyCandidateGuides());
     }
 }

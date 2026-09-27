@@ -26,6 +26,20 @@ public final class AutomationBridge {
     private static final Gson JSON=new GsonBuilder().disableHtmlEscaping().create();
     private static String lastId="", statusId="", phase="idle", detail="", op="";
     private static JsonObject active;
+    private static final dev.twob2tkit.material.MaterialTaskChannel materialTaskChannel=new dev.twob2tkit.material.MaterialTaskChannel();
+    private static final ProjectionBatchScope<BlockPos> projectionBatch=new ProjectionBatchScope<>();
+    private static JsonObject rockQuarryProgress;
+    private static MaterialAirNavigation materialAirNavigation;
+    private static JsonObject lastMaterialAirNavigation;
+    private static dev.twob2tkit.runtime.engine.BorerMiningConfirmation rockQuarryConfirmation;
+    private static NativeMaterialSession nativeMaterialOwner;
+    private static boolean nativeMaterialDispatch;
+    private static JsonObject nativeMaterialReadResult;
+    private static final MaterialAirRoute materialAirRoute=new MaterialAirRoute();
+    private static boolean nativeAirReturnActive;
+    private static String nativeAirReturnPhase="idle",nativeAirReturnOriginalOp="";
+    private static long nativeAirReturnStarted, nativeAirReturnMovedAt;
+    private static double nativeAirReturnLastY;
     private static long controlRevision;
     private static Object observedLevel;
     private static String worldSession="";
@@ -48,6 +62,156 @@ public final class AutomationBridge {
     private static int pendingSafetyTick;
     private static long pendingPauseSince;
     private static boolean restoreAutoReconnect;
+    /** True only while an in-process material child is entering the existing dispatcher. */
+    public static boolean internalDispatch(){return nativeMaterialDispatch;}
+    /** Read-only launch scope for the Kit material-job UI; does not acquire a second lease. */
+    public static JsonObject materialJobContext(Minecraft c){
+        if(c.player==null||c.level==null||c.gameMode==null||c.player.isDeadOrDying())
+            throw new IllegalStateException("请先进入世界并确认角色存活");
+        if(dev.twob2tkit.combat.EmergencyExit.held(c))
+            throw new IllegalStateException("安全离线锁仍开启，请先处理角色安全并解除锁");
+        if(KitKeys.manualMovementDown(c))throw new IllegalStateException("请先松开移动按键，再开始材料作业");
+        if(c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<8)
+            throw new IllegalStateException("生命或饥饿值不足，请先恢复后再开始");
+        if(c.player==null||c.level==null||c.gameMode==null||c.player.isDeadOrDying()
+                ||c.gameMode.getPlayerMode()!=net.minecraft.world.level.GameType.SURVIVAL
+                ||dev.twob2tkit.combat.EmergencyExit.held(c)||KitKeys.manualMovementDown(c)
+                ||c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<8
+                ||active!=null||nativeMaterialOwner!=null||KitClient.anyAfkAuto()
+                ||supervisionLease!=null&&!str(supervisionLease,"kind").equals("parking")
+                ||c.player.containerMenu!=c.player.inventoryMenu
+                ||c.screen!=null&&!c.screen.getClass().getName().startsWith("dev.twob2tkit."))
+            throw new IllegalStateException("其他任务或物品界面仍在占用，请先结束后再开始材料作业");
+        JsonObject result=new JsonObject();result.addProperty("world_session",session(c));
+        result.addProperty("server",c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip);
+        result.addProperty("dimension",c.level.dimension().identifier().toString());
+        result.addProperty("expected_revision",controlRevision);
+        result.add("start_pos",JSON.toJsonTree(new double[]{c.player.getX(),c.player.getY(),c.player.getZ()}));
+        return result;
+    }
+    public static String materialJobWorldSession(Minecraft c){return session(c);}
+    private static JsonObject materialTaskReply(Minecraft c,JsonObject request){
+        var reply=new JsonObject();reply.addProperty("op",request.has("op")&&request.get("op").isJsonPrimitive()&&request.getAsJsonPrimitive("op").isString()?request.get("op").getAsString():"");
+        try{
+            var command=dev.twob2tkit.material.MaterialTaskProtocol.parse(request);
+            if(command.op().equals("material_task_status")){
+                reply.add("material_task",dev.twob2tkit.material.MaterialJobs.snapshot(command.jobId()));
+            }else{
+                var context=new JsonObject();context.addProperty("server",c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip);
+                context.addProperty("dimension",c.level==null?"":c.level.dimension().identifier().toString());
+                context.addProperty("world_session",session(c));context.addProperty("expected_revision",controlRevision);
+                dev.twob2tkit.material.MaterialTaskProtocol.requireScope(request,context,System.currentTimeMillis(),
+                    c.player!=null&&c.level!=null&&c.gameMode!=null&&!c.player.isDeadOrDying(),KitKeys.manualMovementDown(c));
+                if(command.op().equals("material_task_start")){
+                    // Shared lifecycle checks health, lock, input, UI, existing lease and process ownership.
+                    materialJobContext(c);
+                    if(command.mode().equals("projection")){
+                        if(!command.placementKey().equals(dev.twob2tkit.builder.LitematicaAccess.lockedBuildSelection().key()))throw new IllegalStateException("Selected locked projection changed");
+                        dev.twob2tkit.material.MaterialJobs.startProjection(c,KitClient.config());
+                    }else dev.twob2tkit.material.MaterialJobs.startItem(c,KitClient.config(),command.item(),command.count());
+                }else{
+                    dev.twob2tkit.material.MaterialJobs.control(c,command.jobId(),command.op().substring("material_task_".length()));
+                }
+                reply.add("material_task",dev.twob2tkit.material.MaterialJobs.snapshot());
+            }
+            reply.addProperty("phase","done");reply.addProperty("detail","Material task request accepted; inspect material_task for actual completion");
+        }catch(RuntimeException failure){
+            reply.addProperty("phase","error");reply.addProperty("detail",failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage());
+            reply.add("material_task",dev.twob2tkit.material.MaterialJobs.snapshot());
+        }
+        reply.addProperty("world_session",session(c));reply.addProperty("control_revision",controlRevision);reply.addProperty("observed_at",System.currentTimeMillis());return reply;
+    }
+    private static void pollMaterialTasks(Minecraft c){
+        try{materialTaskChannel.tick(root(c),request->materialTaskReply(c,request));}
+        catch(Exception failure){KitClient.LOGGER.warn("[Materials] command reply could not be persisted: {}",failure.getClass().getSimpleName());}
+    }
+
+    private static ProjectionBatchScope.Owner projectionBatchOwner(Minecraft c,String key){
+        if(c.player==null||c.level==null||supervisionLease==null||!str(supervisionLease,"kind").equals("materials")
+                ||!supervisionLease.has("revision")||supervisionLease.get("revision").getAsLong()!=controlRevision
+                ||!str(supervisionLease,"world_session").equals(session(c)))return null;
+        return new ProjectionBatchScope.Owner(str(supervisionLease,"id"),str(supervisionLease,"job_session"),session(c),key);
+    }
+    /** Pure gate used inside native printer callbacks; never destroys that callback's singleton. */
+    public static boolean projectionBatchCurrent(Minecraft c){
+        if(!projectionBatch.active())return true;
+        try{return projectionBatch.current(projectionBatchOwner(c,dev.twob2tkit.builder.LitematicaAccess.buildSelection().key()));}
+        catch(RuntimeException ignored){return false;}
+    }
+    /** Invalidating a mask stops its automatic placer before restoring the unrestricted default. */
+    public static boolean validateProjectionBatch(Minecraft c){
+        if(projectionBatchCurrent(c))return true;
+        ProfessionalPrinter.stop(c,true);
+        KitClient.buildJob().stop(c,"施工批次的材料任务、世界或投影已改变");
+        projectionBatch.reset();return false;
+    }
+    public static boolean projectionBatchAllows(Minecraft c,BlockPos target){
+        if(!projectionBatch.active())return true;
+        // The tick/proposal gates validate the live selected key once, not once per model cell.
+        return target!=null&&projectionBatch.allows(projectionBatchOwner(c,projectionBatch.owner().projection()),target);
+    }
+    public static boolean projectionBatchFeetAllowed(double feetY){return projectionBatch.allowsFeet(feetY);}
+    public static boolean projectionBatchStationAllowed(int feetY){return projectionBatch.allowsStation(feetY);}
+    private static JsonObject projectionBatchSnapshot(){
+        var out=new JsonObject();out.addProperty("protocol",ProjectionBatchScope.PROTOCOL);
+        out.addProperty("active",projectionBatch.active());out.addProperty("count",projectionBatch.count());
+        if(projectionBatch.minFeetY()!=null)out.addProperty("min_feet_y",projectionBatch.minFeetY());
+        if(projectionBatch.active()){out.addProperty("placement_key",projectionBatch.owner().projection());out.addProperty("task_session",projectionBatch.owner().task());}
+        return out;
+    }
+    private static void changeProjectionBatch(Minecraft c,JsonObject r,boolean clear){
+        externalMaterialScope(c,r);
+        ProjectionBatchScope.request(ProfessionalPrinter.batchGateAvailable(),
+            active==null&&!KitClient.buildJob().isActive()&&!ProfessionalPrinter.owned(),currentMaterialRequest(c,r),
+            r.get("expected_revision").getAsLong(),controlRevision,r.get("expires_at").getAsLong()-System.currentTimeMillis());
+        var pick=dev.twob2tkit.builder.LitematicaAccess.buildSelection();
+        if(!pick.key().equals(str(r,"placement_key")))throw new IllegalStateException("Selected projection changed before projection batch update");
+        var owner=projectionBatchOwner(c,pick.key());
+        if(clear){projectionBatch.clear(owner);return;}
+        String loading=dev.twob2tkit.builder.LitematicaAccess.loadingReason(pick);
+        if(!loading.isEmpty())throw new IllegalStateException(loading);
+        var model=dev.twob2tkit.builder.LitematicaAccess.schematicWorld();
+        if(model==null)throw new IllegalStateException("Projection model is unavailable");
+        var points=r.getAsJsonArray("positions");
+        if(points==null||points.size()>ProjectionBatchScope.MAX_POSITIONS)throw new IllegalArgumentException("Projection batch positions must contain 0..2048 coordinates");
+        Integer minFeetY=null;
+        if(r.has("min_feet_y")){
+            var raw=r.get("min_feet_y");
+            if(!raw.isJsonPrimitive()||!raw.getAsJsonPrimitive().isNumber())throw new IllegalArgumentException("min_feet_y must be an integer");
+            minFeetY=ProjectionBatchScope.minimumFeet(raw.getAsDouble(),pick.min().getY(),pick.max().getY());
+        }
+        var positions=new ArrayList<BlockPos>();
+        for(var raw:points){
+            if(!raw.isJsonArray()||raw.getAsJsonArray().size()!=3)throw new IllegalArgumentException("Projection batch coordinates require [x,y,z]");
+            var xyz=raw.getAsJsonArray();int[] values=new int[3];
+            for(int i=0;i<3;i++){
+                var value=xyz.get(i);
+                if(!value.isJsonPrimitive()||!value.getAsJsonPrimitive().isNumber())throw new IllegalArgumentException("Projection batch coordinates must be integers");
+                double number=value.getAsDouble();
+                if(!Double.isFinite(number)||number!=Math.rint(number)||number<Integer.MIN_VALUE||number>Integer.MAX_VALUE)throw new IllegalArgumentException("Projection batch coordinates must be finite integers");
+                values[i]=(int)number;
+            }
+            positions.add(new BlockPos(values[0],values[1],values[2]));
+        }
+        projectionBatch.set(owner,positions,p->pick.contains(p)&&dev.twob2tkit.builder.LitematicaAccess.inVisibleLayer(p)
+            &&c.level.hasChunkAt(p)&&!model.getBlockState(p).isAir()&&!model.getBlockState(p).is(net.minecraft.world.level.block.Blocks.STRUCTURE_VOID),minFeetY);
+    }
+
+    /** UI stop applies only to its still-current external material task; leave PvE safety armed. */
+    public static void materialJobCancel(Minecraft c,String taskSession,String reason){
+        if(c.player==null||c.level==null||supervisionLease==null||nativeMaterialOwner!=null
+                ||!str(supervisionLease,"kind").equals("materials")
+                ||!RockQuarryPolicy.ownsCancel(taskSession,str(supervisionLease,"job_session"),
+                    str(supervisionLease,"world_session"),session(c),supervisionLease.get("revision").getAsLong(),controlRevision)
+                ||active!=null&&!str(active,"task_session").equals(taskSession))return;
+        String stoppedId=active==null?"":str(active,"id");
+        boolean previous=dispatching;dispatching=true;
+        try{
+            KitClient.stopWork(reason==null?"材料作业已暂停":reason);
+            if(supervisionLease!=null)supervisionLease.addProperty("revision",controlRevision);
+            if(!stoppedId.isEmpty())statusId=stoppedId;
+        }finally{dispatching=previous;writeStatus(c);}
+    }
     private static final String AUTO_RECONNECT="meteordevelopment.meteorclient.systems.modules.misc.AutoReconnect";
     private static void suspendAutoReconnect(){restoreAutoReconnect|=MeteorModules.isActive(AUTO_RECONNECT);MeteorModules.disable(AUTO_RECONNECT);}
     public static void joined(){try{dev.twob2tkit.combat.GuardFoodLease.recover(Minecraft.getInstance());}catch(IllegalStateException e){KitClient.LOGGER.warn("Food settings recovery unavailable: {}",e.getMessage());}if(dev.twob2tkit.combat.EmergencyExit.held(Minecraft.getInstance())){restoreAutoReconnect=false;dev.twob2tkit.combat.EmergencyExit.joined(Minecraft.getInstance());return;}if(restoreAutoReconnect){restoreAutoReconnect=false;if(!MeteorModules.isActive(AUTO_RECONNECT))MeteorModules.enable(AUTO_RECONNECT);}}
@@ -92,6 +256,7 @@ public final class AutomationBridge {
     }
     /** Network disconnect is authoritative and fires before ordinary cleanup clears the lease. */
     public static void disconnected(Minecraft c){
+        ProfessionalPrinter.stop(c,true);projectionBatch.reset();
         disconnectGuardCandidate=null;
         if(guardArmed() && pveOnly() && !dev.twob2tkit.combat.EmergencyExit.held(c)){
             var scope=guardScope;
@@ -108,11 +273,206 @@ public final class AutomationBridge {
         pendingSafety=null;
     }
     public static void afterDisconnectCleanup(){
+        projectionBatch.reset();
         pendingGuardReconnect=disconnectGuardCandidate;
         disconnectGuardCandidate=null;
+        if(nativeMaterialOwner!=null){nativeMaterialOwner.closed=true;nativeMaterialOwner=null;}
+        if(nativeAirReturnActive&&nativeAirReturnPhase.equals("ascending"))nativeAirReturnPhase="disconnected";
+        nativeAirReturnActive=false;
+        materialAirRoute.clearRoute();
     }
     public static void userTaskStarting(Minecraft c){
         if(!dispatching&&supervisionLease!=null&&Set.of("materials","parking").contains(str(supervisionLease,"kind"))){supervisionLease=null;cancelWork(c,"用户切换自动任务");}
+    }
+    static NativeMaterialSession nativeMaterialOpen(Minecraft c,Vec3 parkTarget){
+        boolean resumeParking=c.player!=null&&c.level!=null&&supervisionLease!=null
+            &&MaterialJobControlPolicy.resumableParking(str(supervisionLease,"kind"),str(supervisionLease,"world_session"),session(c),
+                supervisionLease.has("revision")?supervisionLease.get("revision").getAsLong():-1,controlRevision,
+                highGuardPark(c,supervisionLease),guardArmed()&&pveOnly(),guardBusy);
+        if(c.player==null||c.level==null||c.gameMode==null||parkTarget==null
+                ||c.gameMode.getPlayerMode()!=net.minecraft.world.level.GameType.SURVIVAL
+                ||!c.level.dimension().equals(net.minecraft.world.level.Level.OVERWORLD)
+                ||c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<18
+                ||KitKeys.manualMovementDown(c)||dev.twob2tkit.combat.EmergencyExit.held(c)
+                ||active!=null||supervisionLease!=null&&!resumeParking||nativeMaterialOwner!=null
+                ||KitClient.anyAfkAuto()||c.player.containerMenu!=c.player.inventoryMenu)
+            throw new IllegalStateException("Another controller, safety lock, or player interface owns material work");
+        BlockPos park=BlockPos.containing(parkTarget);
+        if(!Double.isFinite(parkTarget.x)||!Double.isFinite(parkTarget.y)
+                ||!Double.isFinite(parkTarget.z)||!c.level.hasChunkAt(park)
+                ||parkTarget.y-c.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+                    park.getX(),park.getZ())<20)
+            throw new IllegalArgumentException("A loaded high guard park is required");
+        String job="native-material-"+UUID.randomUUID().toString().replace("-","");
+        String lease="native-lease-"+UUID.randomUUID().toString().replace("-","");
+        var owner=new NativeMaterialSession(job,lease,session(c),controlRevision,parkTarget);
+        var scope=new JsonObject();scope.addProperty("id",lease);scope.addProperty("kind","materials");
+        scope.addProperty("job_session",job);scope.addProperty("world_session",owner.world);
+        scope.addProperty("revision",controlRevision);scope.addProperty("remote_finish","guard");
+        scope.add("park_target",JSON.toJsonTree(new double[]{parkTarget.x,parkTarget.y,parkTarget.z}));
+        JsonObject previousLease=supervisionLease;
+        supervisionLease=scope;lastSupervisionHeartbeat=System.currentTimeMillis();
+        logoutQuiet.reset(lastSupervisionHeartbeat);
+        try{armPveGuard(c);nativeMaterialOwner=owner;}
+        catch(RuntimeException failure){supervisionLease=previousLease;if(previousLease==null)disarmGuard(c);throw failure;}
+        return owner;
+    }
+    private static void nativeMaterialCheck(NativeMaterialSession owner,Minecraft c){
+        if(owner==null||owner.closed||owner!=nativeMaterialOwner||c.player==null||c.level==null
+                ||dev.twob2tkit.combat.EmergencyExit.held(c)
+                ||!owner.world.equals(session(c))||owner.revision!=controlRevision
+                ||supervisionLease==null||!str(supervisionLease,"kind").equals("materials")
+                ||!owner.lease.equals(str(supervisionLease,"id"))
+                ||!owner.job.equals(str(supervisionLease,"job_session"))
+                ||supervisionLease.get("revision").getAsLong()!=controlRevision
+                ||!guardArmed()||!pveOnly()||KitKeys.manualMovementDown(c)){
+            if(owner!=null)owner.closed=true;
+            if(nativeMaterialOwner==owner)nativeMaterialOwner=null;
+            throw new IllegalStateException("Native material session lost world, revision, guard or manual control");
+        }
+        owner.lastTouch=System.currentTimeMillis();
+    }
+    private static void nativeMaterialLoaded(Minecraft c,String command,JsonObject request){
+        if(Set.of("mine_block","approach_block").contains(command)){
+            JsonArray p=request.getAsJsonArray("pos");
+            if(p==null||p.size()!=3||!c.level.hasChunkAt(new BlockPos(p.get(0).getAsInt(),p.get(1).getAsInt(),p.get(2).getAsInt())))
+                throw new IllegalArgumentException("Material target chunk is not loaded");
+        }
+        if(Set.of("navigate","walk","air_return_set").contains(command)){
+            JsonArray p=request.getAsJsonArray("target");
+            if(p==null||p.size()!=3||!c.level.hasChunkAt(BlockPos.containing(
+                    p.get(0).getAsDouble(),p.get(1).getAsDouble(),p.get(2).getAsDouble())))
+                throw new IllegalArgumentException("Material waypoint chunk is not loaded");
+        }
+    }
+    private static JsonObject nativeMaterialReceipt(Minecraft c,String id,String outcome,String message){
+        JsonObject result=snapshot(c);result.addProperty("id",id);result.addProperty("phase",outcome);
+        result.addProperty("detail",message);result.addProperty("world_session",session(c));
+        result.addProperty("control_revision",controlRevision);return result;
+    }
+    static String nativeMaterialSubmit(NativeMaterialSession owner,Minecraft c,String command,JsonObject params){
+        nativeMaterialCheck(owner,c);
+        if(owner.pendingId!=null||active!=null)throw new IllegalStateException("Native material child is already running");
+        if(!Set.of("guard","select_item","snapshot","scan","air_return_set","mine_block","rock_quarry_batch",
+                "walk","navigate","collect_item","approach_block").contains(command))
+            throw new IllegalArgumentException("Native material command is not allowed: "+command);
+        JsonObject request=params==null?new JsonObject():params.deepCopy();
+        for(String protectedKey:List.of("id","op","task_session","server","dimension","site",
+                "world_session","expected_revision","expires_at","background_ok"))
+            if(request.has(protectedKey))throw new IllegalArgumentException("Reserved material request field: "+protectedKey);
+        nativeMaterialLoaded(c,command,request);
+        String id="native-child-"+UUID.randomUUID().toString().replace("-","");
+        request.addProperty("id",id);request.addProperty("op",command);
+        request.addProperty("task_session",owner.job);
+        request.addProperty("server",c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip);
+        request.addProperty("dimension",c.level.dimension().identifier().toString());
+        request.add("site",JSON.toJsonTree(new double[]{c.player.getX(),c.player.getY(),c.player.getZ()}));
+        request.addProperty("world_session",owner.world);
+        request.addProperty("expected_revision",controlRevision);
+        request.addProperty("expires_at",System.currentTimeMillis()+5000);
+        request.addProperty("background_ok",true);
+        if(command.equals("guard"))request.addProperty("pve_only",true);
+        owner.pendingId=id;owner.immediate=null;owner.queued=request;
+        return id;
+    }
+    private static void nativeMaterialRunQueued(Minecraft c){
+        NativeMaterialSession owner=nativeMaterialOwner;
+        if(owner==null||owner.queued==null)return;
+        JsonObject request=owner.queued;owner.queued=null;
+        try{nativeMaterialCheck(owner,c);}catch(IllegalStateException lost){return;}
+        String id=str(request,"id");
+        String oldLast=lastId;
+        boolean wasDispatching=dispatching;
+        nativeMaterialDispatch=true;dispatching=true;lastId=id;
+        nativeMaterialReadResult=null;
+        try{
+            dispatch(c,request);
+            if(nativeMaterialOwner==owner&&supervisionLease!=null){
+                supervisionLease.addProperty("revision",controlRevision);owner.revision=controlRevision;
+            }
+            if(nativeMaterialReadResult!=null){
+                owner.immediate=nativeMaterialReadResult;owner.immediate.addProperty("phase","done");
+                owner.immediate.addProperty("detail","native material read completed");
+            }else if(active==null||!str(active,"id").equals(id))
+                owner.immediate=nativeMaterialReceipt(c,id,phase,detail);
+        }catch(Exception failure){
+            if(active!=null&&str(active,"id").equals(id)){
+                KitClient.stopWork("本机材料子任务参数无效");
+                if(supervisionLease!=null){supervisionLease.addProperty("revision",controlRevision);owner.revision=controlRevision;}
+            }
+            owner.immediate=nativeMaterialReceipt(c,id,"error",failure.getMessage());
+        }finally{
+            lastId=oldLast;dispatching=wasDispatching;nativeMaterialDispatch=false;
+            nativeMaterialReadResult=null;writeStatus(c);
+        }
+    }
+    static JsonObject nativeMaterialPoll(NativeMaterialSession owner,Minecraft c){
+        nativeMaterialCheck(owner,c);
+        if(owner.pendingId==null)return null;
+        if(owner.queued!=null)return null;
+        if(owner.immediate!=null){JsonObject result=owner.immediate;owner.immediate=null;owner.pendingId=null;return result;}
+        if(active!=null&&str(active,"id").equals(owner.pendingId))return null;
+        if(!Set.of("done","waiting","stopped","error").contains(phase))return null;
+        JsonObject result=nativeMaterialReceipt(c,owner.pendingId,phase,detail);
+        owner.pendingId=null;return result;
+    }
+    static JsonObject nativeMaterialSnapshot(NativeMaterialSession owner,Minecraft c){
+        nativeMaterialCheck(owner,c);
+        JsonObject state=snapshot(c);state.addProperty("native_material_job",owner.job);
+        state.addProperty("native_material_busy",owner.busy());return state;
+    }
+    static void nativeMaterialInterrupt(NativeMaterialSession owner,Minecraft c,String reason){
+        nativeMaterialCheck(owner,c);
+        if(owner.pendingId!=null&&owner.queued!=null){
+            owner.queued=null;
+            owner.immediate=nativeMaterialReceipt(c,owner.pendingId,"waiting","queued material child interrupted: "+reason);
+            return;
+        }
+        if(owner.pendingId==null||active==null||!str(active,"id").equals(owner.pendingId))return;
+        boolean wasDispatching=dispatching,wasNative=nativeMaterialDispatch;
+        dispatching=true;nativeMaterialDispatch=true;
+        try{
+            KitClient.stopWork("本机材料子任务中断："+reason);
+            if(supervisionLease!=null){supervisionLease.addProperty("revision",controlRevision);owner.revision=controlRevision;}
+            owner.immediate=nativeMaterialReceipt(c,owner.pendingId,"waiting","native material child interrupted: "+reason);
+        }finally{dispatching=wasDispatching;nativeMaterialDispatch=wasNative;}
+    }
+    static void nativeMaterialFinish(NativeMaterialSession owner,Minecraft c,boolean keepGuard){
+        nativeMaterialCheck(owner,c);
+        if(owner.pendingId!=null||active!=null)throw new IllegalStateException("Finish the owned material child first");
+        if(keepGuard){
+            BlockPos here=c.player.blockPosition();
+            if(c.player.isUnderWater()||c.player.getHealth()<19
+                    ||!c.level.hasChunkAt(here)||!MeteorModules.isActive(MeteorModules.FLIGHT)
+                    ||c.player.getY()-c.level.getHeight(
+                        net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+                        here.getX(),here.getZ())<20)
+                throw new IllegalStateException("Remain in the owned material session until the current column is a verified high park");
+            supervisionLease.add("park_target",JSON.toJsonTree(new double[]{
+                c.player.getX(),c.player.getY(),c.player.getZ()}));
+            if(!highGuardPark(c,supervisionLease))
+                throw new IllegalStateException("Current high park was not confirmed");
+        }
+        nativeMaterialOwner=null;owner.closed=true;supervisionLease=null;projectionBatch.reset();
+        if(keepGuard){
+            boolean previous=nativeMaterialDispatch;nativeMaterialDispatch=true;
+            try{KitClient.stopWork("本机材料任务完成");}
+            finally{nativeMaterialDispatch=previous;}
+            armPveGuard(c);
+        }
+        else KitClient.emergencyStop("本机材料任务结束");
+    }
+    static void nativeMaterialCancel(NativeMaterialSession owner,Minecraft c,String reason){
+        if(owner==null||owner.closed||nativeMaterialOwner!=owner)return;
+        nativeMaterialOwner=null;owner.closed=true;
+        KitClient.emergencyStop("本机材料任务急停："+reason);
+    }
+    static void nativeMaterialSafeLogout(NativeMaterialSession owner,Minecraft c,String reason){
+        nativeMaterialCheck(owner,c);
+        suspendAutoReconnect();
+        KitClient.safeLogout(c,"本机材料任务安全退出："+reason);
+        owner.closed=true;
+        if(nativeMaterialOwner==owner)nativeMaterialOwner=null;
     }
     private static boolean highGuardPark(Minecraft c,JsonObject lease){
         if(c.player==null||c.level==null||!lease.has("park_target"))return false;
@@ -129,6 +489,9 @@ public final class AutomationBridge {
         if(supervisionLease==null || c.player==null || c.level==null)return;
         var lease=supervisionLease;long now=System.currentTimeMillis();
         try{
+            if(nativeMaterialOwner!=null&&str(lease,"id").equals(nativeMaterialOwner.lease)
+                    &&now-nativeMaterialOwner.lastTouch<=1000)
+                lastSupervisionHeartbeat=now;
             if(str(lease,"kind").equals("parking")&&c.screen!=null){
                 var menu=c.player.containerMenu;
                 var inventory=new ArrayList<ItemStack>();for(int i=0;i<36;i++)inventory.add(c.player.getInventory().getItem(i));
@@ -247,6 +610,100 @@ public final class AutomationBridge {
         if(pveOnly)MeteorModules.enablePveAura();else MeteorModules.enable(MeteorModules.KILL_AURA);MeteorModules.enable(MeteorModules.AUTO_LOG);
         MeteorModules.enable("meteordevelopment.meteorclient.systems.modules.player.AutoEat");
     }
+    private static String airEquipmentSignature(ItemStack item){
+        var entries=new ArrayList<String>();
+        var applied=item.getEnchantments();
+        for(var enchantment:applied.keySet())
+            entries.add(enchantment.unwrapKey().map(key->key.identifier().toString()).orElse("unknown")
+                +"="+applied.getLevel(enchantment));
+        Collections.sort(entries);
+        return itemId(item)+":"+String.join(",",entries);
+    }
+    private static String airGear(Minecraft c){
+        if(c.player==null)return "";
+        return airEquipmentSignature(c.player.getItemBySlot(EquipmentSlot.HEAD))+"|"
+            +airEquipmentSignature(c.player.getItemBySlot(EquipmentSlot.FEET))+"|"
+            +c.player.getMaxAirSupply();
+    }
+    private static boolean respirationThree(Minecraft c){
+        return c.player!=null&&airEquipmentSignature(c.player.getItemBySlot(EquipmentSlot.HEAD))
+            .contains("minecraft:respiration=3");
+    }
+    private static boolean materialAirScope(Minecraft c){
+        return c.player!=null&&c.level!=null&&guardScope!=null&&pveOnly()
+            &&supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")
+            &&str(supervisionLease,"world_session").equals(session(c))
+            &&supervisionLease.has("revision")
+            &&supervisionLease.get("revision").getAsLong()==controlRevision;
+    }
+    private static MaterialAirBudget.Estimate airEstimate(Minecraft c){
+        return materialAirRoute.estimate(c,session(c),
+            supervisionLease==null?"":str(supervisionLease,"job_session"),
+            respirationThree(c)&&MeteorModules.isActive(MeteorModules.AUTO_LOG)
+                ?airGear(c):"unqualified",System.currentTimeMillis());
+    }
+    private static boolean beginNativeAirReturn(Minecraft c,MaterialAirBudget.Estimate budget,
+                                                boolean boundedDiveDue){
+        if(!materialAirScope(c)||!c.player.isUnderWater()||nativeAirReturnActive
+                ||c.player.hasEffect(net.minecraft.world.effect.MobEffects.WATER_BREATHING)
+                ||c.player.hasEffect(net.minecraft.world.effect.MobEffects.CONDUIT_POWER)
+                ||!materialAirRoute.configuredJob(session(c),str(supervisionLease,"job_session"))
+                ||c.player.getAirSupply()>budget.returnFloor()&&!boundedDiveDue)return false;
+        Vec3 target=materialAirRoute.emergencyTarget(c,session(c),
+            str(supervisionLease,"job_session"),airGear(c));
+        if(target==null){
+            nativeAirReturnPhase="no_verified_route";
+            suspendAutoReconnect();KitClient.safeLogout(c,"水下氧气不足且返气路线失效，停止并退出");
+            return true;
+        }
+        if(active!=null&&op.equals("navigate")&&KitClient.controller().isActive()
+                &&active.has("target")){
+            JsonArray current=active.getAsJsonArray("target");
+            if(current!=null&&current.size()==3
+                    &&current.get(1).getAsDouble()>=target.y
+                    &&Math.hypot(current.get(0).getAsDouble()-target.x,
+                                  current.get(2).getAsDouble()-target.z)<=.2){
+                active.addProperty("auto_air_return",true);
+                active.addProperty("interrupted_op","navigate");
+                KitClient.controller().keepConnectedOnArrival();
+                nativeAirReturnActive=true;nativeAirReturnPhase="ascending";
+                nativeAirReturnOriginalOp="navigate";
+                nativeAirReturnStarted=System.currentTimeMillis();
+                nativeAirReturnMovedAt=nativeAirReturnStarted;
+                nativeAirReturnLastY=c.player.getY();
+                return true;
+            }
+        }
+        String previous=op;
+        JsonObject rescue=active==null?guardScope.deepCopy():active.deepCopy();
+        if(active==null)rescue.addProperty("id","native-air-"+UUID.randomUUID());
+        rescue.addProperty("task_session",str(supervisionLease,"job_session"));
+        rescue.addProperty("world_session",session(c));
+        rescue.addProperty("expected_revision",controlRevision-1);
+        rescue.add("target",JSON.toJsonTree(new double[]{target.x,target.y,target.z}));
+        rescue.addProperty("auto_air_return",true);
+        rescue.addProperty("interrupted_op",previous);
+        if(c.gameMode!=null)c.gameMode.stopDestroyBlock();
+        if(active!=null)releaseWalk(c);
+        if(supplyTask!=null){supplyTask.close(c);supplyTask=null;}
+        active=rescue;op="navigate";phase="running";
+        nativeAirReturnActive=true;nativeAirReturnPhase="ascending";
+        nativeAirReturnOriginalOp=previous;nativeAirReturnStarted=System.currentTimeMillis();
+        nativeAirReturnMovedAt=nativeAirReturnStarted;nativeAirReturnLastY=c.player.getY();
+        detail="native air return interrupted "+previous;
+        deadline=ticks+20*20;
+        boolean wasDispatching=dispatching;dispatching=true;
+        try{
+            MeteorModules.enable(MeteorModules.FLIGHT);
+            KitClient.controller().startExact(c,target.x,target.z,target.y);
+            KitClient.controller().keepConnectedOnArrival();
+            materialAirRoute.beginAscent(c,str(rescue,"id"),target.y);
+        }catch(Exception failed){
+            nativeAirReturnActive=false;nativeAirReturnPhase="launch_failed";
+            suspendAutoReconnect();KitClient.safeLogout(c,"水下返气启动失败，停止并退出");
+        }finally{dispatching=wasDispatching;}
+        return true;
+    }
     private static boolean ownedUnderwaterAirReturn(Minecraft c){
         if(c.player==null||c.level==null||!c.player.isUnderWater()
                 ||active==null
@@ -290,6 +747,27 @@ public final class AutomationBridge {
         boolean enabled=guardScope!=null;
         if(enabled&&c.player!=null){lastGuardHealth=c.player.getHealth();lastGuardX=c.player.getX();lastGuardZ=c.player.getZ();}
         if(enabled)try{guard(c,guardScope);}catch(Exception changed){guardScope=null;enabled=false;dev.twob2tkit.combat.GuardFoodLease.release();}
+        if(active!=null&&op.equals("navigate")&&materialAirScope(c))
+            materialAirRoute.observeAscent(c,str(active,"id"));
+        if(enabled&&materialAirScope(c)&&c.player.isUnderWater()){
+            long now=System.currentTimeMillis();
+            if(beginNativeAirReturn(c,airEstimate(c),
+                    materialAirRoute.returnDue(session(c),str(supervisionLease,"job_session"),
+                        airGear(c),now))&&!nativeAirReturnActive)return true;
+        }
+        if(nativeAirReturnActive&&active!=null&&c.player!=null){
+            materialAirRoute.observeAscent(c,str(active,"id"));
+            long now=System.currentTimeMillis();
+            if(c.player.getY()>nativeAirReturnLastY+.2){
+                nativeAirReturnLastY=c.player.getY();nativeAirReturnMovedAt=now;
+            }
+            if(c.player.isUnderWater() && (c.player.getAirSupply()<=Math.ceil(c.player.getMaxAirSupply()/10.0)
+                    ||now-nativeAirReturnMovedAt>3000)){
+                nativeAirReturnPhase="stalled_underwater";
+                suspendAutoReconnect();KitClient.safeLogout(c,"水下返气停止前进，停止并退出");
+                return true;
+            }
+        }
         if(enabled&&ownedUnderwaterAirReturn(c)){
             // Reaching air from underwater outranks ranged combat. Keep guard
             // armed; PvE defense resumes immediately after leaving the water.
@@ -309,6 +787,7 @@ public final class AutomationBridge {
         return guardBusy;
     }
     private static double savedArrival=Double.NaN, temporaryArrival;
+    private static Boolean savedClearCeiling;
     private static boolean restoreFlight;
     private static boolean mineStarted;
     private static boolean guiRequested, initialized, dispatching;
@@ -319,19 +798,48 @@ public final class AutomationBridge {
         pendingGuardReconnect=null;
         ownedBorerSession="";
         ProfessionalPrinter.stop(c,true);
-        supervisionLease=null;pendingSafety=null;survivalArmed=false;disarmGuard(c);
+        supervisionLease=null;pendingSafety=null;survivalArmed=false;disarmGuard(c);projectionBatch.reset();
         cancelWork(c,reason);
     }
     private static void abortOwnedRequest(Minecraft c,String reason){
-        if(supervisionLease!=null && active!=null && (str(active,"job_session").equals(str(supervisionLease,"job_session"))||str(active,"task_session").equals(str(supervisionLease,"job_session")))){KitClient.stopWork(reason);if(supervisionLease!=null&&str(supervisionLease,"kind").equals("materials"))supervisionLease.addProperty("revision",controlRevision);}
+        if(supervisionLease!=null && active!=null && (str(active,"job_session").equals(str(supervisionLease,"job_session"))||str(active,"task_session").equals(str(supervisionLease,"job_session")))){
+            boolean nativeChild=nativeMaterialOwner!=null&&active.has("id")
+                &&str(active,"id").equals(nativeMaterialOwner.pendingId)
+                &&nativeMaterialOwner.world.equals(session(c))&&!KitKeys.manualMovementDown(c);
+            boolean previous=nativeMaterialDispatch;
+            if(nativeChild)nativeMaterialDispatch=true;
+            try{KitClient.stopWork(reason);}
+            finally{nativeMaterialDispatch=previous;}
+            if(supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")){
+                supervisionLease.addProperty("revision",controlRevision);
+                if(nativeChild&&nativeMaterialOwner!=null)nativeMaterialOwner.revision=controlRevision;
+            }
+            if(nativeChild&&nativeMaterialOwner!=null)
+                nativeMaterialOwner.immediate=nativeMaterialReceipt(c,nativeMaterialOwner.pendingId,"stopped",reason);
+        }
         else KitClient.emergencyStop(reason);
     }
     public static void cancelWork(Minecraft c,String reason){
+        closeMaterialAirNavigation(c,"stopped");
+        if(active!=null&&Set.of("quarry_batch","rock_quarry_batch").contains(op)&&KitClient.borer()!=null)
+            KitClient.borer().stop(c,reason);
+        if(active!=null&&op.equals("rock_quarry_batch"))rockQuarryStopped("stopped",reason);
+        if(nativeMaterialOwner!=null&&!nativeMaterialDispatch){
+            nativeMaterialOwner.closed=true;nativeMaterialOwner=null;supervisionLease=null;
+        }
+        if(nativeAirReturnActive){
+            nativeAirReturnActive=false;
+            if(nativeAirReturnPhase.equals("ascending"))nativeAirReturnPhase="cancelled";
+        }
         survivalArmed=false;craftTask=null;if(supplyTask!=null){supplyTask.close(c);supplyTask=null;}controlRevision++;ProfessionalPrinter.stop(c,false);restoreArrival();releaseWalk(c);
-        active=null;phase="stopped";detail=reason;if(!dispatching)writeStatus(c);
+        active=null;phase="stopped";detail=reason;if(supervisionLease==null||!dispatching&&!nativeMaterialDispatch)projectionBatch.reset();if(!dispatching)writeStatus(c);
     }
     /** Short-range walking owns input before Minecraft samples keys; it does not use cruise fly-over routing. */
-    public static boolean reapplySupplyLook(Minecraft c){if(active==null || !Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) || supplyTask==null)return false;supplyTask.reapply(c);return true;}
+    public static boolean reapplySupplyLook(Minecraft c){
+        if(materialAirNavigation!=null&&materialAirNavigation.reapply(c))return true;
+        if(active==null || !Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) || supplyTask==null)return false;
+        supplyTask.reapply(c);return true;
+    }
     private static boolean ownsMaterialMenu(Minecraft c){
         if(active==null||!active.has("task_session")||c.player==null)return false;
         var menu=c.player.containerMenu;String command=str(active,"op");
@@ -343,9 +851,47 @@ public final class AutomationBridge {
         }
         return false;
     }
+    private static boolean nativeKitMenu(Minecraft c){
+        if(c.screen==null||!c.screen.getClass().getName().startsWith("dev.twob2tkit."))return false;
+        if(nativeMaterialOwner!=null)return true;
+        // The local Python material worker must remain pausable from its own
+        // Kit page. Freeze its inputs there; do not turn UI inspection into an
+        // emergency stop that destroys both the worker and its PvE protection.
+        return supervisionLease!=null&&supervisionLease.has("revision")
+            &&str(supervisionLease,"kind").equals("materials")
+            &&str(supervisionLease,"world_session").equals(session(c))
+            &&supervisionLease.get("revision").getAsLong()==controlRevision
+            &&(active==null||str(active,"task_session").equals(str(supervisionLease,"job_session")));
+    }
     public static boolean beforeInput(Minecraft c){
         if(active!=null)ownsMaterialMenu(c); // Capture our CraftingMenu even though it is an allowed survival screen.
-        if(active!=null && (active.has("job_session")||active.has("task_session")) && c.player!=null && (KitKeys.manualMovementDown(c) || !background(active) && !c.isWindowActive() || !survivalMenu(c) && !ownsMaterialMenu(c) && !(supplyTask!=null && Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) && supplyTask.ownsMenu(c)))){KitClient.emergencyStop("托管技能交还控制");return true;}
+        if(active!=null && (active.has("job_session")||active.has("task_session")) && c.player!=null && (KitKeys.manualMovementDown(c) || !background(active) && !c.isWindowActive() || !survivalMenu(c) && !nativeKitMenu(c) && !ownsMaterialMenu(c) && !(supplyTask!=null && Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) && supplyTask.ownsMenu(c)))){KitClient.emergencyStop("托管技能交还控制");return true;}
+        if(active!=null&&op.equals("rock_quarry_batch")){
+            tickRockQuarry(c,true);
+            if(active==null)return true;
+        }
+        if(active!=null&&op.equals("navigate")&&active.has("air_only")&&active.get("air_only").getAsBoolean()){
+            if(KitClient.config().clearCeiling||!airNavigationClear(c,active.getAsJsonArray("target"))){
+                KitClient.controller().stop(c,"已观察空气通道发生变化，停止移动");
+                finish(c,"waiting","air-only path changed; no blocks were excavated");return true;
+            }
+        }
+        if(nativeKitMenu(c)&&!nativeAirReturnActive&&active!=null){
+            if(materialAirNavigation!=null)try{materialAirNavigation.pause(c);}
+            catch(Exception error){KitClient.controller().stop(c,"材料精确停靠暂停");finish(c,"waiting",error.getMessage());return true;}
+            c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);
+            c.options.keyShift.setDown(false);c.options.keyAttack.setDown(false);
+            if(c.gameMode!=null)c.gameMode.stopDestroyBlock();
+            return true;
+        }
+        if(materialAirNavigation!=null&&active!=null&&op.equals("navigate")){
+            try{
+                guard(c,active);
+                if(!currentMaterialRequest(c,active)||!guardArmed()||!pveOnly())throw new IllegalStateException("Air waypoint ownership or protection changed");
+                return materialAirNavigation.input(c);
+            }
+            catch(Exception error){KitClient.controller().stop(c,"材料精确停靠停止");finish(c,"waiting",error.getMessage());return true;}
+        }
         if(survivalArmed && c.player!=null && (KitKeys.manualMovementDown(c) || !survivalBackground && !c.isWindowActive() || !survivalMenu(c))){KitClient.emergencyStop("生存试运行交还控制");return true;}
         if(active!=null && Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) && supplyTask!=null){supplyTask.input(c);return true;}
         if(active==null || !Set.of("walk","walk_path","mine_block","use_item").contains(op) || c.player==null || c.level==null)return false;
@@ -364,7 +910,9 @@ public final class AutomationBridge {
             return true;
         }
         if(op.equals("walk")&&active.has("water_descend")&&active.get("water_descend").getAsBoolean()){
-            if(!WaterDescentPolicy.continueDescent(c.player.isUnderWater(),c.player.getHealth(),c.player.getAirSupply())){
+            var air=airEstimate(c);
+            int floor=air.source().equals("observed")?air.returnFloor():245;
+            if(!WaterDescentPolicy.continueDescent(c.player.isUnderWater(),c.player.getHealth(),c.player.getAirSupply(),floor)){
                 finish(c,"waiting","water descent stopped for surface air or health");return true;
             }
             JsonArray target=active.getAsJsonArray("target");
@@ -380,14 +928,20 @@ public final class AutomationBridge {
         if(op.equals("mine_block")){
             try{guard(c,active);}catch(Exception e){finish(c,"stopped",e.getMessage());return true;}
             if(active.has("underwater_gravel")&&active.get("underwater_gravel").getAsBoolean()){
+                var air=airEstimate(c);
                 boolean breathing=c.player.hasEffect(net.minecraft.world.effect.MobEffects.WATER_BREATHING)
                     ||c.player.hasEffect(net.minecraft.world.effect.MobEffects.CONDUIT_POWER);
                 if(!UnderwaterGravelPolicy.continueMining(c.player.isUnderWater(),c.player.getHealth(),
-                        c.player.getAirSupply(),breathing)){
+                        c.player.getAirSupply(),breathing,air.returnFloor())){
                     finish(c,"waiting","Underwater oxygen or health changed; surface before mining more");return true;
                 }
             }
             JsonArray a=active.getAsJsonArray("pos");BlockPos target=new BlockPos(a.get(0).getAsInt(),a.get(1).getAsInt(),a.get(2).getAsInt());
+            if(active.has("footing_gravel")&&active.get("footing_gravel").getAsBoolean()
+                    &&(!c.player.onGround()||!c.player.blockPosition().below().equals(target)
+                        ||!GravelFootingPolicy.stableFloor(c.level,target))){
+                finish(c,"waiting","Safe gravel footing changed");return true;
+            }
             if(c.level.isEmptyBlock(target)){finish(c,"done","target removed");return true;}
             if(!state(c,target).equals(str(active,"expected_state"))){finish(c,"error","mining target changed");return true;}
             Vec3 aim=blockAim(target,active);if(c.player.getEyePosition().distanceTo(aim)>c.player.blockInteractionRange()-.2){finish(c,"waiting","mining target moved out of reach");return true;}RotationAim.Look look=RotationAim.lookAt(c.player,aim);RotationAim.apply(c.player,look);
@@ -424,17 +978,23 @@ public final class AutomationBridge {
         if(!initialized){initialized=true;try{Path old=root(c).resolve("request.json");if(Files.isRegularFile(old))lastId=str(JsonParser.parseString(Files.readString(old)).getAsJsonObject(),"id");}catch(Exception ignored){}}
         if(guiRequested){guiRequested=false;if(c.player!=null)KitClient.openGui(c);}
         ticks++;
+        if(ticks%5==0)pollMaterialTasks(c);
+        validateProjectionBatch(c);
+        nativeMaterialRunQueued(c);
         restoreGuardAfterReconnect(c);
         if(!ownedBorerSession.isEmpty() && (KitClient.borer()==null || !KitClient.borer().isActive()))ownedBorerSession="";
         if(ticks%5==0){
             Path f=root(c).resolve("request.json");
             try{
-                if(Files.isRegularFile(f) && Files.size(f)<=16384){
+                if(Files.isRegularFile(f) && Files.size(f)<=131072){
                     JsonObject r=JsonParser.parseString(Files.readString(f)).getAsJsonObject();String id=str(r,"id");
                     if(!id.isBlank() && !id.equals(lastId)){
                         lastId=id;
                         try {
-                            if(active!=null && !str(r,"op").equals("stop") && !Set.of("snapshot","scan","scan_trees","projection_audit").contains(str(r,"op")))throw new IllegalStateException("A job is active; stop it first");
+                            if(Files.size(f)>16384&&!str(r,"op").equals("projection_batch_set"))throw new IllegalArgumentException("Request exceeds the bounded action size");
+                            if(nativeMaterialOwner!=null&&!Set.of("snapshot","scan","scan_trees","projection_audit","projection_model","gravel_stop").contains(str(r,"op")))
+                                throw new IllegalStateException("A local material session owns all write actions");
+                            if(active!=null && !str(r,"op").equals("stop") && !Set.of("snapshot","scan","scan_trees","projection_audit","projection_model","gravel_stop","material_job_pause").contains(str(r,"op")))throw new IllegalStateException("A job is active; stop it first");
                             dispatching=true;
                             try{dispatch(c,r);if(supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")&&str(r,"task_session").equals(str(supervisionLease,"job_session")))supervisionLease.addProperty("revision",controlRevision);}finally{dispatching=false;}
                         } catch(Exception e) {
@@ -449,7 +1009,24 @@ public final class AutomationBridge {
         if(active!=null){
             try{
                 guard(c,active);
-                if(Set.of("build_supply","collect_supply","approach_block","collect_item").contains(op)){
+                if(nativeKitMenu(c)&&!nativeAirReturnActive&&nativeMaterialOwner!=null
+                        &&str(active,"id").equals(nativeMaterialOwner.pendingId))deadline++;
+                if(nativeAirReturnActive&&op.equals("navigate")&&c.player!=null
+                        &&!c.player.isUnderWater()&&c.player.getY()>=materialAirRoute.returnY()-1){
+                    materialAirRoute.finishAscent(c,str(active,"id"),true);
+                    KitClient.controller().stop(c,"已从水下返气");
+                    nativeAirReturnActive=false;nativeAirReturnPhase="recovered";
+                    finish(c,"waiting","native air return reached breathable air; "+nativeAirReturnOriginalOp+" interrupted");
+                    return;
+                }
+                if(op.equals("rock_quarry_batch")){
+                    tickRockQuarry(c,false);
+                }else if(op.equals("quarry_batch")){
+                    int gained=count(c,"minecraft:sand")-active.get("sand_before").getAsInt();
+                    if(c.player.getHealth()<19){finish(c,"waiting","quarry stopped for health; verify safe parking");}
+                    else if(gained>=active.get("target_count").getAsInt())finish(c,"done","sand inventory target reached");
+                    else if(!KitClient.borer().isActive())finish(c,"waiting","native quarry stopped: "+KitClient.borer().status());
+                }else if(Set.of("build_supply","collect_supply","approach_block","collect_item").contains(op)){
                     if(guardBusy || c.player.getHealth()<14)deadline++;
                     try{supplyTask.tick(c);}catch(Exception e){supplyTask.fail(c,e.getMessage());}
                     if(!supplyTask.failure().isEmpty())finish(c,"waiting",supplyTask.failure());
@@ -523,9 +1100,26 @@ public final class AutomationBridge {
                     if(count(c,str(active,"item"))>=desiredCount)KitClient.chopper().finishCurrentTree();
                     if(KitClient.chopper().waitingForTree()){KitClient.chopper().stop(c,"当前附近没有该树种，交回跑图搜索");finish(c,"waiting","no matching tree in local reach");}
                     else if(!KitClient.chopper().isActive())finish(c,KitClient.chopper().materialTargetFinished()?"done":"stopped",KitClient.chopper().materialTargetFinished()?"tree batch and pickup completed; verify material count":"chopper stopped");
+                }else if(op.equals("navigate")&&materialAirNavigation!=null){
+                    if(guardBusy)materialAirNavigation.defensePause();
+                    else{
+                        materialAirNavigation.observe(c);
+                        if(materialAirNavigation.done())finish(c,"done","air-only waypoint reached and stable after restoring Flight settings");
+                    }
                 }else if(op.equals("navigate") && !KitClient.controller().isActive()){
                     JsonArray p=active.getAsJsonArray("target");double dx=c.player.getX()-p.get(0).getAsDouble(),dz=c.player.getZ()-p.get(2).getAsDouble();
-                    finish(c,Math.hypot(dx,dz)<=KitClient.config().arrivalRadius+1 && Math.abs(c.player.getY()-p.get(1).getAsDouble())<=1?"done":"stopped","navigation ended");
+                    boolean arrived=Math.hypot(dx,dz)<=KitClient.config().arrivalRadius+1 && Math.abs(c.player.getY()-p.get(1).getAsDouble())<=1;
+                    materialAirRoute.finishAscent(c,str(active,"id"),arrived);
+                    if(nativeAirReturnActive){
+                        nativeAirReturnActive=false;
+                        if(c.player.isUnderWater()){
+                            nativeAirReturnPhase="stopped_underwater";
+                            suspendAutoReconnect();KitClient.safeLogout(c,"水下返气导航中断，停止并退出");
+                        }else{
+                            nativeAirReturnPhase="recovered";
+                            finish(c,"waiting","native air return reached breathable air; "+nativeAirReturnOriginalOp+" interrupted");
+                        }
+                    }else finish(c,arrived?"done":"stopped","navigation ended");
                 }else if(op.equals("print") && !KitClient.machines().isPlacing())finish(c,"stopped","printer stopped");
                 else if(op.equals("settle") && ticks>=deadline)finish(c,"done","server state available");
                 if(active!=null && ticks>=deadline && !op.equals("settle")){
@@ -548,9 +1142,51 @@ public final class AutomationBridge {
         double dx=c.player.getX()-site.get(0).getAsDouble(),dz=c.player.getZ()-site.get(2).getAsDouble();
         if(!AutomationScope.nearSite(dx,dz))throw new IllegalStateException("Outside authorized worksite; lobby actions refused");
     }
+    private static void gravelScope(Minecraft c,JsonObject r){
+        if(c.player==null||c.level==null||c.player.isDeadOrDying()
+                ||!str(r,"world_session").equals(session(c))
+                ||!r.has("expected_revision")||r.get("expected_revision").getAsLong()!=controlRevision
+                ||!r.has("expires_at")||r.get("expires_at").getAsLong()<System.currentTimeMillis()
+                ||r.get("expires_at").getAsLong()-System.currentTimeMillis()>15000)
+            throw new IllegalStateException("Gravel control belongs to an old world or controller");
+    }
+    private static void configureGravel(JsonObject r){
+        var config=KitClient.config();
+        int radius=r.has("radius")?r.get("radius").getAsInt():config.gravelRadius;
+        int depth=r.has("depth")?r.get("depth").getAsInt():config.gravelDepth;
+        int limit=r.has("limit")?r.get("limit").getAsInt():config.gravelLimit;
+        if(radius<4||radius>64||depth<6||depth>32||limit<0||limit>2304)
+            throw new IllegalArgumentException("Gravel radius 4..64, depth 6..32, limit 0..2304 required");
+        config.gravelRadius=radius;config.gravelDepth=depth;config.gravelLimit=limit;config.gravelWaterMode=true;
+        config.save();
+    }
+    private static void gravelReceipt(Minecraft c)throws Exception{
+        JsonObject receipt=snapshot(c);
+        receipt.addProperty("id",lastId);receipt.addProperty("phase",phase);receipt.addProperty("detail",detail);
+        save(root(c).resolve("reply-"+safeId(lastId)+".json"),receipt);
+    }
     private static void dispatch(Minecraft c,JsonObject r)throws Exception{
         String command=str(r,"op");
         if(command.equals("stop")){if(r.has("expected_revision") && (r.get("expected_revision").getAsLong()!=controlRevision || !str(r,"world_session").equals(session(c))))throw new IllegalStateException("Stop belongs to an old controller");statusId=lastId;ProfessionalPrinter.stop(c,true);KitClient.emergencyStop("本地脚本停止");active=null;phase="stopped";detail="stopped";writeStatus(c);return;}
+        if(command.equals("gravel_stop")){
+            gravelScope(c,r);
+            if(!GravelCollector.isActive())throw new IllegalStateException("No gravel collection is active");
+            GravelCollector.stop(c,"本机接口停止");
+            statusId=lastId;phase="done";op=command;detail="gravel returning to safe height";
+            gravelReceipt(c);writeStatus(c);return;
+        }
+        if(command.equals("material_job_pause")){
+            externalMaterialScope(c,r);
+            if(c.screen!=null&&!c.screen.getClass().getName().startsWith("dev.twob2tkit."))
+                throw new IllegalStateException("Material pause cannot take over a different item interface");
+            if(r.has("release")&&(!r.get("release").isJsonPrimitive()||!r.getAsJsonPrimitive("release").isBoolean()))
+                throw new IllegalArgumentException("Material release must be boolean");
+            boolean release=r.has("release")&&r.get("release").getAsBoolean();
+            materialJobCancel(c,str(r,"task_session"),"材料作业已暂停，防护继续");
+            if(release){supervisionLease=null;lastSupervisionHeartbeat=0;projectionBatch.reset();}
+            statusId=lastId;op=command;phase="done";detail=release?"owned material task stopped and lease released; PvE guard retained":"owned material task stopped; PvE guard and lease retained";
+            writeStatus(c);return;
+        }
         guard(c,r);
         if(r.has("task_session")&&!command.equals("material_session")){
             long expiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
@@ -565,13 +1201,16 @@ public final class AutomationBridge {
             long remaining=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
             if(remaining<0 || remaining>15000)throw new IllegalStateException("Expired survival action");
         }
-        if(Set.of("snapshot","scan","scan_trees","projection_audit").contains(command)){
+        if(Set.of("snapshot","scan","scan_trees","projection_audit","projection_model").contains(command)){
             if(survival(r)){survivalArmed=true;survivalBackground=background(r);}
             JsonObject out=snapshot(c);out.addProperty("id",lastId);
             if(command.equals("scan"))out.add("blocks",scan(c,r));
             if(command.equals("scan_trees"))out.add("tree_survey",TreeSurvey.scan(c,r));
             if(command.equals("projection_audit"))out.add("projection_audit",ProjectionAudit.scan(c));
-            save(root(c).resolve("reply-"+safeId(lastId)+".json"),out);writeStatus(c);return;
+            if(command.equals("projection_model"))out.add("projection_model",ProjectionAudit.model(c));
+            if(nativeMaterialDispatch)nativeMaterialReadResult=out;
+            else save(root(c).resolve("reply-"+safeId(lastId)+".json"),out);
+            writeStatus(c);return;
         }
         if(dev.twob2tkit.combat.EmergencyExit.held(c))throw new IllegalStateException("Safety lock: manual in-game acknowledgement required; do not reconnect automatically");
         boolean defensiveRise=false;
@@ -582,9 +1221,30 @@ public final class AutomationBridge {
                 c.player.getX(),c.player.getY(),c.player.getZ(),
                 point.get(0).getAsDouble(),point.get(1).getAsDouble(),point.get(2).getAsDouble());
         }
-        if(guardBusy && !command.equals("guard") && !command.equals("use_item") && !defensiveRise)throw new IllegalStateException("Construction guard is defending or eating; wait before changing items or starting work");
+        if(guardBusy && !Set.of("guard","use_item","air_return_set").contains(command) && !defensiveRise)throw new IllegalStateException("Construction guard is defending or eating; wait before changing items or starting work");
         statusId=lastId;
-        if(command.equals("material_session")){
+        if(command.equals("gravel_start")||command.equals("gravel_config")){
+            gravelScope(c,r);
+            if(GravelCollector.isActive()||nativeMaterialOwner!=null||active!=null)
+                throw new IllegalStateException("Gravel collection or another task already owns control");
+            configureGravel(r);
+            if(command.equals("gravel_start")){
+                if(!GravelCollector.start(c))throw new IllegalStateException(GravelCollector.status());
+                detail="gravel collector started";
+            }else detail="gravel collector settings saved";
+            phase="done";op=command;
+        }else if(command.equals("air_return_set")){
+            if(!materialAirScope(c)||!r.has("task_session")
+                    ||!str(r,"task_session").equals(str(supervisionLease,"job_session"))
+                    ||!respirationThree(c)||!MeteorModules.isActive(MeteorModules.AUTO_LOG))
+                throw new IllegalStateException("Current guarded material lease is required for an air route");
+            JsonArray t=r.getAsJsonArray("target");checkSiteTarget(r,t);
+            if(t==null||t.size()!=3)throw new IllegalArgumentException("Expected air-return target");
+            materialAirRoute.configure(c,session(c),str(supervisionLease,"job_session"),airGear(c),
+                new Vec3(t.get(0).getAsDouble(),t.get(1).getAsDouble(),t.get(2).getAsDouble()),
+                System.currentTimeMillis());
+            nativeAirReturnPhase="armed";phase="done";op=command;detail="verified material air route refreshed";
+        }else if(command.equals("material_session")){
             long expiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
             boolean resumePark=supervisionLease!=null&&str(supervisionLease,"kind").equals("parking")&&str(r,"replace_parking_lease").equals(str(supervisionLease,"id"));
             if(expiry<0||expiry>15000||!r.has("expected_revision")||r.get("expected_revision").getAsLong()!=controlRevision||!str(r,"world_session").equals(session(c))||supervisionLease!=null&&!resumePark||KitClient.anyAfkAuto()||c.screen!=null||KitKeys.manualMovementDown(c)||c.player.getHealth()<14)throw new IllegalStateException("Material session cannot acquire control");
@@ -594,6 +1254,67 @@ public final class AutomationBridge {
             ProfessionalPrinter.stop(c,true); // Inventory/crafting ownership excludes an externally enabled printer.
             if(resumePark)supervisionLease=null;
             String leaseId=safeId(str(r,"supervision_lease")),taskId=safeId(str(r,"task_session"));supervisionLease=new JsonObject();supervisionLease.addProperty("id",leaseId);supervisionLease.addProperty("world_session",session(c));supervisionLease.addProperty("job_session",taskId);supervisionLease.addProperty("kind","materials");supervisionLease.addProperty("revision",controlRevision);supervisionLease.addProperty("remote_finish",guardFinish?"guard":"disconnect");if(guardFinish)supervisionLease.add("park_target",r.getAsJsonArray("park_target").deepCopy());lastSupervisionHeartbeat=System.currentTimeMillis();logoutQuiet.reset(lastSupervisionHeartbeat);armPveGuard(c);phase="done";detail="material session protected";
+        }else if(command.equals("material_job_park")){
+            externalMaterialScope(c,r);updateMaterialPark(c,r);
+            phase="done";op=command;detail="local guard parking target updated; movement not started";
+        }else if(command.equals("rock_quarry_batch")){
+            startRockQuarry(c,r);
+        }else if(command.equals("quarry_batch")){
+            boolean owned=supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")
+                &&str(supervisionLease,"job_session").equals(str(r,"task_session"));
+            var borer=KitClient.borer();
+            if(!owned||!guardArmed()||!pveOnly()||c.player.getHealth()<19
+                    ||c.player.getFoodData().getFoodLevel()<8||c.player.isUnderWater()
+                    ||c.screen!=null||KitKeys.manualMovementDown(c)||hostileNearby(c)
+                    ||borer==null||borer.isActive()||KitClient.controller().isActive()
+                    ||KitClient.anyAfkAuto()||!KitClient.config().borerAutoDefend)
+                throw new IllegalStateException("Guarded, healthy, idle dry quarry scope required");
+            if(!c.level.dimension().equals(net.minecraft.world.level.Level.OVERWORLD)
+                    ||!str(r,"item").equals("minecraft:sand"))
+                throw new IllegalArgumentException("Only dry Overworld sand is supported by the material quarry");
+            var low=r.getAsJsonArray("min");var high=r.getAsJsonArray("max");
+            checkSiteTarget(r,low);checkSiteTarget(r,high);
+            for(var point:List.of(low,high))for(var v:point)
+                if(!Double.isFinite(v.getAsDouble())||v.getAsDouble()!=Math.rint(v.getAsDouble()))
+                    throw new IllegalArgumentException("Quarry coordinates must be integers");
+            BlockPos min=new BlockPos(low.get(0).getAsInt(),low.get(1).getAsInt(),low.get(2).getAsInt());
+            BlockPos max=new BlockPos(high.get(0).getAsInt(),high.get(1).getAsInt(),high.get(2).getAsInt());
+            int amount=r.get("target_count").getAsInt();
+            if(!MaterialQuarryPolicy.bounds(max.getX()-min.getX()+1,max.getY()-min.getY()+1,
+                    max.getZ()-min.getZ()+1,amount)||min.getY()<c.level.getSeaLevel()+1
+                    ||c.player.getY()<max.getY()+2
+                    ||Math.hypot(c.player.getX()-(min.getX()+max.getX()+1)/2.0,
+                        c.player.getZ()-(min.getZ()+max.getZ()+1)/2.0)>64)
+                throw new IllegalArgumentException("Quarry bounds or clear aerial start are invalid");
+            int available=0;
+            for(BlockPos p:BlockPos.betweenClosed(min.offset(-3,-2,-3),max.offset(3,2,3))){
+                boolean inside=p.getX()>=min.getX()&&p.getX()<=max.getX()
+                    &&p.getY()>=min.getY()&&p.getY()<=max.getY()
+                    &&p.getZ()>=min.getZ()&&p.getZ()<=max.getZ();
+                var state=c.level.getBlockState(p);
+                if(!MaterialQuarryPolicy.cellAllowed(c.level.hasChunkAt(p),inside,state.isAir(),
+                        state.is(net.minecraft.world.level.block.Blocks.SAND),!state.getFluidState().isEmpty(),
+                        c.level.getBlockEntity(p)!=null))
+                    throw new IllegalStateException("Quarry changed: non-sand, liquid, container or unloaded buffer at "+p);
+                if(inside&&state.is(net.minecraft.world.level.block.Blocks.SAND))available++;
+                boolean column=p.getX()>=min.getX()&&p.getX()<=max.getX()
+                    &&p.getZ()>=min.getZ()&&p.getZ()<=max.getZ();
+                if(column&&p.getY()>max.getY()&&!state.isAir())
+                    throw new IllegalStateException("Sand quarry top is not open air");
+                if(column&&p.getY()==min.getY()-1&&!state.isCollisionShapeFullBlock(c.level,p))
+                    throw new IllegalStateException("Sand quarry lacks a solid bottom");
+            }
+            int capacity=0;for(int i=0;i<36;i++){var stack=c.player.getInventory().getItem(i);
+                if(stack.isEmpty())capacity+=64;else if(stack.is(net.minecraft.world.item.Items.SAND))capacity+=64-stack.getCount();}
+            var held=c.player.getMainHandItem();
+            if(available<amount||capacity<amount||!held.is(net.minecraft.tags.ItemTags.SHOVELS)
+                    ||held.getMaxDamage()-held.getDamageValue()<Math.min(amount,256)+32)
+                throw new IllegalStateException("Quarry sand, backpack room or shovel durability is insufficient");
+            borer.startMaterialArea(c,min,max);
+            if(!borer.isActive())throw new IllegalStateException("Native sand quarry could not start: "+borer.status());
+            active=r.deepCopy();active.addProperty("sand_before",count(c,"minecraft:sand"));
+            op=command;phase="running";detail="native bounded sand quarry running";
+            deadline=ticks+20*Math.max(30,Math.min(600,r.has("seconds")?r.get("seconds").getAsInt():300));
         }else if(command.equals("borer_start")){
             var borer=KitClient.borer();
             boolean materialOwned=supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")
@@ -654,6 +1375,23 @@ public final class AutomationBridge {
             if(expiry<0 || expiry>15000 || str(r,"job_session").isEmpty())throw new IllegalStateException("Supervisor attachment expired or has no job");
             if(!r.has("expected_revision") || r.get("expected_revision").getAsLong()!=controlRevision || !str(r,"world_session").equals(session(c)))throw new IllegalStateException("Supervisor attachment scope changed");
             attachSupervision(c,r);phase="done";detail="native safety watchdog attached";
+        }else if(command.equals("projection_load")||command.equals("projection_load_rollback")){
+            projectionLoadScope(c,r);
+            JsonObject loaded=command.equals("projection_load")?ProjectionLoader.load(c,r,()->projectionLoadScope(c,r))
+                :ProjectionLoader.rollback(c,r,()->projectionLoadScope(c,r));
+            if(loaded.get("success").getAsBoolean()){
+                projectionBatch.reset();controlRevision++;
+                if(supervisionLease!=null&&str(supervisionLease,"kind").equals("parking"))supervisionLease.addProperty("revision",controlRevision);
+            }
+            op=command;phase=loaded.get("success").getAsBoolean()?"done":"error";
+            detail=phase.equals("done")?"Projection configuration updated; real blocks were not changed; verify projection_model after chunk loading":str(loaded,"error");
+            var reply=snapshot(c);reply.addProperty("id",lastId);reply.addProperty("phase",phase);reply.addProperty("detail",detail);reply.add("projection_load",loaded);
+            save(root(c).resolve("reply-"+safeId(lastId)+".json"),reply);
+        }else if(command.equals("projection_batch_set")||command.equals("projection_batch_clear")){
+            changeProjectionBatch(c,r,command.equals("projection_batch_clear"));
+            op=command;phase="done";detail=projectionBatch.active()?"projection batch installed; full-model completion unchanged":"projection batch cleared; unrestricted selected projection restored";
+            var reply=snapshot(c);reply.addProperty("id",lastId);reply.addProperty("phase",phase);reply.addProperty("detail",detail);
+            save(root(c).resolve("reply-"+safeId(lastId)+".json"),reply);
         }else if(command.equals("projection_start")){
             long requestedExpiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
             if(requestedExpiry<0 || requestedExpiry>15000 || c.screen!=null || c.player.getHealth()<14 || KitKeys.manualMovementDown(c))throw new IllegalStateException("Projection start expired or player input/state changed");
@@ -689,6 +1427,15 @@ public final class AutomationBridge {
             if(!survival(r))throw new IllegalArgumentException("Recipe macros currently require the local survival scope");
             craftSpec=r.deepCopy();craftRemaining=0;craftTask=new SurvivalCraftTask(c,r);active=r.deepCopy();op=command;phase="running";detail="native recipe workflow";deadline=ticks+1200;
         }else if(command.equals("navigate") || command.equals("walk") || command.equals("walk_path") || command.equals("chop") || command.equals("print")){
+            // stopWork advances the owned revision; remember the verified scope
+            // before that transition so an external material job keeps precision.
+            boolean materialNavigation=command.equals("navigate")&&currentMaterialRequest(c,r);
+            if(command.equals("navigate")&&r.has("air_only")){
+                if(!r.get("air_only").isJsonPrimitive()||!r.getAsJsonPrimitive("air_only").isBoolean())
+                    throw new IllegalArgumentException("air_only must be boolean");
+                if(r.get("air_only").getAsBoolean()&&(!materialNavigation||!airNavigationClear(c,r.getAsJsonArray("target"))))
+                    throw new IllegalStateException("Air-only navigation requires the current material lease and a loaded clear dry path");
+            }
             ProfessionalPrinter.stop(c,true);KitClient.stopWork("切换到脚本任务");active=r.deepCopy();op=command;phase="running";detail="";
             deadline=ticks+20*Math.max(5,Math.min(600,r.has("seconds")?r.get("seconds").getAsInt():120));
             if(command.equals("walk_path")){
@@ -704,7 +1451,7 @@ public final class AutomationBridge {
                 if(r.has("water_descend")&&r.get("water_descend").getAsBoolean()&&
                     !WaterDescentPolicy.allowed(r.has("task_session"),guardScope!=null,
                      c.player.isUnderWater(),c.player.getHealth(),c.player.getAirSupply(),
-                     d,c.player.getY()-p.get(1).getAsDouble()))
+                     d,c.player.getY()-p.get(1).getAsDouble(),airEstimate(c).pickupFloor()))
                     throw new IllegalStateException("Guarded water descent needs clear vertical pickup and full reserve");
                 if(r.has("freefall_brake_y")){
                     double brakeY=r.get("freefall_brake_y").getAsDouble();
@@ -715,9 +1462,23 @@ public final class AutomationBridge {
                 restoreFlight=MeteorModules.isActive(MeteorModules.FLIGHT) && (!r.has("restore_flight") || r.get("restore_flight").getAsBoolean());MeteorModules.disable(MeteorModules.FLIGHT);
             }else if(command.equals("navigate")){
                 JsonArray p=r.getAsJsonArray("target");checkSiteTarget(r,p);
-                if(r.has("arrival")){savedArrival=KitClient.config().arrivalRadius;temporaryArrival=Math.max(1,Math.min(8,r.get("arrival").getAsDouble()));KitClient.config().arrivalRadius=temporaryArrival;}
+                if(r.has("arrival")){savedArrival=KitClient.config().arrivalRadius;
+                    temporaryArrival=MaterialJobControlPolicy.arrival(r.get("arrival").getAsDouble(),materialNavigation);
+                    KitClient.config().arrivalRadius=temporaryArrival;}
                 MeteorModules.enable(MeteorModules.FLIGHT);
                 KitClient.controller().startExact(c,p.get(0).getAsDouble(),p.get(2).getAsDouble(),p.get(1).getAsDouble());
+                if(r.has("air_only")&&r.get("air_only").getAsBoolean()){
+                    // startExact persists the user's original preference first.
+                    // Borrow the in-memory setting only for this bounded command.
+                    savedClearCeiling=KitClient.config().clearCeiling;KitClient.config().clearCeiling=false;
+                    KitClient.controller().keepConnectedOnArrival();
+                    materialAirNavigation=new MaterialAirNavigation(new Vec3(p.get(0).getAsDouble(),p.get(1).getAsDouble(),p.get(2).getAsDouble()),
+                        r.has("arrival")?temporaryArrival:.25);
+                }
+                if(supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")
+                        &&str(supervisionLease,"job_session").equals(str(r,"task_session"))
+                        &&materialAirRoute.owned(session(c),str(supervisionLease,"job_session"),airGear(c),c))
+                    materialAirRoute.beginAscent(c,str(r,"id"),p.get(1).getAsDouble());
             }else if(command.equals("chop")){
                 if(!r.has("item"))active.addProperty("item","minecraft:oak_log");
                 desiredCount=Math.max(1,Math.min(512,r.get("target_count").getAsInt()));
@@ -752,8 +1513,9 @@ public final class AutomationBridge {
             PlacementRotation.after(c,r.get("yaw").getAsFloat(),Math.max(-90,Math.min(90,r.get("pitch").getAsFloat())),null);phase="done";detail="rotation queued";
         }else if(command.equals("select_item")){
             if(c.player.containerMenu.containerId!=0)throw new IllegalStateException("Close the container before selecting a held item");
-            String item=str(r,"item");int found=-1;for(int i=0;i<36;i++)if(itemId(c.player.getInventory().getItem(i)).equals(item)){found=i;break;}
-            if(found<0)throw new IllegalStateException("Missing item: "+item);
+            String item=str(r,"item");var inventoryIds=new ArrayList<String>();
+            for(int i=0;i<36;i++)inventoryIds.add(itemId(c.player.getInventory().getItem(i)));
+            int found=matchingInventorySlot(inventoryIds,item,r.has("slot")?r.get("slot").getAsInt():null);
             if(found<9)c.player.getInventory().setSelectedSlot(found);
             else{int hotbar=5;c.gameMode.handleContainerInput(0,found,hotbar,ContainerInput.SWAP,c.player);c.player.getInventory().setSelectedSlot(hotbar);}
             settle(r,8);
@@ -806,22 +1568,35 @@ public final class AutomationBridge {
                     ||!str(supervisionLease,"job_session").equals(str(r,"task_session")))
                     throw new IllegalStateException("Guarded material session required for underwater gravel");
                 boolean lavaNear=false;
-                for(Direction direction:Direction.values())if(c.level.getFluidState(pos.relative(direction)).is(net.minecraft.world.level.material.Fluids.LAVA))lavaNear=true;
+                for(Direction direction:Direction.values())if(c.level.getFluidState(pos.relative(direction)).is(net.minecraft.tags.FluidTags.LAVA))lavaNear=true;
                 ItemStack held=c.player.getMainHandItem();
                 boolean breathing=c.player.hasEffect(net.minecraft.world.effect.MobEffects.WATER_BREATHING)
                     ||c.player.hasEffect(net.minecraft.world.effect.MobEffects.CONDUIT_POWER);
                 String rejection=UnderwaterGravelPolicy.startRejection(
                     c.level.getBlockState(pos).is(net.minecraft.world.level.block.Blocks.GRAVEL),
-                    c.level.getFluidState(pos.above()).is(net.minecraft.world.level.material.Fluids.WATER),
+                    c.level.getFluidState(pos.above()).is(net.minecraft.tags.FluidTags.WATER),
                     lavaNear,c.player.isUnderWater(),c.player.getHealth(),c.player.getAirSupply(),breathing,
-                    held.is(net.minecraft.tags.ItemTags.SHOVELS),held.isDamageableItem()?held.getMaxDamage()-held.getDamageValue():0);
-                if(rejection!=null)throw new IllegalStateException(rejection);
+                    held.is(net.minecraft.tags.ItemTags.SHOVELS),held.isDamageableItem()?held.getMaxDamage()-held.getDamageValue():0,
+                    airEstimate(c).workFloor());
+                if(rejection!=null){
+                    KitClient.LOGGER.warn("[Gravel] mine preflight rejected pos={} block={} aboveFluid={} air={} health={} reason={}",
+                        pos,c.level.getBlockState(pos),c.level.getFluidState(pos.above()),c.player.getAirSupply(),c.player.getHealth(),rejection);
+                    throw new IllegalStateException(rejection);
+                }
             }
             boolean allowed=ContainerRecoveryPolicy.allowed(BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(pos).getBlock()).toString(),recovery,c.player.getInventory().getFreeSlot()>=0?1:0);
             if(recovery && !allowed)throw new IllegalStateException("Shulker retrieval requires an actual shulker box and a free inventory slot");
             if(c.level.getBlockEntity(pos)!=null && !allowed)throw new IllegalStateException("Block entities and containers are protected");
             if(c.level.getBlockState(pos).getDestroySpeed(c.level,pos)<0 || c.level.isEmptyBlock(pos))throw new IllegalStateException("Target is not mineable");
-            if(c.player.onGround() && c.player.blockPosition().below().equals(pos))throw new IllegalStateException("Current footing is protected");
+            if(c.player.onGround() && c.player.blockPosition().below().equals(pos)){
+                boolean ownedMaterial=supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")
+                    &&str(supervisionLease,"job_session").equals(str(r,"task_session"));
+                boolean footing=r.has("footing_gravel")&&r.get("footing_gravel").getAsBoolean();
+                if(!footing||!GravelFootingPolicy.mayMineUnderfoot(ownedMaterial,underwater,
+                        GravelFootingPolicy.stableFloor(c.level,pos),true,c.player.isUnderWater(),
+                        c.player.getHealth(),c.player.getAirSupply(),airEstimate(c).workFloor()))
+                    throw new IllegalStateException("Current footing is protected");
+            }
             if(!underwater)for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
             if(c.player.getEyePosition().distanceTo(blockAim(pos,r))>c.player.blockInteractionRange()-.2)throw new IllegalStateException("Mining target out of reach");
             KitClient.stopWork("切换到指定方块修正");active=r.deepCopy();op="mine_block";phase="running";detail="mining the verified target";mineStarted=false;deadline=ticks+20*Math.min(20,r.has("seconds")?r.get("seconds").getAsInt():10);
@@ -855,11 +1630,271 @@ public final class AutomationBridge {
             if(!c.player.containerMenu.getCarried().isEmpty())throw new IllegalStateException("Cursor holds an item");c.player.closeContainer();phase="done";detail="menu closed";
         }else throw new IllegalArgumentException("Unknown operation");
         if(survival(r)){survivalArmed=true;survivalBackground=background(r);}
+        if(command.equals("gravel_start")||command.equals("gravel_config"))gravelReceipt(c);
         writeStatus(c);
     }
     private static void settle(JsonObject r,int wait){active=r.deepCopy();op="settle";phase="running";detail="awaiting server acknowledgement";deadline=ticks+wait;}
-    private static void finish(Minecraft c,String p,String text){if(op.equals("concrete_batch")){if(KitClient.concrete().isActive())KitClient.concrete().stop(c,"批次结束");if(supplyTask!=null){supplyTask.close(c);supplyTask=null;}concretePreexistingDrops.clear();concreteRetryUuid=null;concreteRetryPos=null;}ProfessionalPrinter.stop(c,false);restoreArrival();releaseWalk(c);active=null;phase=p;detail=text;writeStatus(c);}
-    private static void restoreArrival(){if(Double.isFinite(savedArrival)){if(KitClient.config().arrivalRadius==temporaryArrival){KitClient.config().arrivalRadius=savedArrival;KitClient.config().save();}savedArrival=Double.NaN;}}
+    private static void finish(Minecraft c,String p,String text){
+        String completedId=active==null?"":str(active,"id");
+        closeMaterialAirNavigation(c,p);
+        if(Set.of("quarry_batch","rock_quarry_batch").contains(op)&&KitClient.borer()!=null)KitClient.borer().stop(c,text);
+        if(op.equals("rock_quarry_batch"))rockQuarryStopped(p,text);
+        if(op.equals("concrete_batch")){if(KitClient.concrete().isActive())KitClient.concrete().stop(c,"批次结束");if(supplyTask!=null){supplyTask.close(c);supplyTask=null;}concretePreexistingDrops.clear();concreteRetryUuid=null;concreteRetryPos=null;}
+        ProfessionalPrinter.stop(c,false);restoreArrival();releaseWalk(c);active=null;phase=p;detail=text;
+        if(nativeMaterialOwner!=null&&completedId.equals(nativeMaterialOwner.pendingId))
+            nativeMaterialOwner.immediate=nativeMaterialReceipt(c,completedId,p,text);
+        writeStatus(c);
+    }
+    private static void restoreArrival(){
+        boolean save=false;
+        if(savedClearCeiling!=null){
+            if(!KitClient.config().clearCeiling){KitClient.config().clearCeiling=savedClearCeiling;save=true;}
+            savedClearCeiling=null;
+        }
+        if(Double.isFinite(savedArrival)){
+            if(KitClient.config().arrivalRadius==temporaryArrival){KitClient.config().arrivalRadius=savedArrival;save=true;}
+            savedArrival=Double.NaN;
+        }
+        if(save)KitClient.config().save();
+    }
+    private static void closeMaterialAirNavigation(Minecraft c,String outcome){
+        if(materialAirNavigation==null)return;
+        lastMaterialAirNavigation=materialAirNavigation.snapshot(c);
+        lastMaterialAirNavigation.addProperty("world_session",session(c));
+        lastMaterialAirNavigation.addProperty("outcome",outcome);
+        materialAirNavigation.close(c);materialAirNavigation=null;
+    }
+    private static boolean currentMaterialRequest(Minecraft c,JsonObject r){
+        return supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")
+            &&supervisionLease.has("revision")&&supervisionLease.get("revision").getAsLong()==controlRevision
+            &&str(supervisionLease,"world_session").equals(session(c))
+            &&!str(r,"task_session").isBlank()&&str(r,"task_session").equals(str(supervisionLease,"job_session"));
+    }
+    private static boolean airNavigationClear(Minecraft c,JsonArray target){
+        if(c.player==null||c.level==null||target==null||target.size()!=3)return false;
+        double x=target.get(0).getAsDouble(),y=target.get(1).getAsDouble(),z=target.get(2).getAsDouble();
+        if(!Double.isFinite(x)||!Double.isFinite(y)||!Double.isFinite(z)
+                ||y<c.level.getMinY()+2||y>c.level.getMaxY()+64)return false;
+        var sweep=c.player.getBoundingBox().expandTowards(new Vec3(x-c.player.getX(),y-c.player.getY(),z-c.player.getZ()));
+        if((sweep.maxX-sweep.minX+1)*(sweep.maxY-sweep.minY+1)*(sweep.maxZ-sweep.minZ+1)>8192
+                ||!c.level.noCollision(c.player,sweep))return false;
+        for(BlockPos p:BlockPos.betweenClosed(BlockPos.containing(sweep.minX,sweep.minY,sweep.minZ),
+                BlockPos.containing(sweep.maxX-1e-7,sweep.maxY-1e-7,sweep.maxZ-1e-7))){
+            if(!c.level.hasChunkAt(p))return false;
+            var state=c.level.getBlockState(p);
+            if(!state.getFluidState().isEmpty()||state.is(net.minecraft.world.level.block.Blocks.FIRE)
+                    ||state.is(net.minecraft.world.level.block.Blocks.SOUL_FIRE)||state.is(net.minecraft.world.level.block.Blocks.COBWEB)
+                    ||state.is(net.minecraft.world.level.block.Blocks.POWDER_SNOW))return false;
+        }
+        return true;
+    }
+    private static void externalMaterialScope(Minecraft c,JsonObject r){
+        if(c.player==null||c.level==null||c.gameMode==null||c.player.isDeadOrDying()
+                ||supervisionLease==null||!supervisionLease.has("revision")||!r.has("expected_revision")||!r.has("expires_at")
+                ||!MaterialJobControlPolicy.owned(str(r,"task_session"),str(supervisionLease,"job_session"),
+                    str(r,"world_session"),str(supervisionLease,"world_session"),r.get("expected_revision").getAsLong(),
+                    controlRevision,supervisionLease.get("revision").getAsLong(),r.get("expires_at").getAsLong()-System.currentTimeMillis(),
+                    nativeMaterialOwner!=null,str(supervisionLease,"kind").equals("materials"),KitKeys.manualMovementDown(c))
+                ||!str(r,"world_session").equals(session(c))
+                ||!AutomationScope.sameServer(c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip,str(r,"server"))
+                ||!c.level.dimension().identifier().toString().equals(str(r,"dimension"))
+                ||active!=null&&!str(active,"task_session").equals(str(r,"task_session")))
+            throw new IllegalStateException("Material job control no longer owns this world and revision");
+    }
+    private static void updateMaterialPark(Minecraft c,JsonObject r){
+        JsonArray target=r.getAsJsonArray("park_target");
+        if(target==null||target.size()!=3||active!=null||c.screen!=null
+                ||c.player.containerMenu!=c.player.inventoryMenu||c.player.isUnderWater())
+            throw new IllegalStateException("Local park update requires an idle dry material task");
+        double x=target.get(0).getAsDouble(),y=target.get(1).getAsDouble(),z=target.get(2).getAsDouble();
+        if(!Double.isFinite(x)||!Double.isFinite(y)||!Double.isFinite(z)
+                ||Math.hypot(c.player.getX()-x,c.player.getZ()-z)>2||y<c.player.getY()||y>=320)
+            throw new IllegalArgumentException("Local guard target must be finite, above this column and within two blocks horizontally");
+        BlockPos at=BlockPos.containing(x,y,z);
+        if(!c.level.hasChunkAt(at))throw new IllegalStateException("Local parking column is not loaded");
+        var sweep=c.player.getBoundingBox().expandTowards(new Vec3(x-c.player.getX(),y-c.player.getY(),z-c.player.getZ()));
+        boolean clear=c.level.noCollision(c.player,sweep);
+        for(BlockPos p:BlockPos.betweenClosed(BlockPos.containing(sweep.minX,sweep.minY,sweep.minZ),
+                BlockPos.containing(sweep.maxX-1e-7,sweep.maxY-1e-7,sweep.maxZ-1e-7)))
+            if(!c.level.hasChunkAt(p)||!c.level.getFluidState(p).isEmpty())clear=false;
+        int ground=c.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,at.getX(),at.getZ());
+        if(!MaterialJobControlPolicy.localPark(c.player.getX(),c.player.getY(),c.player.getZ(),x,y,z,ground,
+                c.player.getHealth(),MeteorModules.isActive(MeteorModules.FLIGHT),guardArmed()&&pveOnly(),clear))
+            throw new IllegalStateException("Local park needs a clear dry ascent and twenty blocks of ground clearance");
+        supervisionLease.add("park_target",target.deepCopy());supervisionLease.addProperty("remote_finish","guard");
+    }
+    private static void rockQuarryStopped(String outcome,String reason){
+        if(rockQuarryProgress!=null){rockQuarryProgress.addProperty("active",false);
+            rockQuarryProgress.addProperty("phase",outcome);rockQuarryProgress.addProperty("reason",reason);}
+    }
+    private static RockQuarryPolicy.Bounds rockBounds(JsonObject r){
+        int[] a=rockPoint(r.getAsJsonArray("min")),b=rockPoint(r.getAsJsonArray("max"));
+        return new RockQuarryPolicy.Bounds(a[0],a[1],a[2],b[0],b[1],b[2]);
+    }
+    private static int[] rockPoint(JsonArray point){
+        if(point==null||point.size()!=3)throw new IllegalArgumentException("Rock quarry requires min/max coordinates");
+        int[] result=new int[3];
+        for(int i=0;i<3;i++){double n=point.get(i).getAsDouble();
+            if(!Double.isFinite(n)||n!=Math.rint(n)||n<Integer.MIN_VALUE+8.0||n>Integer.MAX_VALUE-8.0)
+                throw new IllegalArgumentException("Rock quarry coordinates must be finite integers");
+            result[i]=(int)n;
+        }
+        return result;
+    }
+    private static int rockInt(JsonObject r,String key,int fallback){
+        if(!r.has(key))return fallback;double n=r.get(key).getAsDouble();
+        if(!Double.isFinite(n)||n!=Math.rint(n)||n<Integer.MIN_VALUE||n>Integer.MAX_VALUE)
+            throw new IllegalArgumentException("Invalid rock quarry "+key);
+        return (int)n;
+    }
+    private static boolean silk(ItemStack item){
+        for(var enchantment:item.getEnchantments().keySet())
+            if(enchantment.unwrapKey().map(key->key.identifier().toString()).orElse("").equals("minecraft:silk_touch")
+                    &&item.getEnchantments().getLevel(enchantment)>0)return true;
+        return false;
+    }
+    private static int rockFreeSlots(Minecraft c){int n=0;for(int i=0;i<36;i++)if(c.player.getInventory().getItem(i).isEmpty())n++;return n;}
+    private static int rockCapacity(Minecraft c,String item){
+        int n=0;for(int i=0;i<36;i++){ItemStack stack=c.player.getInventory().getItem(i);
+            if(stack.isEmpty())n+=64;else if(itemId(stack).equals(item))n+=Math.max(0,stack.getMaxStackSize()-stack.getCount());}
+        return n;
+    }
+    private static RockQuarryPolicy.Inspection inspectRockQuarry(Minecraft c,RockQuarryPolicy.Bounds bounds,String item){
+        if(rockQuarryConfirmation==null)rockQuarryConfirmation=new dev.twob2tkit.runtime.engine.BorerMiningConfirmation();
+        return RockQuarryPolicy.inspect((x,y,z)->{
+            BlockPos pos=new BlockPos(x,y,z);
+            if(y<c.level.getMinY()||y>=c.level.getMaxY()||!c.level.hasChunkAt(pos))
+                return new RockQuarryPolicy.Cell(false,"unloaded",false,false,false,false,false,false);
+            var block=c.level.getBlockState(pos);
+            return new RockQuarryPolicy.Cell(true,BuiltInRegistries.BLOCK.getKey(block.getBlock()).toString(),block.isAir(),
+                !block.getFluidState().isEmpty(),c.level.getBlockEntity(pos)!=null,
+                block.getBlock() instanceof net.minecraft.world.level.block.FallingBlock,
+                block.isCollisionShapeFullBlock(c.level,pos),rockQuarryConfirmation.pending(c.level,pos));
+        },bounds,item);
+    }
+    private static void projectionLoadScope(Minecraft c,JsonObject request){
+        ProjectionLoadPolicy.envelope(request,str(request,"op").equals("projection_load_rollback"));
+        boolean idle=active==null&&nativeMaterialOwner==null&&!KitClient.anyAfkAuto()
+            &&!dev.twob2tkit.material.MaterialJobs.snapshot().get("occupied").getAsBoolean()
+            &&!ProfessionalPrinter.owned()&&!guardBusy
+            &&(supervisionLease==null||str(supervisionLease,"kind").equals("parking"));
+        var printer=ProfessionalPrinter.status();if(printer.has("enabled")&&printer.get("enabled").getAsBoolean())idle=false;
+        ProjectionLoadPolicy.scope(c.player!=null&&c.level!=null&&c.gameMode!=null&&!c.player.isDeadOrDying(),idle,
+            c.player!=null&&c.player.getHealth()>=19&&c.player.getFoodData().getFoodLevel()>=8
+                &&!c.player.isInWater()&&!c.player.isInLava()&&!c.player.isOnFire(),
+            KitKeys.manualMovementDown(c),c.screen==null&&c.player!=null&&c.player.containerMenu==c.player.inventoryMenu&&c.player.containerMenu.getCarried().isEmpty(),
+            !dev.twob2tkit.combat.EmergencyExit.held(c),str(request,"world_session"),session(c),
+            ProjectionLoadPolicy.integer(request,"expected_revision"),controlRevision,
+            ProjectionLoadPolicy.integer(request,"expires_at"),System.currentTimeMillis());
+    }
+    private static boolean rockFlightAllowed(Minecraft c,JsonObject request){
+        boolean flying=MeteorModules.isActive(MeteorModules.FLIGHT);
+        boolean current=active!=null&&request==active&&op.equals("rock_quarry_batch");
+        boolean material=current&&currentMaterialRequest(c,request);
+        boolean ownedArea=false;
+        if(material&&KitClient.borer()!=null){
+            var bounds=rockBounds(request);
+            ownedArea=KitClient.borer().ownsMaterialArea(
+                new BlockPos(bounds.minX(),bounds.minY(),bounds.minZ()),new BlockPos(bounds.maxX(),bounds.maxY(),bounds.maxZ()));
+        }
+        // AREA's own flight lease rejects an external off-toggle; its intentional
+        // digOnFoot transition must not be mistaken for lost material ownership.
+        return RockQuarryPolicy.flightAllowed(flying,current,material,ownedArea);
+    }
+    private static void rockScope(Minecraft c,JsonObject request){
+        if(c.player==null||c.level==null||c.gameMode==null
+                ||c.gameMode.getPlayerMode()!=net.minecraft.world.level.GameType.SURVIVAL
+                ||!c.level.dimension().equals(net.minecraft.world.level.Level.OVERWORLD)
+                ||supervisionLease==null||!str(supervisionLease,"kind").equals("materials")
+                ||!str(supervisionLease,"job_session").equals(str(request,"task_session"))
+                ||!str(supervisionLease,"world_session").equals(session(c))
+                ||supervisionLease.get("revision").getAsLong()!=controlRevision
+                ||!str(request,"world_session").equals(session(c))
+                ||dev.twob2tkit.combat.EmergencyExit.held(c)||!guardArmed()||!pveOnly()
+                ||!RockQuarryPolicy.healthy(c.player.getHealth(),c.player.getFoodData().getFoodLevel(),c.player.isUnderWater())
+                ||KitKeys.manualMovementDown(c)||c.player.containerMenu!=c.player.inventoryMenu
+                ||c.screen!=null&&!nativeKitMenu(c)||!KitClient.config().borerAutoDefend
+                ||!MeteorModules.isActive(MeteorModules.AUTO_LOG))
+            throw new IllegalStateException("Current guarded, healthy, dry material quarry scope required");
+        if(!rockFlightAllowed(c,request))throw new IllegalStateException("Rock quarry Flight is off outside its current owned AREA");
+        if(str(request,"completion").equals("collect")){
+            // AREA may auto-select a reserve pickaxe; inspect all eligible sources, not only the current hand.
+            for(int i=0;i<=36;i++){ItemStack tool=i==36?c.player.getOffhandItem():c.player.getInventory().getItem(i);
+                if(tool.is(net.minecraft.tags.ItemTags.PICKAXES)&&silk(tool))
+                    throw new IllegalStateException("Store Silk Touch pickaxes before collecting ordinary rock or ore drops");}
+        }
+    }
+    private static void startRockQuarry(Minecraft c,JsonObject request){
+        JsonObject r=request.deepCopy();if(!r.has("completion"))r.addProperty("completion","collect");
+        var bounds=rockBounds(r);String item=str(r,"item"),completion=str(r,"completion");
+        int target=rockInt(r,"target_count",-1),seconds=rockInt(r,"seconds",300);
+        if(!RockQuarryPolicy.requestAllowed(bounds,item,completion,target)||seconds<30||seconds>600)
+            throw new IllegalArgumentException("Rock quarry requires 1..6 x 2..18 x 1..6 bounds, collect count or explicit clear count zero, and 30..600 seconds");
+        checkSiteTarget(r,r.getAsJsonArray("min"));checkSiteTarget(r,r.getAsJsonArray("max"));rockScope(c,r);
+        var borer=KitClient.borer();
+        if(borer==null||borer.isActive()||KitClient.anyAfkAuto()||KitClient.controller().isActive()||hostileNearby(c)
+                ||c.player.getY()<bounds.maxY()+1
+                ||Math.hypot(c.player.getX()-(bounds.minX()+bounds.maxX()+1)/2.0,
+                    c.player.getZ()-(bounds.minZ()+bounds.maxZ()+1)/2.0)>32
+                ||!c.level.noCollision(c.player,c.player.getBoundingBox()))
+            throw new IllegalStateException("Rock quarry needs an idle clear aerial or shaft-entry start near its top");
+        var observed=inspectRockQuarry(c,bounds,item);boolean collect=completion.equals("collect");
+        ItemStack held=c.player.getMainHandItem();boolean strong=held.is(net.minecraft.world.item.Items.DIAMOND_PICKAXE)
+            ||held.is(net.minecraft.world.item.Items.NETHERITE_PICKAXE);
+        if(!RockQuarryPolicy.toolAllowed(strong,held.getMaxDamage()-held.getDamageValue(),observed.remaining(),silk(held),collect)
+                ||rockFreeSlots(c)<2||collect&&(observed.available()<target||rockCapacity(c,item)<target))
+            throw new IllegalStateException("Rock quarry source blocks, inventory room or suitable durable pickaxe are insufficient");
+        int before=count(c,item);r.addProperty("item_before",before);r.addProperty("rock_deadline_ms",System.currentTimeMillis()+seconds*1000L);
+        rockQuarryProgress=new JsonObject();rockQuarryProgress.addProperty("id",str(r,"id"));
+        rockQuarryProgress.addProperty("world_session",session(c));rockQuarryProgress.add("min",r.getAsJsonArray("min").deepCopy());
+        rockQuarryProgress.add("max",r.getAsJsonArray("max").deepCopy());rockQuarryProgress.addProperty("item",item);
+        rockQuarryProgress.addProperty("completion",completion);rockQuarryProgress.addProperty("target_count",target);
+        rockQuarryProgress.addProperty("before",before);rockQuarryProgress.addProperty("clear_semantics","natural_blocks_removed_lights_retained");
+        active=r;op="rock_quarry_batch";phase="running";deadline=ticks+20*seconds;
+        updateRockQuarry(c,observed);
+        if(!collect&&observed.remaining()==0){finish(c,"done","rock area already clear; retained lighting preserved");return;}
+        try{borer.startMaterialArea(c,new BlockPos(bounds.minX(),bounds.minY(),bounds.minZ()),new BlockPos(bounds.maxX(),bounds.maxY(),bounds.maxZ()));}
+        catch(RuntimeException error){finish(c,"error","native rock quarry could not start: "+error.getMessage());throw error;}
+        if(!borer.isActive()){finish(c,"waiting","native rock quarry did not start: "+borer.status());return;}
+        detail="native bounded rock quarry running; inventory gain is confirmed separately from cleared rock";
+    }
+    private static void updateRockQuarry(Minecraft c,RockQuarryPolicy.Inspection observed){
+        int current=count(c,str(active,"item"));rockQuarryProgress.addProperty("current",current);
+        rockQuarryProgress.addProperty("gained",current-active.get("item_before").getAsInt());
+        rockQuarryProgress.addProperty("remaining_blocks",observed.remaining());
+        rockQuarryProgress.addProperty("available_target_blocks",observed.available());
+        rockQuarryProgress.addProperty("retained_lights",observed.retainedLights());
+        rockQuarryProgress.addProperty("pending_blocks",observed.pendingBlocks());
+        rockQuarryProgress.addProperty("area_cleared",observed.remaining()==0);
+        rockQuarryProgress.addProperty("active",true);rockQuarryProgress.addProperty("phase","running");
+        rockQuarryProgress.addProperty("observed_at",System.currentTimeMillis());
+    }
+    private static void tickRockQuarry(Minecraft c,boolean beforeInput){
+        if(active==null||!op.equals("rock_quarry_batch"))return;
+        try{
+            rockScope(c,active);
+            if(System.currentTimeMillis()>=active.get("rock_deadline_ms").getAsLong()){
+                finish(c,"waiting","rock quarry time limit reached; inspect actual inventory gain");return;}
+            boolean minerActive=KitClient.borer()!=null&&KitClient.borer().isActive();
+            if(!beforeInput&&minerActive)return;
+            // Revalidate the whole bounded buffer before AREA can issue its next mining input.
+            var observed=inspectRockQuarry(c,rockBounds(active),str(active,"item"));updateRockQuarry(c,observed);
+            var outcome=RockQuarryPolicy.result(str(active,"completion"),active.get("target_count").getAsInt(),
+                active.get("item_before").getAsInt(),count(c,str(active,"item")),observed.remaining(),minerActive);
+            if(outcome==RockQuarryPolicy.Result.DONE){finish(c,"done",str(active,"completion").equals("collect")
+                ?"rock inventory target reached":"rock area cleared; retained lighting preserved");return;}
+            if(outcome==RockQuarryPolicy.Result.WAITING){finish(c,"waiting","rock excavation stopped or is clear but inventory target is not reached");return;}
+            if(rockFreeSlots(c)<2){finish(c,"waiting","rock quarry backpack reserve exhausted; store materials before resuming");return;}
+            ItemStack held=c.player.getMainHandItem();
+            if(!guardBusy&&held.isDamageableItem()&&(held.is(net.minecraft.tags.ItemTags.PICKAXES)
+                    ||held.is(net.minecraft.tags.ItemTags.SHOVELS))&&held.getMaxDamage()-held.getDamageValue()<32)
+                finish(c,"waiting","rock quarry tool durability reserve reached; replace the tool");
+        }catch(Exception error){
+            finish(c,"waiting",error.getMessage());
+            if(c.player!=null&&c.player.getHealth()<14)
+                dev.twob2tkit.combat.EmergencyExit.begin(c,"材料采坑生命过低，停止并安全离线");
+        }
+    }
     private static void checkSiteTarget(JsonObject r,JsonArray p){JsonArray s=r.getAsJsonArray("site");if(p==null || p.size()!=3 || !Double.isFinite(p.get(1).getAsDouble()) || !AutomationScope.nearSite(p.get(0).getAsDouble()-s.get(0).getAsDouble(),p.get(2).getAsDouble()-s.get(2).getAsDouble()))throw new IllegalArgumentException("Target outside worksite");}
     private static JsonArray scan(Minecraft c,JsonObject r){
         JsonArray a=r.getAsJsonArray("min"),b=r.getAsJsonArray("max");checkSiteTarget(r,a);checkSiteTarget(r,b);
@@ -883,6 +1918,15 @@ public final class AutomationBridge {
     private static String state(Minecraft c,BlockPos p){return c.level.getBlockState(p).toString();}
     private static boolean hostileNearby(Minecraft c){return c.level.getEntities(c.player,c.player.getBoundingBox().inflate(16)).stream().anyMatch(e->e instanceof net.minecraft.world.entity.monster.Enemy && e.isAlive() && c.player.hasLineOfSight(e));}
     private static String itemId(ItemStack s){return s.isEmpty()?"minecraft:air":BuiltInRegistries.ITEM.getKey(s.getItem()).toString();}
+    static int matchingInventorySlot(List<String> inventory,String item,Integer exact){
+        if(exact!=null){
+            if(exact<0||exact>=36||exact>=inventory.size()||!inventory.get(exact).equals(item))
+                throw new IllegalStateException("Selected material slot no longer holds the expected item");
+            return exact;
+        }
+        for(int i=0;i<Math.min(36,inventory.size());i++)if(inventory.get(i).equals(item))return i;
+        throw new IllegalStateException("Missing item: "+item);
+    }
     private static int count(Minecraft c,String id){int n=0;for(int i=0;i<c.player.getInventory().getContainerSize();i++){ItemStack s=c.player.getInventory().getItem(i);if(itemId(s).equals(id))n+=s.getCount();}return n;}
     private static JsonArray enchantments(ItemEnchantments values){
         JsonArray rows=new JsonArray();if(values==null)return rows;
@@ -893,6 +1937,11 @@ public final class AutomationBridge {
         return rows;
     }
     private static void addItemDetails(JsonObject target,ItemStack item){
+        target.addProperty("max_stack",item.getMaxStackSize());
+        if(item.isDamageableItem()){
+            target.addProperty("durability",item.getMaxDamage()-item.getDamageValue());
+            target.addProperty("max_durability",item.getMaxDamage());
+        }
         var applied=item.getEnchantments();if(!applied.isEmpty())target.add("enchantments",enchantments(applied));
         var stored=item.get(net.minecraft.core.component.DataComponents.STORED_ENCHANTMENTS);
         if(stored!=null&&!stored.isEmpty())target.add("stored_enchantments",enchantments(stored));
@@ -901,7 +1950,7 @@ public final class AutomationBridge {
             potion.is(Potions.WATER_BREATHING)||potion.is(Potions.LONG_WATER_BREATHING));
     }
     private static JsonObject stack(ItemStack s){
-        JsonObject j=new JsonObject();j.addProperty("item",itemId(s));j.addProperty("count",s.getCount());j.addProperty("max_stack",s.getMaxStackSize());if(s.isDamageableItem()){j.addProperty("durability",s.getMaxDamage()-s.getDamageValue());j.addProperty("max_durability",s.getMaxDamage());}
+        JsonObject j=new JsonObject();j.addProperty("item",itemId(s));j.addProperty("count",s.getCount());
         addItemDetails(j,s);
         var contents=s.get(net.minecraft.core.component.DataComponents.CONTAINER);
         if(contents!=null){JsonArray rows=new JsonArray();contents.nonEmptyItemCopyStream().limit(27).forEach(item->{JsonObject v=new JsonObject();v.addProperty("item",itemId(item));v.addProperty("count",item.getCount());addItemDetails(v,item);rows.add(v);});j.add("contains",rows);}
@@ -911,7 +1960,21 @@ public final class AutomationBridge {
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
         if(supervisionLease!=null)j.add("supervision_lease",supervisionLease.deepCopy());if(lastSafetyEvent!=null)j.add("supervision_safety",lastSafetyEvent.deepCopy());
         j.add("safety_hold",dev.twob2tkit.combat.EmergencyExit.snapshot(c));
-        j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("tree_survey_protocol",1);j.addProperty("material_protocol",2);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("freefall_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",4);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.screen==null?"":c.screen.getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
+        j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("job_hud_protocol",1);j.addProperty("quarry_protocol",1);j.addProperty("tree_survey_protocol",1);j.addProperty("material_protocol",2);j.addProperty("air_return_protocol",1);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("freefall_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",4);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.screen==null?"":c.screen.getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
+        var gravelState=GravelCollector.snapshot();
+        if(nativeMaterialOwner!=null&&GravelCollector.isActive())gravelState.addProperty("session",nativeMaterialOwner.job);
+        j.add("gravel",gravelState);
+        j.addProperty("rock_quarry_protocol",1);
+        j.addProperty("air_only_navigation_protocol",2);
+        if(materialAirNavigation!=null)j.add("material_air_navigation",materialAirNavigation.snapshot(c));
+        else if(lastMaterialAirNavigation!=null&&str(lastMaterialAirNavigation,"world_session").equals(session(c)))
+            j.add("material_air_navigation",lastMaterialAirNavigation.deepCopy());
+        j.addProperty("material_job_control_protocol",1);
+        j.addProperty("material_task_api_protocol",dev.twob2tkit.material.MaterialTaskProtocol.VERSION);j.add("material_task",dev.twob2tkit.material.MaterialJobs.snapshot());
+        j.addProperty("projection_load_protocol",1);
+        j.addProperty("projection_batch_protocol",ProjectionBatchScope.PROTOCOL);j.addProperty("projection_model_protocol",1);j.add("projection_batch",projectionBatchSnapshot());
+        if(rockQuarryProgress!=null&&str(rockQuarryProgress,"world_session").equals(session(c)))
+            j.add("rock_quarry",rockQuarryProgress.deepCopy());
         if(c.player==null || c.level==null)return j;
         j.addProperty("player_name",c.player.getGameProfile().name());j.addProperty("player_uuid",c.player.getUUID().toString());j.addProperty("experience_level",c.player.experienceLevel);
         c.player.getLastDeathLocation().ifPresent(death->{var marker=new JsonObject();marker.addProperty("dimension",death.dimension().identifier().toString());marker.add("pos",JSON.toJsonTree(new int[]{death.pos().getX(),death.pos().getY(),death.pos().getZ()}));j.add("server_last_death",marker);});
@@ -922,6 +1985,23 @@ public final class AutomationBridge {
         j.addProperty("server",c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip);j.addProperty("dimension",c.level.dimension().identifier().toString());
         j.add("pos",JSON.toJsonTree(new double[]{c.player.getX(),c.player.getY(),c.player.getZ()}));j.addProperty("yaw",c.player.getYRot());j.addProperty("pitch",c.player.getXRot());j.addProperty("health",c.player.getHealth());j.addProperty("food",c.player.getFoodData().getFoodLevel());
         j.addProperty("air_supply",c.player.getAirSupply());j.addProperty("max_air_supply",c.player.getMaxAirSupply());j.addProperty("under_water",c.player.isUnderWater());
+        double oxygenBonus=c.player.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.OXYGEN_BONUS);
+        j.addProperty("oxygen_bonus",oxygenBonus);
+        j.addProperty("air_expected_seconds",EquipmentAirBudget.expectedSeconds(c.player.getAirSupply(),oxygenBonus));
+        var airBudget=airEstimate(c);
+        j.addProperty("air_return_floor",airBudget.returnFloor());
+        j.addProperty("air_pickup_floor",airBudget.pickupFloor());
+        j.addProperty("air_work_floor",airBudget.workFloor());
+        j.addProperty("air_return_y",materialAirRoute.owned(session(c),supervisionLease==null?"":str(supervisionLease,"job_session"),airGear(c),c)?materialAirRoute.returnY():c.level.getSeaLevel()+2);
+        j.addProperty("air_budget_source",airBudget.source());
+        j.addProperty("air_budget_samples",airBudget.samples());
+        j.addProperty("air_budget_valid_until",airBudget.source().equals("observed")
+            ?materialAirRoute.budgetValidUntil(session(c),supervisionLease==null?"":str(supervisionLease,"job_session"),airGear(c)):0);
+        j.addProperty("air_estimated_loss",airBudget.estimatedLoss());
+        j.addProperty("air_return_active",nativeAirReturnActive);
+        j.addProperty("air_return_phase",nativeAirReturnPhase);
+        j.addProperty("air_return_job_session",nativeAirReturnActive&&supervisionLease!=null?str(supervisionLease,"job_session"):"");
+        j.addProperty("air_return_revision",nativeAirReturnActive?controlRevision:-1);
         j.addProperty("no_fall_active",dev.twob2tkit.runtime.engine.BorerFlight.meteorNoFallActive());
         j.addProperty("water_breathing_effect",c.player.hasEffect(net.minecraft.world.effect.MobEffects.WATER_BREATHING));j.addProperty("conduit_power_effect",c.player.hasEffect(net.minecraft.world.effect.MobEffects.CONDUIT_POWER));
         j.addProperty("on_ground",c.player.onGround());j.addProperty("horizontal_collision",c.player.horizontalCollision);j.add("velocity",JSON.toJsonTree(new double[]{c.player.getDeltaMovement().x,c.player.getDeltaMovement().y,c.player.getDeltaMovement().z}));
@@ -937,6 +2017,9 @@ public final class AutomationBridge {
         var menu=c.player.containerMenu;JsonObject m=new JsonObject();m.addProperty("id",menu.containerId);m.addProperty("type",menu.getClass().getSimpleName());m.add("cursor",stack(menu.getCarried()));JsonArray slots=new JsonArray();
         for(int i=0;i<menu.slots.size();i++){JsonObject s=stack(menu.getSlot(i).getItem());s.addProperty("slot",i);slots.add(s);}m.add("slots",slots);j.add("menu",m);
         try{var selected=dev.twob2tkit.builder.LitematicaAccess.buildSelection();var pick=new JsonObject();pick.addProperty("key",selected.key());pick.addProperty("name",selected.name());pick.add("min",JSON.toJsonTree(new int[]{selected.min().getX(),selected.min().getY(),selected.min().getZ()}));pick.add("max",JSON.toJsonTree(new int[]{selected.max().getX(),selected.max().getY(),selected.max().getZ()}));j.add("projection_selection",pick);}catch(Exception ignored){}
+        j.addProperty("borer_status",KitClient.borer().status());
+        j.addProperty("planter_status",KitClient.planter().status());j.addProperty("planter_count",KitClient.planter().plantedCount());j.addProperty("harvest_count",KitClient.planter().harvestedCount());
+        j.addProperty("feeder_status",KitClient.feeder().status());j.addProperty("feeder_count",KitClient.feeder().fedCount());
         j.addProperty("borer_control_session",ownedBorerSession);j.addProperty("guard_reconnect_pending",pendingGuardReconnect!=null);j.addProperty("borer_active",KitClient.borer().isActive());j.addProperty("planter_active",KitClient.planter().isActive());j.addProperty("feeder_active",KitClient.feeder().isActive());j.addProperty("fisher_active",KitClient.fisher()!=null&&KitClient.fisher().isActive());j.addProperty("fisher_status",KitClient.fisher()==null?"":KitClient.fisher().status());j.add("build_job",KitClient.buildJob().snapshot());j.add("concrete",KitClient.concrete().snapshot());j.addProperty("guard_busy",guardBusy);j.addProperty("guard_armed",guardScope!=null);j.addProperty("guard_pve_only",guardScope!=null && guardScope.has("pve_only") && guardScope.get("pve_only").getAsBoolean());j.addProperty("health_recovery_hold",healthRecoveryHold);j.add("guard_food",dev.twob2tkit.combat.GuardFoodLease.snapshot());j.addProperty("guard_status",healthRecoveryHold?"等待生命恢复到 19 后继续工作":KitClient.borer().status());j.add("professional_printer",ProfessionalPrinter.status());j.addProperty("chopping",KitClient.chopper().isActive());j.addProperty("chopper_status",KitClient.chopper().status());j.addProperty("chopper_remaining",KitClient.chopper().remainingLogs());j.addProperty("chopper_verified_trees",KitClient.chopper().treesDone());j.addProperty("chopper_platforms",KitClient.chopper().platforms());j.addProperty("guide_active",KitClient.structureGuide().isActive());j.addProperty("guide_status",KitClient.structureGuide().status());j.addProperty("navigating",KitClient.controller().isActive());j.addProperty("printing",KitClient.machines().isPlacing());j.addProperty("printer_status",KitClient.machines().status());
         JsonArray nearby=new JsonArray();for(var e:c.level.entitiesForRendering()){
             if(e==c.player || e.distanceToSqr(c.player)>256)continue;
@@ -944,7 +2027,29 @@ public final class AutomationBridge {
         }j.add("entities",nearby);
         j.addProperty("kill_aura",MeteorModules.isActive(MeteorModules.KILL_AURA));j.addProperty("auto_log",MeteorModules.isActive(MeteorModules.AUTO_LOG));j.addProperty("flight",MeteorModules.isActive(MeteorModules.FLIGHT));return j;
     }
-    private static void writeStatus(Minecraft c){try{JsonObject j=snapshot(c);j.addProperty("id",statusId);j.addProperty("last_request",lastId);j.addProperty("phase",phase);j.addProperty("op",op);j.addProperty("detail",detail);save(root(c).resolve("status.json"),j);}catch(Exception ignored){}}
+    private static long nextSnapshotSlowWarningAt, nextSnapshotFailureWarningAt;
+    private static void writeStatus(Minecraft c){
+        if(nativeMaterialDispatch)return; // Internal child IDs never replace the consumed external request cursor.
+        long began=System.nanoTime();
+        try{
+            JsonObject j=snapshot(c);j.addProperty("id",statusId);j.addProperty("last_request",lastId);
+            j.addProperty("phase",phase);j.addProperty("op",op);j.addProperty("detail",detail);
+            dev.twob2tkit.hud.WorkHud.update(j,root(c));save(root(c).resolve("status.json"),j);
+            long elapsed=(System.nanoTime()-began)/1_000_000;
+            if(elapsed>=250 && System.currentTimeMillis()>=nextSnapshotSlowWarningAt){
+                nextSnapshotSlowWarningAt=System.currentTimeMillis()+10_000;
+                KitClient.LOGGER.warn("[Automation] slow status snapshot duration_ms={} op={}",elapsed,op);
+            }
+        }catch(Exception error){
+            if(System.currentTimeMillis()>=nextSnapshotFailureWarningAt){
+                nextSnapshotFailureWarningAt=System.currentTimeMillis()+10_000;
+                // The type and first source frame explain silent stale-state failures without dumping state or credentials.
+                var frames=error.getStackTrace();
+                KitClient.LOGGER.warn("[Automation] status snapshot failed type={} at={} op={}",
+                    error.getClass().getSimpleName(),frames.length==0?"unknown":frames[0],op);
+            }
+        }
+    }
     private static void save(Path file,JsonObject j)throws Exception{Files.createDirectories(file.getParent());Path tmp=file.resolveSibling(file.getFileName()+".tmp");Files.writeString(tmp,JSON.toJson(j));try{Files.move(tmp,file,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);}catch(AtomicMoveNotSupportedException e){Files.move(tmp,file,StandardCopyOption.REPLACE_EXISTING);}}
     private static String str(JsonObject j,String k){return j.has(k)?j.get(k).getAsString():"";}
     private static String safeId(String s){if(!s.matches("[A-Za-z0-9_-]{1,80}"))throw new IllegalArgumentException("Invalid job ID");return s;}

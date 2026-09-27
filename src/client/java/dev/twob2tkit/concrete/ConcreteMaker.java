@@ -44,7 +44,7 @@ public final class ConcreteMaker {
     public boolean isActive(){return active;}
     public boolean ownsMining(){return active && mineStarted;}
     public String status(){return status+(completed>0 ? " · 已挖 "+completed+" 块" : "");}
-    public JsonObject snapshot(){var j=new JsonObject();j.addProperty("active",active);j.addProperty("completed",completed);j.addProperty("status",status());if(target!=null)j.addProperty("target",target.toShortString());return j;}
+    public JsonObject snapshot(){var j=new JsonObject();j.addProperty("active",active);j.addProperty("completed",completed);j.addProperty("limit",sessionLimit>=0?sessionLimit:config.concreteLimit);j.addProperty("status",status());if(target!=null)j.addProperty("target",target.toShortString());return j;}
     private static String id(Item item){return BuiltInRegistries.ITEM.getKey(item).toString();}
     public boolean start(Minecraft c){
         sessionLimit=-1;
@@ -137,7 +137,7 @@ public final class ConcreteMaker {
             if(c.screen!=null){pause(c);stateSince=ticks;status="界面打开，暂停制作";return;}
             if(c.player.getHealth()<Math.max(8,config.minHealth)){stop(c,"血量不足");return;}
             if(eating(c)){pause(c);stateSince=ticks;status="等待自动吃完成";return;}
-            if(!c.level.getBlockState(anchor).equals(anchorState)){stop(c,"支撑面发生变化");return;}
+            if(!supportUnchanged(c)){stop(c,"支撑面发生变化");return;}
             ticks++;
             if(pending && ticks-pendingSince>40){stop(c,"等待视角同步超时");return;}
             BlockState s=c.level.getBlockState(target);
@@ -172,7 +172,7 @@ public final class ConcreteMaker {
                     var current=c.level.getBlockState(target);
                     if(!current.isAir() && !current.is(Blocks.WATER))return;
                     if(!c.player.getMainHandItem().is(powder))return;
-                    if(c.player.position().distanceTo(start)>.8 || !c.level.getBlockState(anchor).equals(anchorState)){stop(c,"放置前现场发生变化");return;}
+                    if(c.player.position().distanceTo(start)>.8 || !supportUnchanged(c)){stop(c,"放置前现场发生变化");return;}
                     placeSneaking(c);submitted=true;stateSince=ticks;status="粉末已放置，等待硬化";
                 });
                 return;
@@ -258,9 +258,20 @@ public final class ConcreteMaker {
         try{c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,placement);}
         finally{KitClient.setForceSneakForPlacement(false);c.options.keyShift.setDown(key);if(c.player.input!=null)c.player.input.keyPresses=previous;c.player.connection.send(new ServerboundPlayerInputPacket(previous));}
     }
+    private boolean supportUnchanged(Minecraft c) {
+        BlockState current=c.level.getBlockState(anchor);
+        if(current.equals(anchorState))return true;
+        if(!ConcretePolicy.sameSoilSupport(
+                BuiltInRegistries.BLOCK.getKey(anchorState.getBlock()).toString(),
+                BuiltInRegistries.BLOCK.getKey(current.getBlock()).toString(),
+                anchorState.isCollisionShapeFullBlock(c.level,anchor),current.isCollisionShapeFullBlock(c.level,anchor),
+                anchorState.getFluidState().isEmpty()&&current.getFluidState().isEmpty()))return false;
+        anchorState=current;return true;
+    }
     private void log(Minecraft c,String event){
         String line=event+" target="+target+" completed="+completed;
         KitClient.LOGGER.info("[Concrete] {}",line);
-        if(c.player!=null && (event.startsWith("start")||event.startsWith("stop")))c.player.sendSystemMessage(Component.literal("[twob2tkit] 混凝土制作："+status()));
+        if(event.startsWith("start"))dev.twob2tkit.cruise.CruiseScreenHud.begin("混凝土制作 · "+status());
+        else if(event.startsWith("stop"))dev.twob2tkit.cruise.CruiseScreenHud.finish("混凝土制作 · "+status());
     }
 }

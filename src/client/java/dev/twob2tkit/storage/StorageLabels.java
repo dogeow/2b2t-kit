@@ -20,7 +20,9 @@ import net.minecraft.world.level.block.state.properties.ChestType;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import dev.twob2tkit.KitConfig;
 
@@ -43,13 +45,9 @@ public final class StorageLabels {
 	private StorageLabels() {
 	}
 
-	/** 区块已加载且方块明确不是仓库容器时才删记录；空气一律保留，避免误删。 */
-	public static boolean shouldPruneMissingRecord(Level level, BlockPos pos) {
-		if (level == null || pos == null || !level.hasChunkAt(pos)) return false;
-		BlockState state = level.getBlockState(pos);
-		if (state.isAir()) return false;
-		return !isStorageBlock(level, pos);
-	}
+    /** Missing containers now become history through StorageLifecycle; never delete a record here. */
+    @Deprecated
+    public static boolean shouldPruneMissingRecord(Level level,BlockPos pos){return false;}
 
 	/** 是否箱子类存储方块。 */
 	public static boolean isStorageBlock(Level level, BlockPos pos) {
@@ -96,6 +94,32 @@ public final class StorageLabels {
 		String color = colorLabel(snapshot.colorId);
 		if (!color.isEmpty() && !name.contains(color)) return color + " · " + name;
 		return name;
+	}
+
+	/** 按完整物品 ID 汇总；搜索命中不同物品时分别显示，数量仅来自开箱缓存。 */
+	public static String quantitySummary(KitConfig.StorageSnapshot snapshot, String query) {
+		var counts = new LinkedHashMap<String, Long>();
+		var names = new LinkedHashMap<String, String>();
+		if (snapshot != null && snapshot.items != null) for (var item : snapshot.items) {
+			if (item == null || item.count <= 0) continue;
+			String id = blank(item.id) ? "" : item.id;
+			String name = blank(item.name) ? id : item.name;
+			if (name.isEmpty()) continue;
+			String key = id.isEmpty() ? "name:" + name : id;
+			counts.merge(key, (long)item.count, Long::sum);
+			names.putIfAbsent(key, name);
+		}
+		String normalized = query == null ? "" : query.strip().toLowerCase(Locale.ROOT);
+		List<String> hits = new ArrayList<>();
+		if (!normalized.isEmpty()) for (var entry : counts.entrySet()) {
+			String text = (entry.getKey() + " " + names.get(entry.getKey())).toLowerCase(Locale.ROOT);
+			if (java.util.Arrays.stream(normalized.split("\\s+")).allMatch(text::contains))
+				hits.add(names.get(entry.getKey()) + "×" + entry.getValue());
+		}
+		if (!hits.isEmpty()) return "开箱缓存：" + String.join(" · ", hits.subList(0, Math.min(3, hits.size())))
+			+ (hits.size() > 3 ? " · 另 " + (hits.size() - 3) + " 类" : "");
+		long total = counts.values().stream().mapToLong(Long::longValue).sum();
+		return "开箱缓存：" + (total == 0 ? "空箱" : counts.size() + " 类 · 共 " + total + " 件");
 	}
 
 	/** 颜色中文名。 */
@@ -155,7 +179,7 @@ public final class StorageLabels {
 	}
 
 	/** 同色邻近存储聚成一组。 */
-	private static Set<BlockPos> cluster(Level level, BlockPos pos) {
+	public static Set<BlockPos> cluster(Level level, BlockPos pos) {
 		Set<BlockPos> cluster = new LinkedHashSet<>();
 		cluster.add(pos.immutable());
 		BlockState state = level.getBlockState(pos);

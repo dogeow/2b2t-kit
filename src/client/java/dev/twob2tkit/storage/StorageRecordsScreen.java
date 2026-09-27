@@ -236,8 +236,8 @@ public final class StorageRecordsScreen extends KitHudScreen {
 
 	/** 开始走向该存储。 */
 	private void startGuide(KitConfig.StorageSnapshot snapshot) {
-		if (!sameDimension(snapshot)) {
-			showNotice("当前维度不同，无法指引", 0xFFFF55);
+		if (!StorageLifecycle.usable(this.minecraft, snapshot)) {
+			showNotice("此记录需要在原服务器重新开箱核对，无法指引", 0xFFFF55);
 			return;
 		}
 		StructureGuide guide = KitClient.structureGuide();
@@ -248,7 +248,7 @@ public final class StorageRecordsScreen extends KitHudScreen {
 
 	/** 删除记录。 */
 	private void delete(KitConfig.StorageSnapshot snapshot) {
-		config.storageSnapshots.removeIf(existing -> existing.key().equals(snapshot.key()));
+		config.storageSnapshots.removeIf(existing -> existing.scopedKey().equals(snapshot.scopedKey()));
 		config.save();
 		showNotice("已删除仓库记录", 0xFFFF55);
 		page = Math.min(page, maxPage(visibleSnapshots()));

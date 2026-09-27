@@ -27,9 +27,9 @@ def shoreline_water_sides(rows, support, expected_state, residual_solid=None):
         raise RuntimeError('Concrete support changed')
     cell = [x, y + 1, z]
     observed_cell = block_state(rows, cell)
-    if not observed_cell.startswith('Block{minecraft:water}') and observed_cell != f'Block{{{residual_solid}}}':
-        raise RuntimeError('Concrete cell is not water: ' + observed_cell)
-    sides = sum(block_state(rows, [x + dx, y + 1, z + dz]).startswith('Block{minecraft:water}')
+    if observed_cell not in ('Block{minecraft:air}','Block{minecraft:cave_air}') and not observed_cell.startswith('Block{minecraft:water}') and observed_cell != f'Block{{{residual_solid}}}':
+        raise RuntimeError('Concrete cell is occupied: ' + observed_cell)
+    sides = sum((lambda state: state.startswith('Block{minecraft:water}') or 'waterlogged=true' in state)(block_state(rows, [x + dx, y + 1, z + dz]))
                 for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)))
     if sides not in (1, 2):
         raise RuntimeError('Concrete cell must touch water on only one or two sides')
@@ -44,8 +44,28 @@ def reconcile_batch(before, after, powder, solid, count):
     return {'powder_used': used, 'solid_recovered': recovered}
 
 
+def batch_pickup_candidate(before,after,solid,cell,deficit):
+    old={e.get('uuid') for e in before.get('entities',[]) if e.get('type')=='minecraft:item'}
+    available=[e for e in after.get('entities',[]) if e.get('type')=='minecraft:item'
+               and e.get('uuid') not in old and e.get('stack',{}).get('item')==solid
+               and 0<e['stack'].get('count',0)<=deficit and len(e.get('pos',[]))==3
+               and sum((e['pos'][i]-(cell[i]+.5))**2 for i in range(3))<=36]
+    return min(available,key=lambda e:sum((a-b)**2 for a,b in zip(e['pos'],after['pos'])),default=None)
+
+
+def position_for_batch(client,support,expected_state,stand_block):
+    x,_,z=support
+    if stand_block is not None:
+        marker=block_state(client.request('scan',min=list(stand_block),max=list(stand_block))['blocks'],stand_block)
+        if marker=='Block{minecraft:air}' or 'minecraft:water' in marker:raise RuntimeError('Dry standing marker changed')
+        client.checked('approach_block',pos=list(stand_block),face='up',expected_state=marker,stand_distance=.75,seconds=120)
+        feet=client.status()['pos']
+        if abs(feet[0]-(x+.5))<.9 and abs(feet[2]-(z+.5))<.9:raise RuntimeError('Standing position overlaps the powder cell')
+    else:client.checked('approach_block',pos=list(support),face='up',expected_state=expected_state,seconds=120)
+
+
 def convert(client, support, expected_state, powder, solid, count, batch_size=8, out=None,
-            waypoint=None, staging=None, stand_block=None):
+            waypoint=None, staging=None, stand_block=None, on_progress=None):
     if not 1 <= count <= 64 or not 1 <= batch_size <= 16:
         raise ValueError('Count must be 1..64 and batch size 1..16')
     start = client.status()
@@ -70,6 +90,8 @@ def convert(client, support, expected_state, powder, solid, count, batch_size=8,
             raise RuntimeError('Staging block is not loaded or has changed')
         client.checked('approach_block', pos=list(staging), face='up', expected_state=state, seconds=120)
     scan = client.request('scan', min=[x-1, y, z-1], max=[x+1, y+2, z+1], details=True)
+    from concrete_soil import resolve as resolve_support, recover as recover_soil
+    expected_state=resolve_support(scan['blocks'],support,expected_state)
     sides = shoreline_water_sides(scan['blocks'], support, expected_state, solid)
     result = {'support': list(support), 'water_sides': sides, 'requested': count, 'batches': []}
     cell = [x, y+1, z]
@@ -84,27 +106,20 @@ def convert(client, support, expected_state, powder, solid, count, batch_size=8,
         if (recovered.get('phase') != 'done' or
                 item_count(after, powder) != item_count(before, powder) or
                 item_count(after, solid) != item_count(before, solid)+1 or
-                not block_state(reopened, cell).startswith('Block{minecraft:water}')):
+                not (block_state(reopened,cell).startswith('Block{minecraft:water}') or block_state(reopened,cell) in ('Block{minecraft:air}','Block{minecraft:cave_air}'))):
             raise RuntimeError('Residual concrete recovery was not confirmed; do not place more powder')
         result['residual_recovered'] = 1
+        if on_progress is not None:on_progress(1)
     done = 0
     while done < count:
         n = min(batch_size, count-done)
-        if stand_block is not None:
-            marker = block_state(client.request('scan', min=list(stand_block), max=list(stand_block))['blocks'], stand_block)
-            if marker == 'Block{minecraft:air}' or 'minecraft:water' in marker:
-                raise RuntimeError('Dry standing marker changed')
-            client.checked('approach_block', pos=list(stand_block), face='up', expected_state=marker,
-                           stand_distance=.75, seconds=120)
-            feet = client.status()['pos']
-            if abs(feet[0]-(x+.5))<.9 and abs(feet[2]-(z+.5))<.9:
-                raise RuntimeError('Standing position overlaps the powder cell')
-        else:
-            client.checked('approach_block', pos=list(support), face='up', expected_state=expected_state, seconds=120)
+        position_for_batch(client,support,expected_state,stand_block)
         client.checked('select_item', item=powder)
+        expected_state=resolve_support(client.request('scan',min=list(support),max=list(support),details=True)['blocks'],support,expected_state)
         before = client.status()
         batch = client.request('concrete_batch', support=list(support), expected_state=expected_state,
                                powder=powder, target_count=n, seconds=120)
+        batch,expected_state=recover_soil(client,batch,before,support,expected_state,powder,solid,n,prepare=lambda state:position_for_batch(client,support,state,stand_block))
         after = client.status()
         entry = {'count': n, 'phase': batch.get('phase'), 'detail': batch.get('detail'),
                  'powder_before': item_count(before, powder), 'powder_after': item_count(after, powder),
@@ -113,17 +128,24 @@ def convert(client, support, expected_state, powder, solid, count, batch_size=8,
         if out is not None:
             Path(out).mkdir(parents=True, exist_ok=True)
             (Path(out)/'progress.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
-        if batch.get('phase') != 'done' and 'Drop pickup not confirmed at the reached position' in str(batch.get('detail')):
+        if batch.get('phase') != 'done' and any(text in str(batch.get('detail')) for text in ('Drop pickup not confirmed at the reached position','concrete mined but drops were not all recovered')):
             # The server may award the final drop just after the bounded
             # pickup navigator yields. Observe the exact inventory delta and
             # reopened water cell; never replay a placement on this signal.
+            after=client.status()
+            deficit=n-(item_count(after,solid)-item_count(before,solid))
+            candidate=batch_pickup_candidate(before,after,solid,cell,deficit)
+            if (candidate is not None and after.get('health',0)>=19 and not after.get('guard_busy')
+                    and item_count(before,powder)-item_count(after,powder)==n):
+                from drop_collection import collect_drop
+                collect_drop(client,candidate,observation=after,seconds=12)
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
                 after = client.status()
                 if (item_count(before, powder) - item_count(after, powder) == n
                         and item_count(after, solid) - item_count(before, solid) == n):
                     reopened = client.request('scan', min=cell, max=cell)['blocks']
-                    if block_state(reopened, cell).startswith('Block{minecraft:water}'):
+                    if block_state(reopened,cell).startswith('Block{minecraft:water}') or block_state(reopened,cell) in ('Block{minecraft:air}','Block{minecraft:cave_air}'):
                         entry.update(phase='late_verified', native_phase=batch.get('phase'),
                                      powder_after=item_count(after, powder), solid_after=item_count(after, solid))
                         break
@@ -133,6 +155,10 @@ def convert(client, support, expected_state, powder, solid, count, batch_size=8,
                 raise RuntimeError('Native concrete batch stopped: ' + str(batch.get('detail')))
         entry.update(reconcile_batch(before, after, powder, solid, n))
         done += n
+        if on_progress is not None:on_progress(n)
+        result['completed'] = done
+        if out is not None:
+            (Path(out)/'progress.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
     result['completed'] = done
     return result
 

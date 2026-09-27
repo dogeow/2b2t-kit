@@ -32,4 +32,12 @@ class ConcretePolicyTest {
         assertFalse(ConcretePolicy.reached(10000,0));assertFalse(ConcretePolicy.reached(15,16));
         assertTrue(ConcretePolicy.reached(16,16));assertTrue(ConcretePolicy.reached(17,16));
     }
+    @Test void naturalSoilUpdatesRetainTheSameSupportWithoutRelaxingOtherChanges(){
+        assertTrue(ConcretePolicy.sameSoilSupport("minecraft:grass_block","minecraft:dirt",true,true,true));
+        assertTrue(ConcretePolicy.sameSoilSupport("minecraft:dirt","minecraft:grass_block",true,true,true));
+        for(String changed:List.of("minecraft:air","minecraft:dirt_path","minecraft:farmland","minecraft:chest","minecraft:stone"))
+            assertFalse(ConcretePolicy.sameSoilSupport("minecraft:dirt",changed,true,true,true));
+        assertFalse(ConcretePolicy.sameSoilSupport("minecraft:dirt","minecraft:grass_block",true,false,true));
+        assertFalse(ConcretePolicy.sameSoilSupport("minecraft:dirt","minecraft:grass_block",true,true,false));
+    }
 }

@@ -1,6 +1,24 @@
 # Minecraft typed decisions
 
-当前使用入口：双击桌面 **Minecraft AI 体验.command**，选择 **6：启动/托管选中投影**。普通生成地图和 Simpcraft 的首轮实测见文末；3～5 是早期开发入口，不代表已实现普通地图自主通关。
+## Kit 本机命令接口（无需点击游戏界面）
+
+游戏运行且进入世界后，在本项目目录执行：
+
+```bash
+python3 decision-runtime/kit_cli.py gravel status
+python3 decision-runtime/kit_cli.py gravel config --radius 48 --depth 28 --limit 0
+python3 decision-runtime/kit_cli.py gravel start
+python3 decision-runtime/kit_cli.py gravel stop
+```
+
+这些命令通过 Kit 的本机请求接口执行；`status` 只读取简短状态，不截图、不占用聊天栏。`start` 也接受 `--radius`、`--depth`、`--limit`，会在开始前保存参数。`stop` 发起安全上浮；再次查看 `status`，确认 `active` 变成 `false`。`limit 0` 表示背包装满才停。世界、控制版本或玩家操作变化时，命令拒绝复发，先查看状态再决定下一步。
+
+`status` 还会显示装备提供的 `oxygen_bonus`、平均预计可用秒数和返气预留值。附魔提供的是每 tick 随机省氧的概率，预计秒数不等于安全潜水时长；Kit 会以返气路径和保守概率上界留出余量，并继续实时读取氧气。自然上浮的实测数据可以逐步替换初始估计，不再为了校准而空潜。
+
+宿主包改动需完整退出游戏后更新；这一步现在由 `python3 decision-runtime/kit_release.py` 完成构建、测试、备份、单包替换和哈希校验。已经在本轮验证过产物时可加 `--skip-build`。脚本检测到游戏还在运行会拒绝替换，不处理 HMCL 登录凭据，也不自动开启游戏。纯运行参数优先通过 `kit_cli.py gravel config` 修改，无需重启。
+
+`native_sand_quarry.py` 使用 `quarry_batch` 本机接口，重新扫描指定干燥沙地后选择有界沙堆，交给已有 AREA 引擎整批挖掘。接口会在游戏线程再次检查全部方块、无液体和容器的边界、实心底部、工具耐久和背包空间。实际背包增量才计入目标；区域完成后集中核对掉落物。材料批次使用临时区域参数，不改用户保存的角点和模式。因健康余量退出的材料脚本会保留额外安全记录；仅上线或旧的 inactive 安全状态都不能被当作用户已允许恢复。
+s当前使用入口：双击桌面 Minecraft AI 体验.command，选择 6：启动/托管选中投影。普通生成地图和 Simpcraft 的首轮实测见文末；3～5 是早期开发入口，不代表已实现普通地图自主通关。
 Jev 已接到 Kit 的本地动作接口；Laya-MLX 可用来做本地比较。这里不启动后台模型服务，不唤醒 Codex 任务，也不恢复已移除的 Spark 反馈。
 
 当前支持：实验性的本机生存开局任务循环，以及从给定候选中选择动作、读取概率/置信度、限制过期回复；在本地平坦验收世界执行一个六格以内的预定义步行目标并核对实际位置。`decisions.py` 默认只输出建议；菜单 4/5 和 `survival.py` 会实际控制游戏。Laya 在本机小样本测试中有错误选择，暂不允许它通过此入口操控游戏。
@@ -191,3 +209,35 @@ Kit 1.9.54 起的 `projection_audit` 同时报告封闭空气区中的占位方�
 ## 经验保存与可复用程度
 
 已实现流程、测试及实测边界集中列在 [EXPERIENCE-INDEX.md](EXPERIENCE-INDEX.md)。材料控制器在原生动作回包后直接记录，记录器自动识别 HMCL 隔离实例目录；未知结果不复用，回顾材料不自动晋升技能。
+
+
+## 共用 Jev 决策接口（采集与材料任务）
+
+`decision_advisor.py` 向 Jev 提供本地程序已核验的候选方案，供 Kit 托管程序和操作方共用。`MaterialClient.advise()` 可直接调用；`native_sand_quarry.select_region()` 用它选择有实际沙子的安全区域，轻伤后的高空恢复也已接入。投影建造原有的 Jev 托管仍保留。其他原生功能尚未全部接入，不能把接口可用等同于所有功能已经自动调用 Jev。
+
+- 配置：`~/Library/Application Support/MinecraftDecisions/decision-advisor/settings.json`。`enabled` 开关、`calls_per_hour` 每小时上限（默认 120）、`timeout_seconds` 最多等待秒数（默认 4）。这是共用材料决策额度，和原有投影托管额度分别统计。
+- 密钥复用私密的 `typesafe.key`，不放到计划、源码或日志中。
+- 只在非紧急、已有防护的状态询问。网络请求在后台执行，主循环持续刷新现场和看护；超时或低置信度用本地保守方案。手动操作、世界/控制版本、血量、物品或位置变化后，旧答复作废。
+- Jev 只能返回候选编号，不能生成执行命令、取消防护、解除低血量锁或自主重连。紧急上浮、低血量撤离和手动接管不等模型。
+- 每次选择记录在任务输出目录 `jev-decisions.jsonl`；执行方调用 `record_advice_outcome()` 记录实际结果，避免把建议当成已完成。
+
+命令行只读咨询：`python decision-runtime/decision_advisor.py --plan plan.json --out result-dir`。计划包含 `goal`、`candidates`（含 `wait` 的 2–12 项文字候选）和可选 `scene`；返回选择，不直接操作游戏。执行方必须重新核验候选的现场条件。
+
+材料工作低于 19 点血可暂停采集，但不直接下线。轻伤先到已验证的高空防护位置，选择吃饭、等待恢复或保留防护收尾；低于 14 点血立即走原有紧急撤离，不等待 Jev。回避死亡并非保证不死，网络中断与未覆盖的游戏机制仍可能影响保护。
+
+陆地采沙不再每批回到区域最高点加 25 格：仅补足实际沙堆/脚下障碍上方的必要净空；区域上界也压缩到实际沙子高度。无人看护的收尾停靠与采集转场分别处理。
+
+
+## 批量原料合成与连续生产
+
+`stack_recipe.py` 使用普通鼠标式取料/放入每个合成格，支持已经实机验证的骨粉、白色染料和白色混凝土粉末；不使用拖拽分配，也不重放结果不确定的输出点击。每批重新计算真实输入堆栈、输出空间（包括原料入格后腾出的槽位），并核对输入消耗、输出增加、光标和网格清空。`material_manufacture.py` 对上述三种物品自动使用该批量路径，其余配方保持原有实现。已实测一次 23 个骨块转 207 骨粉、按整栈制造染料、单批合成 512 白色粉末。
+
+`material_depots.exchange()` 在指定的自有材料箱之间存放成品和补充原料。背包接近满时，每取一堆原料，就复用刚空出的箱子槽存一堆成品，避免先取完所有原料而卡在背包满。它只处理调用方指定的物品和容器，保存每箱前后数量。
+
+`shore_concrete.convert()` 对原生“掉落物尚未全部收回”回执，会先检查本批新出现、靠近工位且不超过缺口的同种掉落物，有限拾取并等候真实背包更新。没有确认回收的数量不计入成功；不会重新放置已经消耗的粉末。生产时优先使用耐久符合保护门槛的高效率镐；临时潜影盒必须完整收回并归还原末影箱槽位。
+
+- 顶部作业进度、Jade 避让与脚本接入：[WORK-HUD.md](WORK-HUD.md)。
+
+- 分层与组件约定：[ARCHITECTURE.md](ARCHITECTURE.md)。
+- 离线回归：`python check_offline.py --java`；它不会启动或连接 Minecraft。
+- 有界只读诊断：`python diagnose.py --run <运行目录>`，显示观测时间、慢操作、失败分类及 Jev 来源。

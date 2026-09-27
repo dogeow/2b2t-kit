@@ -17,6 +17,8 @@ final class BorerRangedCombat {
 	private final BorerCombatSession<LivingEntity> session = new BorerCombatSession<>();
 	private final BorerCombatPeek peek;
 	private final BorerCombatContinuation continuation=new BorerCombatContinuation();
+    private final BorerCombatSeparation separation=new BorerCombatSeparation();
+    private Object combatWorld;
 	private String holdReason = "";
 	private boolean drawing;
 	private boolean escaping, escapeFlightFailed,hoverMelee;
@@ -24,6 +26,8 @@ final class BorerRangedCombat {
 	private boolean releasePending;
 	private final BorerBowViewGate viewGate = new BorerBowViewGate();
 	private int lookTick = Integer.MIN_VALUE, viewWaitTicks;
+    private int riseRetryAfter;
+    private String lastRiseFailure = "";
 	private RotationAim.Look look;
 	private int previousSlot = -1, cooldown, blockedTicks, passiveTicks;
 	BorerRangedCombat(DefaultTunnelBorerEngine engine) { this.engine = engine; this.peek=new BorerCombatPeek(engine); }
@@ -32,6 +36,8 @@ final class BorerRangedCombat {
 		try { enabled = engine.standaloneGuard || engine.host.borerAutoDefend(); } catch (LinkageError oldHost) { return false; }
 		if (!enabled) { end(c); return false; }
 		var p = c.player;
+        if(combatWorld!=null&&combatWorld!=c.level)end(c);
+        combatWorld=c.level;
 		boolean wasPending = session.pending();
 		session.beginTick(p.tickCount);
 		boolean missingRestored=continuation.restore(c,session);
@@ -48,21 +54,40 @@ final class BorerRangedCombat {
 			boolean present = c.level.getEntity(e.getId()) == e;
 			boolean eligible = present && BorerDefensePolicy.eligible(true, e.isAlive(), p.hasLineOfSight(e), rank(e), p.distanceTo(e));
 			boolean engaged = eligible && engine.engagement.shouldReact(p, e)
-				|| present && engine.standaloneGuard && creeperAlert(c, e);
+				|| present && flightDefenseScope() && creeperAlert(c, e);
 			if (eligible && !engaged && !session.contains(e.getUUID())) passive++;
 			// isAlive() also becomes false on an unload. Health/death status is the required evidence.
 			if (session.observe(e.getUUID(), e, engaged, e.isDeadOrDying(), eligible, e.getHealth()))
 				engine.fileLog(c, "area-defense-death-confirmed id=" + e.getId() + " uuid=" + e.getUUID());
 		}
 		continuation.save(c,session);
-		if(missingRestored){engine.pauseGuardMovement(c);engine.status="等待重新观察热加载前的敌对生物，施工保持暂停";return true;}
+        // Retain every unresolved UUID. Only a continuously verified safe height
+        // permits other work; returning into reach/LOS makes this gate false immediately.
+        boolean previouslyYielding=separation.yielding();
+        if(!missingRestored && safeVerticalSeparation(c,nearby)){
+            if(!previouslyYielding)engine.fileLog(c,"area-defense-safe-deferred unresolved="+session.targets().size()+" confirmed_deaths=0");
+            releaseControls(c);session.pause(p.tickCount);holdReason="safe-deferred";
+            engine.status="已安全升空脱离，保留未解决敌人记录；靠近后恢复防御";return false;
+        }
+        if(missingRestored)separation.observe(c.level,p.tickCount,false);
+        if(!missingRestored&&separation.verifying()){
+            releaseControls(c);session.pause(p.tickCount);engine.mobs.raiseShield(c,p);
+            engine.status="已离开爆炸范围，正在确认安全高度";return true;
+        }
+
+		// Missing pre-reload targets keep work paused, but must not prevent defense
+		// against a currently observed threat. They also forbid clearing the fight.
 		// A controller may have flown away from an unfinished fight to a different
 		// work area. Keeping that old UUID pending forever blocks safe inventory
 		// work even when every hostile is over 48 blocks behind us. Record an
 		// explicit disengagement, never a fabricated kill; fresh nearby threats
 		// are observed again when the player returns.
-		if(engine.standaloneGuard && session.pending() && session.targets().stream()
+		if(!missingRestored && (engine.standaloneGuard||separation.retain(c.level)) && session.pending() && session.targets().stream()
 			.allMatch(e -> BorerDefensePolicy.encounterLeftBehind(p.getX()-e.getX(),p.getZ()-e.getZ()))) {
+            if(separation.retain(c.level)){
+                releaseControls(c);session.pause(p.tickCount);holdReason="safe-deferred-relocated";
+                engine.status="已离开旧威胁区域，保留未解决敌人记录";return false;
+            }
 			engine.fileLog(c,"area-defense-disengage-relocated unresolved="+session.targets().size()+" confirmed_deaths=0");
 			end(c);return false;
 		}
@@ -76,21 +101,25 @@ final class BorerRangedCombat {
 		var threats = session.targets().stream().filter(e -> session.canAttack(e.getUUID())).toList();
 		int chosen = BorerDefensePolicy.choose(threats.stream().map(e -> new BorerDefensePolicy.Candidate(e.getId(), rank(e), p.distanceTo(e), engine.engagement.recentAttacker(p, e))).toList(), target == null ? -1 : target.getId());
 		LivingEntity next = threats.stream().filter(e -> e.getId() == chosen).findFirst().orElse(null);
-		if (!session.pending()) {
+		if (!missingRestored && !session.pending()) {
 			if (wasPending) engine.fileLog(c, "area-defense-resume-work reason=all-engaged-targets-dead");
 			end(c); return false;
 		}
 		if (previousSlot < 0) previousSlot = p.getInventory().getSelectedSlot();
-		if (engine.standaloneGuard) engine.pauseGuardMovement(c);
+		if (engine.standaloneGuard || escaping && flightDefenseScope()) engine.pauseGuardMovement(c);
 		else engine.areaRunner.suspendForCombat(c);
 		// An urgent creeper can require evasion even behind a corner or after the attack budget expires.
-		if (engine.standaloneGuard) {
+		if (flightDefenseScope()) {
 			var emergency = session.targets().stream().filter(e -> e instanceof Creeper && c.level.getEntity(e.getId()) == e && e.isAlive())
 				.map(e -> (Creeper)e).filter(e -> StandaloneCreeperPolicy.evade(swelling(e), e.isPowered(), p.distanceTo(e), escaping && e == target))
 				.min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
-			if (emergency != null) { peek.close(c);target = emergency; return evadeCreeper(c, emergency); }
+			if (emergency != null) {
+                if(!engine.standaloneGuard&&!escaping)engine.areaRunner.yieldFlightForEscape(c);
+                peek.close(c);target = emergency; return evadeCreeper(c, emergency);
+            }
 		}
 		if (next == null) {
+			if (missingRestored) return holdForMissingObservation(c);
 			releaseEscape(c); cancelDraw(c); rangedMode(false); target = null;
 			if(engine.standaloneGuard){
 				var hidden=session.targets().stream().filter(e->c.level.getEntity(e.getId())==e&&e.isAlive()&&!p.hasLineOfSight(e))
@@ -183,6 +212,44 @@ final class BorerRangedCombat {
 		}
 		return true;
 	}
+    private boolean safeVerticalSeparation(Minecraft c,java.util.List<LivingEntity> nearby){
+        var p=c.player;
+        // Account for half a second of downward momentum before accepting the blast margin.
+        double projectedY=p.getY()+Math.min(0,p.getDeltaMovement().y)*10;
+        var projected=new Vec3(p.getX(),projectedY,p.getZ());
+        var currentlyObserved=new java.util.ArrayList<java.util.UUID>();
+        var threats=session.targets().stream().map(e->{
+            boolean observed=c.level.getEntity(e.getId())==e&&e.isAlive()&&c.level.hasChunkAt(e.blockPosition());
+            if(!observed)return separation.unloaded(c.level,e.getUUID(),p.getX(),projectedY,p.getZ());
+            boolean ordinary=e instanceof Creeper creeper&&!creeper.isPowered();
+            boolean swelling=e instanceof Creeper creeper&&swelling(creeper);
+            separation.seen(c.level,e.getUUID(),e.getX(),e.getY(),e.getZ(),e.getBoundingBox().maxY,ordinary,swelling);
+            currentlyObserved.add(e.getUUID());
+            return new BorerCombatSeparation.Threat(true,ordinary,p.hasLineOfSight(e),swelling,
+                projected.distanceTo(e.position()),projectedY-e.getBoundingBox().maxY);
+        }).toList();
+        boolean otherThreat=nearby.stream().anyMatch(e->e.isAlive()&&(
+            BorerDefensePolicy.eligible(true,true,p.hasLineOfSight(e),rank(e),p.distanceTo(e))||creeperAlert(c,e)));
+        boolean healthyDryClear=p.getHealth()>=19&&p.hurtTime==0&&!p.isInWater()&&!p.isInLava()&&!p.isOnFire()
+            &&safeAir(c,p.blockPosition())&&safeAir(c,p.blockPosition().above())&&c.level.noCollision(p,p.getBoundingBox());
+        boolean safe=separation.observe(c.level,p.tickCount,BorerCombatSeparation.safe(engine.standaloneGuard,
+            Boolean.TRUE.equals(BorerFlight.meteorFlightActive()),healthyDryClear,false,otherThreat,threats));
+        if(safe)separation.verifyDeferred(c.level,currentlyObserved);
+        return safe;
+    }
+    /** Ordinary task switches release inputs without forgetting a safely deferred same-world fight. */
+    void handoff(Minecraft c){
+        if(c.player!=null&&c.level!=null&&session.pending()&&separation.retain(c.level)){
+            releaseControls(c);session.pause(c.player.tickCount);continuation.save(c,session);return;
+        }
+        end(c);
+    }
+	private boolean holdForMissingObservation(Minecraft c) {
+		releaseControls(c);
+		engine.mobs.raiseShield(c, c.player);
+		engine.status = "等待重新观察热加载前的敌对生物，施工保持暂停";
+		return true;
+	}
 	private static boolean swelling(Creeper e) { return e.isIgnited() || e.getSwellDir()>0 || e.getSwelling(1)>0; }
 	private boolean creeperAlert(Minecraft c, LivingEntity e) {
 		if (!(e instanceof Creeper creeper) || !e.isAlive()) return false;
@@ -190,9 +257,14 @@ final class BorerRangedCombat {
 		return StandaloneCreeperPolicy.alert(c.player.hasLineOfSight(e),swelling(creeper),creeper.isPowered(),d)
 			|| escaping && e==target && StandaloneCreeperPolicy.evade(swelling(creeper),creeper.isPowered(),d,true);
 	}
+    private boolean flightDefenseScope(){
+        return StandaloneCreeperPolicy.flightDefenseScope(engine.standaloneGuard,engine.active,
+            engine.mode==DefaultTunnelBorerEngine.Mode.AREA);
+    }
 	/** Clear the whole ascent before borrowing Flight; combat only resumes above nearby hostiles. */
 	private boolean elevateBeforeCombat(Minecraft c, java.util.List<LivingEntity> threats) {
 		var p = c.player;
+        if (p.tickCount < riseRetryAfter && p.getHealth() >= 14) return false;
 		double rise = GuardWeaponPolicy.combatRise(p.getY(), threats.stream()
 			.map(e -> new GuardWeaponPolicy.Threat(e.getY(),
 				e.getMainHandItem().is(Items.BOW) || e.getMainHandItem().is(Items.CROSSBOW), p.distanceTo(e)))
@@ -200,22 +272,15 @@ final class BorerRangedCombat {
 		if (rise <= .25) return false;
 		cancelDraw(c);rangedMode(false);engine.pauseGuardMovement(c);
 		if (!clearWholeRise(c, rise)) {
-			releaseEscape(c);
-			engine.mobs.raiseShield(c, p);
-			engine.status = "头顶没有安全升空通道，已停止攻击与施工";
-			if (p.getHealth() < 14) engine.host.requestEmergencyExit(c, "遇敌且无法安全升空");
-			return true;
+            return groundDefenseAfterRiseFailure(c, "ceiling_blocked", "头顶没有安全升空通道");
 		}
 		try {
 			escapeFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/guard-hover-flight.bak"));
 			if (escapeFlight.acquire(p) != null) {
-				releaseEscape(c);
-				engine.mobs.raiseShield(c, p);
-				engine.status = "无法启飞，已停止攻击与施工";
-				if (p.getHealth() < 14) engine.host.requestEmergencyExit(c, "遇敌且飞行不可用");
-				return true;
+                return groundDefenseAfterRiseFailure(c, "flight_unavailable", "无法启飞");
 			}
 			escaping = true;
+            riseRetryAfter = 0; lastRiseFailure = "";
 			if (!hoverMelee) { engine.host.enablePveMelee(); hoverMelee = true; }
 			escapeFlight.speed(.16);
 			c.options.keyJump.setDown(true);
@@ -223,12 +288,23 @@ final class BorerRangedCombat {
 			engine.status = "先升空避敌，再反击 " + target.getName().getString();
 			return true;
 		} catch (IllegalStateException unavailable) {
-			releaseEscape(c);engine.mobs.raiseShield(c, p);
-			engine.status = "升空失败，已停止攻击与施工";
-			if (p.getHealth() < 14) engine.host.requestEmergencyExit(c, "遇敌且升空失败");
-			return true;
+            return groundDefenseAfterRiseFailure(c, "flight_failed", "升空失败");
 		}
 	}
+    /** A ceiling blocks ascent, not defense. Work remains paused by the enclosing combat session. */
+    private boolean groundDefenseAfterRiseFailure(Minecraft c, String code, String reason) {
+        releaseEscape(c); cancelDraw(c); rangedMode(false);
+        riseRetryAfter = c.player.tickCount + 40;
+        engine.mobs.raiseShield(c, c.player);
+        if (!lastRiseFailure.equals(code)) {
+            engine.fileLog(c, "guard-ascent-fallback reason=" + code + " action=ground_defense");
+            lastRiseFailure = code;
+        }
+        engine.status = reason + "，保持停工并改为原地防御";
+        if (GuardWeaponPolicy.riseFailureNeedsExit(c.player.getHealth()))
+            return engine.host.requestEmergencyExit(c, "遇敌且" + reason);
+        return false; // Continue the existing melee/bow path, including its visibility and ammunition checks.
+    }
 	/** Emergency motion must outrank the ordinary food pause, without changing ordinary mob engagement. */
 	boolean hasCreeperEmergency(Minecraft c) {
 		if(c.player==null||c.level==null)return false;
@@ -358,7 +434,8 @@ final class BorerRangedCombat {
 		drawing = false; releasePending = false; look = null; viewGate.reset(); viewWaitTicks = 0;
 	}
 	void end(Minecraft c) {
-		session.clear(); continuation.clear(); holdReason = "";
+        riseRetryAfter = 0; lastRiseFailure = "";
+		session.clear(); continuation.clear(); separation.clear(); combatWorld=null; holdReason = "";
 		releaseControls(c);
 	}
 	/** A menu suspends input, not our knowledge of the unfinished fight. */

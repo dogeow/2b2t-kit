@@ -105,6 +105,9 @@ public abstract class KitHudScreen extends Screen {
 		return label(this.width / 2 - textWidth / 2, y, textWidth, value, color);
 	}
 
+	/** A new explicit navigation/search action dismisses the previous contextual hint. */
+	protected void clearNotice() { notice = ""; }
+
 	/** 设置底部提示文案与颜色。 */
 	protected void showNotice(String text, int color) {
 		notice = text;

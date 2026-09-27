@@ -40,7 +40,10 @@ class BorerCombatLifecycleWiringTest {
 		assertTrue(calls.stream().anyMatch(c -> c.endsWith(".hasLineOfSight")));
 	}
 	@Test void explicitStopStillReleasesSessionAndControls() throws Exception {
-		assertTrue(calls("DefaultTunnelBorerEngine", "stop").contains("BorerRangedCombat.end"));
+        assertTrue(calls("DefaultTunnelBorerEngine", "stop").contains("BorerRangedCombat.handoff"));
+        assertTrue(calls("BorerRangedCombat", "handoff").contains("BorerCombatSeparation.retain"));
+        assertTrue(calls("BorerRangedCombat", "handoff").contains("BorerRangedCombat.end"),"A non-deferred fight keeps the existing stop behavior");
+        assertTrue(calls("DefaultTunnelBorerEngine", "tickStandaloneGuard").contains("BorerRangedCombat.end"),"Explicit guard disarm still cancels the remembered fight");
 		var end = calls("BorerRangedCombat", "end");
 		assertTrue(end.contains("BorerCombatSession.clear"));
 		assertTrue(end.contains("BorerRangedCombat.releaseControls"));

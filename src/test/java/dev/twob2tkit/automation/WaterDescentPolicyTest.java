@@ -19,4 +19,12 @@ class WaterDescentPolicyTest {
         assertTrue(WaterDescentPolicy.align(.66));
         assertFalse(WaterDescentPolicy.align(.1));
     }
+
+    @Test void scopedPickupUsesPickupFloorButOtherCallsKeepOriginalThreshold() {
+        assertTrue(WaterDescentPolicy.allowed(true,true,true,20,90,.2,2,90));
+        assertFalse(WaterDescentPolicy.allowed(true,true,true,20,89,.2,2,90));
+        assertFalse(WaterDescentPolicy.allowed(true,true,true,20,90,.2,2));
+        assertTrue(WaterDescentPolicy.continueDescent(true,20,60,60));
+        assertFalse(WaterDescentPolicy.continueDescent(true,20,59,60));
+    }
 }

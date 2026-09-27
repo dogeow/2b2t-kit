@@ -1,5 +1,5 @@
 import unittest
-from goal_workflow import open_workbench,subset_matches,build_phase,station_target
+from goal_workflow import open_workbench,subset_matches,build_phase,station_target,protected_background
 
 
 class Client:
@@ -18,6 +18,15 @@ class Client:
 
 
 class WorkbenchTests(unittest.TestCase):
+    def test_background_requires_current_native_guard_lease_and_live_heartbeat(self):
+        from types import SimpleNamespace
+        c=SimpleNamespace(task='task',heartbeat=SimpleNamespace(attached=True,id='lease'))
+        s={'material_protocol':2,'guard_armed':True,'world_session':'world',
+           'supervision_lease':{'kind':'materials','job_session':'task','id':'lease','world_session':'world'}}
+        self.assertTrue(protected_background(c,s))
+        for delta in ({'guard_armed':False},{'manual_movement':True},{'world_session':'other'},{'material_protocol':1},{'supervision_lease':None}):
+            self.assertFalse(protected_background(c,{**s,**delta}))
+        c.heartbeat.attached=False;self.assertFalse(protected_background(c,s))
     def test_station_reposition_uses_only_three_verified_integer_coordinates(self):
         self.assertEqual([760816.5,87.02,797764.5],station_target('760816, 87, 797764'))
         self.assertIsNone(station_target('760816, 87'))

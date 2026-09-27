@@ -255,9 +255,31 @@ public final class TunnelBorer {
 		engine.start(client, mode.name());
 	}
 
+	/** A bounded material batch borrows area coordinates without changing the user's saved project. */
+	public void startMaterialArea(Minecraft client, BlockPos min, BlockPos max) {
+		if (engine.isActive()) throw new IllegalStateException("Another miner is active");
+		host.materialArea = new MaterialArea(min.immutable(), max.immutable());
+		try {
+			engine.start(client, Mode.AREA.name());
+			if (!engine.isActive()) host.materialArea = null;
+		} catch (RuntimeException failure) { host.materialArea = null; throw failure; }
+	}
+
+	/** True only for this still-running borrowed AREA, never the player's saved/manual selection. */
+	public boolean ownsMaterialArea(BlockPos min, BlockPos max) {
+		return host.materialArea != null && host.materialArea.owns(engine.isActive(), engine.modeName(), min, max);
+	}
+
+	private record MaterialArea(BlockPos min, BlockPos max) {
+		boolean owns(boolean active, String mode, BlockPos requestedMin, BlockPos requestedMax) {
+			return active && "AREA".equals(mode) && min.equals(requestedMin) && max.equals(requestedMax);
+		}
+	}
+
 	/** 停止盾构并说明原因。 */
 	public void stop(Minecraft client, String reason) {
-		engine.stop(client, reason);
+		try { engine.stop(client, reason); }
+		finally { host.materialArea = null; }
 	}
 
 	/** 热键切换：开则停，停则按上次模式开。 */
@@ -595,6 +617,7 @@ public final class TunnelBorer {
 
 	/** 把 KitConfig 桥成引擎可读的 BorerHost。 */
 	private static final class HostBridge implements dev.twob2tkit.runtime.api.BorerHost {
+		private MaterialArea materialArea;
 		private final java.util.Set<String> pausedCombatModules = new java.util.HashSet<>();
 		private static final String[] RANGED_CONFLICTS = {
 			dev.twob2tkit.MeteorModules.KILL_AURA,
@@ -604,8 +627,8 @@ public final class TunnelBorer {
 		@Override public boolean requestEmergencyExit(Minecraft client,String reason){if(client.player==null||client.player.getHealth()>=14)return false;dev.twob2tkit.combat.EmergencyExit.begin(client,reason);return true;}
         @Override public void enablePveMelee(){dev.twob2tkit.MeteorModules.enablePveAura();}
 		@Override public boolean borerAutoDefend() { return config.borerAutoDefend; }
-		@Override public boolean borerAreaDiscardStone() { return config.borerAreaDiscardStone; }
-		@Override public boolean borerAreaStoreDrops() { return config.borerAreaStoreDrops; }
+		@Override public boolean borerAreaDiscardStone() { return materialArea == null && config.borerAreaDiscardStone; }
+		@Override public boolean borerAreaStoreDrops() { return materialArea == null && config.borerAreaStoreDrops; }
 		@Override public boolean[] borerCargoSupplies(Minecraft client) {
 			return dev.twob2tkit.adventure.MiningCargoSupplies.reserved(client.player, config);
 		}
@@ -635,28 +658,28 @@ public final class TunnelBorer {
 		@Override public void prepareForBorer(Minecraft client) { KitClient.prepareForBorer(client); }
 		@Override public boolean surroundActive() { return KitClient.surround() != null && KitClient.surround().isActive(); }
 		@Override public void startEmergencySurround(Minecraft client) { KitClient.startSurroundFromBorer(client); }
-		@Override public String borerLastMode() { return config.borerLastMode; }
-		@Override public void setBorerLastMode(String value) { config.borerLastMode = value; }
+		@Override public String borerLastMode() { return materialArea == null ? config.borerLastMode : "AREA"; }
+		@Override public void setBorerLastMode(String value) { if (materialArea == null) config.borerLastMode = value; }
 		@Override public String borerHeading() { return config.borerHeading; }
 		@Override public String borerOreTarget() { return config.borerOreTarget; }
 		@Override public boolean borerCoalXpMode() { return config.borerCoalXpMode; }
 		@Override public boolean borerQuartzXpMode() { return config.borerQuartzXpMode; }
-		@Override public boolean borerHomeOnDone() { return config.borerHomeOnDone; }
+		@Override public boolean borerHomeOnDone() { return materialArea == null && config.borerHomeOnDone; }
 		@Override public boolean borerTurnAroundLava() { return config.borerTurnAroundLava; }
 		@Override public boolean borerAxisAim() { return config.borerAxisAim; }
-		@Override public int borerWidth() { return config.borerWidth; }
-		@Override public int borerHeight() { return config.borerHeight; }
+		@Override public int borerWidth() { return materialArea == null ? config.borerWidth : 1; }
+		@Override public int borerHeight() { return materialArea == null ? config.borerHeight : 2; }
 		@Override public int borerLookAhead() { return config.borerLookAhead; }
 		@Override public int borerMobRadius() { return config.borerMobRadius; }
 		@Override public int borerOreRadius() { return config.borerOreRadius; }
-		@Override public boolean borerAreaSet() { return config.borerAreaASet && config.borerAreaBSet; }
-		@Override public int borerAreaAx() { return config.borerAreaAx; }
-		@Override public int borerAreaAy() { return config.borerAreaAy; }
-		@Override public int borerAreaAz() { return config.borerAreaAz; }
-		@Override public int borerAreaBx() { return config.borerAreaBx; }
-		@Override public int borerAreaBy() { return config.borerAreaBy; }
-		@Override public int borerAreaBz() { return config.borerAreaBz; }
-		@Override public int borerAreaSliceHeight() { return config.borerAreaSliceHeight; }
+		@Override public boolean borerAreaSet() { return materialArea != null || config.borerAreaASet && config.borerAreaBSet; }
+		@Override public int borerAreaAx() { return materialArea == null ? config.borerAreaAx : materialArea.min().getX(); }
+		@Override public int borerAreaAy() { return materialArea == null ? config.borerAreaAy : materialArea.min().getY(); }
+		@Override public int borerAreaAz() { return materialArea == null ? config.borerAreaAz : materialArea.min().getZ(); }
+		@Override public int borerAreaBx() { return materialArea == null ? config.borerAreaBx : materialArea.max().getX(); }
+		@Override public int borerAreaBy() { return materialArea == null ? config.borerAreaBy : materialArea.max().getY(); }
+		@Override public int borerAreaBz() { return materialArea == null ? config.borerAreaBz : materialArea.max().getZ(); }
+		@Override public int borerAreaSliceHeight() { return materialArea == null ? config.borerAreaSliceHeight : 2; }
 		@Override public boolean borerStopOnLava() { return config.borerStopOnLava; }
 		@Override public boolean borerSealLiquids() { return config.borerSealLiquids; }
 		@Override public boolean borerPauseOnMob() { return config.borerPauseOnMob; }

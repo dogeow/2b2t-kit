@@ -19,5 +19,6 @@ final class GuardWeaponPolicy {
 		}
 		return Math.max(0.0, desired - playerY);
 	}
+    static boolean riseFailureNeedsExit(double health) { return health < 14; }
     private GuardWeaponPolicy(){}
 }

@@ -6,12 +6,21 @@ final class WaterDescentPolicy {
 
     static boolean allowed(boolean task, boolean guard, boolean underwater,
                            double health, int air, double horizontal, double drop) {
-        return task && guard && underwater && health >= 19 && air >= 260
+        return allowed(task,guard,underwater,health,air,horizontal,drop,260);
+    }
+
+    static boolean allowed(boolean task, boolean guard, boolean underwater,
+                           double health, int air, double horizontal, double drop,int pickupFloor) {
+        return task && guard && underwater && health >= 19 && air >= pickupFloor
             && horizontal <= 1.5 && drop >= .5 && drop <= 5;
     }
 
     static boolean continueDescent(boolean underwater, double health, int air) {
-        return underwater && health >= 19 && air >= 245;
+        return continueDescent(underwater,health,air,245);
+    }
+
+    static boolean continueDescent(boolean underwater, double health, int air,int returnFloor) {
+        return underwater && health >= 19 && air >= returnFloor;
     }
 
     static boolean atTarget(double currentY, double targetY) {

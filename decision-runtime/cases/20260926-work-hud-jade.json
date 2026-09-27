@@ -1,0 +1,34 @@
+{
+  "problem": "Need truthful overall job progress without covering target-block tooltip",
+  "solution": "One shared top row, reuse bridge snapshots and session-scoped progress mailbox; reserve actual Jade current/expected rectangles plus6GUIpx",
+  "lessons": [
+    "Counts advance only after verified recovery, do not reset to sub-batch totals or decrease when depositing",
+    "Follow only controller-accepted control revisions; reject stale files and other owners",
+    "Stopping via SIGINT during a native batch is not graceful: roof cleanup can be rejected by active job. Use bounded completed batches before UI maintenance. No health damage observed; safe logout fallback preserved inventory."
+  ],
+  "verification": {
+    "at_ms": 1790403426850,
+    "kit_version": "1.9.98",
+    "runtime_version": "1.7.65",
+    "installed_sha256": "e240852d93fba433ff82c7aa1255e19ac695483a81c424f3ee8ec91d47382ff8",
+    "java_tests": 1019,
+    "java_failures": 0,
+    "python_focused_tests": 23,
+    "visual_check": "Live CUA screenshot: Jade dirt tooltip top, concrete 371/840 below with visible gap; no overlap. Native 8-item batch finished at 379/840, progress file removed after safe cleanup.",
+    "health": 20.0,
+    "guard_armed": true,
+    "position": [
+      761035.092170616,
+      95.0471988327286,
+      797852.5000001164
+    ],
+    "verification_run": "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/starship/work/goal-current/hud98-verification8",
+    "total_goal_finished_concrete": 1257,
+    "remaining_powder_carried": 133,
+    "campaign_done": 379,
+    "campaign_goal": 840,
+    "goal_model_blocks_verified_last": 741,
+    "goal_model_total_blocks": 3407,
+    "starship_complete": false
+  }
+}

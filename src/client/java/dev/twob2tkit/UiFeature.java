@@ -9,6 +9,7 @@ import net.minecraft.client.gui.screens.Screen;
 public enum UiFeature {
     AREA(Category.MINING, "区域挖", "分次标 A/B、保存工程、浅层水平／深层竖井", "工程 采石场 AB 黄框"),
     ORE(Category.MINING, "自动找矿", "选择矿种、开路采集与拾取", "煤 铁 钻石 找矿"),
+    GRAVEL(Category.MINING, "采集沙砾", "水下专用采集；陆地沿用自动找矿设置", "沙砾 海底 水下 陆地 呼吸"),
     FORWARD(Category.MINING, "向前挖", "巷道断面与掘进方向", "隧道 地铁"),
     DOWN(Category.MINING, "向下挖", "竖向截面与方向", "竖井"),
     ROUTE(Category.MINING, "挖矿路线", "回家、回地狱门、路线显示", "路点 返回 门"),
@@ -25,6 +26,7 @@ public enum UiFeature {
     FEEDER(Category.PRODUCTION, "自动喂养", "动物选择、繁殖和幼体喂食", "动物 饲料"),
     FISHER(Category.PRODUCTION, "自动钓鱼", "钓点、Meteor 配合与满包存箱", "鱼竿"),
     CONCRETE(Category.PRODUCTION, "混凝土制作", "定点放粉末、遇水硬化、挖掘循环", "混凝土 粉末 自动 放置 挖掉 concrete"),
+    MATERIALS(Category.PRODUCTION, "材料任务", "指定物品与数量，自动取料、采集和制作", "沙砾 沙子 混凝土 熔炼 合成 自动 材料"),
     SKILLS(Category.PRODUCTION, "技能库", "查看已学技能、候选技能与验证记录", "Voyager skill 学习 经验 技能"),
     BUILDER(Category.PRODUCTION, "投影建造", "自动走位、打印、核对与缺料提示", "建筑 投影 打印 printer"),
     VILLAGER(Category.PRODUCTION, "村民职业", "职业统计与缺失工作方块", "村庄 交易"),
@@ -50,14 +52,23 @@ public enum UiFeature {
     UiFeature(Category category, String title, String description, String keywords) { this.category = category; this.title = title; this.description = description; this.keywords = keywords; }
     public boolean matches(String query) {
         String text = (title + " " + description + " " + keywords + " " + name()
-            + (category == Category.MINING ? " 盾构 盾构机 borer" : "")).toLowerCase(Locale.ROOT);
+            + (category == Category.MINING && this != GRAVEL ? " 盾构 盾构机 borer" : "")).toLowerCase(Locale.ROOT);
         return Arrays.stream(query.toLowerCase(Locale.ROOT).trim().split("\\s+")).allMatch(text::contains);
     }
     public static UiFeature find(String id) { try { return valueOf(id); } catch (RuntimeException ignored) { return null; } }
+    /** Home is explicitly curated; category tabs are never affected by the home search. */
+    public static List<UiFeature> visible(Category category, String query, Collection<String> favorites) {
+        if (category != Category.HOME) return Arrays.stream(values()).filter(f -> f.category == category).toList();
+        if (query != null && !query.isBlank()) return Arrays.stream(values()).filter(f -> f.matches(query)).toList();
+        Set<UiFeature> selected = new LinkedHashSet<>();
+        if (favorites != null) for (String id : favorites) { var feature = find(id); if (feature != null) selected.add(feature); }
+        return List.copyOf(selected);
+    }
     public boolean active() {
         var b = KitClient.borer();
         return switch (this) {
             case AREA, ORE, FORWARD, DOWN -> b != null && b.isActive() && !b.isSceneryActive() && b.mode().name().equals(name());
+            case GRAVEL -> dev.twob2tkit.automation.GravelCollector.isActive();
             case SCENERY -> b != null && b.isSceneryActive();
             case CRUISE -> KitClient.controller() != null && KitClient.controller().isActive();
             case CHOPPER -> KitClient.chopper() != null && KitClient.chopper().isActive();
@@ -67,6 +78,7 @@ public enum UiFeature {
             case SURROUND -> KitClient.surround() != null && KitClient.surround().isActive();
             case BRAWLER -> KitClient.brawler() != null && KitClient.brawler().isActive();
             case CONCRETE -> KitClient.concrete() != null && KitClient.concrete().isActive();
+            case MATERIALS -> dev.twob2tkit.material.MaterialJobs.running();
             case BUILDER -> KitClient.buildJob() != null && KitClient.buildJob().isActive();
             default -> false;
         };
@@ -91,6 +103,8 @@ public enum UiFeature {
         switch (this) {
             case AREA -> mc.setScreen(new AreaSetupScreen(parent, c));
             case ORE, FORWARD, DOWN -> ClickGuiPages.mining(parent, c, TunnelBorer.Mode.valueOf(name()));
+            case GRAVEL -> ClickGuiPages.gravel(parent, c);
+            case MATERIALS -> dev.twob2tkit.material.MaterialJobPages.open(parent, c);
             case ROUTE -> ClickGuiPages.routes(parent, c);
             case BORER_SAFETY -> ClickGuiPages.miningSafety(parent, c);
             case CRUISE -> ClickGuiPages.cruise(parent, c, controller);

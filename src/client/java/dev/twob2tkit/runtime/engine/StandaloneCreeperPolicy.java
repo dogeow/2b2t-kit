@@ -3,6 +3,9 @@ package dev.twob2tkit.runtime.engine;
 /** Nearby creepers threaten the structure even when the player is hovering above them. */
 final class StandaloneCreeperPolicy {
     private StandaloneCreeperPolicy() {}
+    static boolean flightDefenseScope(boolean standalone,boolean miningActive,boolean areaMode){
+        return standalone||miningActive&&areaMode;
+    }
     static boolean alert(boolean visible,boolean swelling,boolean powered,double distance){
         return visible&&distance<=(powered?12:8) || swelling&&distance<=(powered?14:8) || distance<=4;
     }

@@ -105,11 +105,11 @@ public final class StorageDetailScreen extends KitHudScreen {
 	private boolean openUnifiedDetail() {
 		var config = dev.twob2tkit.KitClient.config();
 		if (config == null) return false;
-		var list = new dev.twob2tkit.KitCollectionScreen<KitConfig.StoredItem>(parent, config, "storage-items:" + snapshot.key(), StorageLabels.headline(snapshot),
+		var list = new dev.twob2tkit.KitCollectionScreen<KitConfig.StoredItem>(parent, config, "storage-items:" + snapshot.scopedKey(), StorageLabels.headline(snapshot),
 			"记录时的物品快照，不会取出或移动物品", () -> snapshot.items, item -> item.name + " ×" + item.count,
 			item -> item.id + "\nX " + snapshot.x + " Y " + snapshot.y + " Z " + snapshot.z, item -> item.name + " " + item.id).icon(StorageItems::stack);
 		list.onOpen(item -> {
-			var detail = new dev.twob2tkit.KitFormScreen(list, item.name, "仓库快照，不是实时库存").bind(config).id("storage-item:" + snapshot.key() + ":" + item.id);
+			var detail = new dev.twob2tkit.KitFormScreen(list, item.name, "仓库快照，不是实时库存").bind(config).id("storage-item:" + snapshot.scopedKey() + ":" + item.id);
 			detail.note(item.id + " · 记录数量 " + item.count);
 			detail.note("箱子位置：X " + snapshot.x + " Y " + snapshot.y + " Z " + snapshot.z + "；" + StorageRecordsScreen.dimensionLabel(snapshot.dimension));
 			detail.action("查看相关配方", "只查询本地配方。", () -> dev.twob2tkit.KitRecipePages.open(detail, config, item.name));

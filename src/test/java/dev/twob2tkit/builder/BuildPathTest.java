@@ -44,7 +44,9 @@ class BuildPathTest {
         assertEquals(result,search.advance(3,Long.MAX_VALUE));
     }
     @Test void pendingBudgetAndExhaustedFrontierHaveDifferentResults(){
-        var search=new BuildPath.GoalSearch(world(p->p.getY()==0&&p.getZ()==0&&p.getX()>=0&&p.getX()<=3),BlockPos.ZERO,List.of(new BlockPos(5,0,0)));
+        // Both endpoints are clear, but the four-cell components are separated.
+        // An occupied goal can now be rejected immediately without any search.
+        var search=new BuildPath.GoalSearch(world(p->p.getY()==0&&p.getZ()==0&&p.getX()>=0&&p.getX()<=8&&p.getX()!=4),BlockPos.ZERO,List.of(new BlockPos(5,0,0)));
         assertNull(search.advance(2,Long.MAX_VALUE));assertEquals(2,search.expanded());
         var result=search.advance(2,Long.MAX_VALUE);assertNotNull(result);assertTrue(result.nodes().isEmpty());assertEquals(4,result.expanded());
     }

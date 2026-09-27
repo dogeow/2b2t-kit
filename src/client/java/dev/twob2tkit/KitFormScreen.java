@@ -188,8 +188,9 @@ public final class KitFormScreen extends KitHudScreen {
         }
         contentHeight = y - layout.top();
         boolean inputs = rows.stream().anyMatch(r -> r instanceof Input);
-        int count = 1 + (inputs ? 1 : 0) + (toggle != null ? 1 : 0), index = 0;
-        if (inputs) applyButton = addRenderableWidget(Button.builder(Component.literal(applyText), b -> finishEdits())
+        boolean submit = inputs || customSubmit;
+        int count = 1 + (submit ? 1 : 0) + (toggle != null ? 1 : 0), index = 0;
+        if (submit) applyButton = addRenderableWidget(Button.builder(Component.literal(applyText), b -> finishEdits())
             .bounds(layout.footerButtonX(index++, count), layout.footer(), layout.footerButtonWidth(count), 20).build());
         if (toggle != null) runButton = addRenderableWidget(Button.builder(Component.literal(active.getAsBoolean() ? stopText : startText), b -> {
             if (active.getAsBoolean()) { toggle.run(); showNotice("已停止；输入草稿保留", 0xFFFF55); }

@@ -117,6 +117,7 @@ public final class KitClient implements ClientModInitializer {
 	/** 帧尾：热键、监视器、围箱与观察类逻辑。 */
 	private void onEndTick(Minecraft client) {
 		dev.twob2tkit.automation.AutomationBridge.tick(client);
+		dev.twob2tkit.material.MaterialJobs.tick(client);
 		boolean menuBeforeHeldKeys = client.screen instanceof KitHudScreen;
 		handleHeldKeys(client);
 		if (KitKeys.suppressHotkeys || menuBeforeHeldKeys || client.screen instanceof KitHudScreen) {
@@ -159,6 +160,7 @@ public final class KitClient implements ClientModInitializer {
 			while (KitKeys.TOGGLE_FISHER.consumeClick()) toggleFisher(client);
 			while (KitKeys.TOGGLE_VILLAGER_SCAN.consumeClick()) toggleVillagerScan(client);
 		}
+		dev.twob2tkit.automation.GravelCollector.tick(client);
 		if (combatWatch != null) combatWatch.tick(client);
 		if (client.player != null && client.player.isDeadOrDying()) {
 			freezeForDeath(client);
@@ -213,6 +215,7 @@ public final class KitClient implements ClientModInitializer {
 
     private static void stopAll(String reason,boolean announce) {
         Minecraft client = Minecraft.getInstance();
+        dev.twob2tkit.material.MaterialJobs.stop(reason);
         dev.twob2tkit.combat.EmergencyExit.cancel(client);
         if(instance!=null&&instance.controller!=null)instance.controller.cancelPendingLogout();
         dev.twob2tkit.automation.AutomationBridge.cancel(client, reason);
@@ -225,6 +228,8 @@ public final class KitClient implements ClientModInitializer {
     /** Task handoff may retain an explicitly armed guard. It is not an emergency stop. */
     public static void stopWork(String reason) {
         Minecraft client=Minecraft.getInstance();
+        if(!dev.twob2tkit.automation.AutomationBridge.internalDispatch())
+            dev.twob2tkit.automation.GravelCollector.cancel(client,reason);
         dev.twob2tkit.automation.AutomationBridge.cancelWork(client,reason);
         if (instance == null) return;
 		instance.projectionBuildJob.stop(client,reason);
@@ -417,6 +422,7 @@ public final class KitClient implements ClientModInitializer {
 	public static boolean anyAfkAuto() {
 		if (instance == null) return false;
 		return instance.projectionBuildJob != null && instance.projectionBuildJob.isActive()
+			|| dev.twob2tkit.automation.GravelCollector.isActive()
 			|| instance.concreteMaker != null && instance.concreteMaker.isActive()
 			|| instance.controller != null && instance.controller.isActive()
 			|| instance.tunnelBorer != null && instance.tunnelBorer.isActive()
@@ -822,7 +828,8 @@ public final class KitClient implements ClientModInitializer {
 			instance.piglinBrawler.tick(client);
 			return;
 		}
-		boolean otherAuto = instance.tunnelBorer.isActive()
+		boolean otherAuto = dev.twob2tkit.automation.GravelCollector.isActive()
+			|| instance.tunnelBorer.isActive()
 			|| instance.autoSurround.isActive()
 			|| instance.autoFeeder.isActive()
 			|| instance.autoPlanter.isActive()

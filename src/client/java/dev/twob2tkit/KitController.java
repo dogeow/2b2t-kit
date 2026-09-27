@@ -67,6 +67,9 @@ public final class KitController {
 	private double avoidanceX;
 	private double avoidanceZ;
 	private int lastObstacleMessageTick = -1000;
+	private boolean blockedNoticeSent;
+	private double blockedNoticeX = Double.NaN;
+	private double blockedNoticeZ = Double.NaN;
 	private String pendingDisconnectReason;
     private long logoutGeneration;
     public void cancelPendingLogout(){pendingDisconnectReason=null;logoutGeneration++;}
@@ -74,8 +77,8 @@ public final class KitController {
 	private final CruiseCeilingMiner ceilingMiner;
 	private double sampleY = Double.NaN;
 	private int altitudeStuckSeconds;
-	private int lastCeilingMessageTick = -1000;
-	private int lastHealthWarnTick = -1000;
+	private boolean lowHealthWarned;
+	private boolean flightWarningSent;
 	private double altitudeOffset;
 	private double dodgeFromX = Double.NaN;
 	private double dodgeFromZ = Double.NaN;
@@ -120,6 +123,11 @@ public final class KitController {
 	public void startExact(Minecraft client, double targetX, double targetZ, double cruiseY) {
 		start(client, targetX, targetZ, cruiseY);
 		exactArrival = true;
+	}
+
+	/** A safety ascent must reach air without inheriting a route's logout preference. */
+	public void keepConnectedOnArrival() {
+		disconnectOnThisArrival = false;
 	}
 
 	public void start(Minecraft client, double targetX, double targetZ, double cruiseY) {
@@ -184,24 +192,30 @@ public final class KitController {
 		dodgeFromZ = Double.NaN;
 		lastAltitudeDodgeTick = -200;
 		lastObstacleMessageTick = -1000;
+		blockedNoticeSent = false;
+		blockedNoticeX = Double.NaN;
+		blockedNoticeZ = Double.NaN;
 		pendingDisconnectReason = null;
-		lastCeilingMessageTick = -1000;
-		lastHealthWarnTick = -1000;
 		if (client.player != null) {
 			resetMovementSample(client.player);
 			plannedDistance = Math.hypot(config.targetX - client.player.getX(), config.targetZ - client.player.getZ());
+			if (client.player.getHealth() > config.minHealth || hasEdibleFood(client.player)) lowHealthWarned = false;
 		}
-		if (ensureMeteorFlight(client.player)) {
-			message(client, "已打开 Meteor 飞行");
-		} else if (client.player != null && !BorerFlight.isFlying(client.player)) {
-			message(client, "没开到 Meteor 飞行，升空会跳。请在 Meteor 里打开飞行");
-		}
-		message(client, String.format(Locale.ROOT, "开始：目标 %.1f, %.1f，巡航高度 %.1f", config.targetX, config.targetZ, desiredY()));
+		boolean openedFlight = ensureMeteorFlight(client.player);
+		boolean flightMissing = !openedFlight && client.player != null && !BorerFlight.isFlying(client.player);
+		if (flightMissing && !flightWarningSent) {
+			flightWarningSent = true;
+			warning(client, "没开到 Meteor 飞行，升空会跳。请在 Meteor 里打开飞行");
+		} else if (!flightMissing) flightWarningSent = false;
+		CruiseScreenHud.begin(String.format(Locale.ROOT, "巡航 · 调整高度至 Y %.0f", desiredY()));
+		KitClient.LOGGER.debug("[Cruise] start target=({}, {}) y={}", config.targetX, config.targetZ, desiredY());
 	}
 
 	/** 停止巡航并松键。 */
 	public void stop(Minecraft client, String reason) {
+		boolean leavingWorld = client.level == null || "离开世界".equals(reason) || "退出游戏".equals(reason);
 		if (!isActive()) {
+			if (leavingWorld || !"按键停止巡航".equals(reason)) CruiseScreenHud.hide();
 			releaseKeys(client);
 			return;
 		}
@@ -209,9 +223,10 @@ public final class KitController {
 		avoidanceActive = false;
 		blockedByObstacle = false;
 		altitudeOffset = 0.0;
-		CruiseScreenHud.hide();
+		if (!leavingWorld && "按键停止巡航".equals(reason)) CruiseScreenHud.finish("巡航已停止");
+		else CruiseScreenHud.hide();
 		releaseKeys(client);
-		message(client, "已停止：" + reason);
+		KitClient.LOGGER.info("[Cruise] stopped: {}", reason);
 	}
 
 	/** 每拍导航：高度、绕障、前进、卡住与到达。 */
@@ -221,6 +236,7 @@ public final class KitController {
 		LocalPlayer player = client.player;
 		if (player == null || client.level == null) {
 			phase = Phase.IDLE;
+			CruiseScreenHud.hide();
 			releaseKeys(client);
 			return;
 		}
@@ -233,10 +249,12 @@ public final class KitController {
 		ticks++;
 		trackTravel(player);
 		ensureMeteorFlight(player);
-		if (config.minHealth > 0.0 && player.getHealth() <= config.minHealth && !hasEdibleFood(player)
-			&& lastHealthWarnTick < 0) {
-			lastHealthWarnTick = ticks;
-			message(client, String.format(Locale.ROOT, "生命偏低：%.1f，没有可吃的东西，继续巡航", player.getHealth()));
+		boolean lowHealthWithoutFood = config.minHealth > 0.0
+			&& player.getHealth() <= config.minHealth && !hasEdibleFood(player);
+		if (!lowHealthWithoutFood) lowHealthWarned = false;
+		else if (!lowHealthWarned) {
+			lowHealthWarned = true;
+			warning(client, String.format(Locale.ROOT, "生命偏低：%.1f，没有可吃的东西，继续巡航", player.getHealth()));
 		}
 		if (BorerItems.allMiningToolsWorn(player)) {
 			int left = BorerItems.isMiningTool(player.getMainHandItem())
@@ -288,12 +306,8 @@ public final class KitController {
 		double upTolerance = phase == Phase.ALTITUDE ? config.altitudeTolerance : config.altitudeCorrectionTolerance;
 		if (config.clearCeiling && desiredY() - player.getY() > upTolerance
 			&& ceilingMiner.tick(client, player, desiredY())) {
-			if (ticks - lastCeilingMessageTick >= 80) {
-				message(client, ceilingMiner.status());
-				lastCeilingMessageTick = ticks;
-			}
 			if (ticks % 10 == 0) {
-				client.gui.setOverlayMessage(Component.literal("twob2tkit | " + ceilingMiner.status()).withColor(0x55FFFF), false);
+				CruiseScreenHud.show(String.format(Locale.ROOT, "巡航 · 清理头顶 · Y %.0f", player.getY()));
 			}
 			return;
 		}
@@ -303,7 +317,7 @@ public final class KitController {
 			if (phase == Phase.ALTITUDE) {
 				phase = Phase.CRUISE;
 				resetMovementSample(player);
-				message(client, "头顶挖不掉（基岩一类），已在当前高度前进");
+				warning(client, "头顶挖不掉（基岩一类），已在当前高度前进");
 			}
 			client.options.keyJump.setDown(false);
 		}
@@ -318,7 +332,7 @@ public final class KitController {
 			}
 			phase = Phase.CRUISE;
 			resetMovementSample(player);
-			message(client, String.format(Locale.ROOT, "已到 Y %.0f，开始前进", desiredY()));
+			CruiseScreenHud.flash(String.format(Locale.ROOT, "已到 Y %.0f · 开始前进", desiredY()));
 			if (config.obstacleAvoidance) checkObstacleAndPlan(client, player);
 			if (phase == Phase.ALTITUDE) {
 				adjustAltitude(client, player, config.altitudeTolerance);
@@ -434,6 +448,9 @@ public final class KitController {
 
 	/** 前方有障碍：贴身时先升高越过树冠，远处才水平绕行；找不到绕行也不停车。 */
 	private void checkObstacleAndPlan(Minecraft client, LocalPlayer player) {
+		if (blockedNoticeSent && Math.hypot(player.getX() - blockedNoticeX, player.getZ() - blockedNoticeZ) >= 8.0) {
+			blockedNoticeSent = false;
+		}
 		double obstacleDistance = firstObstacleDistanceAtY(client, player, 0.0, config.obstacleLookAhead);
 		if (obstacleDistance < 0.0) {
 			blockedByObstacle = false;
@@ -459,7 +476,7 @@ public final class KitController {
 			blockedByObstacle = false;
 			phase = Phase.AVOIDING;
 			if (ticks - lastObstacleMessageTick >= 100) {
-				message(client, String.format(Locale.ROOT, "前方 %.0f 格有障碍，绕行至 %.0f, %.0f", obstacleDistance, avoidanceX, avoidanceZ));
+				CruiseScreenHud.flash(String.format(Locale.ROOT, "绕开障碍 · 前方 %.0f 格", obstacleDistance));
 				lastObstacleMessageTick = ticks;
 			}
 			return;
@@ -472,10 +489,13 @@ public final class KitController {
 		avoidanceActive = false;
 		blockedByObstacle = true;
 		phase = Phase.AVOIDING;
-		if (ticks - lastObstacleMessageTick >= 100) {
-			message(client, "已升到可飞最高处仍被挡住，暂停前进");
-			lastObstacleMessageTick = ticks;
+		if (!blockedNoticeSent) {
+			blockedNoticeSent = true;
+			blockedNoticeX = player.getX();
+			blockedNoticeZ = player.getZ();
+			warning(client, "已升到可飞最高处仍被挡住，暂停前进");
 		}
+		CruiseScreenHud.show("巡航 · 前进受阻");
 	}
 
 	/** 在左右侧找可绕开的水平路点。 */
@@ -645,7 +665,8 @@ public final class KitController {
 			phase = Phase.ALTITUDE;
 		}
 		if (ticks - lastObstacleMessageTick >= 60) {
-			message(client, String.format(Locale.ROOT, format, probeY));
+			CruiseScreenHud.flash(String.format(Locale.ROOT, "绕障 · 升至 Y %.0f", probeY));
+			KitClient.LOGGER.debug("[Cruise] {}", String.format(Locale.ROOT, format, probeY));
 			lastObstacleMessageTick = ticks;
 		}
 	}
@@ -683,7 +704,7 @@ public final class KitController {
 		altitudeOffset = 0.0;
 		dodgeFromX = Double.NaN;
 		dodgeFromZ = Double.NaN;
-		message(client, "障碍已过，回到巡航高度 " + String.format(Locale.ROOT, "%.0f", config.cruiseY));
+		CruiseScreenHud.flash(String.format(Locale.ROOT, "恢复巡航高度 Y %.0f", config.cruiseY));
 	}
 
 	/** 把碰撞箱垂直平移 dy 后，朝目标方向是否畅通。 */
@@ -826,15 +847,20 @@ public final class KitController {
 			remaining, total, formatDuration(elapsedSeconds), etaLabel());
 	}
 
-	/** 屏幕 HUD 两行：主行高亮剩余/全程与剩余时间；副行已走时间与阶段、高度。 */
+	/** 顶部一行：只保留当前动作及所需的距离或高度。 */
 	private void publishProgressHud(double remaining, double y, String healthNote) {
-		double total = plannedDistance > 0.0 ? plannedDistance : remaining;
-		long elapsedSeconds = Math.max(0L, ticks / 20L);
-		String primary = String.format(Locale.ROOT, "剩余 %.0f/%.0f 格  ·  %s", remaining, total, etaLabel());
-		String secondary = String.format(Locale.ROOT, "已走 %s  ·  %s  ·  Y %.0f/%.0f%s",
-			formatDuration(elapsedSeconds), phase.label, y, desiredY(),
-			healthNote == null || healthNote.isEmpty() ? "" : "  ·  " + healthNote);
-		CruiseScreenHud.show(primary, secondary);
+		boolean adjustingHeight = phase == Phase.ALTITUDE
+			|| Math.abs(desiredY() - y) > config.altitudeCorrectionTolerance;
+		String action;
+		if (blockedByObstacle) action = "前进受阻";
+		else if (adjustingHeight)
+			action = String.format(Locale.ROOT, "调整高度 Y %.0f→%.0f", y, desiredY());
+		else if (phase == Phase.AVOIDING) action = "绕障";
+		else action = "前进";
+		String progress = adjustingHeight
+			? action : String.format(Locale.ROOT, "%s · 剩余 %.0f 格", action, remaining);
+		CruiseScreenHud.show("巡航 · " + (healthNote == null || healthNote.isEmpty()
+			? progress : "生命偏低 · " + progress));
 	}
 
 	/** 采样水平移动，超时卡住则尝试脱困。 */
@@ -876,7 +902,7 @@ public final class KitController {
 		unstickPhase = 1;
 		unstickTicksRemaining = 10;
 		stationarySeconds = Math.max(0, stationarySeconds - 5);
-		message(client, "疑似卡住，先后退侧移试试（第 " + unstickRound + " 轮）");
+		CruiseScreenHud.flash("巡航 · 尝试脱困 " + unstickRound);
 		return true;
 	}
 
@@ -950,10 +976,10 @@ public final class KitController {
 		avoidanceActive = false;
 		blockedByObstacle = false;
 		altitudeOffset = 0.0;
-		CruiseScreenHud.hide();
+		CruiseScreenHud.finish("已到达目标");
 		releaseKeys(client);
 		if (disconnectOnThisArrival) pendingDisconnectReason = reason;
-		else message(client, reason);
+		KitClient.LOGGER.debug("[Cruise] {}", reason);
 	}
 
 	/** 排队安全离线原因。 */
@@ -961,7 +987,7 @@ public final class KitController {
 		pendingDisconnectReason = reason;
 	}
 
-	/** 标记待离线并在聊天提示。 */
+	/** Critical navigation failure: notify once, then let the safe logout path run. */
 	private void disconnect(Minecraft client, String reason) {
 		phase = Phase.IDLE;
 		avoidanceActive = false;
@@ -969,6 +995,7 @@ public final class KitController {
 		altitudeOffset = 0.0;
 		CruiseScreenHud.hide();
 		releaseKeys(client);
+		warning(client, reason);
 		pendingDisconnectReason = reason;
 	}
 
@@ -1009,6 +1036,12 @@ public final class KitController {
 	/** 向玩家发系统消息。 */
 	private static void message(Minecraft client, String text) {
 		if (client.player != null) client.player.sendSystemMessage(Component.literal("[twob2tkit] " + text));
+		KitClient.LOGGER.info("[Cruise] {}", text);
+	}
+
+	private static void warning(Minecraft client, String text) {
+		if (client.player != null) client.player.sendSystemMessage(Component.literal("[twob2tkit] " + text).withColor(0xFFAA66));
+		KitClient.LOGGER.warn("[Cruise] {}", text);
 	}
 
 	/** 角度归一到 [-180,180)。 */

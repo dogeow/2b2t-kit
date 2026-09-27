@@ -12,7 +12,13 @@ def high_park_clearance(rows,target_y):
   if not ground:raise Handoff('High guard park has no verified ground column')
   return target_y-max(ground)
 def underwater_action_allowed(state,op,params):
- if not state.get('under_water') or state.get('water_breathing_effect') or state.get('conduit_power_effect') or state.get('air_supply',0)>=240:return True
+ from dive_safety import native_air_budget,pickup_air_floor
+ budget=native_air_budget(state)
+ floor=budget[1] if budget else 240
+ if budget and (op=='collect_item' or op=='walk' and params.get('water_descend')):floor=pickup_air_floor(state)
+ if state.get('air_return_active') and op in ('navigate','walk','collect_item','approach_block','mine_block'):
+  return vertical_surface_escape(state,op,params)
+ if not state.get('under_water') or state.get('water_breathing_effect') or state.get('conduit_power_effect') or state.get('air_supply',0)>=floor:return True
  if op not in ('navigate','walk','collect_item','approach_block','mine_block'):return True
  target=params.get('target')
  if op=='navigate' and isinstance(target,(list,tuple)) and len(target)==3:
@@ -37,10 +43,10 @@ class Client:
   assert not any(s.get(k) for k in ('borer_active','chopping','navigating'))
   self.anchor=list(s['pos']);self.world=s['world_session'];self.rev=s['control_revision'];self.owned=False;self.last=None
  def raw(self):
-  s=json.loads((self.root/'status.json').read_text())
+  from live_snapshot import read_fresh
+  s=read_fresh(self.root)
   from safety_interlock import require_unlocked
   require_unlocked(self.root,s)
-  if time.time()*1000-s['time']>3000:raise RuntimeError('Game state is stale')
   return s
  def status(self):
   s=self.raw()
@@ -80,7 +86,7 @@ class Client:
   tmp=path.with_suffix('.materials.tmp');tmp.write_text(json.dumps(req));tmp.replace(path);self.last=rid
   expected=self.rev+(2 if op in ('stop','safe_logout') else 1 if op in ('navigate','chop','walk','walk_path','print','mine_block','recover_shulker','professional_print','projection_start','borer_start') else 0)
   end=time.monotonic()+params.get('seconds',20)+15
-  last_poll=time.monotonic();guard_pause=0
+  last_poll=time.monotonic();guard_pause=0;movement_samples=[]
   while time.monotonic()<end:
    current=self.raw()
    now=time.monotonic()
@@ -94,6 +100,9 @@ class Client:
     raise Handoff('World disconnected')
    reply=self.root/('reply-'+rid+'.json');result=json.loads(reply.read_text()) if reply.exists() else current
    terminal=result.get('id')==rid and result.get('phase') in ('done','stopped','error','waiting')
+   if op in ('navigate','approach_block','walk','collect_item') and not terminal:
+    movement_samples.append({k:current.get(k) for k in ('time','pos','velocity','movement_keys','guard_busy','build_supply','phase','detail')})
+    movement_samples=movement_samples[-3:]
    lease=current.get('supervision_lease',{})
    native_stop=terminal and current.get('last_request')==rid and lease.get('job_session')==getattr(self,'task',None) and lease.get('revision')==current['control_revision'] and lease.get('kind')=='materials'
    # A native movement timeout may abort its own controller and advance the
@@ -109,6 +118,9 @@ class Client:
    if current.get('manual_movement') or current['control_revision'] not in (self.rev,expected) and not native_stop and not owned_terminal and not owned_logout:raise Handoff('Control revision changed outside the owned request')
    if reply.exists() or current.get('last_request')==rid and current.get('id')==rid and current.get('phase') in ('done','stopped','error','waiting'):
     self.rev=current['control_revision']
+    if movement_samples and result.get('phase') in ('waiting','error','stopped'):
+     try:(self.out/('movement-failure-'+rid+'.json')).write_text(json.dumps({'op':op,'params':params,'detail':result.get('detail'),'last_inflight':movement_samples,'terminal_pos':current.get('pos')},ensure_ascii=False,indent=2))
+     except OSError:pass
     with (self.out/'events.jsonl').open('a') as f:f.write(json.dumps({'time':time.time(),'request_id':rid,'world_session':self.world,'op':op,'params':params,'phase':result.get('phase'),'detail':result.get('detail'),'pos':current.get('pos'),'health':current.get('health'),'duration_ms':round((time.monotonic()-request_started)*1000),'guard_pause_ms':round(guard_pause*1000),'evidence_scope':'native_operation_reply_not_goal_completion',**observed_delta(evidence_before,current)},ensure_ascii=False)+'\n')
     try:
      from experience_recording import record_native_transaction
@@ -137,19 +149,34 @@ class Client:
     self.request('safe_logout')
   except Handoff:pass
  def transfer(self,item,target,deposit=False):
-  for _ in range(16):
+  from kit_runtime.inventory import InventorySession,destination_capacity
+  from kit_runtime.storage import move_amount
+  if isinstance(target,bool) or not isinstance(target,int) or target<0:raise ValueError('Transfer target must be a nonnegative count')
+  session=InventorySession(self)
+  for _ in range(128):
    s=self.status();before=stocks(s).get(item,0)
    if before<=target if deposit else before>=target:return before
    menu=s['menu'];assert menu['type'] in ('ChestMenu','ShulkerBoxMenu') and menu['cursor']['count']==0
    boundary=len(menu['slots'])-36
    pool=menu['slots'][boundary:] if deposit else menu['slots'][:boundary]
-   if deposit and not any(v['count']==0 or v['item']==item and v['count']<v.get('max_stack',64) for v in menu['slots'][:boundary]):raise RuntimeError('Depot has no space for '+item)
+   destinations=menu['slots'][:boundary] if deposit else menu['slots'][boundary:]
    source=next((v for v in pool if v['item']==item and v['count']),None)
    if source is None:return before
-   self.checked('slot_click',menu_id=menu['id'],slot=source['slot'],expected_item=item,expected_count=source['count'],kind='quick_move')
+   destination=next((v for v in destinations if v['count'] and v['item']==item and v['count']<v.get('max_stack',64)),None)
+   if destination is None:destination=next((v for v in destinations if not v['count']),None)
+   if destination is None:raise RuntimeError('Destination has no space for '+item)
+   needed=before-target if deposit else target-before
+   if source['count']<=needed:
+    session.click(s,source['slot'],'quick_move')
+   else:
+    room=destination_capacity(source,destination)-destination['count']
+    move_amount(session,s,source,destination,min(needed,room))
    deadline=time.monotonic()+6
    while time.monotonic()<deadline:
-    after=stocks(self.status()).get(item,0)
+    fresh=self.status()
+    if fresh['menu']['id']!=menu['id']:raise Handoff('Container changed during transfer')
+    after=stocks(fresh).get(item,0)
+    if (after<target if deposit else after>target):raise RuntimeError('Inventory transfer crossed its requested target')
     if (after<before if deposit else after>before):break
     time.sleep(.2)
    else:raise RuntimeError('Inventory transfer not confirmed; no duplicate click')
@@ -174,7 +201,7 @@ class MaterialClient(Client):
  def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None,remote_finish='disconnect',park_target=None):
   if remote_finish not in ('disconnect','guard') or remote_finish=='guard' and (not isinstance(park_target,(list,tuple)) or len(park_target)!=3):raise ValueError('Guard finish requires a high park target')
   self.remote_finish=remote_finish;self.park_target=list(park_target) if park_target is not None else None
-  self.heartbeat=None;self.owned_material_menu=None
+  self.heartbeat=None;self.owned_material_menu=None;self.job_progress=None
   super().__init__(root,out,server,min_health=18)
   self.record_experience=record_experience;self.experience_state=experience_state
   s=self.raw()
@@ -204,6 +231,10 @@ class MaterialClient(Client):
  def raw(self):
   s=super().raw()
   if self.heartbeat:self.heartbeat.touch()
+  if getattr(self,'job_progress',None):
+   # Only follow revisions already accepted by the owning Client request checks.
+   self.job_progress.revision=self.rev
+   self.job_progress.publish(s)
   return s
  def request(self,op,**params):
   for attempt in range(4):
@@ -212,7 +243,79 @@ class MaterialClient(Client):
    # This exact native rejection happens before dispatch mutates game state; ambiguous failures are never replayed.
    self.status();time.sleep(.25)
   return r
+ def start_progress(self,title,total,done=0,phase='准备中'):
+  from job_progress import JobProgress
+  self.job_progress=JobProgress(self.root,self.world,self.task,self.rev,title,total,done)
+  self.set_progress(phase=phase)
+ def set_progress(self,*,done=None,phase=None):
+  if getattr(self,'job_progress',None):
+   self.job_progress.update(done=done,phase=phase)
+   try:self.raw()
+   except (OSError,RuntimeError,ValueError):pass
+ def advance_progress(self,amount):
+  if getattr(self,'job_progress',None):self.set_progress(done=self.job_progress.done+amount)
+ def advise(self,goal,candidates,scene=None,fallback='wait'):
+  from decision_advisor import Advisor
+  if not hasattr(self,'advisor'):self.advisor=Advisor(self.out)
+  return self.advisor.select(goal,candidates,self.status,scene,fallback)
+ def record_advice_outcome(self,decision,result,**evidence):
+  if hasattr(self,'advisor'):self.advisor.outcome(decision,result,**evidence)
+ def recover_park_health(self,seconds=60):
+  """Pause work and use safe high parking for recovery; 19 HP is not a logout threshold."""
+  from food_refuel_policy import PREFERRED
+  initial=self.status()
+  if initial['health']<14:raise RuntimeError('Critical health before guarded recovery')
+  if not self.park_near(initial) or not initial.get('guard_armed') or not initial.get('flight'):
+   raise RuntimeError('Recovery requires verified guarded high parking')
+  options={'rest':'Remain at the verified high guarded position and wait up to 60 seconds for health regeneration.',
+           'wait':'Use the local guarded recovery routine; no new mining or travel.'}
+  if initial.get('food',20)<20 and any(v.get('slot',99)<9 and v.get('item') in PREFERRED and v.get('count',0)>0 for v in initial.get('inventory',[])):
+   options['eat']='Eat an available hotbar meal here, then wait for recovery.'
+  if initial.get('health',0)>=18 and initial.get('food',0)>=18:
+   options['remain_guarded']='Finish this work session and keep native protection at this verified high safe position without logging out.'
+  decision=self.advise('Recover from noncritical injury without unnecessary logout. Preserve player safety and food; do not resume mining below 19 health.',options,
+                       {'verified_high_parking':True,'work_health_reserve':19,'parking_min_health':18,'critical_health':14})
+  if decision['choice']=='remain_guarded':
+   fresh=self.status()
+   if fresh['health']>=18 and self.park_near(fresh) and fresh.get('guard_armed') and fresh.get('flight'):
+    self.record_advice_outcome(decision,'kept_guarded',health=fresh['health']);return fresh
+  deadline=time.monotonic()+seconds
+  last_meal=None
+  while True:
+   state=self.status()
+   if state['health']<14:raise RuntimeError('Critical health during guarded recovery')
+   if not self.park_near(state) or not state.get('guard_armed') or not state.get('flight'):
+    raise RuntimeError('Recovery requires verified guarded high parking')
+   if state['health']>=19 or time.monotonic()>=deadline:
+    self.record_advice_outcome(decision,'recovered' if state['health']>=19 else 'recovery_wait_finished',health=state['health'],food=state.get('food'))
+    return state
+   # Let Meteor finish its own meal. Native use_item independently rejects
+   # hostile proximity and restores the originally held slot after eating.
+   if state.get('food',20)<20 and not state.get('guard_busy') and not state.get('under_water'):
+    hotbar={v['item']:v['count'] for v in state.get('inventory',[]) if v.get('slot',99)<9 and v.get('count',0)>0}
+    meal=next((item for item in PREFERRED if hotbar.get(item)),None)
+    key=(meal,hotbar.get(meal),state.get('food'))
+    if meal and key!=last_meal:
+     last_meal=key
+     self.request('use_item',item=meal)
+   time.sleep(.25)
  def finish(self):
+  try:
+   self.set_progress(phase='安全收尾')
+   from material_shutdown import drain_pending
+   drained=drain_pending(self);state=drained.get('state') or {}
+   (self.out/'finish-drain.json').write_text(json.dumps({**{k:v for k,v in drained.items() if k!='state'},'observed':{k:state.get(k) for k in ('time','world_session','control_revision','last_request','phase','health')}},ensure_ascii=False,indent=2))
+   if not drained['safe_to_cleanup']:
+    self.heartbeat.close()
+    if drained['reason']=='low_health':
+     from safety_interlock import record_material_health_exit
+     record_material_health_exit(self.root,state,'Low health while waiting for the owned action to settle')
+    print('CLEANUP_YIELDED',drained['reason'],flush=True)
+    return
+   return self._finish()
+  finally:
+   if getattr(self,'job_progress',None):self.job_progress.close()
+ def _finish(self):
   # Recover owned temporary resources while heartbeat and defense are still alive.
   from material_cleanup import run as cleanup_resources
   cleanup_resources(self)
@@ -230,23 +333,26 @@ class MaterialClient(Client):
     self.checked('close_menu')
   except (Handoff,RuntimeError,KeyError):pass
   if self.remote_finish=='guard':
+   health_exit_state=None
    try:
     s=self.status()
     if not s.get('guard_armed'):raise RuntimeError('High parking needs PvE guard')
-    if s['health']<19:
+    if s['health']<14:
+     health_exit_state=s
      if s['pos'][1]<self.park_target[1]-2:
       rise=[s['pos'][0],self.park_target[1],s['pos'][2]]
       self.request('navigate',target=rise,arrival=1,seconds=8)
-     raise RuntimeError('Health fell below 19; rise before safety logout')
+     raise RuntimeError('Critical health; rise before safety logout')
     if not self.park_near(s):
      deadline=time.monotonic()+12
      while True:
       s=self.status()
-      if s['health']<19:
+      if s['health']<14:
+       health_exit_state=s
        if s['pos'][1]<self.park_target[1]-2:
         rise=[s['pos'][0],self.park_target[1],s['pos'][2]]
         self.request('navigate',target=rise,arrival=1,seconds=8)
-       raise RuntimeError('High parking wait lost health clearance')
+       raise RuntimeError('Critical health while reaching high parking')
       if s.get('under_water') or s['pos'][1]<64:
        up=[s['pos'][0],70,s['pos'][2]]
        climb=self.request('navigate',target=up,arrival=1,seconds=8)
@@ -269,14 +375,25 @@ class MaterialClient(Client):
        time.sleep(.25);continue
       raise RuntimeError('High parking route did not finish: '+str(r.get('detail')))
     s=self.status()
+    if 14<=s['health']<19:s=self.recover_park_health()
     if s['health']<18 or not s.get('guard_armed') or not self.park_near(s):
+     if s['health']<18:health_exit_state=s
      raise RuntimeError('High parking position or guard not verified')
    except Handoff:
     self.heartbeat.close();return
    except (RuntimeError,KeyError) as error:
+    if health_exit_state is None:
+     try:
+      latest=self.status()
+      if latest.get('health',20)<18:health_exit_state=latest
+     except (Handoff,RuntimeError,KeyError):pass
     (self.out/'park-fallback.json').write_text(json.dumps({'reason':str(error),'action':'safe_logout'},ensure_ascii=False))
     try:self.request('safe_logout')
     except (Handoff,RuntimeError):pass
+    finally:
+     if health_exit_state is not None:
+      from safety_interlock import record_material_health_exit
+      record_material_health_exit(self.root,health_exit_state,str(error))
     self.heartbeat.close();return
   self.heartbeat.close()
   p=self.root/('supervision-receipt-'+self.heartbeat.id+'.json')

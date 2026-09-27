@@ -1,4 +1,5 @@
 """Fetch one exact material target across several approved live depots."""
+from material_jobs.protocol import server_key
 
 
 def inventory_count(state, item):
@@ -6,12 +7,19 @@ def inventory_count(state, item):
                if row.get('slot', 100) < 36 and row.get('item') == item)
 
 
-def snapshot_sources(config, item, server, dimension, region):
+def snapshot_sources(config, item, server, dimension, region, *, world_id=''):
+    server=server_key(server)
+    if server=='singleplayer' and not world_id:
+        return []
     approved = {(row['x'], row['y'], row['z'])
                 for row in config.get('projectionSupplySources', [])
-                if row.get('server') == server and row.get('dimension') == dimension}
+                if server_key(row.get('server')) == server and row.get('dimension') == dimension
+                and (row.get('worldId') or '')==world_id}
     found = {}
     for snapshot in config.get('storageSnapshots', []):
+        if (snapshot.get('status')!='active' or server_key(snapshot.get('server'))!=server
+                or snapshot.get('dimension')!=dimension or (snapshot.get('worldId') or '')!=world_id):
+            continue
         pos = (snapshot['x'], snapshot['y'], snapshot['z'])
         if pos not in approved or not region(pos):
             continue

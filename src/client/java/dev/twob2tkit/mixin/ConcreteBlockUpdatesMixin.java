@@ -13,12 +13,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ConcreteBlockUpdatesMixin {
     @Inject(method="handleBlockUpdate",at=@At("TAIL"))
     private void kit$concreteBlockUpdate(ClientboundBlockUpdatePacket packet,CallbackInfo info){
+        dev.twob2tkit.storage.StorageLifecycle.blockUpdated(net.minecraft.client.Minecraft.getInstance(),packet.getPos());
         dev.twob2tkit.automation.ProfessionalPrinter.serverBlock(packet.getPos(),packet.getBlockState());
         var job=KitClient.buildJob();if(job!=null)job.serverBlock(packet.getPos(),packet.getBlockState());
         var maker=KitClient.concrete();if(maker!=null)maker.serverBlock(packet.getPos(),packet.getBlockState());
     }
     @Inject(method="handleChunkBlocksUpdate",at=@At("TAIL"))
     private void kit$concreteSectionUpdate(ClientboundSectionBlocksUpdatePacket packet,CallbackInfo info){
+        packet.runUpdates((pos,state)->dev.twob2tkit.storage.StorageLifecycle.blockUpdated(net.minecraft.client.Minecraft.getInstance(),pos));
         if(dev.twob2tkit.automation.ProfessionalPrinter.owned())packet.runUpdates(dev.twob2tkit.automation.ProfessionalPrinter::serverBlock);
         var job=KitClient.buildJob();if(job!=null && job.isActive())packet.runUpdates(job::serverBlock);
         var maker=KitClient.concrete();if(maker!=null && maker.isActive())packet.runUpdates(maker::serverBlock);

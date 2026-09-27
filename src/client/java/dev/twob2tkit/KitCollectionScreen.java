@@ -19,6 +19,7 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
     private Consumer<T> open = value -> {};
     private Function<T, net.minecraft.world.item.ItemStack> icon;
     private BiPredicate<T, String> matcher;
+    private BiFunction<T, String, String> rowSummary;
     private Function<T, String> key;
     private String selectedKey = "";
     private String addLabel; private Runnable add;
@@ -47,6 +48,8 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
     public KitCollectionScreen<T> onOpen(Consumer<T> open) { this.open = open; return this; }
     public KitCollectionScreen<T> icon(Function<T, net.minecraft.world.item.ItemStack> icon) { this.icon = icon; return this; }
     public KitCollectionScreen<T> matcher(BiPredicate<T, String> matcher) { this.matcher = matcher; return this; }
+    public KitCollectionScreen<T> summary(BiFunction<T, String, String> summary) { this.rowSummary = summary; return this; }
+    private String summaryText(T item) { return rowSummary == null ? "" : rowSummary.apply(item, query); }
     public KitCollectionScreen<T> key(Function<T, String> key) { this.key = key; return this; }
     public KitCollectionScreen<T> add(String label, Runnable action) { addLabel = label; add = action; return this; }
     public KitCollectionScreen<T> action(String label, String tip, Consumer<T> run, Predicate<T> enabled) { actions.add(new Action<>(label, tip, run, enabled)); return this; }
@@ -70,9 +73,11 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
         addRenderableWidget(Button.builder(Component.literal("紧急停止"), b -> KitClient.emergencyStop("列表页紧急停止"))
             .bounds(layout.left() + layout.width() - 76, 8, 76, 20).build());
         int searchWidth = layout.width() - (add == null ? 0 : 100);
-        search = addRenderableWidget(KitUi.field(font, layout.left(), 36, searchWidth, "搜索", query, 80));
-        search.setHint(Component.literal(searchHint));
-        search.setResponder(value -> { query = value; savedScroll = 0; if (list != null) { list.populate(); list.setScrollAmount(0); } });
+        var bar = dev.twob2tkit.ui.components.SearchBar.create(font, layout.left(), 36, searchWidth,
+            "搜索", searchHint, query,
+            value -> { query = value; savedScroll = 0; if (list != null) { list.populate(); list.setScrollAmount(0); } }, this::setFocused);
+        search = addRenderableWidget(bar.field());
+        addRenderableWidget(bar.clear());
         if (add != null) addRenderableWidget(Button.builder(Component.literal(addLabel), b -> add.run()).bounds(layout.left() + layout.width() - 94, 36, 94, 20).build());
         int top = 64;
         if (filter != null) {
@@ -112,7 +117,7 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
         if (list.children().isEmpty()) KitUi.centered(g, font, "暂无匹配记录，可调整筛选或新增", width / 2, list.getY() + 8, 0xAABBCC);
     }
     private final class Items extends ContainerObjectSelectionList<Items.Entry> {
-        Items(Minecraft client, int w, int h, int y) { super(client, w, h, y, 24); centerListVertically = false; }
+        Items(Minecraft client, int w, int h, int y) { super(client, w, h, y, rowSummary == null ? 24 : 40); centerListVertically = false; }
         @Override public int getRowWidth() { return width - 16; }
         void populate() {
             double oldScroll = scrollAmount(); clearEntries();
@@ -132,7 +137,7 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
             Entry(T item) {
                 this.item = item;
                 buttons.add(Button.builder(Component.literal(titleText.apply(item)), b -> { selectEntry(); open.accept(item); })
-                    .bounds(0, 0, 100, 20).tooltip(Tooltip.create(Component.literal(titleText.apply(item) + "\n" + detailText.apply(item)))).build());
+                    .bounds(0, 0, 100, 20).tooltip(Tooltip.create(Component.literal(titleText.apply(item) + "\n" + summaryText(item) + "\n" + detailText.apply(item)))).build());
                 for (Action<T> action : actions) {
                     var button = Button.builder(Component.literal(action.label()), b -> { if (action.enabled().test(item)) { selectEntry(); action.run().accept(item); } })
                         .bounds(0, 0, 44, 20).tooltip(Tooltip.create(Component.literal(action.tip()))).build();
@@ -141,13 +146,14 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
             }
             @Override public void extractContent(GuiGraphicsExtractor g, int mx, int my, boolean hover, float delta) {
                 int contentWidth = getContentRight() - getContentX(), mainWidth = Math.max(40, contentWidth - actions.size() * 48);
-                int y = getContentYMiddle() - 10;
+                int y = getContentYMiddle() - (rowSummary == null ? 10 : 18);
                 int offset = icon == null ? 0 : 22;
                 Button main = buttons.getFirst(); main.setPosition(getContentX() + offset, y); main.setWidth(mainWidth - offset - 4);
                 main.setMessage(Component.literal(KitUi.fit(font, titleText.apply(item), mainWidth - offset - 12)));
                 if (icon != null) { var stack = icon.apply(item); if (stack != null && !stack.isEmpty()) g.item(stack, getContentX() + 2, y + 2); }
                 for (int i = 1; i < buttons.size(); i++) { buttons.get(i).setPosition(getContentX() + mainWidth + (i - 1) * 48, y); buttons.get(i).active = actions.get(i - 1).enabled().test(item); }
                 for (Button button : buttons) button.extractRenderState(g, mx, my, delta);
+                if (rowSummary != null) KitUi.text(g, font, KitUi.fit(font, summaryText(item), contentWidth - 6), getContentX() + 3, y + 24, 0xAABBCC);
             }
             @Override public List<? extends GuiEventListener> children() { return buttons; }
             @Override public List<? extends NarratableEntry> narratables() { return buttons; }

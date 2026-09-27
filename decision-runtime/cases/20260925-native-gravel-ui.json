@@ -1,0 +1,26 @@
+{
+  "version": "1.9.87",
+  "problem": "Verified underwater collection had no clickable Kit entry and depended on Starship Python orchestration",
+  "change": "Native GravelCollector plus owned in-process material session and mining page entry",
+  "validation": {
+    "ui_start_complete": "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/starship/work/release-1.9.87-native-gravel/ui-run-1790348934.json",
+    "stop_button": "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/starship/work/release-1.9.87-native-gravel/stop-button-check.json",
+    "requested_and_collected": 4,
+    "health": 20,
+    "native_only": true,
+    "requires_external_python": false,
+    "current_config": {
+      "gravelWaterMode": true,
+      "gravelLimit": 0,
+      "gravelRadius": 12,
+      "gravelDepth": 12
+    },
+    "current_carried_gravel": 218,
+    "currently_running": false,
+    "known_limits": [
+      "Stops when no safe targets remain in the loaded search area",
+      "Stops if a drop drifts beyond the protected pickup route or several pickups cannot be confirmed"
+    ]
+  },
+  "java_tests": 988
+}

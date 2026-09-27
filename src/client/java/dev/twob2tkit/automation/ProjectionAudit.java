@@ -42,6 +42,29 @@ public final class ProjectionAudit {
   out.add("decorations",ProjectionDecorations.entities(c,pick.min(),pick.max()));out.add("banners",banners);
   out.addProperty("name",pick.name());out.addProperty("placement_key",pick.key());out.addProperty("matched",matched);out.addProperty("total",total);out.add("mismatches",rows);out.add("kinds",new Gson().toJsonTree(kinds));out.add("replacement_items",new Gson().toJsonTree(wantedItems));out.add("actual_mismatch_blocks",new Gson().toJsonTree(actualBlocks));return out;
  }
+ /** The whole selected visible model, including matched blocks; never a reduced completion target. */
+ public static JsonObject model(Minecraft c){
+  if(c.player==null||c.level==null)throw new IllegalStateException("Projection model requires a loaded world");
+  var pick=LitematicaAccess.buildSelection();String loading=LitematicaAccess.loadingReason(pick);
+  if(!loading.isEmpty())throw new IllegalStateException(loading);
+  if(pick.volume()>100000)throw new IllegalArgumentException("Projection model volume exceeds the bounded scan size");
+  var world=LitematicaAccess.schematicWorld();if(world==null)throw new IllegalStateException("Projection model is unavailable");
+  var rows=new JsonArray();var hashLines=new ArrayList<String>();
+  for(var p:BlockPos.betweenClosed(pick.min(),pick.max())){
+   if(!pick.contains(p)||!LitematicaAccess.inVisibleLayer(p))continue;
+   if(!c.level.hasChunkAt(p))throw new IllegalStateException("Projection chunk is not loaded");
+   var expected=world.getBlockState(p);if(expected.isAir()||expected.is(Blocks.STRUCTURE_VOID))continue;
+   String state=expected.toString(),item=BuiltInRegistries.ITEM.getKey(expected.getBlock().asItem()).toString();
+   var row=new JsonObject();row.add("pos",new Gson().toJsonTree(new int[]{p.getX(),p.getY(),p.getZ()}));row.addProperty("state",state);row.addProperty("item",item);rows.add(row);
+   hashLines.add(p.getX()+","+p.getY()+","+p.getZ()+"\t"+state+"\t"+item);
+  }
+  var bounds=new JsonObject();bounds.add("min",new Gson().toJsonTree(new int[]{pick.min().getX(),pick.min().getY(),pick.min().getZ()}));bounds.add("max",new Gson().toJsonTree(new int[]{pick.max().getX(),pick.max().getY(),pick.max().getZ()}));
+  var out=new JsonObject();out.addProperty("model_schema",1);out.addProperty("placement_key",pick.key());out.add("bounds",bounds);out.addProperty("observed_at",System.currentTimeMillis());out.addProperty("loaded_chunks_verified",true);out.addProperty("total",rows.size());out.add("expected",rows);out.addProperty("content_hash",contentHash(hashLines));return out;
+ }
+ static String contentHash(Collection<String> rows){
+  try{var digest=java.security.MessageDigest.getInstance("SHA-256");for(String row:rows.stream().sorted().toList())digest.update((row+"\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));return java.util.HexFormat.of().formatHex(digest.digest());}
+  catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+ }
  private static JsonObject row(Minecraft c,BlockPos p,String expected,String kind){
   var r=new JsonObject();r.add("pos",new Gson().toJsonTree(new int[]{p.getX(),p.getY(),p.getZ()}));r.addProperty("expected",expected);r.addProperty("actual",c.level.getBlockState(p).toString());r.addProperty("kind",kind);
   r.addProperty("block_entity",c.level.getBlockEntity(p)!=null);r.addProperty("fluid",!c.level.getFluidState(p).isEmpty());

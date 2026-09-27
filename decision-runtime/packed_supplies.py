@@ -10,6 +10,31 @@ from inventory_exact import take_exact
 from projection_wood import use_with_margin
 from drop_collection import collect_drop
 from material_cleanup import register as register_cleanup,complete as cleanup_complete
+from container_access import wait_container_contents
+
+# Before pickup: the intact box, an output/splitting slot, and recovery room.
+# Placing the box releases its slot; callers may then reserve the other two.
+REQUIRED_FREE_SLOTS=3
+
+def workspace_requirement(state):
+    """Read-only admission check shared by planning and the actual box action."""
+    rows=[v for v in state.get('inventory',[]) if 0<=v.get('slot',-1)<36]
+    if (len(rows)!=36 or len({v['slot'] for v in rows})!=36
+            or any(type(v.get('count')) is not int or v['count']<0 for v in rows)):
+        return {'phase':'waiting','code':'packed_inventory_unknown','required_free_slots':REQUIRED_FREE_SLOTS,
+                'free_slots':None,'missing_free_slots':None,'detail':'背包空槽尚未完整确认，未取出潜影盒'}
+    free=sum(not v['count'] for v in rows)
+    if free<REQUIRED_FREE_SLOTS:
+        return {'phase':'waiting','code':'packed_workspace_required','required_free_slots':REQUIRED_FREE_SLOTS,
+                'free_slots':free,'missing_free_slots':REQUIRED_FREE_SLOTS-free,
+                'detail':f'潜影盒取料需要 {REQUIRED_FREE_SLOTS} 个空槽，当前 {free} 个；先腾出 {REQUIRED_FREE_SLOTS-free} 格，尚未取出潜影盒'}
+    return None
+
+class PackedWorkspaceRequired(RuntimeError):
+    """Pre-mutation refusal only; uncertain portable-box operations never use it."""
+    def __init__(self,receipt):
+        self.receipt=receipt
+        super().__init__(receipt['detail'])
 
 VALUABLE={'minecraft:diamond','minecraft:diamond_block','minecraft:emerald','minecraft:emerald_block',
           'minecraft:bone_block',
@@ -19,15 +44,21 @@ def contents(rows):
     for row in rows:
         if row.get('count') and row['item']!='minecraft:air':result[row['item']]+=row['count']
     return dict(result)
-def matching_source(rows,material,required_stored_enchantments=None,minimum_durability=None):
+def matching_source(rows,material,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None):
     required=(required_stored_enchantments or {}).get(material,{})
+    ordinary=(required_enchantments or {}).get(material,{})
     minimum=(minimum_durability or {}).get(material,0)
     for row in rows:
         if row['item']!=material or not row['count']:continue
         if row.get('durability',0)<minimum:continue
         actual={v['id']:v['level'] for v in row.get('stored_enchantments',[])}
-        if all(actual.get(name,0)>=level for name,level in required.items()):return row
+        equipped={v['id']:v['level'] for v in row.get('enchantments',[])}
+        if (all(actual.get(name,0)>=level for name,level in required.items())
+                and all(equipped.get(name,0)>=level for name,level in ordinary.items())):return row
     return None
+def matching_count(rows,material,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None):
+    return sum(row['count'] for row in rows if matching_source([row],material,
+               required_stored_enchantments,minimum_durability,required_enchantments) is not None)
 def choose_box(slots,targets,carried):
     candidates=[]
     for row in slots:
@@ -71,7 +102,7 @@ def open_box(client,pos,kind):
     if not allowed:raise RuntimeError('Expected portable-stock container changed')
     client.checked('select_item',item='minecraft:diamond_sword')
     use_with_margin(client,pos,state,'minecraft:diamond_sword',('up','north','south','west','east','down'))
-    s=wait(client,lambda s:s['menu']['type']==kind and not s['menu']['cursor']['count'])
+    s=wait_container_contents(client,kind)
     client.owned_material_menu=s['menu']['id'];return s
 
 def owned_drop(entities,item,pad,before_ids,known_uuid=None):
@@ -117,13 +148,21 @@ def recover_and_return(client,record,ender,journal):
     with (client.out/'packed-transfers.jsonl').open('a') as stream:stream.write(json.dumps(record,ensure_ascii=False)+'\n')
     print('PACKED_RETURNED',slot,record.get('taken',{}),flush=True)
 
-def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,minimum_durability=None):
+def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None):
     journal=client.out/'packed-transfer-active.json'
     if journal.exists() and json.loads(journal.read_text()).get('stage')!='returned':
         raise RuntimeError('An earlier portable box needs inspected recovery before another withdrawal')
     state=client.status()
+    for material,target in targets.items():
+        filtered=((required_stored_enchantments or {}).get(material)
+                  or (required_enchantments or {}).get(material) or (minimum_durability or {}).get(material))
+        if (filtered and target<=inventory_counts(state)[material]
+                and matching_source(state['inventory'],material,required_stored_enchantments,
+                                    minimum_durability,required_enchantments) is None):
+            raise RuntimeError('Existing item count has no matching equipment; request current total plus the additional items')
     if any(v.get('count') and v['item'].endswith('shulker_box') for v in state['inventory']):raise RuntimeError('Keep existing carried shulker boxes outside this operation')
-    if sum(v['slot']<36 and not v['count'] for v in state['inventory'])<3:raise RuntimeError('Three free slots are needed for safe portable-stock handling')
+    space=workspace_requirement(state)
+    if space:raise PackedWorkspaceRequired(space)
     ground=[pad[0],pad[1]-1,pad[2]];ground_state=block(client,ground)
     if block(client,pad) or block(client,[pad[0],pad[1]+1,pad[2]]) or not ground_state or 'minecraft:grass_block' not in ground_state:
         raise RuntimeError('Temporary shulker pad is no longer empty grass')
@@ -131,7 +170,9 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
     if source['count']!=1 or not item.endswith('shulker_box') or not initial:raise RuntimeError('Observed source box changed')
     wanted={i:n for i,n in targets.items() if n>inventory_counts(s)[i] and initial.get(i,0)>0}
     if not wanted:client.checked('close_menu');return None
-    record={'slot':slot,'item':item,'initial_counts':initial,'requested':wanted,'temporary_position':pad,'stage':'prepared'}
+    record={'slot':slot,'item':item,'initial_counts':initial,'requested':wanted,'temporary_position':pad,'stage':'prepared',
+            'required_stored_enchantments':required_stored_enchantments or {},
+            'required_enchantments':required_enchantments or {},'minimum_durability':minimum_durability or {}}
     def save(stage):record['stage']=stage;journal.write_text(json.dumps(record,ensure_ascii=False,indent=2))
     save('prepared')
     client.checked('slot_click',menu_id=s['menu']['id'],slot=slot,expected_item=item,expected_count=1,kind='quick_move')
@@ -151,29 +192,34 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
             live=client.status();need=target-inventory_counts(live)[material]
             if need<=0:break
             src=matching_source(live['menu']['slots'][:27],material,
-                                required_stored_enchantments,minimum_durability)
-            if src is None:break
+                                required_stored_enchantments,minimum_durability,required_enchantments)
+            if src is None:
+                if ((required_stored_enchantments or {}).get(material) or (required_enchantments or {}).get(material)
+                        or (minimum_durability or {}).get(material)):
+                    record.setdefault('deferred',{})[material]='No observed item satisfies the requested enchantments and durability'
+                break
             free=sum(v['slot']<36 and not v['count'] for v in live['inventory'])
             if free<=1:record.setdefault('deferred',{})[material]='Reserve a free slot for the intact box';break
             if (material in VALUABLE or (required_stored_enchantments or {}).get(material)
-                    or (minimum_durability or {}).get(material)):
+                    or (required_enchantments or {}).get(material) or (minimum_durability or {}).get(material)):
                 if src.get('max_stack',64)==1 and src['count']==1 and need==1:
                     # A uniquely identified unstackable item is already an
                     # exact one-item transfer; inventory_exact intentionally
                     # handles ordinary stackable ingredients only.
+                    carried_before=inventory_counts(live)[material]
+                    qualified_before=matching_count(live['inventory'],material,required_stored_enchantments,
+                                                    minimum_durability,required_enchantments)
                     client.checked('slot_click',menu_id=live['menu']['id'],slot=src['slot'],
                                    expected_item=material,expected_count=1,kind='quick_move')
-                    selected=(required_stored_enchantments or {}).get(material,{})
-                    if selected and not any(v['item']==material and v['count']==1 and
-                                            all({e['id']:e['level'] for e in v.get('stored_enchantments',[])}.get(k,0)>=n
-                                                for k,n in selected.items())
-                                            for v in client.status()['inventory']):
-                        raise RuntimeError('Selected unstackable enchantment was not confirmed in inventory')
-                    minimum=(minimum_durability or {}).get(material,0)
-                    if minimum and not any(v['item']==material and v['count']==1 and
-                                           v.get('durability',0)>=minimum
-                                           for v in client.status()['inventory']):
-                        raise RuntimeError('Selected durable unstackable item was not confirmed in inventory')
+                    def received(state):
+                        menu=state['menu']
+                        if menu['id']!=live['menu']['id'] or menu['type']!='ShulkerBoxMenu':
+                            raise RuntimeError('Portable equipment container changed; do not repeat withdrawal')
+                        return (not menu['cursor']['count'] and not menu['slots'][src['slot']]['count']
+                                and inventory_counts(state)[material]==carried_before+1
+                                and matching_count(state['inventory'],material,required_stored_enchantments,
+                                                   minimum_durability,required_enchantments)==qualified_before+1)
+                    wait(client,received)
                 else:
                     take_exact(client,src['slot'],min(need,src['count'],16),reserve_empty=1)
             else:client.transfer(material,target)

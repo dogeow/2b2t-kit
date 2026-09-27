@@ -18,6 +18,7 @@ public final class ProfessionalPrinter {
         var c=Minecraft.getInstance();
         if(!owned||paused||pendingAnchor==null||!hit.getBlockPos().equals(pendingAnchor)||hit.getDirection()!=pendingFace)return false;
         if(c.isWindowActive()&&dev.twob2tkit.KitKeys.isPhysicallyDown(c,c.options.keyUse))return false;
+        if(!AutomationBridge.projectionBatchCurrent(c)||!AutomationBridge.projectionBatchAllows(c,pendingTarget)||!AutomationBridge.projectionBatchFeetAllowed(player.getY())){fail(c,"施工批次已改变，已阻止排队放置");return true;}
         if(expectedHand!=null&&expectedHand!=net.minecraft.world.item.Items.AIR&&!player.getItemInHand(hand).is(expectedHand)){
             lastHandMismatch="expected="+expectedHand+" actual="+player.getItemInHand(hand).getItem();recheck=true;paused=true;return true; // An exhausted/swapped stack must never become an empty-hand container click.
         }
@@ -71,9 +72,18 @@ public final class ProfessionalPrinter {
             }
         }catch(ReflectiveOperationException e){fail(c,"无法核对打印器工具准备");}
     }
-    public static void observeCandidate(Object source){
+    public static boolean observeCandidate(Object source){
         try{candidateTarget=((net.minecraft.core.BlockPos)source.getClass().getField("blockPos").get(source)).immutable();candidateState=(net.minecraft.world.level.block.state.BlockState)source.getClass().getField("targetState").get(source);}
-        catch(ReflectiveOperationException e){fail(Minecraft.getInstance(),"无法读取打印器的原始目标");}
+        catch(ReflectiveOperationException|RuntimeException e){fail(Minecraft.getInstance(),"无法读取打印器的原始目标");return false;}
+        return AutomationBridge.projectionBatchAllows(Minecraft.getInstance(),candidateTarget);
+    }
+    public static Object emptyCandidateGuides(){
+        try{return java.lang.reflect.Array.newInstance(Class.forName("me.aleksilassila.litematica.printer.guides.Guide"),0);}
+        catch(ReflectiveOperationException e){fail(Minecraft.getInstance(),"打印器候选过滤接口不可用");throw new IllegalStateException("Unsupported native printer candidate array",e);}
+    }
+    public static boolean batchGateAvailable(){
+        try{return PrinterGateInstalled.class.isAssignableFrom(Class.forName("me.aleksilassila.litematica.printer.Printer"))&&PrinterCandidateGateInstalled.class.isAssignableFrom(Class.forName("me.aleksilassila.litematica.printer.guides.Guides"));}
+        catch(ReflectiveOperationException e){return false;}
     }
     private static net.minecraft.core.Direction pendingFace;
     private static net.minecraft.world.level.block.state.BlockState pendingState,pendingFinalState;
@@ -91,6 +101,8 @@ public final class ProfessionalPrinter {
         if(AutomationBridge.ownsMaterialInventory()&&!owned)return false;
         if(!owned)return true;
         var c=Minecraft.getInstance();
+        if(!AutomationBridge.projectionBatchCurrent(c)){fail(c,"施工批次已过期，已停止放置");return false;}
+        if(c.player==null||!AutomationBridge.projectionBatchFeetAllowed(c.player.getY()))return false;
         candidateTarget=null;candidateState=null;
         try{return pacing.acquire(elapsedTicks,paused||c.screen!=null||AutomationBridge.guardBusy()||!failure.isEmpty(),(boolean)handler(printer).getClass().getMethod("acceptsActions").invoke(handler(printer)));}
         catch(ReflectiveOperationException e){fail(c,"无法检查打印队列，已停止放置");return false;}
@@ -99,6 +111,7 @@ public final class ProfessionalPrinter {
         if(!owned)return;
         var c=Minecraft.getInstance();
         try{
+            if(c.player==null||!AutomationBridge.projectionBatchFeetAllowed(c.player.getY()))throw new IllegalStateException("Printer actor is below this batch minimum feet height");
             if(queue(printer).isEmpty()){pacing.cancelUnsent(elapsedTicks);return;}
             Object h=handler(printer),prepare=h.getClass().getField("lookAction").get(h);
             pendingTarget=pendingAnchor=null;pendingState=null;pendingFace=null;placementSneak=false;expectedHand=null;
@@ -110,7 +123,7 @@ public final class ProfessionalPrinter {
                     var target=candidateTarget;var world=dev.twob2tkit.builder.LitematicaAccess.schematicWorld();
                     if(world!=null&&target!=null&&candidateState!=null){
                         var selection=dev.twob2tkit.builder.LitematicaAccess.buildSelection();
-                        if(!selection.contains(target)||!dev.twob2tkit.builder.LitematicaAccess.inVisibleLayer(target))throw new IllegalStateException("Printer proposed a target outside the selected projection");
+                        if(!selection.contains(target)||!dev.twob2tkit.builder.LitematicaAccess.inVisibleLayer(target)||!AutomationBridge.projectionBatchAllows(c,target))throw new IllegalStateException("Printer proposed a target outside the selected projection");
                         pendingFinalState=candidateState;
                         var state=candidateState;
                         boolean placement=context.getItemInHand().getItem() instanceof net.minecraft.world.item.BlockItem && context.getClickedPos().equals(target);

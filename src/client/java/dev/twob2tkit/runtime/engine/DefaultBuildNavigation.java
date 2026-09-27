@@ -17,7 +17,10 @@ public final class DefaultBuildNavigation implements BuildNavigation {
         }return cells;
     }
     public Motion motion(Vec3 delta){
-        double horizontal=Math.hypot(delta.x,delta.z);boolean vertical=Math.abs(delta.y)>.005001;
+        // Feet waypoints sit 0.02 above the grid; accept the real collision floor
+        // and tiny Flight rounding instead of blocking horizontal movement on a micro-step.
+        // The host still collision-checks every proposed movement.
+        double horizontal=Math.hypot(delta.x,delta.z);boolean vertical=Math.abs(delta.y)>.025001;
         boolean arrived=horizontal<.005001&&!vertical;
         // Move briskly between path cells, then taper before the exact station.
         // The collision probe below remains ahead of the actual movement.
@@ -28,7 +31,7 @@ public final class DefaultBuildNavigation implements BuildNavigation {
     public static final class GoalSearch implements BuildNavigation.Search {
         private record Node(BlockPos pos,int g,int h){}
         private final BuildNavigation.World world;
-        private final Set<BlockPos> goals=new HashSet<>();
+        private final BlockPos start;
         private final Map<BlockPos,BlockPos> parent=new HashMap<>();
         private final Map<BlockPos,Integer> costs=new HashMap<>();
         private final PriorityQueue<Node> open=new PriorityQueue<>(Comparator.<Node>comparingInt(n->n.g+n.h)
@@ -36,12 +39,21 @@ public final class DefaultBuildNavigation implements BuildNavigation {
         private int expanded;
         private BuildNavigation.Result result;
         public GoalSearch(BuildNavigation.World world,BlockPos start,Collection<BlockPos> goals){
-            this.world=world;goals.forEach(p->this.goals.add(p.immutable()));start=start.immutable();
-            if(this.goals.isEmpty()||!world.clear(start)){result=new BuildNavigation.Result(List.of(),0);return;}
-            open.add(new Node(start,0,heuristic(start)));costs.put(start,0);parent.put(start,null);
+            this.world=world;this.start=start.immutable();
+            var destinations=new HashSet<BlockPos>();goals.forEach(p->destinations.add(p.immutable()));
+            if(destinations.isEmpty()||!world.clear(this.start)){result=new BuildNavigation.Result(List.of(),0);return;}
+            // Search backwards from verified stations. A sealed nearby station
+            // then exhausts its own small component instead of pulling a search
+            // through the player's entire surrounding volume of open sky.
+            if(destinations.contains(this.start)){destinations.clear();destinations.add(this.start);}
+            for(var goal:destinations){
+                if(!world.clear(goal))continue;
+                open.add(new Node(goal,0,heuristic(goal)));costs.put(goal,0);parent.put(goal,null);
+            }
+            if(open.isEmpty())result=new BuildNavigation.Result(List.of(),0);
         }
         private int heuristic(BlockPos p){
-            int best=Integer.MAX_VALUE;for(var q:goals)best=Math.min(best,p.distManhattan(q));return best;
+            return p.distManhattan(start);
         }
         public int expanded(){return expanded;}
         /** Limits both expanded nodes and elapsed slice time; frontier survives between ticks. */
@@ -53,13 +65,15 @@ public final class DefaultBuildNavigation implements BuildNavigation {
                 var node=open.remove();var p=node.pos;
                 if(node.g!=costs.getOrDefault(p,Integer.MAX_VALUE))continue;
                 expanded++;
-                if(goals.contains(p)){
-                    var path=new LinkedList<BlockPos>();for(var q=p;q!=null;q=parent.get(q))path.addFirst(q);
+                if(p.equals(start)){
+                    var path=new ArrayList<BlockPos>();for(var q=p;q!=null;q=parent.get(q))path.add(q);
                     return result=new BuildNavigation.Result(List.copyOf(path),expanded);
                 }
                 for(var direction:Direction.values()){
                     var q=p.relative(direction);int cost=node.g+1;
-                    if(cost>=costs.getOrDefault(q,Integer.MAX_VALUE)||!world.clear(q)||!world.edge(p,q))continue;
+                    // q is a predecessor in the real start-to-goal route. The
+                    // world API may have directional edges, so do not invert it.
+                    if(cost>=costs.getOrDefault(q,Integer.MAX_VALUE)||!world.clear(q)||!world.edge(q,p))continue;
                     costs.put(q,cost);parent.put(q,p);open.add(new Node(q,cost,heuristic(q)));
                 }
             }

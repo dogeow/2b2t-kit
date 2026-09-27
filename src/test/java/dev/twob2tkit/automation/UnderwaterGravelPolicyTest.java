@@ -21,4 +21,12 @@ class UnderwaterGravelPolicyTest {
 		assertFalse(UnderwaterGravelPolicy.continueMining(false,20,300,true));
 		assertTrue(UnderwaterGravelPolicy.continueMining(true,20,0,true));
 	}
+
+	@Test void scopedMaterialBudgetControlsOnlyTheExplicitUnderwaterCall() {
+		assertNotNull(UnderwaterGravelPolicy.startRejection(true,true,false,true,20,69,false,true,500,70));
+		assertNull(UnderwaterGravelPolicy.startRejection(true,true,false,true,20,70,false,true,500,70));
+		assertTrue(UnderwaterGravelPolicy.continueMining(true,20,50,false,50));
+		assertFalse(UnderwaterGravelPolicy.continueMining(true,20,49,false,50));
+		assertNotNull(UnderwaterGravelPolicy.startRejection(true,true,false,true,20,70,false,true,500));
+	}
 }

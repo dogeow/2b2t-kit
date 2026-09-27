@@ -19,6 +19,7 @@ def observed_delta(before,after):
 def write_manifest(out,task,snapshot):
     source=Path(__file__).parent
     files=('material_client.py','material_manufacture.py','craft_grid.py','craft_recipe.py','craft_recovery.py',
+           'stack_recipe.py','kit_runtime/inventory.py','kit_runtime/storage.py','kit_runtime/journal.py','kit_runtime/diagnostics.py','live_snapshot.py','material_shutdown.py','job_progress.py','furnace_batches.py','furnace_bank.py','smelting_workflow.py','material_depots.py','decision_advisor.py','shore_concrete.py','concrete_shelter.py','concrete_soil.py',
            'goal_workflow.py','projection_terrain.py','projection_access.py','ground_pickup.py','work_access.py','drop_collection.py')
     data={'schema':1,'task_session':task,'created_at':int(time.time()*1000),
           'kit_version':snapshot.get('kit_version'),'game_mode':snapshot.get('game_mode'),'difficulty':snapshot.get('difficulty'),

@@ -56,10 +56,23 @@ def station_target(label):
     except (AttributeError,TypeError,ValueError):
         return None
 
-def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None,max_station_repositions=0):
+def protected_background(client,state):
+    lease=state.get('supervision_lease') or {}
+    heartbeat=getattr(client,'heartbeat',None)
+    return bool(state.get('material_protocol',0)>=2 and state.get('guard_armed')
+                and heartbeat and getattr(heartbeat,'attached',False)
+                and lease.get('kind')=='materials' and lease.get('job_session')==getattr(client,'task',None)
+                and lease.get('id')==getattr(heartbeat,'id',None)
+                and lease.get('world_session')==state.get('world_session')
+                and not state.get('manual_movement'))
+
+
+def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None,max_station_repositions=0,background=False):
     s=client.status()
     if s['projection_selection'].get('key')!=selection_key:raise Handoff('Selected projection changed')
-    if not s.get('window_active'):
+    if background and not protected_background(client,s):
+        raise RuntimeError('Background construction requires the current protected material lease')
+    if not s.get('window_active') and not background:
         raise RuntimeError('Minecraft must be the foreground window for construction movement')
     if s['screen']:client.checked('close_menu')
     client.checked('projection_start',manual_start=True,placement_key=selection_key)
@@ -71,11 +84,14 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             with (client.out/'build-station-events.jsonl').open('a') as stream:stream.write(json.dumps({'time':s['time'],'pos':s['pos'],'velocity':s.get('velocity'),'movement_keys':s.get('movement_keys'),'window_active':s.get('window_active'),'flight':s.get('flight'),'health':s['health'],'guard_busy':s.get('guard_busy'),'build':b,'printer':s.get('professional_printer')},ensure_ascii=False)+'\n')
         if b.get('placement_key')!=selection_key or s.get('projection_selection',{}).get('key')!=selection_key:raise Handoff('Projection changed during build')
         if b.get('outcome')=='manual_stop':raise Handoff('Player stopped construction')
-        if not s.get('window_active'):
+        if (background and not protected_background(client,s)) or (not background and not s.get('window_active')):
             if b.get('active'):client.checked('build_control',job_session=b['session'],action='pause_and_report')
             raise RuntimeError('Minecraft left foreground during construction')
         if b.get('matched',0)>best:best=b['matched'];last_gain=time.monotonic()
-        if best-last_report>=10:print('BUILD',best,b.get('total'),b.get('phase'),flush=True);last_report=best
+        if best-last_report>=10:
+            print('BUILD',best,b.get('total'),b.get('phase'),flush=True);last_report=best
+            progress=getattr(client,'set_progress',None)
+            if callable(progress):progress(done=best,phase='自动放置')
         if not b['active']:break
         if complete_cells and not s.get('guard_busy') and b.get('queue_settled') and not s.get('professional_printer',{}).get('waiting_for_server') and time.monotonic()-last_subset_check>=3:
             last_subset_check=time.monotonic()

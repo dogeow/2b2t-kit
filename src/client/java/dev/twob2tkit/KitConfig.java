@@ -56,6 +56,11 @@ public final class KitConfig {
 	public String workspaceCategory = "HOME";
 	public java.util.List<String> recentUiFeatures = new java.util.ArrayList<>();
 	public java.util.Set<String> favoriteUiFeatures = new java.util.LinkedHashSet<>();
+	/** Deterministic material worker. Empty paths use the installed per-profile worker and local runtime. */
+	public String materialJobsWorker = "";
+	public String materialJobsPython = "";
+	public String materialJobItem = "minecraft:white_concrete";
+	public int materialJobCount = 64;
 	/** 巡航目标 X。 */
 	public double targetX;
 	/** 巡航目标 Z。 */
@@ -188,6 +193,14 @@ public final class KitConfig {
 	public String borerLastMode = "FORWARD";
 	public String borerHeading = "LOOK";
 	public String borerOreTarget = "DIAMOND";
+	/** Dedicated gravel entry; does not modify the ORE mode's multi-ore selection. */
+	public boolean gravelWaterMode = true;
+	/** Horizontal search radius around the player, in blocks. */
+	public int gravelRadius = 48;
+	/** Confirmed gravel items to collect; 0 means stop when the backpack is full. */
+	public int gravelLimit = 64;
+	/** Maximum depth below the nearby water surface, in blocks. */
+	public int gravelDepth = 28;
 	public boolean borerCoalXpMode;
 	public boolean borerQuartzXpMode;
 	public boolean borerHomeOnDone = true;
@@ -323,6 +336,7 @@ public final class KitConfig {
 				if (snapshot.blockId == null) snapshot.blockId = "";
 				if (snapshot.colorId == null) snapshot.colorId = "";
 				if (snapshot.note == null) snapshot.note = "";
+                dev.twob2tkit.storage.StorageLifecycle.normalize(snapshot);
 			}
 			if (config.machineSiteId == null) config.machineSiteId = "";
 			if (config.machineSiteForward == null) config.machineSiteForward = "SOUTH";
@@ -367,6 +381,7 @@ public final class KitConfig {
 			if (config.borerHeading == null || config.borerHeading.isBlank()) config.borerHeading = "LOOK";
 			if (config.borerOreTarget == null || config.borerOreTarget.isBlank()) config.borerOreTarget = "DIAMOND";
 			else config.borerOreTarget = TunnelBorer.OreTarget.normalize(config.borerOreTarget);
+			config.normalizeGravelSettings();
 			if (config.borerSessionVersion < 1) {
 				config.borerHomeOnDone = true;
 				config.borerSessionVersion = 1;
@@ -525,9 +540,17 @@ public final class KitConfig {
 		}
 	}
 
+	/** Clamp persisted gravel controls without touching the existing multi-ore choice. */
+	public void normalizeGravelSettings() {
+		if (gravelRadius < 4 || gravelRadius > 64) gravelRadius = 48;
+		if (gravelLimit < 0 || gravelLimit > 2304) gravelLimit = 64;
+		if (gravelDepth < 6 || gravelDepth > 32) gravelDepth = 28;
+	}
+
 	/** 写回 twob2tkit.json。 */
 	public void save() {
 		try {
+			normalizeGravelSettings();
 			Files.createDirectories(PATH.getParent());
 			try (Writer writer = Files.newBufferedWriter(PATH)) {
 				GSON.toJson(this, writer);
@@ -869,38 +892,36 @@ public final class KitConfig {
 
 	/** 写入仓库快照，最多保留 50 条。 */
 	public void upsertStorageSnapshot(StorageSnapshot snapshot) {
-		storageSnapshots.removeIf(existing -> existing.key().equals(snapshot.key()));
+        dev.twob2tkit.storage.StorageLifecycle.normalize(snapshot);
+        StorageSnapshot previous=storageSnapshots.stream().filter(existing->existing.scopedKey().equals(snapshot.scopedKey())).findFirst().orElse(null);
+        // A fresh open binds an unknown legacy coordinate; its old contents remain explicitly unscoped history.
+        if(previous==null&&!snapshot.server.isBlank())previous=storageSnapshots.stream()
+            .filter(existing->safe(existing.server).isBlank()&&existing.key().equals(snapshot.key())).findFirst().orElse(null);
+        if(previous!=null){dev.twob2tkit.storage.StorageLifecycle.inherit(previous,snapshot);storageSnapshots.remove(previous);}
 		storageSnapshots.add(0, snapshot);
 		while (storageSnapshots.size() > 50) storageSnapshots.remove(storageSnapshots.size() - 1);
 		save();
 	}
 
-	/** 当前维度已加载的区块里，箱子/潜影盒没了就把记录删掉。 */
-	public int pruneMissingStorage(Level level, String dimension) {
-		if (level == null || dimension == null || dimension.isBlank()) return 0;
-		String currentDimension = normalizeDimension(dimension);
-		int before = storageSnapshots.size();
-		storageSnapshots.removeIf(snapshot -> {
-			if (!currentDimension.equals(normalizeDimension(snapshot.dimension))) return false;
-			BlockPos pos = new BlockPos(snapshot.x, snapshot.y, snapshot.z);
-			return StorageLabels.shouldPruneMissingRecord(level, pos);
-		});
-		int removed = before - storageSnapshots.size();
-		if (removed > 0) save();
-		return removed;
-	}
+    /** Legacy UI hook: revalidate loaded records without deleting notes or recorded contents. */
+    public int pruneMissingStorage(Level level,String dimension){
+        var client=net.minecraft.client.Minecraft.getInstance();
+        if(client!=null&&client.level==level)dev.twob2tkit.storage.StorageLifecycle.refresh(client,this);
+        return 0; // Historical callers display a deletion count; no record was deleted.
+    }
 
 	/** 更新已有快照的备注/颜色/标题。 */
 	public void patchStorageLabels(StorageSnapshot snapshot) {
 		if (snapshot == null) return;
 		for (StorageSnapshot existing : storageSnapshots) {
-			if (!existing.key().equals(snapshot.key())) continue;
-			boolean changed = !safe(existing.note).equals(safe(snapshot.note))
+			if (!existing.scopedKey().equals(snapshot.scopedKey())) continue;
+            String note=safe(existing.note).isBlank()?safe(snapshot.note):existing.note;
+			boolean changed = !safe(existing.note).equals(note)
 				|| !safe(existing.colorId).equals(safe(snapshot.colorId))
 				|| !safe(existing.blockId).equals(safe(snapshot.blockId))
 				|| !safe(existing.title).equals(safe(snapshot.title));
 			if (!changed) return;
-			existing.note = safe(snapshot.note);
+			existing.note = note;
 			existing.colorId = safe(snapshot.colorId);
 			existing.blockId = safe(snapshot.blockId);
 			if (!safe(snapshot.title).isEmpty()) existing.title = snapshot.title;
@@ -1075,6 +1096,10 @@ public final class KitConfig {
 
 	/** 开过的容器快照。 */
 	public static final class StorageSnapshot {
+        public String server="", worldId="", status="unknown_scope", invalidReason="";
+        public long lastVerifiedAt;
+        public List<int[]> containerPositions=new ArrayList<>();
+        public List<StorageHistory> history=new ArrayList<>();
 		public String dimension = "";
 		public int x;
 		public int y;
@@ -1086,11 +1111,20 @@ public final class KitConfig {
 		public long lastSeenEpochMillis;
 		public List<StoredItem> items = new ArrayList<>();
 
+        /** UI/persistence identity; source_key stays dimension+XYZ for the guarded supply protocol. */
+        public String scopedKey(){return dev.twob2tkit.storage.StorageLifecycle.serverKey(server)+"|"+(worldId==null?"":worldId)+"|"+key();}
 		/** 维度+坐标唯一键。 */
 		public String key() {
 			return dimension + ":" + x + ":" + y + ":" + z;
 		}
 	}
+
+    /** Bounded historical evidence, including legacy unknown provenance; never current inventory. */
+    public static final class StorageHistory {
+        public String server="",worldId="",status="",reason="",note="",blockId="";
+        public long observedAt;
+        public List<StoredItem> items=new ArrayList<>();
+    }
 
 	/** 快照里的物品条目。 */
 	public static final class StoredItem {

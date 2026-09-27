@@ -1,4 +1,5 @@
 package dev.twob2tkit.builder;
+import dev.twob2tkit.automation.AutomationBridge;
 
 import com.google.gson.JsonObject;
 import dev.twob2tkit.runtime.api.BuildNavigation;
@@ -156,6 +157,7 @@ public final class ProjectionBuildJob {
     public void tick(Minecraft c){
         if(!active)return;
         try{
+            if(!AutomationBridge.validateProjectionBatch(c))return;
             if(ProfessionalPrinter.consumeRecheck()){discardSearch();ProfessionalPrinter.stop(c,false);recount(c);path=List.of();station=null;look=null;return;}
             if(!ProfessionalPrinter.failure().isEmpty()){finishJob(c,ProfessionalPrinter.failure(),"printer_error");return;}
             if(c.player==null||c.level!=level||c.player.isDeadOrDying()){finishJob(c,"离开原世界","world_changed");return;}
@@ -167,6 +169,7 @@ public final class ProjectionBuildJob {
             if(rescan!=null){for(int n=0;n<2048&&rescan.hasNext();n++){BlockPos p=rescan.next();if(!c.level.hasChunkAt(p))throw new IllegalStateException("Rescan chunk not loaded");actual.put(p,c.level.getBlockState(p));}if(!rescan.hasNext()){rescan=null;recount(c);}return;}
             if(tick-scanSince>=20){recount(c);scanSince=tick;}
             if(matched==total){finishJob(c,"当前投影范围全部匹配","complete");return;}
+            if(!AutomationBridge.projectionBatchFeetAllowed(c.player.getY())){finishJob(c,"请先移动到本批最低施工高度以上","needs_reposition");return;}
             if(defensePaused){defensePaused=false;ProfessionalPrinter.stop(c,false);path=List.of();station=null;look=null;}
             if(autoMove){String e=flight.acquire(c.player);if(e!=null){finishJob(c,e,"dependency_error");return;}}
             if(pathSearch!=null){advanceSearch(c);return;}
@@ -229,7 +232,7 @@ public final class ProjectionBuildJob {
     private List<BlockPos> available(Minecraft c){
         var inv=inventory(c);var result=new ArrayList<BlockPos>();
         for(var e:expected.entrySet()){
-            var p=e.getKey();if(e.getValue().equals(actual.get(p))||inv.getOrDefault(e.getValue().getBlock().asItem(),0)==0)continue;
+            var p=e.getKey();if(!AutomationBridge.projectionBatchAllows(c,p)||e.getValue().equals(actual.get(p))||inv.getOrDefault(e.getValue().getBlock().asItem(),0)==0)continue;
             if(!LitematicaAccess.inVisibleLayer(p)||!c.level.getBlockState(p).canBeReplaced())continue;
             boolean support=false;for(Direction d:Direction.values()){var s=c.level.getBlockState(p.relative(d));if(!s.isAir()&&!s.canBeReplaced()&&s.getFluidState().isEmpty()){support=true;break;}}
             if(support)result.add(p);
@@ -247,6 +250,7 @@ public final class ProjectionBuildJob {
     private static Vec3 feet(BlockPos p){return new Vec3(p.getX()+.5,p.getY()+.02,p.getZ()+.5);}
     private static AABB body(Vec3 p){return new AABB(p.x-.31,p.y+.01,p.z-.31,p.x+.31,p.y+1.82,p.z+.31);}
     private boolean clear(Minecraft c,BlockPos p){
+        if(!AutomationBridge.projectionBatchStationAllowed(p.getY()))return false;
         if(p.getX()<selection.min().getX()-5||p.getX()>selection.max().getX()+5||p.getZ()<selection.min().getZ()-5||p.getZ()>selection.max().getZ()+5||p.getY()<selection.min().getY()-2||p.getY()>selection.max().getY()+5)return false;
         if(!c.level.hasChunkAt(p)||!c.level.noCollision(c.player,body(feet(p))))return false;
         for(int y=0;y<2;y++){var s=c.level.getBlockState(p.above(y));if(!s.getFluidState().isEmpty()||s.is(Blocks.FIRE)||s.is(Blocks.LAVA)||s.is(Blocks.COBWEB)||s.is(Blocks.POWDER_SNOW))return false;}

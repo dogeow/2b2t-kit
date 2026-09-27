@@ -344,6 +344,47 @@ final class BorerAreaPlanTest {
 		sim.finish();
 	}
 	@Test
+	void occludedFloorDoesNotMakeNaturalDescentFightAnUnreachableHoverHeight() {
+		BlockPos min=new BlockPos(760976,49,797914),max=new BlockPos(760977,66,797915);
+		Simulation sim=new Simulation(min,max,true,new Pose(760977.431,68.959,797914.562,0,0,0));
+		sim.until(()->sim.plan.phase()==Phase.DIG);
+		sim.world.visible=false;sim.naturalDig=true;
+		for(int tick=0;tick<40;tick++){
+			Command command=sim.tick();
+			assertNotEquals(Action.UP,command.action(),"A blocked ray must not lift the actor back above the floor");
+			assertTrue(sim.pose.y()>=67&&sim.pose.y()<67.36);
+			assertEquals(66,sim.plan.cursorY());assertEquals(0,sim.plan.completed());
+		}
+		assertTrue(sim.world.broken.isEmpty(),"An occluded ray is never authorization to mine through the plant");
+		assertEquals(67,sim.pose.y(),.02);
+		// A separately confirmed clear ray resumes the original 72-block job.
+		sim.world.visible=true;sim.finish();assertEquals(72,sim.world.broken.size());
+	}
+
+	@Test
+	void landedFeetWithNormalGravityImpulseKeepTheSameMiningTargetWhileRayIsBlocked() {
+		Simulation sim=new Simulation(new BlockPos(0,49,0),new BlockPos(0,66,0),true);
+		sim.until(()->sim.plan.phase()==Phase.DIG);sim.world.visible=false;
+		for(double vy:new double[]{0,-.0784})for(int repeat=0;repeat<10;repeat++){
+			Command command=sim.plan.step(sim.world,new Pose(.5,67,.5,0,vy,0));
+			assertEquals(Action.MINE,command.action());assertEquals(sim.max,command.block());
+			assertEquals(66,sim.plan.cursorY());assertEquals(0,sim.plan.completed());
+		}
+		assertTrue(sim.world.broken.isEmpty());
+	}
+
+	@Test
+	void unreachableRayDescendsToTheRealTopFaceAndVisibleRayCanStillMineDuringDescent() {
+		Simulation sim=new Simulation(new BlockPos(0,49,0),new BlockPos(0,66,0),true);
+		sim.until(()->sim.plan.phase()==Phase.DIG);sim.world.visible=false;
+		Command move=sim.plan.step(sim.world,new Pose(.5,69.5,.5,0,-.16,0));
+		assertEquals(Action.DOWN,move.action());assertEquals(67,move.y());
+		sim.world.visible=true;
+		Command mine=sim.plan.step(sim.world,new Pose(.5,67.5,.5,0,-.16,0));
+		assertEquals(Action.MINE_DOWN,mine.action());assertEquals(sim.max,mine.block());
+	}
+
+	@Test
 	void naturalGravityDigLandsOnEachUnbrokenBlockAndOnlyFliesOnReturn() {
 		Simulation sim = new Simulation(new BlockPos(0, 0, 0), new BlockPos(1, 64, 0), true);
 		sim.naturalDig = true;
@@ -727,6 +768,8 @@ final class BorerAreaPlanTest {
 	}
 
 	private static final class VoxelWorld implements BorerAreaPlan.World {
+		boolean visible=true;
+		@Override public boolean canMine(BlockPos pos){return visible;}
 		final BlockPos min, max;
 		final boolean solidVolume;
 		final Map<BlockPos, Cell> overrides = new HashMap<>();
@@ -863,7 +906,7 @@ final class BorerAreaPlanTest {
 				assertTrue(Math.abs(pose.y() - plan.transferY()) <= BorerAreaPlan.HEIGHT,
 					"Never cross to another shaft below the transfer height");
 			}
-			if (command.action() == Action.MINE || command.action() == Action.MINE_DOWN) world.requestMine(command.block());
+			if ((command.action() == Action.MINE || command.action() == Action.MINE_DOWN) && world.canMine(command.block())) world.requestMine(command.block());
 			if (naturalDig && plan.phase() == Phase.DIG && command.action() != Action.UP
 				&& command.action() != Action.X && command.action() != Action.Z) {
 				applyGravity();

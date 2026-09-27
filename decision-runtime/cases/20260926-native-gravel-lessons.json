@@ -1,0 +1,27 @@
+{
+  "feature": "Kit native underwater gravel collection",
+  "world": "Simpcraft survival Overworld",
+  "observed": [
+    "The original 12-block radius and 12-block depth stopped searching early. A 64-block radius and 32-block depth were live-tested with near-to-far scanning.",
+    "Empty dives occurred because the controller required several ascent samples before allowing any mining. A first-dive equipment estimate now permits work under a conservative live air reserve.",
+    "A selected gravel column could be abandoned after flight momentum carried the player into a neighboring column. Target coordinates are preserved, exact-column checks are bounded, and unreachable targets are skipped.",
+    "At one pickup, air policy changed during descent and rejected the action. The pending mined block is kept while surfacing, then rechecked after refilling.",
+    "Water current moved item drops beyond the old 1.5-block pickup limit. A nearby clear return column can now trigger at most two surface recenter attempts. A 1.9.96 live run logged a recenter attempt and finished with four items credited against a target of three."
+  ],
+  "implementation": [
+    "src/client/java/dev/twob2tkit/automation/GravelCollector.java",
+    "src/client/java/dev/twob2tkit/automation/GravelCollectionPolicy.java",
+    "src/client/java/dev/twob2tkit/automation/EquipmentAirBudget.java",
+    "decision-runtime/kit_cli.py",
+    "decision-runtime/kit_release.py"
+  ],
+  "validation": {
+    "kit_version": "1.9.96",
+    "java_tests": 1000,
+    "java_failures": 0,
+    "python_cli_release_tests": 5,
+    "live_batch": "4 confirmed inventory gravel on a 3-item target, no player damage, safe high park",
+    "live_limit": "One drifting item was not confirmed on its first recenter; a later pickup gained two items. This is not proof of long-term unattended collection."
+  },
+  "safety_rule": "Expected air duration from oxygen_bonus is a mean, not a guarantee. Native ascent, current air, route clearance, combat and low-health guards retain priority."
+}

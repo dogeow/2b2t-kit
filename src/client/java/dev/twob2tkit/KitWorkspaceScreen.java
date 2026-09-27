@@ -24,17 +24,23 @@ public class KitWorkspaceScreen extends KitHudScreen {
     }
     @Override protected void init() {
         if (search != null) query = search.getValue();
+        search = null;
         layout = UiPageLayout.workspace(width, height);
         int n = UiFeature.Category.values().length, w = (layout.width() - (n - 1) * 3) / n;
         for (var item : UiFeature.Category.values()) {
             var button = addRenderableWidget(Button.builder(Component.literal(item.label), b -> {
-                category = item; config.workspaceCategory = item.name(); config.save(); scroll = 0; query = ""; if (search != null) search.setValue(""); rebuildWidgets();
+                clearNotice(); category = item; config.workspaceCategory = item.name(); config.save(); scroll = 0; query = ""; if (search != null) search.setValue(""); rebuildWidgets();
             }).bounds(layout.left() + item.ordinal() * (w + 3), 8, w, 20).build()); button.active = item != category;
         }
-        search = addRenderableWidget(KitUi.field(font, layout.left(), 36, layout.width(), "搜索全部功能", query, 80));
-        search.setHint(Component.literal("搜索全部功能，例如：钻石、箱子、飞行、按键…"));
-        search.setResponder(value -> { query = value; scroll = 0; rebuildEntries(); });
-        bodyTop = 64; bodyHeight = Math.max(28, layout.footer() - 22 - bodyTop);
+        if (category == UiFeature.Category.HOME) {
+            var bar = dev.twob2tkit.ui.components.SearchBar.create(font, layout.left(), 36, layout.width(),
+                "搜索全部功能", "搜索全部功能，例如：钻石、箱子、飞行、按键…", query,
+                value -> { query = value; scroll = 0; clearNotice(); rebuildEntries(); }, this::setFocused);
+            search = addRenderableWidget(bar.field());
+            addRenderableWidget(bar.clear());
+        }
+        bodyTop = category == UiFeature.Category.HOME ? 64 : 36;
+        bodyHeight = Math.max(28, layout.footer() - 22 - bodyTop);
         rebuildEntries();
         addRenderableWidget(Button.builder(Component.literal("紧急停止全部"), b -> { KitClient.emergencyStop("工具箱停止全部"); showNotice("任务与独立防护已停止", 0xFFFF55); })
             .bounds(layout.footerButtonX(0, 2), layout.footer(), layout.footerButtonWidth(2), 20).build());
@@ -42,14 +48,7 @@ public class KitWorkspaceScreen extends KitHudScreen {
             .bounds(layout.footerButtonX(1, 2), layout.footer(), layout.footerButtonWidth(2), 20).build());
     }
     private List<UiFeature> selected() {
-        if (!query.isBlank()) return Arrays.stream(UiFeature.values()).filter(f -> f.matches(query)).toList();
-        if (category != UiFeature.Category.HOME) return Arrays.stream(UiFeature.values()).filter(f -> f.category == category).toList();
-        Set<UiFeature> home = new LinkedHashSet<>();
-        for (var feature : UiFeature.values()) if (feature.active()) home.add(feature);
-        if (config.favoriteUiFeatures != null) for (String id : config.favoriteUiFeatures) { var f = UiFeature.find(id); if (f != null) home.add(f); }
-        if (config.recentUiFeatures != null) for (String id : config.recentUiFeatures) { var f = UiFeature.find(id); if (f != null) home.add(f); }
-        home.addAll(List.of(UiFeature.AREA, UiFeature.ORE, UiFeature.CRUISE, UiFeature.PLACES, UiFeature.SCENERY, UiFeature.CHECKLIST));
-        return List.copyOf(home);
+        return UiFeature.visible(category, query, config.favoriteUiFeatures);
     }
     private void rebuildEntries() {
         for (Placed p : entries) removeWidget(p.widget()); entries.clear();
@@ -66,7 +65,7 @@ public class KitWorkspaceScreen extends KitHudScreen {
             Button pin = Button.builder(Component.literal(favorite ? "★" : "☆"), b -> {
                 if (config.favoriteUiFeatures == null) config.favoriteUiFeatures = new LinkedHashSet<>();
                 if (!config.favoriteUiFeatures.add(feature.name())) config.favoriteUiFeatures.remove(feature.name()); config.save(); rebuildEntries();
-            }).bounds(grid.favoriteX(i), y, UiFeatureGridLayout.FAVORITE_WIDTH, 20).tooltip(Tooltip.create(Component.literal(favorite ? "取消常用" : "添加到首页常用"))).build();
+            }).bounds(grid.favoriteX(i), y, UiFeatureGridLayout.FAVORITE_WIDTH, 20).tooltip(Tooltip.create(Component.literal(favorite ? "取消收藏" : "收藏到首页"))).build();
             entries.add(new Placed(addRenderableWidget(pin), y));
             String summary = KitUi.fit(font, feature.description, grid.cardWidth() - 12);
             var info = new StringWidget(x + 6, y + 22, font.width(summary), 10,
@@ -95,9 +94,11 @@ public class KitWorkspaceScreen extends KitHudScreen {
             int y0=bodyTop+(bodyHeight-thumb)*scroll/Math.max(1,contentHeight-bodyHeight);
             g.fill(right-3,bodyTop,right,bodyTop+bodyHeight,0xFF273B4A);g.fill(right-3,y0,right,y0+thumb,0xFF8DAEC0);
         }
-        if (entries.isEmpty()) KitUi.centered(g, font, "没有匹配功能，换个关键词试试", width / 2, bodyTop + 8, 0xAABBCC);
+        if (entries.isEmpty()) KitUi.centered(g, font,
+            category == UiFeature.Category.HOME && query.isBlank() ? "暂无收藏 · 在其他分类点击 ☆ 添加到首页" : "没有匹配功能，换个关键词试试",
+            width / 2, bodyTop + 8, 0xAABBCC);
         String running = Arrays.stream(UiFeature.values()).filter(UiFeature::active).map(f -> f.title).collect(java.util.stream.Collectors.joining(" · "));
-        String status = !notice.isEmpty() ? notice : running.isEmpty() ? "共 "+featureCount+" 项 · "+(contentHeight>bodyHeight?"滚轮查看更多 · ":"")+"☆ 设为常用 · Esc 返回游戏" : "正在运行：" + running;
+        String status = !notice.isEmpty() ? notice : running.isEmpty() ? "共 "+featureCount+" 项 · "+(contentHeight>bodyHeight?"滚轮查看更多 · ":"")+"☆ 收藏到首页 · Esc 返回游戏" : "正在运行：" + running;
         KitUi.text(g, font, KitUi.fit(font, status, layout.width()), layout.left(), layout.footer() - 14, notice.isEmpty() ? 0xAABBCC : noticeColor);
     }
     public void showDetail(KitFormScreen screen) { minecraft.setScreen(screen.bind(config)); }

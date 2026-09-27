@@ -110,6 +110,12 @@ final class BorerAreaRunner {
 		} catch (IllegalStateException error) { engine.fileLog(client, "area-defense-hover " + error.getMessage()); }
 	}
 
+    /** Release the area's lease once before emergency flight borrows the same Meteor settings. */
+    void yieldFlightForEscape(Minecraft client){
+        cargo.pause(client);look=null;stopAttack(client);releaseMovement(client);checkpoint();
+        flight.closeKeepingFlight();
+    }
+
 	/** Unlike ordinary suspend, never releases Use or changes the selected food slot. */
 	void suspendForEating(Minecraft client, boolean entering) {
 		if (entering) { cargo.pause(client); checkpoint(); }
@@ -161,7 +167,7 @@ final class BorerAreaRunner {
 				progressWorld = worldKey(client);
 				BlockPos min = new BlockPos(engine.areaMin.getX(), bottom, engine.areaMin.getZ());
 				boolean shallow = BorerAreaHorizontal.enabled(min, engine.areaMax);
-				plan = BorerAreaPlan.restore(min, engine.areaMax, pose(player), BorerAreaProgress.read(progressPath, progressWorld), shallow);
+				plan = BorerAreaPlan.restore(min, engine.areaMax, pose(player), BorerAreaProgress.read(progressPath, progressWorld,min,engine.areaMax), shallow);
 				boolean resumed = plan != null;
 				if (plan == null) {
 					plan = new BorerAreaPlan(min, engine.areaMax, pose(player), shallow);
@@ -304,7 +310,7 @@ final class BorerAreaRunner {
 		BlockPos max = new BlockPos(Math.max(engine.host.borerAreaAx(), engine.host.borerAreaBx()),
 			Math.max(ay, by), Math.max(engine.host.borerAreaAz(), engine.host.borerAreaBz()));
 		return BorerAreaPlan.restore(min, max, pose(client.player), BorerAreaProgress.read(
-			client.gameDirectory.toPath().resolve("config/twob2tkit/area-progress.json"), worldKey(client)), BorerAreaHorizontal.enabled(min, max)) != null;
+			client.gameDirectory.toPath().resolve("config/twob2tkit/area-progress.json"), worldKey(client),min,max), BorerAreaHorizontal.enabled(min, max)) != null;
 	}
 
 	private BorerAreaPlan.Cell cell(Minecraft client, BlockPos pos) {
@@ -323,7 +329,9 @@ final class BorerAreaRunner {
 			|| client.player.blockActionRestricted(client.level, pos, client.gameMode.getPlayerMode())) {
 			return BorerAreaPlan.Cell.PROTECTED;
 		}
-		return BorerAreaPlan.Cell.SOLID;
+		if (state.isCollisionShapeFullBlock(client.level, pos)) return BorerAreaPlan.Cell.SOLID;
+		return BorerAreaVegetation.classify(BorerAreaPlan.Cell.SOLID, BorerText.blockId(state),
+			state.getCollisionShape(client.level, pos).isEmpty(), state.getFluidState().isEmpty());
 	}
 
 	private void mine(Minecraft client, LocalPlayer player, BlockPos target) {

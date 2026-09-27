@@ -1,0 +1,32 @@
+{
+  "at_ms": 1790406087962,
+  "kit_version": "1.9.100",
+  "runtime_version": "1.7.65",
+  "sha256": "774b6023b7187407d72f697f55ae56f5b1c4c367df9343c13f3027c398f59419",
+  "tests": {
+    "tests": 1023,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "health": 20.0,
+  "fixes": [
+    "Natural dirt/grass support transitions preserve full dry placement geometry; other changes remain rejected",
+    "Concrete start/stop notices use top HUD instead of repeated chat",
+    "Outdoor chest access uses precise collision-aware approach before gravity landing"
+  ],
+  "terminal_sessions": [
+    31096,
+    41669,
+    88338
+  ],
+  "active_exec_session": 44518,
+  "stock_accounting": {
+    "finished_before_final328": 1389,
+    "final_new_solid_target": 328,
+    "required_total_white_concrete": 1717,
+    "former_spare_lost": 1,
+    "spare_recovery_scan_candidates": 0
+  },
+  "next": "Observe active44518. After success and safe high parking, run prep-detail-materials.py for 17 furnaces and136 polished andesite; fresh source checks are built in. Remaining deepslate and iron still need acquisition; furnace/smooth-stone production still outstanding. Do not infer complete Starship from material counts."
+}

@@ -27,4 +27,25 @@ class CreeperEscapeWiringTest {
         assertTrue(calls(method("runtime/engine/BorerRangedCombat","releaseControls")).contains("releaseEscape"));
         assertTrue(calls(method("runtime/engine/BorerRangedCombat","releaseEscape")).containsAll(List.of("pauseGuardMovement","closeKeepingFlight","close")));
     }
+    @Test void areaYieldsItsFlightBeforeEmergencyEscapeAndDoesNotWaitForFood()throws Exception{
+        var combat=calls(method("runtime/engine/BorerRangedCombat","tick"));
+        assertTrue(combat.contains("flightDefenseScope"));
+        assertTrue(combat.indexOf("yieldFlightForEscape")<combat.indexOf("evadeCreeper"));
+        assertTrue(calls(method("runtime/engine/BorerAreaRunner","yieldFlightForEscape"))
+            .containsAll(List.of("checkpoint","releaseMovement","closeKeepingFlight")));
+        var engine=calls(method("runtime/engine/DefaultTunnelBorerEngine","tick"));
+        assertTrue(engine.indexOf("hasCreeperEmergency")<engine.indexOf("pauseForMeteorFood"));
+    }
+    @Test void blockedAscentRetainsOrdinaryDefenseAndNeverPretendsCombatFinished()throws Exception{
+        var fallback=method("runtime/engine/BorerRangedCombat","groundDefenseAfterRiseFailure");
+        var linked=calls(fallback);
+        assertTrue(linked.containsAll(List.of("releaseEscape","cancelDraw","rangedMode","raiseShield","riseFailureNeedsExit","requestEmergencyExit")));
+        assertFalse(linked.contains("end"));assertFalse(linked.contains("clear"));
+        var operations=new ArrayList<AbstractInsnNode>();
+        for(var instruction:fallback.instructions)if(instruction.getOpcode()>=0)operations.add(instruction);
+        assertEquals(Opcodes.ICONST_0,operations.get(operations.size()-2).getOpcode(),"Healthy fallback must fall through to melee/bow defense");
+        assertEquals(Opcodes.IRETURN,operations.getLast().getOpcode());
+        assertEquals(3,calls(method("runtime/engine/BorerRangedCombat","elevateBeforeCombat")).stream()
+            .filter("groundDefenseAfterRiseFailure"::equals).count(),"Ceiling, unavailable flight, and failed flight must all retain defense");
+    }
 }

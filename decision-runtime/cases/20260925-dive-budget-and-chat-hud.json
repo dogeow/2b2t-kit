@@ -1,0 +1,32 @@
+{
+  "version": "1.9.83",
+  "problems": [
+    "Routine navigation flooded chat",
+    "Fixed 240/260 air floors wasted most respiration gear time",
+    "An expired ascent sample revoked pickup after mining",
+    "First unsuitable neighbor ended a collection chain",
+    "One-block seabed steps and standing-on-gravel poses were rejected"
+  ],
+  "fixes": [
+    "Top single-line cruise HUD with timed arrival notice",
+    "Native scoped dynamic air reserve and autonomous return",
+    "Fresh calibration pinned until breathing again",
+    "Nearest reachable supported candidate selection",
+    "Verified one-block floor step and standing pose accepted"
+  ],
+  "validation": {
+    "native_air_return": "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/starship/work/air-return-acceptance-1790341226/result.json",
+    "collection": "/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/starship/work/starship-ocean-batch-1790342140/progress.json",
+    "verified_contiguous_pickups": 6,
+    "native_surface_air": 54,
+    "max_air": 300,
+    "health_during_checks": 20,
+    "hud": "Top single-line cruise display verified; routine cruise messages removed from chat",
+    "remaining_limit": "Exact one-bubble arrival is not guaranteed; verified return reserve and delay margin are retained"
+  },
+  "tests": {
+    "java": 976,
+    "python_focused": 40
+  },
+  "boundary": "Only bounded acceptance work; Starship goal remains paused"
+}

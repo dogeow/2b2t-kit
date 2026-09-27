@@ -295,7 +295,11 @@ final class BorerAreaPlan {
 			// Dig from anywhere in reach above the top face. Descend while mining when there is clearance.
 			double gap = p.y - (cursorY + 1.0);
 			if (gap > 1.8 || gap < -0.1 || !world.canMine(block)) {
-				Command position = vertical(world, p, cursorY + 1.15);
+				// Gravity lands on the real top face. An invisible ray (for example
+				// tall grass) must not demand a .15-block hover, then re-enable
+				// Flight every time the actor lands. The executor still verifies
+				// the real outline ray before any mining input.
+				Command position = vertical(world, p, cursorY + 1.0);
 				if (position != null) return position;
 			}
 			boolean descend = gap > 0.25 && p.vy <= 0.04;

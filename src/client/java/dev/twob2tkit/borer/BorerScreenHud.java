@@ -34,7 +34,7 @@ public final class BorerScreenHud {
 	/** 在 GUI 层画半透明底 + 居中换行文字。 */
 	public static void render(Minecraft client, GuiGraphicsExtractor graphics) {
 		if (!visible || client == null || graphics == null || client.player == null) return;
-		if (client.options.hideGui) return;
+		if (client.options.hideGui || dev.twob2tkit.hud.WorkHud.current()!=null) return;
 		String actionText = action;
 		String detailText = detail;
 		int rgb = color;

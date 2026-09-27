@@ -56,6 +56,7 @@ public final class ContainerAssistant {
 
 	/** 开箱时快照并可自动补货。 */
 	public void tick(Minecraft client) {
+        StorageLifecycle.tick(client,config);
 		if (client.player == null || client.level == null) {
 			resetOpenContainer();
 			return;
@@ -137,6 +138,7 @@ public final class ContainerAssistant {
 			labels.z = openedPosition.getZ();
 			labels.title = screen.getTitle().getString();
 			StorageLabels.apply(client.level, openedPosition, labels);
+            if(!StorageLifecycle.capture(client,openedPosition,labels))return;
 			config.patchStorageLabels(labels);
 			return;
 		}
@@ -150,6 +152,7 @@ public final class ContainerAssistant {
 		snapshot.title = screen.getTitle().getString();
 		snapshot.lastSeenEpochMillis = System.currentTimeMillis();
 		StorageLabels.apply(client.level, openedPosition, snapshot);
+        if(!StorageLifecycle.capture(client,openedPosition,snapshot))return;
 		for (ItemTotal total : ordered) {
 			snapshot.items.add(new KitConfig.StoredItem(total.id, total.name, total.count));
 		}

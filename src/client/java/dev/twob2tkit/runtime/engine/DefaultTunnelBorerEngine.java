@@ -117,6 +117,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	final BorerArea area = new BorerArea(this);
 	final BorerAreaRunner areaRunner = new BorerAreaRunner(this);
 	boolean standaloneGuard;
+    private boolean standaloneGuardEnabled;
 	final BorerRangedCombat rangedCombat = new BorerRangedCombat(this);
 	private final BorerMeteorAutomation meteorAutomation = new BorerMeteorAutomation();
 	private final BorerMealPolicy mealPause = new BorerMealPolicy();
@@ -298,7 +299,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		mealPause.reset();
 		engagement.clear();
 		walkRoute.clear(); oreMoveLook = null;
-		rangedCombat.end(client);
+		rangedCombat.handoff(client);
 		Mode mode = Mode.fromConfig(modeName);
 		if (mode == Mode.AREA && !prepareArea(client)) return;
 		boolean preserveSpeedMine = false;
@@ -413,7 +414,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		mealPause.reset();
 		engagement.clear();
 		walkRoute.clear(); oreMoveLook = null;
-		rangedCombat.end(client);
+		rangedCombat.handoff(client);
 		areaRunner.stopInventory(client);
 		if (mode == Mode.AREA) areaRunner.releaseFlight(client);
 		mineTimings.save(client);
@@ -793,7 +794,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		catch (IllegalStateException error) { message(client, error.getMessage()); return false; }
 		miningConfirmation.reset();
 		if (scenery.active()) scenery.stop(client, "改为沿挖矿路线返回");
-		rangedCombat.end(client);
+		rangedCombat.handoff(client);
 		if (mode == Mode.AREA) { areaRunner.suspend(client); areaRunner.releaseFlight(client); areaRunner.reset(); }
 		if (!active) {
 			host.prepareForBorer(client);
@@ -884,7 +885,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		// Do not call tickStandaloneGuard(false): that method may run the old
 		// recovery controller and block the new material navigator again.
 		recoveryAscent.cancel(c,"superseded_by_owned_air_return");
-		rangedCombat.end(c);
+		rangedCombat.handoff(c);
 		if (standaloneGuard) { mobs.lowerShield(c); engagement.clear(); }
 		standaloneGuard = false;
 		return true;
@@ -892,6 +893,10 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 	@Override
 	public boolean tickStandaloneGuard(Minecraft c, boolean enabled) {
+        // The host explicitly sends false when emergency/manual control disarms
+        // the guard. Do this before the active-miner early return, without reason-text heuristics.
+        if(standaloneGuardEnabled&&!enabled)rangedCombat.end(c);
+        standaloneGuardEnabled=enabled;
         if(!active && !enabled && recoveryAscent.tick(c))return true;
 		if (active) return false; // The running mining engine already owns this same combat object.
 		if (!enabled || c.player == null || c.level == null || c.player.isDeadOrDying()) {
@@ -1110,7 +1115,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
             if(!player.isUsingItem())BorerItems.selectWeapon(client,player);
             fileLog(client,"surround-abort health="+player.getHealth()+" reason=damaged-or-timeout; shelter suppressed for this mining session");
         }
-		if (pauseForMeteorFood(client, player)) return;
+		if (!(mode == Mode.AREA && rangedCombat.hasCreeperEmergency(client))
+                && pauseForMeteorFood(client, player)) return;
 		try { toolPolicy = meteorAutomation.tools(); }
 		catch (IllegalStateException error) {
 			fileLog(client, "meteor-tool-error " + error); stop(client, error.getMessage()); return;

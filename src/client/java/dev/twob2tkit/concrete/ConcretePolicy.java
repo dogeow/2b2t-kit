@@ -20,5 +20,11 @@ public final class ConcretePolicy {
     public static boolean usableTool(boolean correct, boolean damageable, int max, int damage, int reservePercent) {
         return correct && (!damageable || max-damage>8 && (long)(max-damage)*100>=(long)max*Math.clamp(reservePercent,1,100));
     }
+    /** Grass dying/spreading changes the ID, but not the locked full, dry support face. */
+    public static boolean sameSoilSupport(String before, String after, boolean fullBefore, boolean fullAfter, boolean dry) {
+        return fullBefore && fullAfter && dry
+            && ("minecraft:dirt".equals(before) || "minecraft:grass_block".equals(before))
+            && ("minecraft:dirt".equals(after) || "minecraft:grass_block".equals(after));
+    }
     public static boolean reached(int completed,int limit) { return limit>0 && completed>=limit; }
 }

@@ -21,6 +21,8 @@ from shore_concrete import block_state
 SAND = 'minecraft:sand'
 SAND_STATE = 'Block{minecraft:sand}'
 BUFFER = 3
+UNSTARTED_TARGET = {'Mining target out of reach', 'mining target moved out of reach',
+                    'mining target is occluded', 'Current footing is protected'}
 APPROVED_CHESTS = ([761019, 64, 797852], [761021, 64, 797852],
                    [761011, 64, 797852], [761015, 64, 797852])
 
@@ -122,28 +124,41 @@ def mine_one(client, pos, expected=SAND_STATE):
     fresh = local_scan(client, pos)
     if not sand_candidate(fresh, pos):
         return {'pos': pos, 'skipped': 'Target is no longer a dry exposed sand block'}
-    client.checked('select_item', item='minecraft:diamond_shovel')
+    if state.get('hand',{}).get('item') != 'minecraft:diamond_shovel':
+        client.checked('select_item', item='minecraft:diamond_shovel')
     before = client.status()
     # Avoid a movement transaction for a block already within reach. The
     # native bridge checks actual reach and returns this exact pre-dispatch
     # error if an approach is needed.
     mined = client.request('mine_block', pos=pos, face='up', expected_state=expected, seconds=20)
-    if mined.get('phase') == 'error' and mined.get('detail') == 'Mining target out of reach':
-        if not sand_candidate(local_scan(client, pos), pos):
+    if mined.get('phase') != 'done' and mined.get('detail') in UNSTARTED_TARGET:
+        verified=local_scan(client,pos)
+        if block_state(verified,pos)!=expected or carried(client.status(),SAND)!=carried(before,SAND):
+            raise RuntimeError('Rejected sand action has an ambiguous world or inventory change')
+        if mined.get('detail') == 'Current footing is protected':
+            return {'pos':pos,'skipped':'Sand supports the player','_observed':verified}
+        if not sand_candidate(verified, pos):
             raise RuntimeError('Sand changed after the out-of-reach rejection')
         approached = client.request('approach_block', pos=pos, face='up',
                                     expected_state=expected, seconds=90)
-        if approached.get('phase') == 'waiting':
+        if approached.get('phase') == 'waiting' and any(word in str(approached.get('detail','')).lower()
+                                                       for word in ('manual','control','接管','交还')):
             raise Handoff('Sand approach yielded control: ' + str(approached.get('detail')))
         if approached.get('phase') != 'done':
-            raise RuntimeError('Sand approach failed: ' + str(approached.get('detail')))
-        client.checked('select_item', item='minecraft:diamond_shovel')
+            safe_state(client.status())
+            return {'pos':pos,'skipped':'Sand approach could not reach this target: '+str(approached.get('detail'))}
+        if client.status().get('hand',{}).get('item') != 'minecraft:diamond_shovel':
+            client.checked('select_item', item='minecraft:diamond_shovel')
         if not sand_candidate(local_scan(client, pos), pos):
             raise RuntimeError('Sand changed after approach; no mining replay')
         before = client.status()
         mined = client.request('mine_block', pos=pos, face='up',
                                expected_state=expected, seconds=20)
     if mined.get('phase') != 'done':
+        if mined.get('detail') in UNSTARTED_TARGET:
+            verified=local_scan(client,pos)
+            if block_state(verified,pos)==expected and carried(client.status(),SAND)==carried(before,SAND):
+                return {'pos':pos,'skipped':mined['detail'],'_observed':verified}
         raise RuntimeError('Sand break was not confirmed: ' + str(mined.get('detail')))
     observed_after = local_scan(client, pos)
     if block_state(observed_after, pos) == expected:
@@ -159,7 +174,18 @@ def mine_one(client, pos, expected=SAND_STATE):
         if drops:
             for drop in drops:
                 if not collect_drop(client, drop, observation=after):
-                    raise RuntimeError('Observed sand drop could not be recovered')
+                    # Movement can finish just before the server's inventory packet.
+                    # Confirm that delayed gain before deciding the pickup failed.
+                    until=time.monotonic()+2
+                    while True:
+                        confirmed=client.status();safe_state(confirmed)
+                        if carried(confirmed,SAND)>carried(before,SAND):
+                            return {'pos':pos,'sand_gain':carried(confirmed,SAND)-carried(before,SAND),
+                                    'health':confirmed['health'],'pickup':'late_inventory','_observed':observed_after}
+                        if time.monotonic()>=until:break
+                        time.sleep(.2)
+                    return {'pos':pos,'skipped':'Sand drop not confirmed; no movement replay',
+                            'unconfirmed_drop':drop,'_observed':observed_after}
             confirmed = client.status()
             if carried(confirmed, SAND) > carried(before, SAND):
                 return {'pos': pos, 'sand_gain': carried(confirmed, SAND) - carried(before, SAND),
@@ -185,6 +211,7 @@ def harvest(client, low, high, target_carried, out):
     result = {'bounds': [list(low), list(high)], 'before': carried(start, SAND),
               'target_carried': target_carried, 'blocks': [], 'world_session': start['world_session']}
     blocked = set()
+    unconfirmed_streak=0
     scan_min, scan_max = scan_bounds(low, high)
     first_scan = client.request('scan', min=scan_min, max=scan_max, details=True)['blocks']
     rows_by_pos = {tuple(row['pos']): row for row in first_scan}
@@ -201,6 +228,7 @@ def harvest(client, low, high, target_carried, out):
             break
         p = available[0]
         record = mine_one(client, p)
+        unconfirmed_streak=unconfirmed_streak+1 if 'unconfirmed_drop' in record else 0
         if 'skipped' in record:
             blocked.add(tuple(p))
         merge_local(rows_by_pos, record.pop('_observed', None) or local_scan(client, p), p)
@@ -209,6 +237,8 @@ def harvest(client, low, high, target_carried, out):
         temporary = out / 'progress.tmp'
         temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2))
         temporary.replace(out / 'progress.json')
+        if unconfirmed_streak>=3:
+            raise RuntimeError('Three consecutive sand drops lacked inventory confirmation')
     end = client.status()
     result.update(after=carried(end, SAND), gained=carried(end, SAND) - result['before'],
                   bag_full=room_for_item(end, SAND) == 0,

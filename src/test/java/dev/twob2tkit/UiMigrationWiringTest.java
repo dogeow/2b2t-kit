@@ -50,6 +50,22 @@ class UiMigrationWiringTest {
         for (String forbidden : List.of("finishEdits", "accept", "run", "start")) assertFalse(removed.contains(forbidden));
         assertTrue(calls(method("KitCollectionScreen", "removed")).containsAll(List.of("scrollAmount", "remember", "save")));
     }
+    @Test void parameterlessExplicitSubmitIsPresentAndEmergencyStopsMaterialWorkerFirst() throws Exception {
+        var init = method("KitFormScreen", "init");
+        int custom = -1, button = -1, at = 0;
+        for (AbstractInsnNode instruction : init.instructions) {
+            if (instruction instanceof FieldInsnNode field && field.name.equals("customSubmit") && field.getOpcode()==Opcodes.GETFIELD) custom = at;
+            if (instruction instanceof FieldInsnNode field && field.name.equals("applyButton") && field.getOpcode()==Opcodes.PUTFIELD) button = at;
+            at++;
+        }
+        assertTrue(custom>=0 && button>custom,"Explicit submit must participate in footer creation even without editable fields");
+        var stop = method("KitClient", "stopAll");
+        List<String> ordered = new ArrayList<>();
+        for (AbstractInsnNode instruction : stop.instructions) if (instruction instanceof MethodInsnNode call)
+            ordered.add(call.owner + "." + call.name);
+        assertTrue(ordered.indexOf("dev/twob2tkit/material/MaterialJobs.stop")>=0);
+        assertTrue(ordered.indexOf("dev/twob2tkit/material/MaterialJobs.stop") < ordered.indexOf("dev/twob2tkit/automation/AutomationBridge.cancel"));
+    }
     @Test void unFocusedEnterHasNoImplicitSubmitOnNewPages() throws Exception {
         for (String type : List.of("KitFormScreen", "KitCollectionScreen", "KitWorkspaceScreen", "KitConfirmScreen", "KitRecipePages$Detail")) {
             var m = method(type, "onEnterPressed"); assertTrue(calls(m).isEmpty(), type);

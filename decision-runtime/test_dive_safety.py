@@ -1,6 +1,7 @@
 import unittest
+import time
 
-from dive_safety import ready_for_gravel_dive, must_surface, ascent_air_floor
+from dive_safety import ready_for_gravel_dive, must_surface, ascent_air_floor, work_air_floor
 from material_client import underwater_action_allowed
 
 
@@ -55,6 +56,51 @@ class DiveSafetyTest(unittest.TestCase):
         self.assertEqual(260,ascent_air_floor(state))
         state['pos']=[10.5,35,20.5]
         self.assertEqual(340,ascent_air_floor(state))
+
+    def test_observed_route_uses_air_and_keeps_one_bubble_at_surface(self):
+        state=self.state()
+        state.update(pos=[10.5,52,20.5],under_water=True,air_supply=100,
+                     max_air_supply=300,air_budget_source='observed',
+                     air_return_floor=62,air_work_floor=88,air_pickup_floor=77,air_return_y=65,
+                     air_budget_valid_until=time.time()*1000+60000)
+        self.assertEqual(62,ascent_air_floor(state))
+        self.assertEqual(88,work_air_floor(state))
+        self.assertIsNone(ready_for_gravel_dive(state))
+        self.assertTrue(underwater_action_allowed(state,'mine_block',{'pos':[10,51,20]}))
+        self.assertFalse(must_surface(state))
+        state['air_supply']=80
+        self.assertFalse(underwater_action_allowed(state,'mine_block',{'pos':[10,51,20]}))
+        self.assertTrue(underwater_action_allowed(state,'walk',
+                        {'target':[10.5,50,20.5],'water_descend':True}))
+        state['air_supply']=61
+        self.assertTrue(must_surface(state))
+        self.assertFalse(underwater_action_allowed(state,'mine_block',{'pos':[10,51,20]}))
+
+    def test_expired_or_invalid_budget_cannot_relax_underwater_safety(self):
+        state=self.state()
+        state.update(pos=[10.5,52,20.5],air_supply=100,under_water=True,
+                     air_budget_source='observed',air_return_floor=20,
+                     air_work_floor=80,air_return_y=65,
+                     air_budget_valid_until=time.time()*1000+60000)
+        self.assertEqual(240,ascent_air_floor(state))
+        state['air_return_floor']=60
+        state['air_budget_valid_until']=time.time()*1000-1
+        self.assertEqual(240,ascent_air_floor(state))
+        state['air_budget_valid_until']=time.time()*1000+60000
+        state['air_return_active']=True
+        self.assertTrue(must_surface(state))
+        self.assertFalse(underwater_action_allowed(state,'mine_block',{}))
+
+    def test_return_cost_above_full_air_refuses_work_instead_of_falling_back(self):
+        state=self.state()
+        state.update(pos=[10.5,52,20.5],under_water=True,
+                     air_budget_source='observed',air_return_floor=320,
+                     air_work_floor=360,air_return_y=65,
+                     air_budget_valid_until=time.time()*1000+60000)
+        self.assertEqual(320,ascent_air_floor(state))
+        self.assertIn('air',ready_for_gravel_dive(state))
+        self.assertTrue(must_surface(state))
+        self.assertFalse(underwater_action_allowed(state,'mine_block',{}))
 
 
 if __name__ == '__main__': unittest.main()

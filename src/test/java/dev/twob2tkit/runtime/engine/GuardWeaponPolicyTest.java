@@ -28,4 +28,9 @@ class GuardWeaponPolicyTest {
 			java.util.List.of(new GuardWeaponPolicy.Threat(74, false, 10),
 				new GuardWeaponPolicy.Threat(74, true, 13))));
 	}
+    @Test void blockedAscentAtHealthyStateFallsBackToCombatInsteadOfIdleOrLogout() {
+        assertFalse(GuardWeaponPolicy.riseFailureNeedsExit(20));
+        assertFalse(GuardWeaponPolicy.riseFailureNeedsExit(14));
+        assertTrue(GuardWeaponPolicy.riseFailureNeedsExit(13.9));
+    }
 }

@@ -1,0 +1,18 @@
+{
+  "case": "native bounded dry sand quarry for Starship materials",
+  "installed_host": "1.9.97",
+  "live_engine_at_exit": "1.7.63",
+  "staged_engine": "1.7.64",
+  "observed": [
+    "Per-block scripted mining repeatedly stopped on occluded faces, late pickup receipts, and an uncertain native timeout. Only 35 carried sand had been verified.",
+    "A new material-scoped quarry_batch interface reused the existing AREA engine inside a fresh loaded sand-only prism with a dry container-free buffer and solid bottom. User area coordinates and selected mode were unchanged in the live pilot.",
+    "The 24-item pilot completed in 28.56 seconds at 20 health. Later native batches and verified drop cleanup increased carried sand to 642, with another 114 already audited in approved chests.",
+    "A creeper was engaged shortly before an unattributed hit reduced health from 20 to 18.92263. The material task ascended from Y67 to Y109.7996 and logged out. This health-based logout requires player recovery; no automated reconnect is permitted."
+  ],
+  "offline_fixes_after_exit": [
+    "AREA combat now enters the existing creeper evasion branch and hands its flight-settings lease over before escape. The candidate is offline-tested only.",
+    "Area checkpoints now archive by world and exact region instead of retaining only the latest region. The candidate is staged for hot reload after player recovery.",
+    "A script health logout above the native emergency threshold is also persisted in material-health-hold.json, preventing later automated entry points from resuming while the native hold appears false."
+  ],
+  "verification_limits": "The ship is not complete. 1.7.64 has not been live-tested or loaded. No claim is made that the observed creeper caused the unattributed hit. Last carried sand is a pre-logout server inventory observation, not a fresh post-login count."
+}

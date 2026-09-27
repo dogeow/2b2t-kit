@@ -42,6 +42,10 @@ final class ClickGuiPages {
 			for (TunnelBorer.OreTarget ore : TunnelBorer.OreTarget.values()) choices.add(new KitFormScreen.IconChip(new ItemStack(ore.icon()), ore.label,
 				() -> TunnelBorer.OreTarget.contains(c.borerOreTarget, ore), () -> { c.borerOreTarget = TunnelBorer.OreTarget.toggle(c.borerOreTarget, ore); c.save(); }));
 			p.icons("选择实际想采集的矿石", choices);
+			p.liveLine(() -> TunnelBorer.OreTarget.contains(c.borerOreTarget, TunnelBorer.OreTarget.GRAVEL)
+				? "已选沙砾：此页仍按陆地/地下找矿运行，水下请打开专用入口。"
+				: "水下沙砾请用专用入口；不会改变这里的多矿选择。");
+			p.action("水下采集沙砾", "使用海底采集与自动返气；不会修改当前矿种。", () -> UiFeature.GRAVEL.open(p));
 			p.slider("扫描半径（格）", "仅使用已加载世界里的矿石信息。", 8, 32, () -> c.borerOreRadius, v -> { c.borerOreRadius = v; c.save(); });
 			p.bool("煤只取经验", "挖煤但不主动拾取煤。", () -> c.borerCoalXpMode, v -> { c.borerCoalXpMode = v; c.save(); });
 			p.bool("石英只取经验", "挖石英但不主动拾取石英。", () -> c.borerQuartzXpMode, v -> { c.borerQuartzXpMode = v; c.save(); });
@@ -62,6 +66,44 @@ final class ClickGuiPages {
 		p.action("挖矿物资清单", "检查工具、食物、封水方块等。", () -> UiFeature.CHECKLIST.open(p));
 		p.action("安全与反击", "液体、怪物与卸货选项。", () -> miningSafety(p, c));
 		p.action("挖矿路线", "回家、返回地狱门和显示路线。", () -> UiFeature.ROUTE.open(p));
+		open(parent, p);
+	}
+
+	static void gravel(Screen parent, KitConfig c) {
+		boolean water = c.gravelWaterMode;
+		var p = new KitFormScreen(parent, "采集沙砾", water
+			? "水下采集：先站在海面上方，再开始；陆地找矿有独立设置。"
+			: "陆地采集沿用自动找矿，原有多矿选择保持不变。")
+			.bind(c).id("gravel");
+		if (water) {
+			p.active(dev.twob2tkit.automation.GravelCollector::isActive, () -> {
+				if (dev.twob2tkit.automation.GravelCollector.isActive())
+					dev.twob2tkit.automation.GravelCollector.stop(mc(), "界面停止");
+				else if (c.gravelWaterMode) dev.twob2tkit.automation.GravelCollector.start(mc());
+			}).status(dev.twob2tkit.automation.GravelCollector::status)
+				.runLabels("开始水下采集", "停止并上浮");
+			p.slider("采集数量（0=背包满）", "只按实际捡进背包的沙砾计数。", 0, 2304,
+				() -> c.gravelLimit, v -> { c.gravelLimit = v; c.save(); });
+			p.slider("扫描半径（格）", "从近到远查找已加载的水下沙砾；找到可采目标后立即开始。", 4, 64,
+				() -> c.gravelRadius, v -> { c.gravelRadius = v; c.save(); });
+			p.slider("最大深度（格）", "从水面向下搜索的最大深度；仍需满足返气与安全通道。", 6, 32,
+				() -> c.gravelDepth, v -> { c.gravelDepth = v; c.save(); });
+			p.section("下水前准备");
+			p.note("需要精准采集铲子（耐久至少 100）、食物、水下速掘／水下呼吸 III 头盔、深海探索者 III 靴子。");
+			p.note("无需水肺药水。氧气接近返程余量时先上浮补气，再继续采集；只计实际入包数量。");
+			p.note("适用于本地生存世界和已确认允许此功能的 Simpcraft 服务器。");
+		} else {
+			p.section("陆地找矿");
+			p.note("陆地沙砾由自动找矿处理，可与原有矿种一起选择；不适合水下采集。切换到这里不会清除已选矿石。");
+			p.action("打开陆地找矿设置", "在原自动找矿页选沙砾；保留其他已选矿种。", () -> UiFeature.ORE.open(p));
+		}
+		p.action(water ? "切换到陆地找矿" : "切换到水下采集",
+			"切换页面与说明，不改动自动找矿的矿种选择。", () -> {
+				if (dev.twob2tkit.automation.GravelCollector.isActive()) {
+					p.message("请先停止水下采集，再切换方式", 0xFF7777);return;
+				}
+				c.gravelWaterMode = !c.gravelWaterMode;c.save();gravel(parent,c);
+			});
 		open(parent, p);
 	}
 
@@ -174,6 +216,7 @@ final class ClickGuiPages {
 		p.note("自动模式：检查图纸 → 找可走路线 → 停稳打印 → 核对服务器结果。缺料、有旧方块挡住或找不到路线时，会显示原因并停止。");
 		p.action("操作说明","如何加载投影、开始和停止。",()->builderHelp(p,c));
 		p.action("材料清单与补货","查看需要准备的材料。",()->UiFeature.CHECKLIST.open(p));
+		p.action("自动补齐材料并建造", "按当前投影缺料自动取料、采集、制作，再继续施工。", () -> dev.twob2tkit.material.MaterialJobPages.projection(p, c));
 		open(parent,p);
 	}
 	static void builderHelp(Screen parent,KitConfig c){

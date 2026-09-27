@@ -113,33 +113,37 @@ public final class KitRecordPages {
     }
 
     public static void storage(Screen parent, KitConfig c) {
+        StorageLifecycle.refresh(mc(), c);
         var list = new KitCollectionScreen<KitConfig.StorageSnapshot>(parent, c, "storage", "仓库记录", "本地快照，不代表箱子当前仍有相同物品",
-            () -> c.storageSnapshots, s -> StorageLabels.headline(s) + "  " + s.x + " " + s.y + " " + s.z,
+            () -> c.storageSnapshots, s -> StorageLifecycle.statusLabel(s) + " · " + StorageLabels.headline(s) + "  " + s.x + " " + s.y + " " + s.z,
             s -> "X " + s.x + " Y " + s.y + " Z " + s.z + " · " + KitConfig.dimensionLabel(s.dimension) + "\n"
-                + s.items.size() + " 类物品，共 " + s.items.stream().mapToInt(i -> i.count).sum() + " 件；点击查看全部内容",
-            KitRecordPages::storageSearch).key(KitConfig.StorageSnapshot::key);
+                + StorageLabels.quantitySummary(s, "") + "\n" + StorageLifecycle.statusLabel(s) + "；点击查看全部内容",
+            KitRecordPages::storageSearch).key(KitConfig.StorageSnapshot::scopedKey)
+            .summary(StorageLabels::quantitySummary).searchHint("搜索物品、名称或坐标；下方显示匹配数量…");
         dimensionFilters(list, s -> s.dimension);
         list.onOpen(s -> mc().setScreen(new StorageDetailScreen(list, s)));
         list.action("备注", "只修改本地记录。", s -> {
             String[] note = {s.note == null ? "" : s.note};
-            var p = new KitFormScreen(list, "箱子备注", s.x + " " + s.y + " " + s.z).bind(c).recordDraft().id("storage-note:" + s.key());
+            var p = new KitFormScreen(list, "箱子备注", s.x + " " + s.y + " " + s.z).bind(c).recordDraft().id("storage-note:" + s.scopedKey());
             p.edit("备注", "用于本地搜索。", () -> note[0], v -> note[0] = v);
             p.submit("保存备注", () -> { s.note = note[0]; c.save(); p.clearDraft(); mc().setScreen(list); }); mc().setScreen(p);
         }, s -> true);
         list.action("建造补给", "切换是否允许托管从此仓库取建材，仅对当前服务器或单人存档生效。", s -> {
+            if (!StorageLifecycle.usable(mc(), s)) { list.message("此记录需要在原服务器重新开箱核对"); return; }
             dev.twob2tkit.automation.BuildSupplyTask.toggleSource(mc(),s);
             list.message(dev.twob2tkit.automation.BuildSupplyTask.sourceEnabled(mc(),s)?"已允许作为建造补给箱；不会立即取料":"已取消此箱的建造补给权限");list.refresh();
-        }, s -> mc().player!=null&&sameDimension(s.dimension));
+        }, s -> StorageLifecycle.usable(mc(), s));
         list.action("指引", "只显示位置，不移动或打开箱子。", s -> {
-            if (sameDimension(s.dimension) && KitClient.structureGuide() != null) { KitClient.structureGuide().start(StorageLabels.headline(s), s.x, s.y, s.z); mc().setScreen(null); }
-        }, s -> sameDimension(s.dimension));
-        list.action("删除", "只删除本地记录，不清空箱子。", s -> confirm(list, "删除仓库记录", StorageLabels.headline(s) + "\n仅删除本地记录，不影响世界中的箱子和物品。", () -> { c.storageSnapshots.removeIf(v -> v.key().equals(s.key())); c.save(); list.refresh(); }), s -> true);
+            if (StorageLifecycle.usable(mc(), s) && KitClient.structureGuide() != null) { KitClient.structureGuide().start(StorageLabels.headline(s), s.x, s.y, s.z); mc().setScreen(null); }
+        }, s -> StorageLifecycle.usable(mc(), s));
+        list.action("删除", "只删除本地记录，不清空箱子。", s -> confirm(list, "删除仓库记录", StorageLabels.headline(s) + "\n仅删除本地记录，不影响世界中的箱子和物品。", () -> { c.storageSnapshots.removeIf(v -> v.scopedKey().equals(s.scopedKey())); c.save(); list.refresh(); }), s -> true);
         list.footer("停止指引", () -> { if (KitClient.structureGuide() != null) KitClient.structureGuide().stop(); list.message("已停止指引"); });
         mc().setScreen(list);
     }
     private static String storageSearch(KitConfig.StorageSnapshot s) {
         return StorageLabels.headline(s) + " " + s.note + " " + StorageLabels.colorLabel(s.colorId) + " " + KitConfig.dimensionLabel(s.dimension) + " " + s.x + " " + s.y + " " + s.z + " "
-            + s.items.stream().map(i -> i.name + " " + i.id + " ×" + i.count).collect(java.util.stream.Collectors.joining("、"));
+            + (s.items == null ? "" : s.items.stream().filter(i -> i != null && i.count > 0)
+                .map(i -> i.name + " " + i.id + " ×" + i.count).collect(java.util.stream.Collectors.joining("、")));
     }
 
     public static void marks(Screen parent, KitConfig c) {

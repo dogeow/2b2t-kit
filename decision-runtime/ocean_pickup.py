@@ -22,8 +22,37 @@ def pickup_pose(drop_pos, column_rows):
 
 
 def supported_drop_neighborhood(rows, target):
-    """Require a 3x3 solid floor so currents cannot sweep a new drop into a cave."""
+    """Allow a verified one-block seabed step, but never an unbounded cavity."""
     x, y, z = target
     solid = {tuple(row['pos']) for row in rows if row.get('solid')}
-    return all((x+dx, y-1, z+dz) in solid
+    return all(any((x+dx, y-1-drop, z+dz) in solid for drop in (0,1))
                for dx in (-1, 0, 1) for dz in (-1, 0, 1))
+
+
+def within_mining_reach(state, target, max_reach=4.15):
+    eye=[state['pos'][0],state['pos'][1]+1.62,state['pos'][2]]
+    top=[target[0]+.5,target[1]+1,target[2]+.5]
+    return math.dist(eye,top)<=max_reach
+
+
+def within_pickup_column(state, target, max_horizontal=1.25):
+    return math.hypot(target[0]+.5-state['pos'][0],
+                      target[2]+.5-state['pos'][2])<=max_horizontal
+
+
+def select_next_gravel(state, choices, rows, previous):
+    """Choose a reachable supported neighbor, skipping unsuitable candidates."""
+    blocks={tuple(row['pos']):row.get('state') for row in rows}
+    for row in sorted(choices, key=lambda row: math.dist(
+            [row['pos'][0]+.5, row['pos'][1]+1, row['pos'][2]+.5], state['pos'])):
+        target=row['pos']
+        if (target!=previous
+                and abs(target[0]-previous[0])<=1
+                and abs(target[2]-previous[2])<=1
+                and .99<=state['pos'][1]-target[1]<=4.5
+                and within_mining_reach(state,target)
+                and within_pickup_column(state,target)
+                and blocks.get(tuple(target))=='Block{minecraft:gravel}'
+                and supported_drop_neighborhood(rows,target)):
+            return row
+    return None
