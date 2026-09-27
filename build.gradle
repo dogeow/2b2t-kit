@@ -82,6 +82,7 @@ tasks.register('generateEngineVersion') {
 	}
 }
 tasks.named('compileClientJava') { dependsOn tasks.named('generateEngineVersion') }
+tasks.named('sourcesJar') { dependsOn tasks.named('generateEngineVersion') }
 
 tasks.register('runtimeEngineJar', Jar) {
 	archiveFileName = 'twob2tkit-engine.jar'
