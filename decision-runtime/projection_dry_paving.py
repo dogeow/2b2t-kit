@@ -522,18 +522,89 @@ def _clear_axis_route(occupied, site, pos, start, middle, finish, top_y):
     return True
 
 
-def _vertical_column_clear(client, pos):
+def _vertical_column_blocks(client, pos):
     low = [pos[0], pos[1] + 1, pos[2]]
     high = [pos[0], pos[1] + 3, pos[2]]
     reply = client.request('scan', min=low, max=high, details=True)
     if (reply.get('phase') not in (None, 'done') or reply.get('world_session') != client.world
             or not isinstance(reply.get('blocks'), list)):
         raise PavingBlocked('Vertical paving clearance was not freshly scanned')
+    observed = {}
     for row in reply['blocks']:
         point = _position(row.get('pos'))
-        if any(point[i] < low[i] or point[i] > high[i] for i in range(3)):
+        if (point in observed or any(point[i] < low[i] or point[i] > high[i]
+                                     for i in range(3))):
             raise PavingBlocked('Vertical paving clearance scan is malformed')
-    return not reply['blocks']
+        observed[point] = row
+    return observed
+
+
+def _safe_canopy(occupied, pos):
+    """The Y66 cap may only be an ordinary dry leaf block, never a fluid or BE."""
+    for (_, y, _), row in occupied.items():
+        if y <= pos[1] + 2:
+            return False
+        try:
+            block = _block(row.get('state'))
+        except PavingBlocked:
+            return False
+        if (not block.endswith('_leaves') or row.get('solid') is not True
+                or row.get('fluid') is not False
+                or row.get('block_entity') is not False):
+            return False
+    return True
+
+
+def _stable_canopy_pose(before, after):
+    """Two distinct observations must show an unmoving, unharmed player."""
+    old, new = before.get('pos'), after.get('pos')
+    velocity = after.get('velocity')
+    return (type(before.get('time')) is int and type(after.get('time')) is int
+            and after['time'] > before['time']
+            and isinstance(old, list) and isinstance(new, list)
+            and len(old) == len(new) == 3
+            and all(type(v) in (int, float) and math.isfinite(v) for v in old + new)
+            and math.dist(old, new) <= .005
+            and type(before.get('health')) in (int, float)
+            and type(after.get('health')) in (int, float)
+            and after['health'] >= 19 and after['health'] >= before['health']
+            and isinstance(velocity, list) and len(velocity) == 3
+            and all(type(v) in (int, float) and math.isfinite(v) for v in velocity)
+            and -.1 <= velocity[1] <= .02)
+
+
+def _vertical_column_clear(client, pos):
+    return not _vertical_column_blocks(client, pos)
+
+
+def _ready_vertical_pose(client, pos, state):
+    """Keep a centered, clear pose below foliage instead of seeking another face."""
+    player = state.get('pos')
+    if (not isinstance(player, list) or len(player) != 3
+            or any(type(v) not in (int, float) or not math.isfinite(v) for v in player)
+            or abs(player[0] - pos[0] - .5) > .1
+            or abs(player[2] - pos[2] - .5) > .1
+            or not pos[1] + 1.1 <= player[1] <= pos[1] + 1.55
+            or not _player_body_clear(state, pos)):
+        return False
+    occupied = _vertical_column_blocks(client, pos)
+    if not _safe_canopy(occupied, pos):
+        raise PavingBlocked('Low paving canopy is not verified dry ordinary leaves')
+    # A Y66 canopy leaves only two blocks of headroom. Make one bounded,
+    # collision-checked downward adjustment; never ascend through that canopy.
+    if occupied and player[1] > pos[1] + 1.2 + 1e-6:
+        reply = client.request('navigate', target=[player[0], pos[1] + 1.11, player[2]],
+                               arrival=.1, air_only=True, seconds=15)
+        if reply.get('phase') != 'done':
+            raise PavingBlocked('Native low-canopy paving adjustment was not confirmed')
+        settled = client.status().get('pos')
+        if (not isinstance(settled, list) or len(settled) != 3
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in settled)
+                or math.dist(settled, [player[0], pos[1] + 1.11, player[2]]) > .1
+                or settled[1] > pos[1] + 1.18
+                or not _player_body_clear({'pos': settled}, pos)):
+            raise PavingBlocked('Native low-canopy reply did not prove a lower clear pose')
+    return True
 
 
 def _vertical_placement_pose(client, site, pos, record, state):
@@ -574,15 +645,21 @@ def _direct_vertical_support_face(client, site, pos, state, support, item):
                               [pos[0] + .5, pos[1], pos[2] + .5]) <= 3.6
                 and _player_body_clear(observed, pos))
 
+    occupied = _vertical_column_blocks(client, pos)
     if (_block(support['state']) not in NATURAL_SUPPORT
             or support.get('solid') is not True or not pose_ready(state)
-            or not _vertical_column_clear(client, pos)):
+            or not _safe_canopy(occupied, pos)
+            or occupied and state['pos'][1] > pos[1] + 1.2 + 1e-6):
         raise PavingBlocked('Direct vertical support face or body clearance is unverified')
+    if occupied:
+        time.sleep(.08)
     fresh = client.status()
     if (_safe_state(client, fresh, site) != state['projection_selection']['key']
             or fresh.get('hand', {}).get('item') != item):
         raise PavingBlocked('Direct vertical placement control or hand changed')
     _entities(fresh, pos, client=client, phase='recovered')
+    if occupied and not _stable_canopy_pose(state, fresh):
+        raise PavingBlocked('Low-canopy paving pose was not stable across fresh observations')
     if not pose_ready(fresh):
         _log_blocker(client, pos, 'recovered', 'direct_vertical_pose_lost', fresh)
         raise PavingBlocked('Direct vertical support face or body clearance is unverified')
@@ -671,8 +748,14 @@ def _place(client, site, pos, path, record, *, settle):
     if (record['world_session'] != client.world or record['expected'] != row['expected']
             or record['model_hash'] != model['content_hash']):
         raise PavingPending('Recovered cell belongs to another world session or model')
-    direct_vertical = False
-    if not _player_body_clear(state, pos):
+    direct_vertical = _ready_vertical_pose(client, pos, state)
+    if direct_vertical:
+        state, model, row, support, _ = _cell_check(client, site, pos, air=True,
+                                                   journal_phase='recovered')
+        if (record['world_session'] != client.world or record['expected'] != row['expected']
+                or record['model_hash'] != model['content_hash']):
+            raise PavingPending('Recovered cell changed during low-canopy adjustment')
+    elif not _player_body_clear(state, pos):
         _log_blocker(client, pos, 'recovered', 'player_body_overlap', state)
         direct_vertical = _reposition_for_placement(client, site, pos, record, state) == 'vertical'
         state, model, row, support, _ = _cell_check(client, site, pos, air=True,

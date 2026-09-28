@@ -28,6 +28,7 @@ class DryPavingPlacementPolicyTest {
         final Set<BlockPos> wet = new HashSet<>();
         final Set<BlockPos> blockEntities = new HashSet<>();
         final Set<BlockPos> nonSolid = new HashSet<>();
+        final Set<BlockPos> leaves = new HashSet<>();
         final ArrayList<Vec3> entities = new ArrayList<>();
         boolean naturalSupport = true;
         AABB playerBody = new AABB(12.2, 63, 10.2, 12.8, 64.8, 10.8);
@@ -37,6 +38,7 @@ class DryPavingPlacementPolicyTest {
         public boolean fluid(BlockPos pos) { return wet.contains(pos); }
         public boolean blockEntity(BlockPos pos) { return blockEntities.contains(pos); }
         public boolean solid(BlockPos pos) { return !nonSolid.contains(pos); }
+        public boolean ordinaryLeaves(BlockPos pos) { return leaves.contains(pos); }
         public boolean naturalSupport(BlockPos pos) { return naturalSupport && pos.equals(SUPPORT); }
         public Iterable<Vec3> nearbyEntities(BlockPos destination) { return entities; }
         public AABB playerBody() { return playerBody; }
@@ -75,6 +77,33 @@ class DryPavingPlacementPolicyTest {
         assertNotNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
         world.unloaded.clear();
         world.blockEntities.add(neighbor);
+        assertNotNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
+        world.blockEntities.clear();
+        BlockPos highNeighbor = SUPPORT.east().above(4);
+        world.wet.add(highNeighbor);
+        assertNotNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
+        world.wet.clear();
+        world.blockEntities.add(highNeighbor);
+        assertNotNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
+    }
+
+    @Test void y66OverheadAcceptsOnlyLoadedDryOrdinaryLeavesOrAir() {
+        World world = new World();
+        BlockPos canopy = SUPPORT.above(4);
+        assertNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
+        world.occupied.add(canopy);
+        world.leaves.add(canopy);
+        assertNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
+        world.wet.add(canopy);
+        assertNotNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
+        world.wet.clear();
+        world.blockEntities.add(canopy);
+        assertNotNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
+        world.blockEntities.clear();
+        world.unloaded.add(canopy);
+        assertNotNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
+        world.unloaded.clear();
+        world.leaves.clear(); // The observed leaf turned into another solid block.
         assertNotNull(DryPavingPlacementPolicy.rejection(world, SUPPORT, Direction.UP));
     }
 

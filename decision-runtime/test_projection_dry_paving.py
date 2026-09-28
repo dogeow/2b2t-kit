@@ -47,6 +47,7 @@ class FakeClient:
         self.direct_scan_drift = False
         self.animal_after_pickup = False
         self.navigation_refused = False
+        self.navigation_no_move = False
         self.navigation_params = []
         self.vertical_settle_y = None
         self.low_settle_y = None
@@ -67,6 +68,7 @@ class FakeClient:
         self.hand = 'minecraft:diamond_shovel'
         self.host_protocol = 1
         self.dimension = 'minecraft:overworld'
+        self.status_time = 10000
 
     def _inventory(self):
         return [{'slot': 0, 'item': 'minecraft:stone_bricks', 'count': self.items['minecraft:stone_bricks'], 'max_stack': 64},
@@ -75,7 +77,8 @@ class FakeClient:
                 {'slot': 3, 'item': 'minecraft:air', 'count': 0, 'max_stack': 1}]
 
     def status(self):
-        snapshot = copy.deepcopy({'time': 10000, 'connected': True, 'world_session': self.world,
+        self.status_time += 1
+        snapshot = copy.deepcopy({'time': self.status_time, 'connected': True, 'world_session': self.world,
                               'dry_paving_protocol': self.host_protocol,
                               'server': 'simpcraft.com:25565', 'dimension': self.dimension,
                               'screen': '', 'manual_movement': False, 'health': 20, 'food': 20,
@@ -85,7 +88,7 @@ class FakeClient:
                               'safety_hold': {'active': False},
                               'supervision_lease': {'kind': 'materials', 'job_session': self.task},
                               'projection_selection': {'key': self.key, **self.site['bounds']},
-                              'pos': self.player_feet,
+                              'pos': self.player_feet, 'velocity': [0, -.0784, 0],
                               'entities': self.entities, 'inventory': self._inventory(),
                               'hand': {'item': self.hand, 'durability': 100}})
         if self.host_protocol is None:
@@ -165,6 +168,8 @@ class FakeClient:
             self.navigation_params.append(params)
             if self.navigation_refused:
                 return {'phase': 'waiting'}
+            if self.navigation_no_move:
+                return {'phase': 'done'}
             self.player_feet = list(params['target'])
             if (self.vertical_settle_y is not None
                     and params['target'][1] == self.pos[1] + 1.45):
@@ -304,6 +309,93 @@ class DryPavingTests(unittest.TestCase):
         self.assertIs(rebounds[0]['observed_air'], True)
         self.assertEqual(self.client.operations.count('mine_block'), 1)
         self.assertEqual(self.client.operations.count('interact'), 1)
+
+    def test_reconnected_recovered_cell_places_from_center_under_leaves_without_climbing(self):
+        pos = [761010, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'canopy-rebind', pos=pos)
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.client.world = 'world-2'
+        self.client.block_after_mine = False
+        self.client.approach_inside = True
+        self.client.player_feet = [pos[0] + .5, 64.200000047, pos[2] + .5]
+        self.client.extra = {'pos': [pos[0], 66, pos[2]],
+                             'state': 'Block{minecraft:oak_leaves}[distance=1,persistent=true,waterlogged=false]',
+                             'solid': True, 'fluid': False, 'block_entity': False,
+                             'passable': False}
+        approaches = self.client.operations.count('approach_block')
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        self.assertEqual(self.client.operations.count('approach_block'), approaches)
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+        self.assertEqual(self.client.navigation_params, [])
+        self.assertIs(self.client.interact_params['dry_paving_guard'], True)
+        self.assertEqual(self.journal()['phase'], 'complete')
+        self.assertEqual(len([r for r in self.journal()['receipts']
+                              if r.get('event') == 'world_session_rebind']), 1)
+
+    def test_canopy_adjustment_uncertain_keeps_recovered_hole_and_never_clicks(self):
+        pos = [761010, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'canopy-refusal', pos=pos)
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.client.block_after_mine = False
+        self.client.player_feet = [pos[0] + .5, 64.21, pos[2] + .5]
+        self.client.navigation_refused = True
+        self.client.extra = {'pos': [pos[0], 66, pos[2]],
+                             'state': 'Block{minecraft:oak_leaves}[distance=1,persistent=true,waterlogged=false]',
+                             'solid': True, 'fluid': False, 'block_entity': False,
+                             'passable': False}
+        with self.assertRaisesRegex(PavingBlocked, 'low-canopy paving adjustment'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('place_intent', [r['phase'] for r in self.journal()['receipts']])
+        self.assertNotIn('interact', self.client.operations)
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+
+    def test_low_canopy_zero_movement_done_does_not_authorize_placement(self):
+        pos = [761010, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'canopy-zero-motion', pos=pos)
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.client.block_after_mine = False
+        self.client.player_feet = [pos[0] + .5, 64.20001, pos[2] + .5]
+        self.client.navigation_no_move = True
+        self.client.extra = {'pos': [pos[0], 66, pos[2]],
+                             'state': 'Block{minecraft:oak_leaves}', 'solid': True,
+                             'fluid': False, 'block_entity': False, 'passable': False}
+        with self.assertRaisesRegex(PavingBlocked, 'did not prove a lower clear pose'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('place_intent', [r['phase'] for r in self.journal()['receipts']])
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_low_canopy_water_or_block_entity_never_authorizes_intent(self):
+        pos = [761010, 63, 797829]
+        for name, state, fluid, block_entity in (
+                ('water', 'Block{minecraft:water}[level=0]', True, False),
+                ('container', 'Block{minecraft:chest}[facing=north,type=single,waterlogged=false]', False, True),
+                ('unknown-fluid', 'Block{minecraft:oak_leaves}', None, False)):
+            with self.subTest(name=name):
+                self.client = FakeClient(Path(self.temp.name) / name, pos=pos)
+                self.client.block_after_mine = True
+                with self.assertRaises(PavingBlocked):
+                    self.run_one()
+                self.client.block_after_mine = False
+                self.client.player_feet = [pos[0] + .5, 64.14, pos[2] + .5]
+                self.client.extra = {'pos': [pos[0], 66, pos[2]], 'state': state,
+                                     'solid': True, 'fluid': fluid,
+                                     'block_entity': block_entity, 'passable': False}
+                with self.assertRaisesRegex(PavingBlocked, 'not verified dry ordinary leaves'):
+                    self.run_one()
+                self.assertEqual(self.journal()['phase'], 'recovered')
+                self.assertNotIn('place_intent', [r['phase'] for r in self.journal()['receipts']])
+                self.assertNotIn('interact', self.client.operations)
 
     def test_recovered_reconnect_pre_approaches_from_high_park_before_rebind(self):
         self.client.block_after_mine = True

@@ -48,12 +48,12 @@ class BackendTest(unittest.TestCase):
         self.client.checked.assert_not_called()
         self.client.request.assert_not_called()
 
-    def stopped_build(self,*,outcome='needs_review',budget=True,held=None,alter=None,native=None):
-        audit={'placement_key':'ship','observed_at':2000,'loaded_chunks_verified':True,
+    def stopped_build(self,*,outcome='needs_review',budget=True,held=None,alter=None,native=None,gained=0):
+        audit={'audit_schema':1,'placement_key':'ship','observed_at':2000,'loaded_chunks_verified':True,
                'matched':2762,'total':3407,'kinds':{'missing':645},
                'replacement_items':{'minecraft:deepslate_tiles':557,'minecraft:blast_furnace':17,
                    'minecraft:polished_andesite':57,'minecraft:hopper':6,'minecraft:white_concrete':8}}
-        before={**audit,'observed_at':1000}
+        before={**audit,'observed_at':1000,'matched':audit['matched']-gained}
         if alter:alter(audit)
         self.current['projection_selection']={'key':'ship','min':[0,64,0],'max':[10,186,10]}
         self.current['build_job']={'outcome':outcome,'reason':'路线搜索达到预算上限',
@@ -90,6 +90,31 @@ class BackendTest(unittest.TestCase):
               'minecraft:polished_andesite':57,'minecraft:hopper':6,'minecraft:white_concrete':8}
         self.assertEqual('blocked',self.stopped_build(native=native,held=held)['phase'])
 
+    def test_positive_build_that_exhausted_the_current_frontier_hands_off_to_fresh_material_batch(self):
+        receipt=self.stopped_build(outcome='missing_materials',budget=False,gained=26)
+        self.assertEqual('waiting',receipt['phase'])
+        self.assertEqual(26,receipt['placed'])
+        self.assertEqual({'minecraft:deepslate_tiles':128},receipt['requirements'])
+
+    def test_missing_material_handoff_never_fetches_from_stale_or_unloaded_audit(self):
+        for values in ({'placement_key':'other'},{'loaded_chunks_verified':False},
+                       {'observed_at':999},{'observed_at':1000},{'kinds':{'missing':0}},
+                       {'kinds':{'missing':645,'unloaded':1}}):
+            with self.subTest(values=values):
+                receipt=self.stopped_build(outcome='missing_materials',budget=False,gained=26,
+                                           alter=lambda audit:audit.update(values))
+                self.assertEqual('blocked',receipt['phase'])
+                self.assertEqual(26,receipt['placed'])
+                self.assertEqual({},receipt['requirements'])
+
+    def test_missing_materials_with_all_needed_stock_does_not_repeat_an_empty_build(self):
+        held={'minecraft:deepslate_tiles':557,'minecraft:blast_furnace':17,
+              'minecraft:polished_andesite':57,'minecraft:hopper':6,'minecraft:white_concrete':8}
+        receipt=self.stopped_build(outcome='missing_materials',budget=False,gained=26,held=held)
+        self.assertEqual('blocked',receipt['phase'])
+        self.assertEqual(26,receipt['placed'])
+        self.assertEqual({},receipt['requirements'])
+
     def test_no_route_text_without_completed_search_does_not_start_mining(self):
         for navigation in ({'path_length':0,'search_pending':True,'goals':366,'expanded':2786},
                            {'path_length':0,'search_pending':False,'goals':0,'expanded':0}):
@@ -105,23 +130,91 @@ class BackendTest(unittest.TestCase):
                 self.assertEqual('blocked',receipt['phase']);self.assertNotIn('requirements',receipt)
 
     def test_route_budget_fallback_requires_current_complete_missing_audit(self):
-        for values in [{'placement_key':'other'},{'loaded_chunks_verified':False},{'observed_at':999},
+        for values in [{'placement_key':'other'},{'loaded_chunks_verified':False},{'observed_at':999},{'observed_at':1000},
                        {'kinds':{'missing':645,'unloaded':1}},{'kinds':{'missing':0}},{'kinds':{}}]:
             with self.subTest(values=values):
                 receipt=self.stopped_build(alter=lambda a:a.update(values))
                 self.assertEqual('blocked',receipt['phase']);self.assertNotIn('requirements',receipt)
 
     def test_missing_build_materials_request_one_new_useful_batch(self):
-        audit={'replacement_items':{'minecraft:white_concrete':8,'minecraft:deepslate_tiles':625,'minecraft:hopper':6}}
+        audit={'audit_schema':1,'replacement_items':{'minecraft:white_concrete':8,'minecraft:deepslate_tiles':625,'minecraft:hopper':6}}
         self.assertEqual({'minecraft:deepslate_tiles':128},backend.next_build_supply(audit,{'minecraft:white_concrete':32,'minecraft:hopper':6}))
         self.assertEqual({'minecraft:deepslate_tiles':256},backend.next_build_supply(audit,{'minecraft:white_concrete':32,'minecraft:hopper':6,'minecraft:deepslate_tiles':128}))
         self.assertFalse(backend.next_build_supply(audit,{'minecraft:white_concrete':32,'minecraft:hopper':6,'minecraft:deepslate_tiles':625}))
+
+    def test_schema_two_supply_uses_only_direct_item_empty_holes_not_occupied_terrain(self):
+        def row(item,kind,actual,**flags):
+            return {'expected':f'Block{{{item}}}','kind':kind,'actual':actual,
+                    'fluid':False,'block_entity':False,'neighbors_loaded':True,
+                    'adjacent_fluid':False,**flags}
+        audit={'audit_schema':2,'loaded_chunks_verified':True,'matched':0,'total':9,
+               'replacement_items':{'minecraft:smooth_quartz':4,'minecraft:deepslate_tile_slab':2,
+                                    'minecraft:dirt':2},
+               'mismatches':[
+                   row('minecraft:smooth_quartz','occupied','Block{minecraft:grass_block}'),
+                   row('minecraft:smooth_quartz','occupied','Block{minecraft:grass_block}'),
+                   row('minecraft:smooth_quartz','missing','Block{minecraft:short_grass}'),
+                   row('minecraft:smooth_quartz','missing','Block{minecraft:air}'),
+                   row('minecraft:deepslate_tile_slab','missing','Block{minecraft:air}'),
+                   row('minecraft:deepslate_tile_slab','missing','Block{minecraft:air}'),
+                   row('minecraft:dirt','occupied','Block{minecraft:grass_block}'),
+                   row('minecraft:dirt','occupied','Block{minecraft:grass_block}'),
+                   row('minecraft:dirt','state_only','Block{minecraft:dirt}')],
+               'kinds':{'missing':4,'occupied':4,'state_only':1}}
+        self.assertEqual({'minecraft:deepslate_tile_slab':2},backend.next_build_supply(audit,{}))
+        self.assertEqual({'minecraft:smooth_quartz':1},backend.next_build_supply(audit,{'minecraft:deepslate_tile_slab':2}))
+        self.assertEqual({},backend.next_build_supply(audit,{'minecraft:deepslate_tile_slab':2,'minecraft:smooth_quartz':1}))
+        audit['replacement_items']['minecraft:smooth_quartz']=5
+        self.assertEqual({},backend.next_build_supply(audit,{'minecraft:deepslate_tile_slab':2}),
+                         'An inconsistent direct-item row count must not restore the raw five-block request')
+
+    def test_non_direct_crop_mapping_and_incomplete_audit_are_not_reinterpreted_as_zero(self):
+        audit={'audit_schema':2,'loaded_chunks_verified':True,'matched':0,'total':4,
+               'replacement_items':{'minecraft:potato':4},
+               'mismatches':[{'kind':'missing','expected':'Block{minecraft:potatoes}[age=0]',
+                              'actual':'Block{minecraft:air}','fluid':False,'block_entity':False,
+                              'neighbors_loaded':True,'adjacent_fluid':False} for _ in range(4)],
+               'kinds':{'missing':4}}
+        self.assertEqual({'minecraft:potato':4},backend.next_build_supply(audit,{}))
+        audit['loaded_chunks_verified']=False
+        self.assertEqual({},backend.next_build_supply(audit,{}))
+
+    def test_cave_air_counts_as_an_empty_missing_cell_but_void_air_never_does(self):
+        audit={'audit_schema':2,'loaded_chunks_verified':True,'matched':0,'total':2,
+               'replacement_items':{'minecraft:stone_bricks':2},'kinds':{'missing':2},
+               'mismatches':[{'kind':'missing','expected':'Block{minecraft:stone_bricks}',
+                              'actual':'Block{minecraft:'+air+'}','fluid':False,'block_entity':False,
+                              'neighbors_loaded':True,'adjacent_fluid':False}
+                             for air in ('cave_air','void_air')]}
+        self.assertEqual({'minecraft:stone_bricks':1},backend.next_build_supply(audit,{}))
+
+    def test_schema_two_supply_rejects_incomplete_or_inconsistent_audit_totals(self):
+        row={'kind':'missing','expected':'Block{minecraft:stone_bricks}',
+             'actual':'Block{minecraft:air}','fluid':False,'block_entity':False,
+             'neighbors_loaded':True,'adjacent_fluid':False}
+        valid={'audit_schema':2,'loaded_chunks_verified':True,'matched':1,'total':2,
+               'mismatches':[row],'kinds':{'missing':1},
+               'replacement_items':{'minecraft:stone_bricks':1}}
+        self.assertEqual({'minecraft:stone_bricks':1},backend.next_build_supply(valid,{}))
+        for mutation in ({'total':3},{'matched':0},{'kinds':{'missing':2}},
+                         {'replacement_items':{'minecraft:stone_bricks':2}},
+                         {'kinds':{'missing':1,'occupied':1}}):
+            with self.subTest(mutation=mutation):
+                self.assertEqual({},backend.next_build_supply({**valid,**mutation},{}))
+
+    def test_only_explicit_legacy_schema_one_uses_old_total_deficits(self):
+        audit={'replacement_items':{'minecraft:smooth_quartz':128}}
+        for schema in (None,0,2.0,3,True):
+            with self.subTest(schema=schema):
+                self.assertEqual({},backend.next_build_supply({**audit,'audit_schema':schema},{}))
+        self.assertEqual({},backend.next_build_supply(audit,{}))
+        self.assertEqual({'minecraft:smooth_quartz':128},backend.next_build_supply({**audit,'audit_schema':1},{}))
 
     def post_audits(self,actual='Block{minecraft:short_grass}'):
         row={'pos':[1,65,1],'expected':'Block{minecraft:stripped_oak_log}[axis=y]',
              'actual':actual,'kind':'missing' if actual.endswith('short_grass}') or actual.endswith('air}') else 'occupied',
              'fluid':False,'adjacent_fluid':False,'block_entity':False,'neighbors_loaded':True}
-        before={'placement_key':'ship','server':'simpcraft.com','dimension':'minecraft:overworld',
+        before={'audit_schema':1,'placement_key':'ship','server':'simpcraft.com','dimension':'minecraft:overworld',
                 'observed_at':1000,'loaded_chunks_verified':True,'matched':0,'total':1,
                 'mismatches':[row],'replacement_items':{'minecraft:stripped_oak_log':1},
                 'kinds':{'missing':1}}

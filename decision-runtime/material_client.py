@@ -1,5 +1,6 @@
 """Shared native material client. Every action is scoped to a live world, revision and safety lease."""
 import json,math,time,uuid
+from collections import deque
 from pathlib import Path
 from build_supervisor import SafetyHeartbeat,stocks
 from run_evidence import observed_delta,write_manifest
@@ -11,6 +12,55 @@ def high_park_clearance(rows,target_y):
   ground=[row['pos'][1]+1 for row in rows if row.get('fluid') or not row.get('passable',True)]
   if not ground:raise Handoff('High guard park has no verified ground column')
   return target_y-max(ground)
+def bounded_canopy_path(rows,pos,target_y,radius=4):
+ """A short, natural-ground walk to an observed open vertical column, or none."""
+ if not isinstance(pos,list) or len(pos)!=3:return None
+ x0,z0=math.floor(pos[0]),math.floor(pos[2]);y=math.floor(pos[1])
+ # A .30-wide player half-body must fit the observed start cell before the
+ # first native AABB sweep; off-centre starts yield instead of guessing.
+ if abs(pos[0]-(x0+.5))>.18 or abs(pos[2]-(z0+.5))>.18:return None
+ cells={}
+ for row in rows:
+  point=row.get('pos') if isinstance(row,dict) else None
+  if not isinstance(point,list) or len(point)!=3 or any(type(v) is not int for v in point):return None
+  key=tuple(point)
+  if key in cells:return None
+  cells[key]=row
+ ground={'minecraft:grass_block','minecraft:dirt','minecraft:coarse_dirt',
+         'minecraft:podzol','minecraft:stone','minecraft:cobblestone',
+         'minecraft:deepslate','minecraft:moss_block',
+         'minecraft:stone_bricks','minecraft:polished_andesite'}
+ soft={'minecraft:short_grass','minecraft:tall_grass','minecraft:fern','minecraft:large_fern'}
+ def block_id(row):
+  state=row.get('state')
+  return state.split('}',1)[0].removeprefix('Block{') if isinstance(state,str) else ''
+ def body_clear(x,z):
+  for head in (y,y+1):
+   row=cells.get((x,head,z))
+   if row and (block_id(row) not in soft or row.get('passable') is not True
+               or row.get('fluid') is not False or row.get('block_entity') is not False):return False
+  return True
+ def floor_clear(x,z):
+  row=cells.get((x,y-1,z))
+  return bool(row and block_id(row) in ground and row.get('solid') is True
+              and row.get('fluid') is False and row.get('block_entity') is False)
+ def safe(x,z):return (abs(x-x0)<=radius and abs(z-z0)<=radius
+                       and body_clear(x,z) and floor_clear(x,z))
+ def open_column(x,z):return all((x,h,z) not in cells for h in range(y,math.ceil(target_y)+3))
+ if not safe(x0,z0):return None
+ queue=deque([(x0,z0)]);parent={(x0,z0):None};goal=None
+ while queue:
+  x,z=queue.popleft()
+  if (x,z)!=(x0,z0) and open_column(x,z):goal=(x,z);break
+  for dx,dz in ((1,0),(-1,0),(0,1),(0,-1)):
+   nxt=(x+dx,z+dz)
+   if nxt not in parent and safe(*nxt):parent[nxt]=(x,z);queue.append(nxt)
+ if goal is None:return None
+ route=[]
+ while goal is not None:
+  route.append([goal[0]+.5,pos[1],goal[1]+.5]);goal=parent[goal]
+ route=list(reversed(route))
+ return route if len(route)-1<=4 else None
 def underwater_action_allowed(state,op,params):
  from dive_safety import native_air_budget,pickup_air_floor
  budget=native_air_budget(state)
@@ -198,6 +248,132 @@ class MaterialClient(Client):
   pos=state.get('pos')
   return bool(pos and abs(pos[1]-self.park_target[1])<=2 and
               (pos[0]-self.park_target[0])**2+(pos[2]-self.park_target[2])**2<=self.PARK_RADIUS_SQR)
+ def ascent_obstacles(self,state):
+  """Fail closed before changing height within the current body column."""
+  # Y 320 is the caller's supported high park. The world has no blocks above
+  # 319; native air_only independently checks the complete player-body sweep.
+  if type(self.park_target[1]) not in (int,float) or not math.isfinite(self.park_target[1]) or self.park_target[1]>320:
+   raise RuntimeError('High park target height is outside the verified body range')
+  pos=state.get('pos')
+  if (not isinstance(pos,list) or len(pos)!=3 or
+      any(type(v) not in (int,float) or not math.isfinite(v) for v in pos)):
+   raise RuntimeError('Current paving park position is unverified')
+  if abs(pos[1]-self.park_target[1])<=2:return []
+  low_y=(math.floor(pos[1])+1 if pos[1]<self.park_target[1]
+         else math.floor(self.park_target[1]))
+  high_y=min(319,math.ceil(max(pos[1],self.park_target[1]))+2)
+  low=[math.floor(pos[0]-.35),low_y,math.floor(pos[2]-.35)]
+  high=[math.floor(pos[0]+.35),high_y,math.floor(pos[2]+.35)]
+  if high[1]<low[1]:raise RuntimeError('High park ascent height is unverified')
+  reply=self.request('scan',min=low,max=high,details=True)
+  if (reply.get('phase') not in (None,'done') or reply.get('world_session')!=self.world
+      or not isinstance(reply.get('blocks'),list)):
+   raise RuntimeError('High park ascent column was not freshly scanned')
+  blocks=[]
+  for row in reply['blocks']:
+   point=row.get('pos')
+   if (not isinstance(point,list) or len(point)!=3 or any(type(v) is not int for v in point)
+       or any(point[i]<low[i] or point[i]>high[i] for i in range(3))):
+    raise RuntimeError('High park ascent scan returned an invalid block')
+   blocks.append({'pos':point,'state':row.get('state')})
+  return blocks
+ def _finish_canopy_escape(self,state,obstacles):
+  """Move at most four ground blocks only through a fresh, natural-floor scan."""
+  if (state.get('health',0)<18 or state.get('under_water') or not state.get('guard_armed')
+      or not state.get('flight') or any(not isinstance(row.get('state'),str)
+      or not row['state'].split('}',1)[0].endswith('_leaves') for row in obstacles)):
+   raise RuntimeError('Blocked park column has no eligible local canopy escape')
+  start=list(state['pos']);x,z=math.floor(start[0]),math.floor(start[2]);y=math.floor(start[1])
+  low=[x-4,y-1,z-4];high=[x+4,min(319,math.ceil(self.park_target[1])+2),z+4]
+  reply=self.request('scan',min=low,max=high,details=True)
+  if (reply.get('phase') not in (None,'done') or reply.get('world_session')!=self.world
+      or not isinstance(reply.get('blocks'),list)):
+   raise RuntimeError('Local canopy corridor was not completely scanned')
+  for row in reply['blocks']:
+   point=row.get('pos') if isinstance(row,dict) else None
+   if (not isinstance(point,list) or len(point)!=3 or any(type(v) is not int for v in point)
+       or any(point[i]<low[i] or point[i]>high[i] for i in range(3))):
+    raise RuntimeError('Local canopy scan returned an invalid block')
+  fresh=self.status()
+  if (math.dist(fresh['pos'],start)>.25 or fresh.get('health',0)<18
+      or not fresh.get('guard_armed') or not fresh.get('flight')):
+   raise RuntimeError('Canopy position or protection changed after scan')
+  route=bounded_canopy_path(reply['blocks'],start,self.park_target[1])
+  if not route:
+   raise RuntimeError('No verified short natural-ground exit from canopy')
+  route_started=time.monotonic();start_step_deadline=route_started+12
+  for waypoint in route[1:]:
+   # Budget only NEW step initiation. An issued native request may take its
+   # own bounded settlement window and must never be interrupted or replayed.
+   remaining=start_step_deadline-time.monotonic()
+   if remaining<=3:raise RuntimeError('Local canopy new-step budget ended before the next move')
+   fresh=self.status();self._safe_canopy_step(fresh,waypoint)
+   result=self.request('navigate',target=waypoint,arrival=.25,
+                       seconds=min(6,max(5,math.ceil(remaining))),air_only=True)
+   if result.get('phase')!='done':
+    raise RuntimeError('Local canopy step was not confirmed: '+str(result.get('detail')))
+   fresh=self.status()
+   if (math.dist(fresh['pos'],waypoint)>.55 or fresh.get('health',0)<18
+       or not fresh.get('guard_armed') or not fresh.get('flight')):
+    raise RuntimeError('Local canopy step or protection changed')
+   if time.monotonic()>start_step_deadline:
+    raise RuntimeError('Local canopy new-step budget ended after a confirmed step')
+  self._safe_canopy_step(fresh,fresh['pos'])
+  (self.out/'park-canopy-route.json').write_text(json.dumps({
+   'world_session':self.world,'from':start,'waypoints':route[1:],
+   'actual':fresh['pos'],'confirmed':True,
+   'elapsed_seconds':round(time.monotonic()-route_started,3),
+   'new_step_initiation_budget_seconds':12},ensure_ascii=False,indent=2))
+  return fresh
+ def _safe_canopy_step(self,status,waypoint):
+  entities=status.get('entities')
+  if (status.get('guard_busy') or status.get('health',0)<18
+      or not status.get('guard_armed') or not status.get('guard_pve_only')
+      or not status.get('flight') or not isinstance(entities,list)):
+   raise RuntimeError('Canopy movement lacks fresh independent protection or entity coverage')
+  for entity in entities:
+   position=entity.get('pos') if isinstance(entity,dict) else None
+   if (not isinstance(position,list) or len(position)!=3
+       or any(type(v) not in (int,float) or not math.isfinite(v) for v in position)):
+    raise RuntimeError('Canopy entity observation is incomplete')
+   if entity.get('hostile') is True:
+    raise RuntimeError('Canopy movement paused for a nearby hostile')
+   if (entity.get('type') not in ('minecraft:item','minecraft:experience_orb')
+       and math.dist(position,waypoint)<3):
+    raise RuntimeError('Canopy waypoint has a nearby entity')
+ def _finish_vertical(self,state,emergency=False):
+  """One verified same-column route; never follow an uncertain reply with another move."""
+  start=list(state['pos']);target_y=self.park_target[1]
+  if abs(start[1]-target_y)<=2:return state
+  obstacles=self.ascent_obstacles(state);canopy_escaped=False
+  if obstacles:
+   (self.out/'park-column-obstacle.json').write_text(json.dumps({
+    'world_session':self.world,'player_pos':start,'park_target':self.park_target,
+    'obstacles':obstacles[:16],'count':len(obstacles),
+    'action':'bounded_canopy_egress_or_safe_logout'},ensure_ascii=False,indent=2))
+   if emergency:raise RuntimeError('Critical health under blocked ascent; no lateral movement')
+   state=self._finish_canopy_escape(state,obstacles)
+   canopy_escaped=True
+   obstacles=self.ascent_obstacles(state)
+   if obstacles:raise RuntimeError('Canopy exit column changed; no upward movement sent')
+   start=list(state['pos'])
+  fresh=self.status()
+  if canopy_escaped:self._safe_canopy_step(fresh,fresh['pos'])
+  if (math.dist(fresh['pos'],start)>.25 or not fresh.get('guard_armed')
+      or not fresh.get('flight')):
+   raise RuntimeError('High park ascent position or protection changed after scan')
+  target=[fresh['pos'][0],target_y,fresh['pos'][2]]
+  if emergency and fresh.get('guard_busy'):
+   raise RuntimeError('Critical health with active defense; no ascent command sent')
+  seconds=8 if emergency else min(90,max(12,math.ceil(abs(target_y-fresh['pos'][1])/2)+12))
+  result=self.request('navigate',target=target,arrival=1,seconds=seconds,air_only=True)
+  if result.get('phase')!='done':
+   raise RuntimeError('High park vertical route was not confirmed: '+str(result.get('detail')))
+  reached=self.status();pos=reached['pos']
+  if (not reached.get('guard_armed') or not reached.get('flight')
+      or abs(pos[1]-target_y)>2 or math.hypot(pos[0]-target[0],pos[2]-target[2])>.75):
+   raise RuntimeError('High park vertical arrival or protection was not verified')
+  return reached
  def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None,remote_finish='disconnect',park_target=None):
   if remote_finish not in ('disconnect','guard') or remote_finish=='guard' and (not isinstance(park_target,(list,tuple)) or len(park_target)!=3):raise ValueError('Guard finish requires a high park target')
   self.remote_finish=remote_finish;self.park_target=list(park_target) if park_target is not None else None
@@ -333,15 +509,13 @@ class MaterialClient(Client):
     self.checked('close_menu')
   except (Handoff,RuntimeError,KeyError):pass
   if self.remote_finish=='guard':
-   health_exit_state=None
+   health_exit_state=None;guard_finish_started=time.monotonic()
    try:
     s=self.status()
     if not s.get('guard_armed'):raise RuntimeError('High parking needs PvE guard')
     if s['health']<14:
      health_exit_state=s
-     if s['pos'][1]<self.park_target[1]-2:
-      rise=[s['pos'][0],self.park_target[1],s['pos'][2]]
-      self.request('navigate',target=rise,arrival=1,seconds=8)
+     if not s.get('under_water'):self._finish_vertical(s,emergency=True)
      raise RuntimeError('Critical health; rise before safety logout')
     if not self.park_near(s):
      deadline=time.monotonic()+12
@@ -349,10 +523,9 @@ class MaterialClient(Client):
       s=self.status()
       if s['health']<14:
        health_exit_state=s
-       if s['pos'][1]<self.park_target[1]-2:
-        rise=[s['pos'][0],self.park_target[1],s['pos'][2]]
-        self.request('navigate',target=rise,arrival=1,seconds=8)
+       if not s.get('under_water'):self._finish_vertical(s,emergency=True)
        raise RuntimeError('Critical health while reaching high parking')
+      if self.park_near(s):break
       # World height does not indicate immersion: dry paving can leave the
       # player at Y63 in a one-block hole. The short local water exit may then
       # hit an overhead block and force an unnecessary logout. Only an actual
@@ -366,13 +539,12 @@ class MaterialClient(Client):
        if time.monotonic()>=deadline:raise RuntimeError('Air did not recover before high parking')
        time.sleep(.25);continue
       if s.get('guard_busy'):
-       if s['pos'][1]<self.park_target[1]-2:
-        rise=[s['pos'][0],self.park_target[1],s['pos'][2]]
-        climb=self.request('navigate',target=rise,arrival=1,seconds=8)
-        if climb.get('phase')=='done':continue
        if time.monotonic()>=deadline:raise RuntimeError('Defense stayed busy before high parking')
        time.sleep(.25);continue
-      r=self.request('navigate',target=self.park_target,arrival=2,seconds=120)
+      if abs(s['pos'][1]-self.park_target[1])>2:
+       self._finish_vertical(s)
+       continue
+      r=self.request('navigate',target=self.park_target,arrival=2,seconds=120,air_only=True)
       if r.get('phase')=='done':break
       if (r.get('phase')=='error' and r.get('detail')=='Construction guard is defending or eating; wait before changing items or starting work'
           and time.monotonic()<deadline):
@@ -391,7 +563,9 @@ class MaterialClient(Client):
       latest=self.status()
       if latest.get('health',20)<18:health_exit_state=latest
      except (Handoff,RuntimeError,KeyError):pass
-    (self.out/'park-fallback.json').write_text(json.dumps({'reason':str(error),'action':'safe_logout'},ensure_ascii=False))
+    (self.out/'park-fallback.json').write_text(json.dumps({
+     'reason':str(error),'action':'safe_logout',
+     'elapsed_seconds':round(time.monotonic()-guard_finish_started,3)},ensure_ascii=False))
     try:self.request('safe_logout')
     except (Handoff,RuntimeError):pass
     finally:

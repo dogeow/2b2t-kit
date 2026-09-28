@@ -40,6 +40,7 @@ class DryPavingMiningPolicyTest {
         public boolean fluid(BlockPos pos) { return wet.contains(pos); }
         public boolean blockEntity(BlockPos pos) { return blockEntities.contains(pos); }
         public boolean solid(BlockPos pos) { return !nonSolid.contains(pos); }
+        public boolean ordinaryLeaves(BlockPos pos) { return false; }
         public boolean naturalSupport(BlockPos pos) { return naturalSupport && pos.equals(TARGET.below()); }
         public Iterable<Vec3> nearbyEntities(BlockPos destination) { return entities; }
         public AABB playerBody() { return playerBody; }

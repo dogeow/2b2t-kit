@@ -1,6 +1,9 @@
+import json
+from pathlib import Path
+import tempfile
 import unittest
-from unittest.mock import patch
-from material_client import Client,MaterialClient,high_park_clearance,credit_guard_pause,vertical_surface_escape,pending_request_state,Handoff
+from unittest.mock import Mock, patch
+from material_client import Client,MaterialClient,high_park_clearance,credit_guard_pause,vertical_surface_escape,pending_request_state,bounded_canopy_path,Handoff
 BUSY='Construction guard is defending or eating; wait before changing items or starting work'
 class Tests(unittest.TestCase):
  def test_combat_pause_extends_only_guarded_native_wait_with_a_cap(self):
@@ -30,6 +33,64 @@ class Tests(unittest.TestCase):
   self.assertTrue(c.park_near({'pos':[107.5,95,200.5]}))
   self.assertFalse(c.park_near({'pos':[109.5,95,200.5]}))
   self.assertFalse(c.park_near({'pos':[100.5,88,200.5]}))
+ def test_canopy_walk_requires_confirmed_paving_support_before_any_horizontal_step(self):
+  floors=[{'pos':[x,63,0],'state':'Block{minecraft:grass_block}',
+           'solid':True,'passable':False,'fluid':False,'block_entity':False} for x in range(3)]
+  roof=[{'pos':[x,68,0],'state':'Block{minecraft:oak_leaves}',
+         'solid':True,'passable':False,'fluid':False,'block_entity':False} for x in (0,1)]
+  self.assertIsNone(bounded_canopy_path(floors[1:]+roof,[.5,64.2,.5],95))
+  floors[0]['state']='Block{minecraft:stone_bricks}'
+  self.assertIsNone(bounded_canopy_path(floors+roof,[.18,64.2,.18],95),
+                    'A body crossing neighbouring cells must not use a single-cell route proof')
+  self.assertEqual([p[0] for p in bounded_canopy_path(floors+roof,[.5,64.2,.5],95)], [.5,1.5,2.5])
+  floors[0]['state']='Block{minecraft:polished_andesite}'
+  self.assertEqual(len(bounded_canopy_path(floors+roof,[.5,64.2,.5],95)),3)
+ def test_canopy_path_rejects_a_long_maze_even_within_the_nine_by_nine_scan(self):
+  floors=[{'pos':[x,63,z],'state':'Block{minecraft:grass_block}',
+           'solid':True,'passable':False,'fluid':False,'block_entity':False}
+          for x in range(-4,5) for z in range(-4,5)]
+  roof=[{'pos':[x,68,z],'state':'Block{minecraft:oak_leaves}',
+         'solid':True,'passable':False,'fluid':False,'block_entity':False}
+        for x in range(-4,5) for z in range(-4,5) if (x,z)!=(4,4)]
+  self.assertIsNone(bounded_canopy_path(floors+roof,[.5,64.2,.5],95))
+ def test_top_world_high_park_remains_a_supported_verified_target(self):
+  c=MaterialClient.__new__(MaterialClient);c.world='world-2';c.park_target=[100.5,320,200.5]
+  calls=[]
+  def request(op,**params):
+   calls.append(params)
+   return {'world_session':c.world,'blocks':[]}
+  c.request=request
+  self.assertEqual([],c.ascent_obstacles({'pos':[100.5,300,200.5]}))
+  self.assertEqual(calls[0]['max'][1],319)
+ def test_leaf_canopy_forces_safe_logout_before_high_park_navigation(self):
+  with tempfile.TemporaryDirectory() as temp:
+   c=MaterialClient.__new__(MaterialClient)
+   c.root=c.out=Path(temp);c.world='world-2';c.park_target=[100.5,145,200.5]
+   c.remote_finish='guard';c.heartbeat=Mock();c.owned_material_menu=None
+   state={'pos':[100.5,64.2,200.5],'guard_armed':True,'flight':True,'air_supply':300,'health':20,
+          'menu':{'type':'InventoryMenu','slots':[{'count':0}]*5,'cursor':{'count':0}}}
+   c.status=lambda:state
+   calls=[]
+   def request(op,**params):
+    calls.append((op,params))
+    if op=='scan':
+     return {'world_session':c.world,'blocks':[{'pos':[100,66,200],
+             'state':'Block{minecraft:oak_leaves}'}]}
+    if op=='safe_logout':return {'phase':'done'}
+    raise AssertionError('The blocked canopy must never receive a navigation command')
+   c.request=request
+   with patch('material_cleanup.run'),patch('craft_recovery.clear_owned_workbench'):
+    c._finish()
+   self.assertEqual([op for op,_ in calls],['scan','scan','safe_logout'])
+   self.assertEqual(calls[0][1]['min'],[100,65,200])
+   self.assertEqual(json.loads((c.out/'park-column-obstacle.json').read_text())['count'],1)
+   self.assertEqual(json.loads((c.out/'park-fallback.json').read_text())['action'],'safe_logout')
+   c.heartbeat.close.assert_called_once()
+ def test_unverified_high_park_column_never_sends_navigation(self):
+  c=MaterialClient.__new__(MaterialClient);c.world='world-2';c.park_target=[100.5,145,200.5]
+  c.request=lambda op,**kw:{'phase':'error','world_session':c.world,'blocks':[]}
+  with self.assertRaisesRegex(RuntimeError,'not freshly scanned'):
+   c.ascent_obstacles({'pos':[100.5,64.2,200.5]})
  def test_only_pre_dispatch_guard_busy_is_retried(self):
   c=MaterialClient.__new__(MaterialClient);c.task='t';c.status=lambda:{}
   with patch.object(Client,'request',side_effect=[{'phase':'error','detail':BUSY},{'phase':'done'}]) as call,patch('material_client.time.sleep'):

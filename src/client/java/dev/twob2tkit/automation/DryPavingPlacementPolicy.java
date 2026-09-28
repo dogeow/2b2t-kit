@@ -15,6 +15,7 @@ final class DryPavingPlacementPolicy {
         boolean fluid(BlockPos pos);
         boolean blockEntity(BlockPos pos);
         boolean solid(BlockPos pos);
+        boolean ordinaryLeaves(BlockPos pos);
         boolean naturalSupport(BlockPos pos);
         Iterable<Vec3> nearbyEntities(BlockPos destination);
         AABB playerBody();
@@ -32,10 +33,17 @@ final class DryPavingPlacementPolicy {
     static String surroundingsRejection(World world, BlockPos destination) {
         for (int x = destination.getX() - 1; x <= destination.getX() + 1; x++)
             for (int z = destination.getZ() - 1; z <= destination.getZ() + 1; z++)
-                for (int y = 62; y <= 65; y++) {
+                for (int y = 62; y <= 66; y++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     if (!world.loaded(pos) || world.fluid(pos) || world.blockEntity(pos))
                         return "Dry paving neighbor became unloaded, wet, or a block entity";
+                    // A low canopy can safely remain above the empty two-block
+                    // work column, but it must still be a dry ordinary leaf at
+                    // the last possible moment before placing. This method is
+                    // called both before and after interaction rotation.
+                    if (y == 66 && x == destination.getX() && z == destination.getZ()
+                            && !world.air(pos) && !world.ordinaryLeaves(pos))
+                        return "Dry paving overhead canopy changed from dry leaves";
                 }
         if (!world.naturalSupport(destination.below())
                 || !world.air(destination.above()) || !world.air(destination.above(2)))

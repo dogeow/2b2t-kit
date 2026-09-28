@@ -190,8 +190,65 @@ def split_post_supply(audit, state=None):
     return needed,posts
 
 
+def direct_air_supply(audit, needed, posts=None):
+    """Cap verified schema-2 item counts to air holes, not occupied terrain.
+
+    This proves only a candidate shortage. The native builder still decides
+    support, survival and reach. Legacy audits retain their old planner path.
+    """
+    if type(audit.get('audit_schema')) is int and audit['audit_schema'] == 1:
+        return dict(needed)
+    if type(audit.get('audit_schema')) is not int or audit['audit_schema'] != 2:
+        return {}
+    rows=audit.get('mismatches');kinds=audit.get('kinds')
+    matched=audit.get('matched');total=audit.get('total')
+    if (audit.get('loaded_chunks_verified') is not True or not isinstance(rows,list)
+            or not isinstance(kinds,dict) or type(matched) is not int or type(total) is not int
+            or matched<0 or total<1 or matched+len(rows)!=total):
+        return {}
+    advertised=dict(quantities(audit.get('replacement_items',{})))
+    observed_kinds=Counter();mapped=Counter();air=Counter()
+    block_item_aliases={'minecraft:potatoes':'minecraft:potato',
+                        'minecraft:wheat':'minecraft:wheat_seeds',
+                        'minecraft:beetroots':'minecraft:beetroot_seeds',
+                        'minecraft:water_cauldron':'minecraft:cauldron'}
+    for row in rows:
+        if not isinstance(row,dict) or row.get('kind') not in ('missing','occupied','state_only'):
+            return {}
+        observed_kinds[row['kind']]+=1
+        expected=row.get('expected')
+        if not isinstance(expected,str):
+            return {}
+        if row['kind']=='state_only' or 'half=upper' in expected or 'part=head' in expected:
+            continue
+        match=re.match(r'^Block\{([a-z0-9_.-]+:[a-z0-9_./-]+)\}',expected)
+        if not match:
+            return {}
+        block=match.group(1)
+        if block in ('minecraft:water','minecraft:lava'):
+            continue  # Vanilla fluid blocks have no inventory item in ProjectionAudit.
+        item=block_item_aliases.get(block,block);mapped[item]+=1
+        if (row.get('kind')=='missing' and row.get('actual') in ('Block{minecraft:air}','Block{minecraft:cave_air}')
+                and row.get('fluid') is False and row.get('block_entity') is False
+                and row.get('neighbors_loaded') is True and row.get('adjacent_fluid') is False):
+            air[item]+=1
+    if (set(kinds)-{'missing','occupied','state_only'}
+            or any(type(count) is not int or count<0 for count in kinds.values())
+            or dict(observed_kinds)!={kind:count for kind,count in kinds.items() if count}
+            or dict(mapped)!=advertised):
+        return {}
+    result={}
+    for item,count in needed.items():
+        if item == POST_ITEM and posts is not None:
+            result[item]=count  # In-place post repair has its own verified ledger.
+        elif air[item]:
+            result[item]=min(count,air[item])
+    return result
+
+
 def next_build_supply(audit, held, state=None):
     needed,posts=split_post_supply(audit,state)
+    needed=direct_air_supply(audit,needed,posts)
     if posts and posts['raw_needed']:
         needed[POST_RAW]=needed.get(POST_RAW,0)+posts['raw_needed']
     missing=[(count-held.get(item,0),item,count) for item,count in needed.items()
@@ -1177,7 +1234,7 @@ class Backend:
                            and after.get('loaded_chunks_verified') is True
                            and not after.get('kinds',{}).get('unloaded')
                            and type(after.get('observed_at')) is int
-                           and after['observed_at']>=before.get('observed_at',0)
+                           and after['observed_at']>before.get('observed_at',0)
                            and type(after.get('kinds',{}).get('missing')) is int
                            and after['kinds']['missing']>0)
             if gained==0 and route_unreachable and fresh_missing:
@@ -1192,12 +1249,16 @@ class Backend:
                         'requirements':requirements,'placed':0,'route_budget_exhausted':route_budget,
                         'route_unreachable':route_unreachable,
                         'navigation':navigation}
-            if gained<=0 and state.get('outcome')=='missing_materials':
-                requirements=next_build_supply(after,self.stock(),c.status())
+            if state.get('outcome')=='missing_materials':
+                # The native builder has already searched the current frontier
+                # with this inventory. Even if it placed some blocks first,
+                # restarting it unchanged only repeats the travel and scan
+                # before discovering the same missing-material stop.
+                requirements=next_build_supply(after,self.stock(),c.status()) if fresh_missing else {}
                 return {'phase':'waiting' if requirements else 'blocked',
-                        'detail':'先补可推进施工的下一批材料' if requirements else '背包已有差料，原生建造仍请求补料；保留现场待核对',
-                        'requirements':requirements,'placed':0}
-            return {'phase':'done' if gained>0 else 'waiting' if state.get('outcome')=='missing_materials' else 'blocked',
+                        'detail':'先补可推进施工的下一批材料' if requirements else '没有新鲜且可放的差料证据，或背包已有差料；保留现场待核对',
+                        'requirements':requirements,'placed':max(0,gained)}
+            return {'phase':'done' if gained>0 else 'blocked',
                     'detail':state.get('reason','施工差料已重新核对'), 'placed':gained,
                     **({'route_budget_exhausted':True,'navigation':navigation} if route_budget else {})}
 

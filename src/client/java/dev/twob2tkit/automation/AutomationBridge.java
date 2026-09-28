@@ -1935,6 +1935,11 @@ public final class AutomationBridge {
             public boolean fluid(BlockPos p){return !c.level.getFluidState(p).isEmpty();}
             public boolean blockEntity(BlockPos p){return c.level.getBlockEntity(p)!=null;}
             public boolean solid(BlockPos p){return c.level.getBlockState(p).isCollisionShapeFullBlock(c.level,p);}
+            public boolean ordinaryLeaves(BlockPos p){
+                var block=c.level.getBlockState(p);
+                return block.is(net.minecraft.tags.BlockTags.LEAVES)
+                    && block.isCollisionShapeFullBlock(c.level,p);
+            }
             public String state(BlockPos p){return AutomationBridge.state(c,p);}
             public boolean naturalSurface(BlockPos p){
                 return Set.of("minecraft:stone","minecraft:andesite","minecraft:grass_block","minecraft:dirt")

@@ -870,6 +870,23 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertEqual('completed',result['state']);self.assertEqual(193,b.matched)
         self.assertEqual(2,sum(call[0]=='build_wait' for call in b.calls))
 
+    def test_partial_build_with_fresh_supply_requirement_fetches_before_another_build(self):
+        b=FakeBackend(self.catalog,held={'minecraft:furnace':1},
+                      depot={'minecraft:smooth_stone':64},
+                      projection={'minecraft:furnace':1,'minecraft:smooth_stone':64})
+        original=b.build
+        def build(key):
+            receipt=original(key)
+            if b.matched==1:
+                return {'phase':'waiting','placed':1,
+                        'requirements':{'minecraft:smooth_stone':64}}
+            return receipt
+        b.build=build
+        result=self.job(b,self.request(projection=True)).run()
+        self.assertEqual('completed',result['state'])
+        self.assertEqual(65,b.matched)
+        self.assertEqual(['build','fetch','build'],[call[0] for call in b.calls])
+
     def test_internal_air_conflicts_are_not_reported_as_finished(self):
         b=FakeBackend(self.catalog);b.total=b.matched=100
         original=b.observe
