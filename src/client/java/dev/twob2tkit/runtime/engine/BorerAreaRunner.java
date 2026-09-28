@@ -7,6 +7,8 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoublePlantBlock;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
@@ -21,6 +23,9 @@ final class BorerAreaRunner {
 	private BorerAreaPlan.Command command;
 	private RotationAim.Look look;
 	private BlockPos mining;
+	private BlockPos clearingGrassHit, clearingGrassCompanion, clearingForTarget;
+	private Object clearingWorld;
+	private int clearingTicks, clearingAirSamples;
 	private int aimFailures, mineIdleTicks, lastStage = -1, moveIdleTicks, diagnostics;
 	private double bestDistance = Double.POSITIVE_INFINITY;
 	private String progressKey = "", lastLogged = "";
@@ -120,6 +125,9 @@ final class BorerAreaRunner {
 		command = null;
 		look = null;
 		mining = null;
+		clearingGrassHit = clearingGrassCompanion = clearingForTarget = null;
+		clearingWorld = null;
+		clearingTicks = clearingAirSamples = 0;
 		attacking = false;
 		aimFailures = mineIdleTicks = moveIdleTicks = diagnostics = confirmationTicks = 0;
 		lastStage = -1;
@@ -203,6 +211,11 @@ final class BorerAreaRunner {
 	}
 
 	void tick(Minecraft client, LocalPlayer player) {
+		if (clearingGrassHit != null && manualMovementHeld(client)) {
+			clearGrassState();
+			stop(client, "玩家手动移动，矮草清除交还控制");
+			return;
+		}
 		releaseMovement(client);
 		look = null;
 		if (stallHold == null) suspendCheckpointed = false;
@@ -234,6 +247,7 @@ final class BorerAreaRunner {
 			if (player.isInWater() || player.isInLava()) { rescue(client, player); return; }
 			rescueTicks = 0;
 			if (stallHold != null) { tickStallHold(client, player); return; }
+			if (clearingGrassHit != null) { tickClearingGrass(client, player); return; }
 			if (pipeline.active()) { tickPipeline(client, player); return; }
 			if (water.active()) { sealSideWater(client); return; }
 			if (torch.tick(client, engine)) { flight.fly(); flight.speed(0); stopAttack(client); return; }
@@ -428,6 +442,7 @@ final class BorerAreaRunner {
 		boolean valid = actual != null && target.equals(actual.getBlockPos())
 			&& player.getEyePosition().distanceTo(actual.getLocation()) <= BorerAim.breakReach(player);
 		if (!valid) {
+			if (tryClearGrass(client, player, target, actual)) return;
 			flight.speed(0);
 			stopAttack(client);
 			if (++aimFailures == 1 || aimFailures % 20 == 0) engine.fileLog(client,
@@ -472,6 +487,97 @@ final class BorerAreaRunner {
 		moveIdleTicks = 0;
 		show(client, (plan.phase() == BorerAreaPlan.Phase.HORIZONTAL ? "浅层水平清挖 " : "挖第 ") + Math.min(plan.total(), plan.completed() + 1) + "/" + plan.total() + " 列 · Y " + target.getY());
 		advanceWhileMining(client,player);
+	}
+
+	/** Only the real ray hit on the selected shaft's short grass or exact tall-grass pair may be cleared. */
+	private boolean tryClearGrass(Minecraft client, LocalPlayer player, BlockPos target, BlockHitResult actual) {
+		if (plan == null || command == null
+			|| !BorerAreaVegetation.clearableAction(plan.phase(), command.action())
+			|| !target.equals(command.block())
+			|| actual == null || !BorerAim.hitInReach(player, actual)
+			|| cell(client, target) != BorerAreaPlan.Cell.SOLID) return false;
+		BlockPos hit = actual.getBlockPos();
+		if (!client.level.hasChunkAt(hit) || engine.miningConfirmation.pending(client.level, hit)) return false;
+		var state = client.level.getBlockState(hit);
+		BlockPos companion = null;
+		if (!BorerAreaVegetation.clearableRayOccluder(target, hit, engine.areaMin, engine.areaMax,
+			BorerText.blockId(state), state.getCollisionShape(client.level, hit).isEmpty(),
+			state.getFluidState().isEmpty())) {
+			if (!BorerAreaVegetation.clearableTallGrassPair(target, hit, engine.areaMin, engine.areaMax)) return false;
+			BlockPos lower = target.above();
+			if (!client.level.hasChunkAt(lower) || engine.miningConfirmation.pending(client.level, lower)) return false;
+			var lowerState = client.level.getBlockState(lower);
+			if (!state.is(Blocks.TALL_GRASS) || state.getValue(DoublePlantBlock.HALF) != DoubleBlockHalf.UPPER
+				|| !lowerState.is(Blocks.TALL_GRASS) || lowerState.getValue(DoublePlantBlock.HALF) != DoubleBlockHalf.LOWER
+				|| !safeGrassPart(client, lower)) return false;
+			companion = lower;
+		}
+		if (!safeGrassPart(client, hit)) return false;
+		if (manualMovementHeld(client)) {
+			stop(client, "玩家手动移动，矮草清除交还控制");
+			return true;
+		}
+		stopAttack(client);
+		holdForMining(client, player);
+		look = RotationAim.lookAt(player, BorerAim.lookAlongRay(player.getEyePosition(), actual));
+		RotationAim.apply(player, look);
+		BlockHitResult verified = BorerAim.clipView(client, player);
+		if (verified == null || !hit.equals(verified.getBlockPos()) || !BorerAim.hitInReach(player, verified)) return false;
+		client.hitResult = verified;
+		client.crosshairPickEntity = null;
+		clearingGrassHit = hit.immutable();
+		clearingGrassCompanion = companion == null ? null : companion.immutable();
+		clearingForTarget = target.immutable();
+		clearingWorld = client.level;
+		clearingTicks = clearingAirSamples = 0;
+		boolean accepted = engine.miningConfirmation.startObservedBreak(client, hit, verified.getDirection());
+		engine.fileLog(client, "area-grass-clear-start block=" + hit + " companion=" + companion + " target=" + target + " accepted=" + accepted);
+		show(client, "清除挡住当前层的草，等待确认");
+		return true;
+	}
+
+	private boolean safeGrassPart(Minecraft client, BlockPos pos) {
+		if (!client.level.hasChunkAt(pos) || engine.miningConfirmation.pending(client.level, pos)) return false;
+		var state = client.level.getBlockState(pos);
+		return state.getCollisionShape(client.level, pos).isEmpty() && state.getFluidState().isEmpty()
+			&& state.getDestroySpeed(client.level, pos) >= 0 && client.level.getBlockEntity(pos) == null
+			&& !client.player.blockActionRestricted(client.level, pos, client.gameMode.getPlayerMode())
+			&& !BorerHazards.wouldOpenWater(client, pos) && !BorerHazards.wouldOpenLava(client, pos);
+	}
+
+	private void tickClearingGrass(Minecraft client, LocalPlayer player) {
+		stopAttack(client);
+		holdForMining(client, player);
+		look = null;
+		if (client.level != clearingWorld) { stop(client, "世界已切换，矮草清除结果未确认"); return; }
+		if (!Objects.equals(mining, clearingForTarget) || !client.level.hasChunkAt(clearingGrassHit)
+			|| clearingGrassCompanion != null && !client.level.hasChunkAt(clearingGrassCompanion)) {
+			enterStall(client, player, "server_ack", clearingForTarget, ++clearingTicks, "rejected");
+			return;
+		}
+		if (engine.miningConfirmation.pending(client.level, clearingGrassHit)
+			|| clearingGrassCompanion != null && engine.miningConfirmation.pending(client.level, clearingGrassCompanion)) {
+			if (++clearingTicks >= 100) enterStall(client, player, "server_ack", clearingForTarget, clearingTicks, "timeout");
+			else show(client, "等待草丛清除的服务器确认");
+			return;
+		}
+		if (client.level.getBlockState(clearingGrassHit).isAir()
+			&& (clearingGrassCompanion == null || client.level.getBlockState(clearingGrassCompanion).isAir())) {
+			if (++clearingAirSamples >= 2) {
+				engine.fileLog(client, "area-grass-clear-confirmed block=" + clearingGrassHit + " companion=" + clearingGrassCompanion + " target=" + clearingForTarget);
+				clearGrassState();
+				aimFailures = 0;
+			} else show(client, "复核草丛已经清除");
+			return;
+		}
+		clearingAirSamples = 0;
+		if (++clearingTicks >= 40) enterStall(client, player, "server_ack", clearingForTarget, clearingTicks, "rejected");
+		else show(client, "等待草丛清除的服务器确认");
+	}
+	private void clearGrassState() {
+		clearingGrassHit = clearingGrassCompanion = clearingForTarget = null;
+		clearingWorld = null;
+		clearingTicks = clearingAirSamples = 0;
 	}
 	private boolean fastClick(Minecraft c, BlockPos pos) {
 		var state = c.level.getBlockState(pos);
@@ -714,9 +820,9 @@ final class BorerAreaRunner {
 				BorerMobPolicy.pauseRadius(engine.host.borerMobRadius())) == null);
 	}
 	private static boolean manualMovementHeld(Minecraft client) {
-		if (!client.isWindowActive()) return false;
+		if (client.screen != null || !client.isWindowActive()) return false;
 		for (KeyMapping key : new KeyMapping[]{client.options.keyUp, client.options.keyDown,
-			client.options.keyLeft, client.options.keyRight, client.options.keyJump, client.options.keyShift}) {
+			client.options.keyLeft, client.options.keyRight}) {
 			var bound = net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper.getBoundKeyOf(key);
 			if (bound.getType() == com.mojang.blaze3d.platform.InputConstants.Type.MOUSE
 				&& org.lwjgl.glfw.GLFW.glfwGetMouseButton(client.getWindow().handle(), bound.getValue()) == org.lwjgl.glfw.GLFW.GLFW_PRESS) return true;
