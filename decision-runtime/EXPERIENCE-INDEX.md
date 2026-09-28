@@ -14,6 +14,7 @@
 | 更新前比较实际安装包，只改引擎不重启 | `release_scope.py`、`hot_update.py` | 文件差异、版本、连续会话与失败回退检查 |
 | 精确取少量材料、潜影盒原位归还 | `inventory_exact.py`、`packed_supplies.py` | 两只潜影盒正常归还，第三只因掉落物内容不可见而漏捡，由用户回收；身份判定与收尾修复已通过测试，待实机复测 |
 | 新接口经验捕获 | `experience_recording.py`、`kit_skills` | 隔离实例目录选择、控制参数剥离、会话核对与直接记录测试 |
+| 卡点与施工经验的离线学习样本 | `experience_loop.py`、[证据分级与用法](EXPERIENCE-LOOP.md) | AREA 挖矿建议不冒充执行；铺地回执和守卫拦截分类；仅从三个不同任务的已执行、已确认恢复动作生成供人工审核的候选；离线测试通过，未接入在线控制 |
 | 野外大投影先扫描完整地基和净空，离线处理图纸前安全下线；飞离旧战斗 48 格后明确记录脱离，不误报击杀 | `projection_site.py`、`material_client.py`、`BorerRangedCombat.java` | 星舰选址现场只读扫描；安全下线确认；远距战斗脱离修复待热加载实测 |
 | 托管材料会话可核对后吃一件快捷栏食物；混凝土粉末批次锁定同一格、需核对挖回成品及水流漂走的掉落物 | `AutomationBridge.java`、`ConcreteMaker.java`、`ConcreteDropPolicy.java` | 进食、第一批 64 粉末取料、单块制作及独立拾回 25 个掉落物已在多人服实测；批次自动拾回待实机复测 |
 | 熔炉界面仅由同一受保护会话操作；长时间烧炼时关界面保持 PvE 防护，按服务端输入／燃料／输出和背包增量验收 | `AutomationBridge.java`、`material_client.py`、`craft_recipe.py` | 高炉 114 生铁、普通熔炉 64 石头、16 高炉与 33 漏斗地基实测；星舰审计 128/3407，尚未完成 |
