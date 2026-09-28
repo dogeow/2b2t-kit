@@ -1,5 +1,9 @@
 import unittest
-from goal_workflow import open_workbench,subset_matches,build_phase,station_target,protected_background
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+import goal_workflow
+from goal_workflow import open_workbench,subset_matches,build_phase,station_target,protected_background,verified_build_navigation
 
 
 class Client:
@@ -53,5 +57,65 @@ class WorkbenchTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):open_workbench(c,[10,65,20])
         self.assertNotIn('interact',c.calls)
         self.assertFalse(c.opened)
+
+
+class BuildProgressTests(unittest.TestCase):
+    def test_native_station_progress_requires_real_movement(self):
+        old={'pos':[0,64,0],'build_job':{'path_step':1,'navigation':{'start':'0,64,0','path_length':10}}}
+        moving={'pos':[1,64,0],'build_job':{'active':True,'auto_move':True,'phase':'自动走位',
+                'station':'10, 64, 0','path_step':2,'navigation':{'start':'0,64,0','path_length':10}}}
+        self.assertTrue(verified_build_navigation(old,moving))
+        self.assertFalse(verified_build_navigation(old,{**moving,'pos':[0,64,0]}))
+        self.assertFalse(verified_build_navigation(old,{**moving,'build_job':{**moving['build_job'],'auto_move':False}}))
+        self.assertFalse(verified_build_navigation(old,{**moving,'pos':[-1,64,0],
+            'build_job':{**moving['build_job'],'path_step':1}}))
+        # A real path step may briefly detour away from the destination.
+        self.assertTrue(verified_build_navigation(old,{**moving,'pos':[-1,64,0]}))
+
+    def test_unproductive_navigation_has_only_bounded_stall_grace(self):
+        class Clock:
+            value=0.0
+            def monotonic(self):return self.value
+            def sleep(self,seconds):self.value+=seconds
+        class BuildClient:
+            def __init__(self,out,clock,moving):
+                self.out=out;self.clock=clock;self.moving=moving;self.active=False;self.paused_at=None
+            def status(self):
+                x=min(self.clock.value,10) if self.moving else 0
+                return {'time':int(self.clock.value*1000),'pos':[x,64,0],
+                        'velocity':[0,0,0],'movement_keys':{},'flight':False,'health':20,
+                        'window_active':True,'screen':None,'guard_busy':False,
+                        'projection_selection':{'key':'selected'},
+                        'professional_printer':{'waiting_for_server':False},
+                        'build_job':{'active':self.active,'placement_key':'selected','session':'job',
+                            'matched':0,'total':10,'phase':'自动走位' if self.moving else '打印中',
+                            'auto_move':True,'station':'10, 64, 0','path_step':int(x),
+                            'navigation':{'start':'0,64,0','path_length':10},'queue_settled':False}}
+            def checked(self,op,**kwargs):
+                if op=='projection_start':self.active=True
+                if op=='build_control':self.active=False;self.paused_at=self.clock.value
+                return {'phase':'done'}
+            def request(self,op,**kwargs):
+                self.assertion=op
+                return {'projection_audit':{'matched':0,'total':10,'kinds':{}}}
+        with tempfile.TemporaryDirectory() as directory:
+            for moving in (False,True):
+                clock=Clock();client=BuildClient(Path(directory),clock,moving)
+                with patch.object(goal_workflow.time,'monotonic',clock.monotonic),\
+                     patch.object(goal_workflow.time,'sleep',clock.sleep):
+                    build_phase(client,'selected',seconds=8,stall_seconds=3,
+                                navigation_grace_seconds=1)
+                self.assertIsNotNone(client.paused_at)
+                if moving:self.assertGreater(client.paused_at,3.0)
+                else:self.assertLess(client.paused_at,3.5)
+                self.assertLess(client.paused_at,4.5)
+            # Even continuous verified travel cannot bypass the overall build budget.
+            clock=Clock();client=BuildClient(Path(directory),clock,True)
+            with patch.object(goal_workflow.time,'monotonic',clock.monotonic),\
+                 patch.object(goal_workflow.time,'sleep',clock.sleep):
+                build_phase(client,'selected',seconds=3.5,stall_seconds=2,
+                            navigation_grace_seconds=100)
+            self.assertGreaterEqual(client.paused_at,3.5)
+            self.assertLess(client.paused_at,3.9)
 
 if __name__=='__main__':unittest.main()

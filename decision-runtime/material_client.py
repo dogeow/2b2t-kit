@@ -353,7 +353,11 @@ class MaterialClient(Client):
         rise=[s['pos'][0],self.park_target[1],s['pos'][2]]
         self.request('navigate',target=rise,arrival=1,seconds=8)
        raise RuntimeError('Critical health while reaching high parking')
-      if s.get('under_water') or s['pos'][1]<64:
+      # World height does not indicate immersion: dry paving can leave the
+      # player at Y63 in a one-block hole. The short local water exit may then
+      # hit an overhead block and force an unnecessary logout. Only an actual
+      # underwater state needs this near-vertical ascent before high parking.
+      if s.get('under_water'):
        up=[s['pos'][0],70,s['pos'][2]]
        climb=self.request('navigate',target=up,arrival=1,seconds=8)
        if climb.get('phase')!='done':raise RuntimeError('Local water exit did not finish')

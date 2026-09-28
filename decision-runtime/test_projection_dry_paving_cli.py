@@ -26,7 +26,8 @@ class AuditClient:
                       'inventory': [
                           {'slot': 0, 'item': 'minecraft:stone_bricks', 'count': 64},
                           {'slot': 1, 'item': 'minecraft:polished_andesite', 'count': 64},
-                      ]}
+                      ] + [{'slot': i, 'item': 'minecraft:air', 'count': 0}
+                           for i in range(2, 36)]}
         self.model = {'content_hash': 'pinned-model', 'observed_at': 1000,
                       'expected': [{'pos': list(pos),
                                     'state': paving.SITE['pinned_conflicts'][pos][0]}
@@ -79,6 +80,159 @@ class PavingCliTests(unittest.TestCase):
         self.context_patch = patch.object(paving, '_fresh_context', self.client.context)
         self.context_patch.start()
         self.addCleanup(self.context_patch.stop)
+        self.scanned = []
+
+        def scanned_geometry(client, pos):
+            self.scanned.append(pos)
+            actual = paving.SITE['pinned_conflicts'][pos][1]
+            return {
+                pos: {'state': actual, 'solid': True,
+                      'fluid': False, 'block_entity': False},
+                (pos[0], 62, pos[2]): {
+                    'state': 'Block{minecraft:stone}', 'solid': True,
+                    'fluid': False, 'block_entity': False},
+            }
+
+        self.scanned_geometry = scanned_geometry
+        self.scan_patch = patch.object(paving, '_scan', scanned_geometry)
+        self.scan_patch.start()
+        self.addCleanup(self.scan_patch.stop)
+
+    def fast_descent_context(self):
+        """A fake leased, guarded high start for the CLI-only transit tests."""
+        park = [761020.0, 145.0, 797852.0]
+        self.client.state.update({
+            'connected': True, 'server': 'simpcraft.com:25565',
+            'dimension': 'minecraft:overworld', 'screen': '',
+            'manual_movement': False, 'health': 20, 'food': 20,
+            'guard_armed': True, 'guard_pve_only': True,
+            'flight': True, 'dry_paving_protocol': 1,
+            'supervision_lease': {'kind': 'materials', 'job_session': self.client.task},
+            'projection_selection': {
+                'key': self.client.key,
+                'min': list(paving.SITE['bounds']['min']),
+                'max': list(paving.SITE['bounds']['max']),
+            },
+            'pos': [761020.5, 145.0, 797852.5],
+        })
+        self.client.status = lambda: copy.deepcopy(self.client.state)
+        site = {**paving.SITE,
+                'placement_key_sha256': hashlib.sha256(self.client.key.encode()).hexdigest()}
+        proof = {'park_target': park, 'world_session': self.client.world,
+                 'ground_clearance': 80}
+        return site, copy.deepcopy(self.client.state), proof
+
+    def test_fast_first_descent_is_explicit_and_only_once_for_a_new_batch(self):
+        site, initial, proof = self.fast_descent_context()
+
+        def descend(client, *, target_y, braking_margin):
+            self.assertEqual((target_y, braking_margin), (63, 16))
+            client.state['pos'][1] = 79
+            return {'used': True, 'start_y': 145, 'brake_y': 79, 'health': 20}
+
+        with (patch.object(paving, 'SITE', site),
+              patch.object(cli, 'descend_if_clear', side_effect=descend) as fast):
+            result = cli.run(self.client, Path(self.temp.name) / 'fast', minutes=20,
+                             max_cells=6, batch_size=4, pave=self.client.pave,
+                             monotonic=lambda: 0, initial_state=initial,
+                             verified_high_park=proof, fast_first_descent=True)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['done'], 6)
+        self.assertEqual(result['first_trip_transit']['used'], True)
+        self.assertEqual(result['first_trip_transit']['brake_y'], 79)
+        self.assertEqual(fast.call_count, 1)
+        events = [json.loads(row) for row in
+                  (Path(self.temp.name) / 'fast' / 'events.jsonl').read_text().splitlines()]
+        self.assertEqual(sum(row.get('event') == 'first_trip_transit_finished'
+                             for row in events), 1)
+
+    def test_fast_descent_used_false_falls_back_to_ordinary_paving(self):
+        site, initial, proof = self.fast_descent_context()
+        with (patch.object(paving, 'SITE', site),
+              patch.object(cli, 'descend_if_clear', return_value={
+                  'used': False, 'reason': 'Descent column contains a block or fluid'}) as fast):
+            result = cli.run(self.client, Path(self.temp.name) / 'fallback', minutes=1,
+                             max_cells=1, allowed_cells=[self.client.positions[0]],
+                             pave=self.client.pave, monotonic=lambda: 0,
+                             initial_state=initial, verified_high_park=proof,
+                             fast_first_descent=True)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['done'], 1)
+        self.assertEqual(result['first_trip_transit']['used'], False)
+        self.assertEqual(fast.call_count, 1)
+        self.assertEqual(self.client.calls, [[list(self.client.positions[0])]])
+
+    def test_fast_descent_never_runs_for_recovered_cell(self):
+        site, initial, proof = self.fast_descent_context()
+        pos = self.client.positions[0]
+        self.client.write_journal(pos, 'recovered')
+        self.client.audit['mismatches'][0].update(actual='Block{minecraft:air}', kind='missing')
+        with (patch.object(paving, 'SITE', site),
+              patch.object(cli, 'descend_if_clear') as fast):
+            result = cli.run(self.client, Path(self.temp.name) / 'recovered', minutes=1,
+                             max_cells=1, allowed_cells=[pos], pave=self.client.pave,
+                             monotonic=lambda: 0, initial_state=initial,
+                             verified_high_park=proof, fast_first_descent=True)
+        self.assertEqual(result['status'], 'completed')
+        self.assertFalse(result['first_trip_transit']['used'])
+        self.assertIn('Recovered cell', result['first_trip_transit']['reason'])
+        fast.assert_not_called()
+
+    def test_full_backpack_blocks_before_fast_descent_or_cell_approach(self):
+        site, initial, proof = self.fast_descent_context()
+        self.client.state['inventory'] = [
+            {'slot': 0, 'item': 'minecraft:stone_bricks', 'count': 64},
+            {'slot': 1, 'item': 'minecraft:grass_block', 'count': 31,
+             'max_stack': 64},
+            {'slot': 2, 'item': 'minecraft:dirt', 'count': 11,
+             'max_stack': 64},
+        ] + [{'slot': i, 'item': 'minecraft:oak_log', 'count': 1,
+              'max_stack': 64} for i in range(3, 36)]
+        with (patch.object(paving, 'SITE', site),
+              patch.object(cli, 'descend_if_clear') as fast):
+            result = cli.run(self.client, Path(self.temp.name) / 'full', minutes=1,
+                             max_cells=1, allowed_cells=[self.client.positions[0]],
+                             pave=self.client.pave, monotonic=lambda: 0,
+                             initial_state=initial, verified_high_park=proof,
+                             fast_first_descent=True)
+        self.assertEqual(result['status'], 'inventory_full')
+        self.assertEqual(result['done'], 0)
+        self.assertEqual(result['last_audit']['selection']['capacity_skips'], 1)
+        self.assertEqual(self.scanned, [])
+        self.assertEqual(self.client.calls, [])
+        fast.assert_not_called()
+
+    def test_fast_descent_guard_change_or_native_exception_stops_without_paving(self):
+        site, initial, proof = self.fast_descent_context()
+        self.client.state['guard_armed'] = False
+        with (patch.object(paving, 'SITE', site),
+              patch.object(cli, 'descend_if_clear') as fast):
+            unsafe = cli.run(self.client, Path(self.temp.name) / 'unsafe', minutes=1,
+                             max_cells=1, allowed_cells=[self.client.positions[0]],
+                             pave=self.client.pave, monotonic=lambda: 0,
+                             initial_state=initial, verified_high_park=proof,
+                             fast_first_descent=True)
+        self.assertEqual(unsafe['status'], 'blocked')
+        self.assertEqual(unsafe['done'], 0)
+        self.assertEqual(unsafe['first_trip_transit']['status'], 'blocked')
+        self.assertEqual(self.client.calls, [])
+        fast.assert_not_called()
+
+        self.client.state['guard_armed'] = True
+        with (patch.object(paving, 'SITE', site),
+              patch.object(cli, 'descend_if_clear', side_effect=RuntimeError(
+                  'Free-fall brake was not confirmed')) as fast):
+            failed = cli.run(self.client, Path(self.temp.name) / 'exception', minutes=1,
+                             max_cells=1, allowed_cells=[self.client.positions[0]],
+                             pave=self.client.pave, monotonic=lambda: 0,
+                             initial_state=initial, verified_high_park=proof,
+                             fast_first_descent=True)
+        self.assertEqual(failed['status'], 'blocked')
+        self.assertEqual(failed['done'], 0)
+        self.assertIn('brake was not confirmed', failed['reason'])
+        self.assertEqual(failed['first_trip_transit']['status'], 'blocked')
+        self.assertEqual(self.client.calls, [])
+        self.assertEqual(fast.call_count, 1)
 
     def test_selects_only_current_pinned_conflicts_in_batches_of_four(self):
         result = cli.run(self.client, Path(self.temp.name) / 'out', minutes=20,
@@ -156,12 +310,14 @@ class PavingCliTests(unittest.TestCase):
         with self.assertRaisesRegex(paving.PavingPending, 'Uncertain prior intent'):
             cli.select_batch(self.client, 1, frozenset({named}))
         self.assertEqual(self.client.calls, [])
+        self.assertEqual(self.scanned, [])
 
     def test_completed_cell_changed_by_player_is_not_replayed(self):
         self.client.write_journal(self.client.positions[0], 'complete')
         self.client.state['inventory'] = []
         with self.assertRaisesRegex(paving.PavingPending, 'Previously completed'):
             cli.select_batch(self.client, 4)
+        self.assertEqual(self.scanned, [])
 
     def test_recovered_cell_can_resume_only_when_full_audit_shows_air(self):
         pos = self.client.positions[0]
@@ -169,15 +325,51 @@ class PavingCliTests(unittest.TestCase):
         self.client.audit['mismatches'][0].update(actual='Block{minecraft:air}', kind='missing')
         selected, _ = cli.select_batch(self.client, 1)
         self.assertEqual(selected, [list(pos)])
+        self.assertEqual(self.scanned, [])
         self.client.audit['mismatches'][0]['actual'] = 'Block{minecraft:stone}'
         with self.assertRaisesRegex(paving.PavingPending, 'Recovered cell changed'):
             cli.select_batch(self.client, 1)
+
+    def test_recovered_cell_requires_no_new_drop_slot(self):
+        pos = self.client.positions[0]
+        self.client.write_journal(pos, 'recovered')
+        self.client.audit['mismatches'][0].update(actual='Block{minecraft:air}', kind='missing')
+        self.client.state['inventory'] = [
+            {'slot': 0, 'item': 'minecraft:stone_bricks', 'count': 1}
+        ] + [{'slot': i, 'item': 'minecraft:oak_log', 'count': 64}
+             for i in range(1, 36)]
+        selected, receipt = cli.select_batch(self.client, 1)
+        self.assertEqual(selected, [list(pos)])
+        self.assertEqual(receipt['selection']['free_drop_slots_after_reservation'], 0)
+        self.assertEqual(self.scanned, [])
+
+    def test_batch_reserves_one_empty_slot_per_new_drop(self):
+        self.client.state['inventory'] = [
+            {'slot': 0, 'item': 'minecraft:stone_bricks', 'count': 64},
+            {'slot': 1, 'item': 'minecraft:polished_andesite', 'count': 64},
+            {'slot': 2, 'item': 'minecraft:air', 'count': 0},
+            {'slot': 3, 'item': 'minecraft:air', 'count': 0},
+        ] + [{'slot': i, 'item': 'minecraft:oak_log', 'count': 1}
+             for i in range(4, 36)]
+        selected, receipt = cli.select_batch(self.client, 4)
+        self.assertEqual(len(selected), 2)
+        self.assertEqual(len(self.scanned), 2)
+        self.assertEqual(receipt['selection']['free_drop_slots_after_reservation'], 0)
+        self.assertGreater(receipt['selection']['capacity_skips'], 0)
+
+    def test_duplicate_inventory_slot_rejects_capacity_evidence(self):
+        self.client.state['inventory'].append(
+            {'slot': 2, 'item': 'minecraft:air', 'count': 0})
+        with self.assertRaisesRegex(paving.PavingBlocked, 'duplicate slots'):
+            cli.select_batch(self.client, 1)
+        self.assertEqual(self.scanned, [])
 
     def test_unheld_replacement_is_skipped_before_a_new_cell_is_touched(self):
         client = AuditClient(self.temp.name, count=79)
         client.state['pos'] = [760987.5, 64, 797828.5]
         client.state['inventory'] = [
-            {'slot': 0, 'item': 'minecraft:stone_bricks', 'count': 1}]
+            {'slot': 0, 'item': 'minecraft:stone_bricks', 'count': 1},
+            {'slot': 1, 'item': 'minecraft:air', 'count': 0}]
         with patch.object(paving, '_fresh_context', client.context):
             selected, receipt = cli.select_batch(client, 4)
         self.assertEqual(len(selected), 1)
@@ -204,6 +396,88 @@ class PavingCliTests(unittest.TestCase):
         self.client.state['inventory'] = []
         with self.assertRaisesRegex(paving.PavingPending, 'awaits its replacement'):
             cli.select_batch(self.client, 4)
+
+    def test_non_solid_neighbor_is_skipped_without_a_new_cell_action(self):
+        first = self.client.positions[0]
+
+        def fence_scan(client, pos):
+            cells = self.scanned_geometry(client, pos)
+            if pos == first:
+                cells[(pos[0], 63, pos[2] - 1)] = {
+                    'state': 'Block{minecraft:oak_fence}', 'solid': False,
+                    'fluid': False, 'block_entity': False}
+            return cells
+
+        with patch.object(paving, '_scan', fence_scan):
+            selected, receipt = cli.select_batch(self.client, 1)
+        self.assertNotEqual(selected, [list(first)])
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(self.scanned, [first, tuple(selected[0])])
+        self.assertEqual(receipt['selection']['geometry_skips'], [
+            {'pos': list(first),
+             'reason': 'Nearby non-solid feature may depend on this surface'}])
+        self.assertEqual(self.client.calls, [])
+
+    def test_live_fence_side_cell_is_not_reselected(self):
+        blocked = (761020, 63, 797828)
+        client = AuditClient(self.temp.name, count=79)
+        client.state['pos'] = [761020.5, 64, 797828.5]
+        client.state['inventory'] = [
+            {'slot': 0, 'item': 'minecraft:stone_bricks', 'count': 64},
+            {'slot': 1, 'item': 'minecraft:air', 'count': 0}]
+
+        def fence_scan(owner, pos):
+            cells = self.scanned_geometry(owner, pos)
+            if pos == blocked:
+                cells[(761020, 63, 797827)] = {
+                    'state': 'Block{minecraft:oak_fence}', 'solid': False,
+                    'fluid': False, 'block_entity': False}
+            return cells
+
+        with (patch.object(paving, '_fresh_context', client.context),
+              patch.object(paving, '_scan', fence_scan)):
+            selected, receipt = cli.select_batch(client, 1)
+        self.assertEqual(len(selected), 1)
+        self.assertNotEqual(selected[0], list(blocked))
+        self.assertIn({'pos': list(blocked),
+                       'reason': 'Nearby non-solid feature may depend on this surface'},
+                      receipt['selection']['geometry_skips'])
+
+    def test_all_local_geometry_blocked_reports_no_action_with_reasons(self):
+        def fence_scan(client, pos):
+            cells = self.scanned_geometry(client, pos)
+            cells[(pos[0], 63, pos[2] - 1)] = {
+                'state': 'Block{minecraft:oak_fence}', 'solid': False,
+                'fluid': False, 'block_entity': False}
+            return cells
+
+        with patch.object(paving, '_scan', fence_scan):
+            result = cli.run(self.client, Path(self.temp.name) / 'fenced', minutes=1,
+                             max_cells=2, pave=self.client.pave, monotonic=lambda: 0)
+        self.assertEqual(result['status'], 'no_eligible_cells')
+        self.assertEqual(result['done'], 0)
+        self.assertEqual(result['batches'], [])
+        self.assertEqual(len(result['last_audit']['selection']['geometry_skips']),
+                         len(self.client.positions))
+        self.assertEqual(len(self.scanned), len(self.client.positions))
+        self.assertIn('local dry geometry', result['reason'])
+        self.assertEqual(self.client.calls, [])
+
+    def test_incomplete_local_scan_stops_selection_instead_of_skipping(self):
+        with patch.object(paving, '_scan', side_effect=paving.PavingBlocked(
+                'Detailed support and neighbor scan is incomplete')):
+            with self.assertRaisesRegex(paving.PavingBlocked, 'scan is incomplete'):
+                cli.select_batch(self.client, 1)
+
+    def test_malformed_local_geometry_is_not_treated_as_an_obstruction(self):
+        def malformed_scan(client, pos):
+            cells = self.scanned_geometry(client, pos)
+            cells[(pos[0], 62, pos[2])]['state'] = 'malformed state'
+            return cells
+
+        with patch.object(paving, '_scan', malformed_scan):
+            with self.assertRaisesRegex(paving.PavingBlocked, 'Unrecognized block state'):
+                cli.select_batch(self.client, 1)
 
     def test_player_changed_untouched_cell_is_skipped(self):
         pos = self.client.positions[0]

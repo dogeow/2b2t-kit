@@ -246,11 +246,13 @@ def _player_body_clear(state, pos):
         return False
     # Normal native body is 0.6 blocks wide; retain clearance beyond its
     # half-width without rejecting a visible pose with a real 0.2-block gap.
+    # The vertical 0.1 total margin still keeps a settled Y64.14 foot clear
+    # above a Y63 destination while the native guard checks the exact AABB.
     body = ((player[0] - .35, player[0] + .35),
-            (player[1] - .1, player[1] + 2),
+            (player[1] - .05, player[1] + 2),
             (player[2] - .35, player[2] + .35))
     destination = ((pos[0] - .1, pos[0] + 1.1),
-                   (pos[1] - .1, pos[1] + 1.1),
+                   (pos[1] - .05, pos[1] + 1.05),
                    (pos[2] - .1, pos[2] + 1.1))
     return any(own[1] <= target[0] or own[0] >= target[1]
                for own, target in zip(body, destination))
@@ -373,6 +375,69 @@ def _record(path, record, phase, **evidence):
     return record
 
 
+def _native_request_settled(client, state):
+    """A stale or unacknowledged bridge request must not precede a rebind."""
+    request_path = Path(client.root) / 'request.json'
+    if not request_path.exists():
+        return None
+    try:
+        request = json.loads(request_path.read_text(encoding='utf-8'))
+        request_id = request['id']
+        reply = json.loads((Path(client.root) / ('reply-' + request_id + '.json'))
+                           .read_text(encoding='utf-8'))
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise PavingPending('Native request completion is unverified') from error
+    if (not isinstance(request_id, str) or not request_id
+            or request_id != state.get('last_request')
+            or request.get('world_session') != client.world
+            or reply.get('id') != request_id
+            or reply.get('world_session') != client.world
+            or reply.get('control_revision') != state.get('control_revision')):
+        raise PavingPending('A native request is pending or belongs to another session')
+    return request_id
+
+
+def _confirmed_recovered_journal(record):
+    old_session = record.get('world_session')
+    receipts = record.get('receipts')
+    if (not isinstance(old_session, str) or not old_session
+            or not isinstance(receipts, list)
+            or not any(isinstance(r, dict) and r.get('phase') == 'mined'
+                       and r.get('server_air') is True for r in receipts)
+            or not any(isinstance(r, dict) and r.get('phase') == 'recovered'
+                       and r.get('item') in DROPS[_block(record['actual'])]
+                       and type(r.get('inventory_after')) is int
+                       for r in receipts)
+            or any(not isinstance(r, dict) or r.get('phase') in ('place_intent', 'complete')
+                   for r in receipts)):
+        raise PavingPending('Recovered journal lacks a confirmed excavation and pickup receipt')
+
+
+def _rebind_recovered(client, site, pos, path, record):
+    """Revalidate one confirmed air hole after reconnect; never replay mining."""
+    _confirmed_recovered_journal(record)
+    old_session = record['world_session']
+    try:
+        state, model, row, support, _ = _cell_check(
+            client, site, pos, air=True, journal_phase='recovered')
+        fresh = client.status()
+        if (_safe_state(client, fresh, site) != state['projection_selection']['key']
+                or model['content_hash'] != record['model_hash']
+                or row['expected'] != record['expected']
+                or _counts(fresh)[_block(row['expected'])] < 1):
+            raise PavingPending('Recovered cell or replacement changed across reconnect')
+        _entities(fresh, pos, client=client, phase='recovered')
+        request_id = _native_request_settled(client, fresh)
+    except PavingBlocked as error:
+        raise PavingPending('Recovered cell cannot be safely rebound: ' + str(error)) from error
+    return _record(path, {**record, 'world_session': client.world}, 'recovered',
+                   event='world_session_rebind', previous_world_session=old_session,
+                   current_world_session=client.world, model_hash=model['content_hash'],
+                   observed_air=True, support_state=support['state'],
+                   replacement_count=_counts(fresh)[_block(row['expected'])],
+                   settled_request_id=request_id)
+
+
 def _drop(client, pos, source, before, path, record):
     state = client.status()
     player = state.get('pos')
@@ -429,7 +494,7 @@ def _clear_pose_columns(client, pos):
     return occupied
 
 
-def _clear_axis_route(occupied, site, pos, start, middle, finish):
+def _clear_axis_route(occupied, site, pos, start, middle, finish, top_y):
     """Check every scanned column crossed by the conservative player envelope."""
     origin = (math.floor(start[0]), math.floor(start[1]))
     for before, after in ((start, start), (start, middle), (middle, finish)):
@@ -444,7 +509,7 @@ def _clear_axis_route(occupied, site, pos, start, middle, finish):
             return False
         if any((x, y, z) in occupied for x in range(x1, x2 + 1)
                for z in range(z1, z2 + 1)
-               for y in range(pos[1] + 1, pos[1] + 5)):
+               for y in range(pos[1] + 1, top_y + 1)):
             return False
         # The actor may already be in a protected buffer; do not route deeper
         # through it while leaving this one excavated cell.
@@ -457,12 +522,7 @@ def _clear_axis_route(occupied, site, pos, start, middle, finish):
     return True
 
 
-def _vertical_placement_pose(client, site, pos, record, state):
-    """Try the open target column before traversing a crowded yard edge."""
-    player = state['pos']
-    if (abs(player[0] - pos[0] - .5) > .1
-            or abs(player[2] - pos[2] - .5) > .1):
-        return False
+def _vertical_column_clear(client, pos):
     low = [pos[0], pos[1] + 1, pos[2]]
     high = [pos[0], pos[1] + 3, pos[2]]
     reply = client.request('scan', min=low, max=high, details=True)
@@ -473,7 +533,15 @@ def _vertical_placement_pose(client, site, pos, record, state):
         point = _position(row.get('pos'))
         if any(point[i] < low[i] or point[i] > high[i] for i in range(3)):
             raise PavingBlocked('Vertical paving clearance scan is malformed')
-    if reply['blocks']:
+    return not reply['blocks']
+
+
+def _vertical_placement_pose(client, site, pos, record, state):
+    """Try the open target column before traversing a crowded yard edge."""
+    player = state['pos']
+    if (abs(player[0] - pos[0] - .5) > .1
+            or abs(player[2] - pos[2] - .5) > .1
+            or not _vertical_column_clear(client, pos)):
         return False
     waypoint = [player[0], pos[1] + 1.45, player[2]]
     moved = client.request('navigate', target=waypoint, arrival=.2,
@@ -492,6 +560,35 @@ def _vertical_placement_pose(client, site, pos, record, state):
     return True
 
 
+def _direct_vertical_support_face(client, site, pos, state, support, item):
+    """Prove a short unobstructed ray to the natural support's upper face."""
+    def pose_ready(observed):
+        player = observed.get('pos')
+        return (isinstance(player, list) and len(player) == 3
+                and all(type(v) in (int, float) and math.isfinite(v) for v in player)
+                and observed.get('game_mode') == 'survival'
+                and abs(player[0] - pos[0] - .5) <= .1
+                and abs(player[2] - pos[2] - .5) <= .1
+                and pos[1] + 1.1 <= player[1] <= pos[1] + 1.55
+                and math.dist([player[0], player[1] + 2, player[2]],
+                              [pos[0] + .5, pos[1], pos[2] + .5]) <= 3.6
+                and _player_body_clear(observed, pos))
+
+    if (_block(support['state']) not in NATURAL_SUPPORT
+            or support.get('solid') is not True or not pose_ready(state)
+            or not _vertical_column_clear(client, pos)):
+        raise PavingBlocked('Direct vertical support face or body clearance is unverified')
+    fresh = client.status()
+    if (_safe_state(client, fresh, site) != state['projection_selection']['key']
+            or fresh.get('hand', {}).get('item') != item):
+        raise PavingBlocked('Direct vertical placement control or hand changed')
+    _entities(fresh, pos, client=client, phase='recovered')
+    if not pose_ready(fresh):
+        _log_blocker(client, pos, 'recovered', 'direct_vertical_pose_lost', fresh)
+        raise PavingBlocked('Direct vertical support face or body clearance is unverified')
+    return fresh
+
+
 def _reposition_for_placement(client, site, pos, record, state):
     """Use native collision-checked air movement; stop if no exact clear pose is proven."""
     player = state['pos']
@@ -500,28 +597,34 @@ def _reposition_for_placement(client, site, pos, record, state):
             or abs(math.floor(start[1]) - pos[2]) > 1):
         raise PavingBlocked('Player overlaps paving from outside the bounded local corridor')
     if _vertical_placement_pose(client, site, pos, record, state):
-        return
+        return 'vertical'
     occupied = _clear_pose_columns(client, pos)
-    selected = middle = None
-    for dx, dz in ((0, -2), (-2, 0), (2, 0), (0, 2)):
-        if _protected((pos[0] + dx, pos[1], pos[2] + dz), site):
-            continue
-        candidate = (pos[0] + dx + .5, pos[2] + dz + .5)
-        for turn in ((start[0], candidate[1]), (candidate[0], start[1])):
-            if _clear_axis_route(occupied, site, pos, start, turn, candidate):
-                selected, middle = candidate, turn
+    selected = middle = rise = None
+    # The low route stays below a Y66 cap. Native air-only navigation checks
+    # the actual swept player AABB before and throughout each move.
+    for top_y, route_y in ((pos[1] + 4, pos[1] + 2.02),
+                           (pos[1] + 2, pos[1] + 1.2)):
+        for dx, dz in ((0, -2), (-2, 0), (2, 0), (0, 2)):
+            if _protected((pos[0] + dx, pos[1], pos[2] + dz), site):
+                continue
+            candidate = (pos[0] + dx + .5, pos[2] + dz + .5)
+            for turn in ((start[0], candidate[1]), (candidate[0], start[1])):
+                if _clear_axis_route(occupied, site, pos, start, turn, candidate, top_y):
+                    selected, middle, rise = candidate, turn, route_y
+                    break
+            if selected is not None:
                 break
         if selected is not None:
             break
     if selected is None:
         raise PavingBlocked('No freshly scanned dry axis route to a clear paving pose')
-    rise = pos[1] + 2.02
     waypoints = [(start[0], rise, start[1])]
     if middle != start:
         waypoints.append((middle[0], rise, middle[1]))
     if selected != middle:
         waypoints.append((selected[0], rise, selected[1]))
-    waypoints.append((selected[0], pos[1] + 1.02, selected[1]))
+    if rise > pos[1] + 1.2:
+        waypoints.append((selected[0], pos[1] + 1.02, selected[1]))
     for waypoint in waypoints:
         reply = client.request('navigate', target=list(waypoint), arrival=.2,
                                air_only=True, seconds=15)
@@ -537,20 +640,24 @@ def _reposition_for_placement(client, site, pos, record, state):
     if not _player_body_clear(observed, pos):
         _log_blocker(client, pos, 'recovered', 'player_body_after_reposition', observed)
         raise PavingBlocked('Player body still overlaps the paving destination')
+    return 'axis'
 
 
-def _recovered_pre_approach(client, site, pos, record):
+def _recovered_pre_approach(client, site, pos, record, *, allow_session_rebind=False):
     """Enter entity-observation range without replaying the recovered excavation."""
     state, model, audit = _fresh_context(client, site)
     if _protected(pos, site):
         raise PavingBlocked('Protected house, warehouse, or birch-tree buffer')
     row = _target(model, audit, pos, site, air=True)
-    if (record['world_session'] != client.world or record['expected'] != row['expected']
+    if ((record['world_session'] != client.world and not allow_session_rebind)
+            or record['expected'] != row['expected']
             or record['model_hash'] != model['content_hash']):
         raise PavingPending('Recovered cell belongs to another world session or model')
     support = _geometry(_scan(client, pos), pos, row['actual'])
     if _counts(state)[_block(row['expected'])] < 1:
         raise PavingBlocked('Replacement block is no longer held')
+    if allow_session_rebind:
+        _native_request_settled(client, client.status())
     try:
         approach_faces(client, [pos[0], pos[1] - 1, pos[2]], support['state'],
                        ('up',), stand_distance=2.4)
@@ -564,18 +671,20 @@ def _place(client, site, pos, path, record, *, settle):
     if (record['world_session'] != client.world or record['expected'] != row['expected']
             or record['model_hash'] != model['content_hash']):
         raise PavingPending('Recovered cell belongs to another world session or model')
+    direct_vertical = False
     if not _player_body_clear(state, pos):
         _log_blocker(client, pos, 'recovered', 'player_body_overlap', state)
-        _reposition_for_placement(client, site, pos, record, state)
+        direct_vertical = _reposition_for_placement(client, site, pos, record, state) == 'vertical'
         state, model, row, support, _ = _cell_check(client, site, pos, air=True,
                                                    journal_phase='recovered')
     support_pos = [pos[0], 62, pos[2]]
     item = _block(row['expected'])
     client.checked('select_item', item=item)
-    try:
-        approach_faces(client, support_pos, support['state'], ('up',), stand_distance=2.4)
-    except ApproachUnavailable as error:
-        raise PavingBlocked('No verified dry support-face approach; recovered cell stays pending') from error
+    if not direct_vertical:
+        try:
+            approach_faces(client, support_pos, support['state'], ('up',), stand_distance=2.4)
+        except ApproachUnavailable as error:
+            raise PavingBlocked('No verified dry support-face approach; recovered cell stays pending') from error
     state, model, row, support, _ = _cell_check(client, site, pos, air=True,
                                                journal_phase='recovered')
     if (record['world_session'] != client.world or record['expected'] != row['expected']
@@ -584,6 +693,8 @@ def _place(client, site, pos, path, record, *, settle):
     if not _player_body_clear(state, pos):
         _log_blocker(client, pos, 'recovered', 'player_body_after_approach', state)
         raise PavingBlocked('Player body overlaps the paving destination after approach')
+    if direct_vertical:
+        state = _direct_vertical_support_face(client, site, pos, state, support, item)
     if state.get('hand', {}).get('item') != item:
         raise PavingBlocked('Replacement is not in the selected hand')
     before = _counts(state)[item]
@@ -625,6 +736,14 @@ def _one(client, site, pos, *, settle):
                     or any(type(v) not in (int, float) or not math.isfinite(v)
                            for v in player)):
                 raise PavingBlocked('Player position is unavailable for recovered paving')
+            if record['world_session'] != client.world:
+                _confirmed_recovered_journal(record)
+                if math.dist(player, [pos[0] + .5, pos[1] + .5, pos[2] + .5]) > 12:
+                    _recovered_pre_approach(client, site, pos, record,
+                                            allow_session_rebind=True)
+                record = _rebind_recovered(client, site, pos, path, record)
+                state = client.status()
+                player = state['pos']
             if math.dist(player, [pos[0] + .5, pos[1] + .5, pos[2] + .5]) > 12:
                 _recovered_pre_approach(client, site, pos, record)
             return _place(client, site, pos, path, record, settle=settle)

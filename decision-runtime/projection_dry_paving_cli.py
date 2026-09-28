@@ -14,6 +14,7 @@ from pathlib import Path
 import time
 
 from kit_runtime.journal import write_json
+from fast_descent import descend_if_clear
 from live_snapshot import read_fresh
 from material_client import Handoff, MaterialClient, high_park_clearance
 import projection_dry_paving as paving
@@ -21,6 +22,13 @@ from safety_interlock import require_unlocked
 
 
 PENDING_PHASES = frozenset({'mine_intent', 'mined', 'pickup_intent', 'place_intent'})
+LOCAL_GEOMETRY_BLOCKERS = frozenset({
+    'Natural target changed or has unsafe block properties',
+    'Dry natural support below the paving cell is unverified',
+    'Paving body column is occupied',
+    'Fluid or block entity lies in the neighbor scan',
+    'Nearby non-solid feature may depend on this surface',
+})
 
 
 class DeterministicPavingClient(MaterialClient):
@@ -137,6 +145,30 @@ def _journal_record(client, pos, state, model):
     return path, record
 
 
+def _free_drop_slots(state):
+    """Count distinct, explicitly empty backpack slots before any travel.
+
+    The native inventory snapshot does not report arbitrary item components.
+    A partial stack of the right item ID therefore cannot prove that the
+    original block's drop will merge into it.
+    """
+    rows = state.get('inventory')
+    if not isinstance(rows, list):
+        raise paving.PavingBlocked('Backpack capacity observation is unavailable')
+    slots = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise paving.PavingBlocked('Backpack capacity observation is malformed')
+        slot = row.get('slot')
+        if type(slot) is not int or not 0 <= slot < 36:
+            continue
+        if slot in slots:
+            raise paving.PavingBlocked('Backpack capacity observation has duplicate slots')
+        slots[slot] = row
+    return sum(row.get('item') == 'minecraft:air' and row.get('count') == 0
+               for row in slots.values())
+
+
 def select_batch(client, limit, allowed_cells=None):
     """Name stocked audited cells; reject old intents before considering supplies."""
     if type(limit) is not int or not 1 <= limit <= 4:
@@ -165,26 +197,52 @@ def select_batch(client, limit, allowed_cells=None):
             if record is not None:
                 raise paving.PavingPending('Recovered cell changed at %s' % (pos,))
             continue
-        candidates.append((pos, paving._block(row['expected']), recovered))
+        candidates.append((pos, paving._block(row['expected']), recovered, row['actual']))
     player = state['pos']
     candidates.sort(key=lambda entry: (not entry[2],
                                        (entry[0][0] + .5 - player[0]) ** 2
                                        + (entry[0][2] + .5 - player[2]) ** 2,
                                        entry[0][2], entry[0][0]))
     available = paving._counts(state)
+    free_drop_slots = _free_drop_slots(state)
     missing = Counter()
+    geometry_skips = []
+    capacity_skips = 0
     selected = []
-    for pos, item, recovered in candidates:
+    for pos, item, recovered, actual in candidates:
         if available[item] < 1:
             if recovered:
                 raise paving.PavingPending('Recovered cell at %s awaits its replacement item' % (pos,))
             missing[item] += 1
             continue
         if len(selected) < limit:
+            if not recovered:
+                # Reserve one provably empty slot per potential mined drop.
+                # Do not rely on replacement placement freeing a slot, or on
+                # a partial stack merging with an unknown-component drop.
+                if free_drop_slots <= 0:
+                    capacity_skips += 1
+                    continue
+                # This is a read-only 3x4x3 scan of the exact audited cell.
+                # A local obstruction excludes this untouched candidate;
+                # scan/world-scope failures still stop the entire run.
+                cells = paving._scan(client, pos)
+                try:
+                    paving._geometry(cells, pos, actual)
+                except paving.PavingBlocked as error:
+                    if str(error) not in LOCAL_GEOMETRY_BLOCKERS:
+                        raise
+                    geometry_skips.append({'pos': list(pos), 'reason': str(error)})
+                    continue
             selected.append(list(pos))
             available[item] -= 1
+            if not recovered:
+                free_drop_slots -= 1
     receipt['selection'] = {'audited_candidates': len(candidates),
-                            'missing_replacement_cells': dict(sorted(missing.items()))}
+                            'missing_replacement_cells': dict(sorted(missing.items())),
+                            'geometry_skips': geometry_skips,
+                            'capacity_skips': capacity_skips,
+                            'free_drop_slots_after_reservation': free_drop_slots}
     return selected, receipt
 
 
@@ -212,6 +270,57 @@ def _append_event(out, event):
         os.fsync(stream.fileno())
 
 
+def _first_trip_descent(client, cells, before, initial_state, verified_high_park):
+    """Try one ordinary guarded descent, only from this run's verified high start.
+
+    A recovered cell has already had a block removed, so it uses the original
+    cautious approach. ``pave_batch`` still performs its own fresh audit and
+    native placement checks after this travel-only optimization.
+    """
+    park = (verified_high_park or {}).get('park_target')
+    if (not isinstance(park, list) or len(park) != 3
+            or (verified_high_park or {}).get('world_session') != client.world
+            or (verified_high_park or {}).get('ground_clearance', 0) < 20
+            or not isinstance(initial_state, dict)
+            or initial_state.get('world_session') != client.world):
+        return {'used': False, 'reason': 'This run has no verified high-start receipt'}
+    state = client.status()
+    key = paving._safe_state(client, state, paving.SITE)
+    if (before.get('world_session') != client.world
+            or before.get('placement_key_sha256') != paving.SITE['placement_key_sha256']
+            or hashlib.sha256(key.encode()).hexdigest() != before['placement_key_sha256']):
+        raise paving.PavingBlocked('Projection selection changed before fast descent')
+    validate_park(park, state)
+    start = initial_state.get('pos')
+    current = state.get('pos')
+    if (not isinstance(start, list) or len(start) != 3
+            or not isinstance(current, list) or len(current) != 3
+            or any(type(v) not in (int, float) or not math.isfinite(v)
+                   for v in (*start, *current, *park))
+            or abs(start[1] - park[1]) > 3
+            or abs(current[1] - park[1]) > 3
+            or math.dist(start, current) > 4):
+        return {'used': False, 'reason': 'Actor did not remain at the original high start'}
+    model = {'content_hash': before.get('model_hash')}
+    for pos in paving.SITE['pinned_conflicts']:
+        _, record = _journal_record(client, pos, state, model)
+        if record is not None and record['phase'] in PENDING_PHASES:
+            raise paving.PavingPending('Uncertain prior intent at %s; inspect the cell journal' % (pos,))
+    for pos in cells:
+        _, record = _journal_record(client, tuple(pos), state, model)
+        if record is not None:
+            if record['phase'] == 'recovered':
+                return {'used': False, 'reason': 'Recovered cell requires cautious approach'}
+            raise paving.PavingPending('Selected cell already has a journal at %s' % (tuple(pos),))
+    result = descend_if_clear(client, target_y=63, braking_margin=16)
+    if not isinstance(result, dict) or type(result.get('used')) is not bool:
+        raise paving.PavingBlocked('Fast descent returned an unverified receipt')
+    # Even a native used:false response must leave the actor under the same
+    # leased safety guard before the regular paving path may continue.
+    paving._safe_state(client, client.status(), paving.SITE)
+    return result
+
+
 def _finish_receipt(client, out):
     out = Path(out)
     for name in ('stock-safety.json', 'park-fallback.json', 'finish-drain.json'):
@@ -230,6 +339,7 @@ def _finish_receipt(client, out):
 
 
 def run(client, out, *, minutes=20, max_cells, batch_size=4, allowed_cells=None,
+        fast_first_descent=False, initial_state=None, verified_high_park=None,
         monotonic=time.monotonic, wall_time=time.time, pave=paving.pave_batch):
     """Run a bounded session, writing durable progress before every batch."""
     validate_limits(minutes, max_cells, batch_size)
@@ -249,6 +359,7 @@ def run(client, out, *, minutes=20, max_cells, batch_size=4, allowed_cells=None,
                 'status': 'running', 'done': 0,
                 'batches': [], 'cells': [], 'reason': None}
     _write_progress(out, progress)
+    first_trip_checked = False
     try:
         while progress['done'] < max_cells:
             if monotonic() - started >= minutes * 60:
@@ -262,14 +373,46 @@ def run(client, out, *, minutes=20, max_cells, batch_size=4, allowed_cells=None,
             cells, before = select_batch(client, limit, allowed_cells)
             progress['last_audit'] = before
             if not cells:
-                missing = before['selection']['missing_replacement_cells']
-                if missing:
+                selection = before['selection']
+                missing = selection['missing_replacement_cells']
+                geometry_skips = selection['geometry_skips']
+                capacity_skips = selection['capacity_skips']
+                if capacity_skips:
+                    progress['status'] = 'inventory_full'
+                    progress['reason'] = ('No verified empty backpack slot for a mined paving drop; '
+                                          '%d audited candidates withheld before travel'
+                                          % capacity_skips)
+                elif missing and not geometry_skips:
                     progress['status'] = 'materials_exhausted'
                     progress['reason'] = 'No held replacement blocks for audited paving cells: ' \
                         + ', '.join('%s=%d' % (item, count) for item, count in missing.items())
                 else:
                     progress['status'] = 'no_eligible_cells'
+                    if geometry_skips:
+                        progress['reason'] = '%d audited paving cells failed local dry geometry preflight' \
+                            % len(geometry_skips)
                 break
+            if fast_first_descent and not first_trip_checked:
+                first_trip_checked = True
+                transit = {'status': 'attempting', 'selected': cells,
+                           'started_at': wall_time()}
+                progress['first_trip_transit'] = transit
+                _write_progress(out, progress)
+                _append_event(out, {'event': 'first_trip_transit_started', **transit})
+                try:
+                    descent = _first_trip_descent(client, cells, before,
+                                                  initial_state, verified_high_park)
+                except (Handoff, paving.PavingBlocked, paving.PavingPending, RuntimeError,
+                        OSError, ValueError, KeyError, TypeError, AttributeError,
+                        AssertionError) as error:
+                    transit.update(status='blocked', used=False, reason=str(error),
+                                   finished_at=wall_time())
+                    _write_progress(out, progress)
+                    _append_event(out, {'event': 'first_trip_transit_finished', **transit})
+                    raise
+                transit.update(status='completed', **descent, finished_at=wall_time())
+                _write_progress(out, progress)
+                _append_event(out, {'event': 'first_trip_transit_finished', **transit})
             batch = {'positions': cells, 'before_audit': before,
                      'started_at': wall_time(), 'status': 'in_progress',
                      'cell_receipts': []}
@@ -349,6 +492,8 @@ def main(argv=None):
     parser.add_argument('--cell', nargs=3, type=int, action='append',
                         metavar=('X', 'Y', 'Z'), help='Exact pinned cell; required for one-cell runs')
     parser.add_argument('--batch-size', type=int, default=4)
+    parser.add_argument('--fast-first-descent', action='store_true',
+                        help='Opt in to one guarded clear-column descent on a new first batch')
     args = parser.parse_args(argv)
     client = None
     park_verified = False
@@ -359,7 +504,7 @@ def main(argv=None):
         allowed_cells = validate_cells(args.cell, args.max_cells)
         if args.out.exists() and any(args.out.iterdir()):
             raise ValueError('Output directory must be new or empty for unambiguous receipts')
-        preflight(args.root, args.park_high)
+        initial = preflight(args.root, args.park_high)
         client = DeterministicPavingClient(args.root, args.out, server=paving.SITE['server'],
                                            record_experience=False, remote_finish='guard',
                                            park_target=args.park_high)
@@ -367,7 +512,9 @@ def main(argv=None):
         park_verified = True
         run_started = True
         result = run(client, args.out, minutes=args.minutes, max_cells=args.max_cells,
-                     batch_size=args.batch_size, allowed_cells=allowed_cells)
+                     batch_size=args.batch_size, allowed_cells=allowed_cells,
+                     fast_first_descent=args.fast_first_descent, initial_state=initial,
+                     verified_high_park=park)
         result['verified_high_park'] = park
     except (Handoff, paving.PavingBlocked, RuntimeError, OSError,
             ValueError, KeyError, TypeError, AttributeError,

@@ -11,8 +11,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.*;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.item.*;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.*;
@@ -233,11 +235,19 @@ public final class ProjectionBuildJob {
         var inv=inventory(c);var result=new ArrayList<BlockPos>();
         for(var e:expected.entrySet()){
             var p=e.getKey();if(!AutomationBridge.projectionBatchAllows(c,p)||e.getValue().equals(actual.get(p))||inv.getOrDefault(e.getValue().getBlock().asItem(),0)==0)continue;
-            if(!LitematicaAccess.inVisibleLayer(p)||!c.level.getBlockState(p).canBeReplaced())continue;
+            if(!LitematicaAccess.inVisibleLayer(p)||!liveTargetReady(e.getValue(),c.level,p))continue;
             boolean support=false;for(Direction d:Direction.values()){var s=c.level.getBlockState(p.relative(d));if(!s.isAir()&&!s.canBeReplaced()&&s.getFluidState().isEmpty()){support=true;break;}}
             if(support)result.add(p);
         }
         result.sort(Comparator.comparingDouble(p->c.player.distanceToSqr(Vec3.atCenterOf(p))));return result;
+    }
+    static boolean liveTargetReady(BlockState wanted,LevelReader level,BlockPos pos){
+        return level.getBlockState(pos).canBeReplaced()
+            &&cropSoilReady(wanted,level.getBlockState(pos.below()))
+            &&wanted.canSurvive(level,pos);
+    }
+    static boolean cropSoilReady(BlockState wanted,BlockState below){
+        return !(wanted.getBlock() instanceof CropBlock)||below.is(Blocks.FARMLAND)||below.is(BlockTags.SUPPORTS_CROPS);
     }
     private int reachable(Minecraft c,Vec3 feet,List<BlockPos> targets,boolean stopAtFirst){
         int count=0;var eye=feet.add(0,c.player.getEyeHeight(),0);

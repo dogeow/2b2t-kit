@@ -10,7 +10,7 @@ class FakeClient(MaterialClient):
     def __init__(self,directory,health=18.9,food=20):
         self.root=self.out=Path(directory);self.remote_finish='guard'
         self.park_target=[1,110,2];self.owned_material_menu=None
-        self.actions=[];self.world='world';self.rev=1;self.heal=False;self.task='task';self.last='request'
+        self.actions=[];self.calls=[];self.world='world';self.rev=1;self.heal=False;self.task='task';self.last='request'
         self.state={'health':health,'food':food,'pos':[1,67,2],
             'guard_armed':True,'flight':True,'time':100,'air_supply':300,
             'connected':True,'control_revision':1,'world_session':'world',
@@ -30,9 +30,13 @@ class FakeClient(MaterialClient):
     def raw(self):return self.status()
     def request(self,op,**params):
         self.actions.append(op)
+        self.calls.append((op,params))
         if (self.root/'material-health-hold.json').exists():
             raise AssertionError('The escape/logout must finish before the hold blocks requests')
-        if op=='navigate':self.state['pos']=params['target']
+        if op=='navigate':
+            self.state['pos']=params['target']
+            if self.state.get('under_water') and params['target'][1]>=70:
+                self.state['under_water']=False;self.state['air_supply']=300
         if op=='use_item':
             self.state['food']=20
             if self.heal:self.state['health']=20
@@ -52,6 +56,24 @@ class MaterialHealthExitTest(unittest.TestCase):
             self.assertEqual(['navigate'],client.actions)
             self.assertTrue(client.heartbeat.closed)
             self.assertFalse((client.root/'material-health-hold.json').exists())
+            self.assertTrue((client.out/'stock-safety.json').exists())
+
+    def test_dry_y63_paving_hole_routes_to_high_park_without_water_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client=FakeClient(directory,health=20)
+            client.state.update(pos=[1,63.15,2],under_water=False,air_supply=300)
+            self.finish(client)
+            self.assertEqual([('navigate',{'target':[1,110,2],'arrival':2,'seconds':120})],client.calls)
+            self.assertTrue((client.out/'stock-safety.json').exists())
+            self.assertFalse((client.out/'park-fallback.json').exists())
+
+    def test_underwater_low_air_still_surfaces_before_high_park(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client=FakeClient(directory,health=20)
+            client.state.update(pos=[1,52,2],under_water=True,air_supply=25)
+            self.finish(client)
+            self.assertEqual([('navigate',{'target':[1,70,2],'arrival':1,'seconds':8}),
+                              ('navigate',{'target':[1,110,2],'arrival':2,'seconds':120})],client.calls)
             self.assertTrue((client.out/'stock-safety.json').exists())
 
     def test_minor_injury_eats_available_food_then_recovers(self):

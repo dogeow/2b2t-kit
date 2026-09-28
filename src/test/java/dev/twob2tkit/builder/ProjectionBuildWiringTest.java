@@ -12,6 +12,11 @@ class ProjectionBuildWiringTest {
         assertTrue(calls(method("builder/ProjectionBuildJob","move")).containsAll(List.of("pause","noCollision","speed")));
         for(String name:List.of("tick","move","beginPrinting"))assertFalse(calls(method("builder/ProjectionBuildJob",name)).contains("useItemOn"));
     }
+    @Test void stationTargetsRequireLiveSupportWithoutBypassingTheBatchMask()throws Exception{
+        var calls=calls(method("builder/ProjectionBuildJob","available"));
+        assertTrue(calls.containsAll(List.of("projectionBatchAllows","liveTargetReady")));
+        assertTrue(calls.indexOf("projectionBatchAllows")<calls.indexOf("liveTargetReady"));
+    }
     @Test void stoppedJobsRestoreFlightAndReleaseKeys()throws Exception{
         assertTrue(calls(method("builder/ProjectionBuildJob","stop")).contains("finishJob"));
         assertTrue(calls(method("builder/ProjectionBuildJob","finishJob")).containsAll(List.of("stop","release","closeKeepingFlight","close")));

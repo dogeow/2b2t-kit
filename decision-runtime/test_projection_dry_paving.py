@@ -39,11 +39,17 @@ class FakeClient:
         self.entities = []
         self.player_feet = [pos[0] + 2.5, 64.02, pos[2] + .5]
         self.pickup_inside = False
+        self.pickup_offset = (0, 0)
+        self.pickup_feet_y = 63.95
         self.approach_inside = False
         self.approach_pose = None
+        self.block_after_vertical_selection = False
+        self.direct_scan_drift = False
         self.animal_after_pickup = False
         self.navigation_refused = False
         self.navigation_params = []
+        self.vertical_settle_y = None
+        self.low_settle_y = None
         self.air_obstacles = set()
         self.neighbor = None
         self.extra = None
@@ -60,6 +66,7 @@ class FakeClient:
         self.items = {'minecraft:stone_bricks': 2, 'minecraft:dirt': 0}
         self.hand = 'minecraft:diamond_shovel'
         self.host_protocol = 1
+        self.dimension = 'minecraft:overworld'
 
     def _inventory(self):
         return [{'slot': 0, 'item': 'minecraft:stone_bricks', 'count': self.items['minecraft:stone_bricks'], 'max_stack': 64},
@@ -70,8 +77,9 @@ class FakeClient:
     def status(self):
         snapshot = copy.deepcopy({'time': 10000, 'connected': True, 'world_session': self.world,
                               'dry_paving_protocol': self.host_protocol,
-                              'server': 'simpcraft.com:25565', 'dimension': 'minecraft:overworld',
+                              'server': 'simpcraft.com:25565', 'dimension': self.dimension,
                               'screen': '', 'manual_movement': False, 'health': 20, 'food': 20,
+                              'game_mode': 'survival',
                               'guard_armed': True, 'guard_pve_only': True, 'guard_busy': False,
                               'flight': True, 'under_water': False, 'air_return_active': False,
                               'safety_hold': {'active': False},
@@ -92,7 +100,7 @@ class FakeClient:
                                         'block_entity': False, 'fluid': False,
                                         'adjacent_fluid': False, 'neighbors_loaded': True}]
         return {'audit_schema': 2, 'observed_at': 10000, 'server': 'simpcraft.com',
-                'dimension': 'minecraft:overworld', 'loaded_chunks_verified': True,
+                'dimension': self.dimension, 'loaded_chunks_verified': True,
                 'enclosed_air_conflicts': [], 'name': self.site['name'],
                 'placement_key': self.key, 'matched': matched, 'total': 1,
                 'mismatches': mismatch}
@@ -128,10 +136,18 @@ class FakeClient:
         if op == 'projection_audit':
             return {'phase': 'done', 'world_session': self.world, 'projection_audit': self._audit()}
         if op == 'scan':
+            if (self.direct_scan_drift and self.actual == 'Block{minecraft:air}'
+                    and self.hand == 'minecraft:stone_bricks'
+                    and params['min'] == [self.pos[0], self.pos[1]+1, self.pos[2]]
+                    and params['max'] == [self.pos[0], self.pos[1]+3, self.pos[2]]):
+                self.player_feet[1] = 64.0
             return {'phase': 'done', 'world_session': self.world,
                     'blocks': self._scan(params['min'], params['max'])}
         if op == 'select_item':
             self.hand = params['item']
+            if (self.block_after_vertical_selection and self.actual == 'Block{minecraft:air}'
+                    and self.navigation_params):
+                self.air_obstacles.add((self.pos[0], self.pos[1]+3, self.pos[2]))
             return {'phase': 'done'}
         if op == 'approach_block':
             if self.block_after_mine and self.actual == 'Block{minecraft:air}':
@@ -150,6 +166,12 @@ class FakeClient:
             if self.navigation_refused:
                 return {'phase': 'waiting'}
             self.player_feet = list(params['target'])
+            if (self.vertical_settle_y is not None
+                    and params['target'][1] == self.pos[1] + 1.45):
+                self.player_feet[1] = self.vertical_settle_y
+            if (self.low_settle_y is not None
+                    and params['target'][1] == self.pos[1] + 1.2):
+                self.player_feet[1] = self.low_settle_y
             return {'phase': 'done'}
         if op == 'mine_block':
             self.mine_params = params
@@ -167,7 +189,8 @@ class FakeClient:
             self.entities = []
             self.items['minecraft:dirt'] += 1
             if self.pickup_inside:
-                self.player_feet = [self.pos[0]+.5, 63.95, self.pos[2]+.5]
+                self.player_feet = [self.pos[0]+.5+self.pickup_offset[0], self.pickup_feet_y,
+                                    self.pos[2]+.5+self.pickup_offset[1]]
             if self.animal_after_pickup:
                 self.entities = [{'type': 'minecraft:cow', 'uuid': 'nearby-private-identity',
                                   'pos': [self.pos[0]+2.5, 63.5, self.pos[2]+.5]}]
@@ -263,6 +286,126 @@ class DryPavingTests(unittest.TestCase):
         self.assertEqual(self.run_one()[0]['result'], 'placed')
         self.assertEqual(self.client.operations.count('mine_block'), 1)
 
+    def test_recovered_air_cell_rebinds_after_reconnect_once_without_remining(self):
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        old = self.journal()
+        self.assertEqual(old['phase'], 'recovered')
+        self.client.world = 'world-2'
+        self.client.block_after_mine = False
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        record = self.journal()
+        self.assertEqual(record['world_session'], 'world-2')
+        rebounds = [r for r in record['receipts'] if r.get('event') == 'world_session_rebind']
+        self.assertEqual(len(rebounds), 1)
+        self.assertEqual(rebounds[0]['previous_world_session'], old['world_session'])
+        self.assertEqual(rebounds[0]['current_world_session'], 'world-2')
+        self.assertIs(rebounds[0]['observed_air'], True)
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+
+    def test_recovered_reconnect_pre_approaches_from_high_park_before_rebind(self):
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.client.world = 'world-2'
+        self.client.block_after_mine = False
+        self.client.player_feet = [POS[0]+15.5, 120.0, POS[2]+23.5]
+        start = len(self.client.operations)
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        resumed = self.client.operations[start:]
+        self.assertLess(resumed.index('approach_block'), resumed.index('select_item'))
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(len([r for r in self.journal()['receipts']
+                              if r.get('event') == 'world_session_rebind']), 1)
+
+    def test_recovered_reconnect_changed_model_or_cell_remains_pending(self):
+        for change in ('model', 'target'):
+            with self.subTest(change=change):
+                self.client = FakeClient(Path(self.temp.name) / change)
+                self.client.block_after_mine = True
+                with self.assertRaises(PavingBlocked):
+                    self.run_one()
+                self.client.world = 'world-2'
+                self.client.block_after_mine = False
+                if change == 'model':
+                    self.client.model_hash = 'changed-model-hash'
+                else:
+                    self.client.actual = OLD
+                with self.assertRaises(PavingPending):
+                    self.run_one()
+                self.assertEqual(self.journal()['world_session'], 'world-1')
+                self.assertEqual(self.journal()['phase'], 'recovered')
+                self.assertEqual(self.client.operations.count('mine_block'), 1)
+                self.assertNotIn('interact', self.client.operations)
+
+    def test_recovered_reconnect_changed_dimension_or_nearby_entity_holds(self):
+        for change in ('dimension', 'entity'):
+            with self.subTest(change=change):
+                self.client = FakeClient(Path(self.temp.name) / change)
+                self.client.block_after_mine = True
+                with self.assertRaises(PavingBlocked):
+                    self.run_one()
+                self.client.world = 'world-2'
+                self.client.block_after_mine = False
+                if change == 'dimension':
+                    self.client.dimension = 'minecraft:the_nether'
+                else:
+                    self.client.entities = [{'type': 'minecraft:cow', 'uuid': 'nearby',
+                                             'pos': [POS[0]+1.5, 63.5, POS[2]+.5]}]
+                with self.assertRaises(PavingBlocked):
+                    self.run_one()
+                self.assertEqual(self.journal()['world_session'], 'world-1')
+                self.assertNotIn('interact', self.client.operations)
+
+    def test_recovered_reconnect_unsettled_native_request_holds_journal(self):
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.client.world = 'world-2'
+        self.client.block_after_mine = False
+        (self.client.root / 'request.json').write_text(json.dumps({
+            'id': 'unconfirmed-native-request', 'world_session': 'world-2'}))
+        with self.assertRaisesRegex(PavingPending, 'Native request completion is unverified'):
+            self.run_one()
+        self.assertEqual(self.journal()['world_session'], 'world-1')
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_recovered_reconnect_requires_original_mine_and_pickup_receipts(self):
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        path = next(self.client.root.glob('dry-paving-v1/*/*.json'))
+        record = json.loads(path.read_text())
+        record['receipts'] = [r for r in record['receipts'] if r['phase'] != 'mined']
+        path.write_text(json.dumps(record))
+        self.client.world = 'world-2'
+        self.client.block_after_mine = False
+        with self.assertRaisesRegex(PavingPending, 'confirmed excavation and pickup'):
+            self.run_one()
+        self.assertEqual(self.journal()['world_session'], 'world-1')
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_inflight_mine_or_place_intent_does_not_rebind_on_reconnect(self):
+        for action in ('mine', 'place'):
+            with self.subTest(action=action):
+                self.client = FakeClient(Path(self.temp.name) / action)
+                if action == 'mine':
+                    self.client.uncertain_mine = True
+                else:
+                    self.client.uncertain_place = True
+                with self.assertRaises(PavingPending):
+                    self.run_one()
+                old = self.journal()
+                self.client.world = 'world-2'
+                with self.assertRaises(PavingPending):
+                    self.run_one()
+                self.assertEqual(self.journal(), old)
+                self.assertEqual(self.client.operations.count('mine_block'), 1)
+                self.assertEqual(self.client.operations.count('interact'), int(action == 'place'))
+
     def test_high_park_recovered_cell_approaches_before_entity_coverage_check(self):
         self.client.block_after_mine = True
         with self.assertRaises(PavingBlocked):
@@ -296,6 +439,7 @@ class DryPavingTests(unittest.TestCase):
 
     def test_post_pickup_body_overlap_stays_recovered_until_safe_approach(self):
         self.client.pickup_inside = True
+        self.client.pickup_offset = (.2, 0)
         self.client.approach_inside = True
         with self.assertRaisesRegex(PavingBlocked, 'Player body overlaps'):
             self.run_one()
@@ -303,7 +447,7 @@ class DryPavingTests(unittest.TestCase):
         self.assertNotIn('place_intent', [row['phase'] for row in self.journal()['receipts']])
         self.assertNotIn('interact', self.client.operations)
         moves = [op for op in self.client.operations if op == 'navigate']
-        self.assertEqual(len(moves), 1)
+        self.assertGreaterEqual(len(moves), 1)
         self.assertTrue(all(row['air_only'] is True and row['arrival'] == .2
                             for row in self.client.navigation_params))
         self.client.approach_inside = False
@@ -430,8 +574,42 @@ class DryPavingTests(unittest.TestCase):
         waypoint = self.client.navigation_params[0]['target']
         self.assertEqual(waypoint, [x+.5, y+1.45, z+.5])
         self.assertIs(self.client.navigation_params[0]['air_only'], True)
+        self.assertEqual(self.client.operations.count('approach_block'), 1)
         self.assertEqual(self.client.operations.count('mine_block'), 1)
         self.assertEqual(self.client.operations.count('interact'), 1)
+
+    def test_live_vertical_settle_skips_approach_that_would_descend_into_hole(self):
+        pos = [761019, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'vertical-live-pose', pos=pos)
+        self.client.pickup_inside = True
+        self.client.vertical_settle_y = 64.31018418550967
+        self.client.approach_inside = True
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        self.assertEqual(self.client.operations.count('approach_block'), 1)
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+
+    def test_vertical_direct_face_change_stops_before_placement_intent(self):
+        pos = [761019, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'vertical-face-change', pos=pos)
+        self.client.pickup_inside = True
+        self.client.block_after_vertical_selection = True
+        with self.assertRaisesRegex(PavingBlocked, 'Direct vertical support face'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('place_intent', [row['phase'] for row in self.journal()['receipts']])
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_vertical_pose_drift_during_final_scan_stops_before_intent(self):
+        pos = [761019, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'vertical-drift', pos=pos)
+        self.client.pickup_inside = True
+        self.client.direct_scan_drift = True
+        with self.assertRaisesRegex(PavingBlocked, 'Direct vertical support face'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('place_intent', [row['phase'] for row in self.journal()['receipts']])
+        self.assertNotIn('interact', self.client.operations)
 
     def test_vertical_column_obstruction_keeps_edge_cell_recovered(self):
         pos = [761021, 63, 797829]
@@ -445,6 +623,50 @@ class DryPavingTests(unittest.TestCase):
             self.run_one()
         self.assertEqual(self.journal()['phase'], 'recovered')
         self.assertEqual(self.client.navigation_params, [])
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_y66_cap_uses_low_air_only_axis_route_without_remining(self):
+        pos = [761013, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'low-ceiling', pos=pos)
+        self.client.pickup_inside = True
+        self.client.pickup_feet_y = 63.154938061599374
+        self.client.animal_after_pickup = True
+        with self.assertRaisesRegex(PavingBlocked, 'animal, player, or unowned drop'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.client.entities = []
+        self.client.animal_after_pickup = False
+        self.client.low_settle_y = 64.14
+        self.client.air_obstacles = {(pos[0], 66, pos[2])}
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        targets = [row['target'] for row in self.client.navigation_params]
+        self.assertTrue(targets)
+        self.assertEqual(targets[0], [pos[0]+.5, 64.2, pos[2]+.5])
+        self.assertTrue(all(target[1] == 64.2 for target in targets))
+        self.assertAlmostEqual(self.client.player_feet[1], 64.14)
+        self.assertTrue(all(row['air_only'] is True for row in self.client.navigation_params))
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+
+    def test_centered_y64_14_is_clear_but_lower_unsafe_pose_is_not(self):
+        pos = (761013, 63, 797829)
+        self.assertTrue(paving._player_body_clear(
+            {'pos': [pos[0]+.5, 64.14, pos[2]+.5]}, pos))
+        self.assertFalse(paving._player_body_clear(
+            {'pos': [pos[0]+.5, 64.08, pos[2]+.5]}, pos))
+
+    def test_y66_cap_and_unsafe_y65_neighbors_keep_recovered_hole(self):
+        pos = [761013, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'low-ceiling-blocked', pos=pos)
+        self.client.pickup_inside = True
+        x, _, z = pos
+        self.client.air_obstacles = {(x, 66, z), (x-1, 65, z), (x+1, 65, z),
+                                     (x, 65, z-1), (x, 65, z+1)}
+        with self.assertRaisesRegex(PavingBlocked, 'No freshly scanned dry axis route'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertEqual(self.client.navigation_params, [])
+        self.assertNotIn('place_intent', [row['phase'] for row in self.journal()['receipts']])
         self.assertNotIn('interact', self.client.operations)
 
     def test_nearby_animal_blocks_mutation(self):

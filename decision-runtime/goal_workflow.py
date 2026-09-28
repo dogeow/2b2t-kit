@@ -67,7 +67,36 @@ def protected_background(client,state):
                 and not state.get('manual_movement'))
 
 
-def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None,max_station_repositions=0,background=False):
+def verified_build_navigation(anchor,state):
+    """Count only native travel with a real pose change, not phase/status churn."""
+    job=state.get('build_job') or {}
+    station=station_target(job.get('station'))
+    old=anchor.get('pos')
+    pos=state.get('pos')
+    if (not job.get('active') or not job.get('auto_move')
+            or job.get('phase') not in ('自动走位','规划走位','打印中')
+            or station is None or not isinstance(old,(list,tuple)) or not isinstance(pos,(list,tuple))
+            or len(old)!=3 or len(pos)!=3):
+        return False
+    try:
+        moved=math.dist(old,pos)
+        closer=math.dist(old,station)-math.dist(pos,station)
+    except (TypeError,ValueError):
+        return False
+    if not math.isfinite(moved) or moved<.5:
+        return False
+    if closer>=.35:
+        return True
+    previous=anchor.get('build_job') or {}
+    before_path=previous.get('navigation') or {}
+    path=job.get('navigation') or {}
+    return (path.get('start') is not None and path.get('start')==before_path.get('start')
+            and path.get('path_length')==before_path.get('path_length')
+            and isinstance(job.get('path_step'),int) and isinstance(previous.get('path_step'),int)
+            and job['path_step']>previous['path_step'])
+
+
+def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None,max_station_repositions=0,background=False,navigation_grace_seconds=15):
     s=client.status()
     if s['projection_selection'].get('key')!=selection_key:raise Handoff('Selected projection changed')
     if background and not protected_background(client,s):
@@ -76,7 +105,8 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
         raise RuntimeError('Minecraft must be the foreground window for construction movement')
     if s['screen']:client.checked('close_menu')
     client.checked('projection_start',manual_start=True,placement_key=selection_key)
-    started=time.monotonic();last_gain=started;best=0;last_report=-1;last_sample=0;last_subset_check=0;repositions=0
+    started=time.monotonic();last_gain=started;last_navigation=None;navigation_anchor=s
+    best=0;last_report=-1;last_sample=0;last_subset_check=0;repositions=0
     while time.monotonic()-started<seconds:
         s=client.status();b=s['build_job']
         if time.monotonic()-last_sample>=2:
@@ -87,7 +117,10 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
         if (background and not protected_background(client,s)) or (not background and not s.get('window_active')):
             if b.get('active'):client.checked('build_control',job_session=b['session'],action='pause_and_report')
             raise RuntimeError('Minecraft left foreground during construction')
-        if b.get('matched',0)>best:best=b['matched'];last_gain=time.monotonic()
+        now=time.monotonic()
+        if b.get('matched',0)>best:best=b['matched'];last_gain=now
+        if verified_build_navigation(navigation_anchor,s):
+            last_navigation=now;navigation_anchor=s
         if best-last_report>=10:
             print('BUILD',best,b.get('total'),b.get('phase'),flush=True);last_report=best
             progress=getattr(client,'set_progress',None)
@@ -103,7 +136,14 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             settled=fresh.get('build_job',{}).get('queue_settled') and not fresh.get('professional_printer',{}).get('waiting_for_server')
             if settled and subset_matches(observed,complete_cells):
                 print('BUILD_SUBSET_VERIFIED',len(complete_cells),flush=True);break
-        if not s.get('guard_busy') and time.monotonic()-last_gain>stall_seconds:
+        stalled_for=time.monotonic()-last_gain
+        # Walking between stations deserves a brief grace period, but cannot
+        # keep an unproductive print job alive indefinitely. The original
+        # overall `seconds` cap remains in force as well.
+        moving_grace=(last_navigation is not None
+                      and stalled_for<=stall_seconds+max(0,navigation_grace_seconds)
+                      and time.monotonic()-last_navigation<=8)
+        if not s.get('guard_busy') and stalled_for>stall_seconds and not moving_grace:
             target=station_target(b.get('station'))
             if (b.get('phase')=='自动走位' and target and repositions<max_station_repositions
                     and s.get('window_active') and s['health']>=18):
