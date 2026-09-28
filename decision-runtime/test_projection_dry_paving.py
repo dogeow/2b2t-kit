@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -36,6 +37,14 @@ class FakeClient:
         self.expected = expected
         self.actual = actual
         self.entities = []
+        self.player_feet = [pos[0] + 2.5, 64.02, pos[2] + .5]
+        self.pickup_inside = False
+        self.approach_inside = False
+        self.approach_pose = None
+        self.animal_after_pickup = False
+        self.navigation_refused = False
+        self.navigation_params = []
+        self.air_obstacles = set()
         self.neighbor = None
         self.extra = None
         self.fluid = False
@@ -68,7 +77,7 @@ class FakeClient:
                               'safety_hold': {'active': False},
                               'supervision_lease': {'kind': 'materials', 'job_session': self.task},
                               'projection_selection': {'key': self.key, **self.site['bounds']},
-                              'pos': [self.pos[0]+.5, 64.3, self.pos[2]+.5],
+                              'pos': self.player_feet,
                               'entities': self.entities, 'inventory': self._inventory(),
                               'hand': {'item': self.hand, 'durability': 100}})
         if self.host_protocol is None:
@@ -102,6 +111,10 @@ class FakeClient:
         if self.fluid:
             rows.append({'pos': [x+1, 62, z], 'state': 'Block{minecraft:water}[level=0]',
                          'solid': False, 'fluid': True, 'block_entity': False, 'passable': False})
+        for point in self.air_obstacles:
+            rows.append({'pos': list(point), 'state': 'Block{minecraft:stone}',
+                         'solid': True, 'fluid': False, 'block_entity': False,
+                         'passable': False})
         return [r for r in rows if all(low[i] <= r['pos'][i] <= high[i] for i in range(3))]
 
     def request(self, op, **params):
@@ -123,6 +136,20 @@ class FakeClient:
         if op == 'approach_block':
             if self.block_after_mine and self.actual == 'Block{minecraft:air}':
                 return {'phase': 'waiting', 'detail': 'No visible collision-free depot approach'}
+            if (self.actual == 'Block{minecraft:air}'
+                    and math.dist(self.player_feet,
+                                  [self.pos[0]+.5, self.pos[1]+.5, self.pos[2]+.5]) > 12):
+                self.player_feet = [self.pos[0]+2.5, 64.02, self.pos[2]+.5]
+            if self.approach_pose is not None and self.actual == 'Block{minecraft:air}':
+                self.player_feet = list(self.approach_pose)
+            elif self.approach_inside and self.actual == 'Block{minecraft:air}':
+                self.player_feet = [self.pos[0]+.5, 63.95, self.pos[2]+.5]
+            return {'phase': 'done'}
+        if op == 'navigate':
+            self.navigation_params.append(params)
+            if self.navigation_refused:
+                return {'phase': 'waiting'}
+            self.player_feet = list(params['target'])
             return {'phase': 'done'}
         if op == 'mine_block':
             self.mine_params = params
@@ -139,6 +166,11 @@ class FakeClient:
         if op == 'collect_item':
             self.entities = []
             self.items['minecraft:dirt'] += 1
+            if self.pickup_inside:
+                self.player_feet = [self.pos[0]+.5, 63.95, self.pos[2]+.5]
+            if self.animal_after_pickup:
+                self.entities = [{'type': 'minecraft:cow', 'uuid': 'nearby-private-identity',
+                                  'pos': [self.pos[0]+2.5, 63.5, self.pos[2]+.5]}]
             return {'phase': 'done'}
         if op == 'interact':
             self.interact_params = params
@@ -167,7 +199,7 @@ class DryPavingTests(unittest.TestCase):
             return pave_batch(self.client, [self.client.pos], settle=lambda _: None)
 
     def journal(self):
-        files = list(Path(self.temp.name).glob('dry-paving-v1/*/*.json'))
+        files = list(self.client.root.glob('dry-paving-v1/*/*.json'))
         self.assertEqual(len(files), 1)
         return json.loads(files[0].read_text())
 
@@ -230,6 +262,190 @@ class DryPavingTests(unittest.TestCase):
         self.client.block_after_mine = False
         self.assertEqual(self.run_one()[0]['result'], 'placed')
         self.assertEqual(self.client.operations.count('mine_block'), 1)
+
+    def test_high_park_recovered_cell_approaches_before_entity_coverage_check(self):
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.client.block_after_mine = False
+        self.client.player_feet = [self.client.pos[0]+15.5, 120.0,
+                                   self.client.pos[2]+23.5]
+        start = len(self.client.operations)
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        resumed = self.client.operations[start:]
+        self.assertLess(resumed.index('approach_block'), resumed.index('select_item'))
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+
+    def test_high_park_pre_approach_failure_keeps_recovered_journal(self):
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.client.player_feet = [self.client.pos[0]+15.5, 120.0,
+                                   self.client.pos[2]+23.5]
+        start = len(self.client.operations)
+        with self.assertRaisesRegex(PavingBlocked, 'No verified dry support-face approach'):
+            self.run_one()
+        resumed = self.client.operations[start:]
+        self.assertIn('approach_block', resumed)
+        self.assertNotIn('select_item', resumed)
+        self.assertNotIn('interact', resumed)
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+
+    def test_post_pickup_body_overlap_stays_recovered_until_safe_approach(self):
+        self.client.pickup_inside = True
+        self.client.approach_inside = True
+        with self.assertRaisesRegex(PavingBlocked, 'Player body overlaps'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('place_intent', [row['phase'] for row in self.journal()['receipts']])
+        self.assertNotIn('interact', self.client.operations)
+        moves = [op for op in self.client.operations if op == 'navigate']
+        self.assertEqual(len(moves), 1)
+        self.assertTrue(all(row['air_only'] is True and row['arrival'] == .2
+                            for row in self.client.navigation_params))
+        self.client.approach_inside = False
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+
+    def test_live_west_approach_gap_passes_before_native_exact_body_guard(self):
+        pos = [761004, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'west-gap', pos=pos)
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.client.block_after_mine = False
+        self.client.player_feet = [761002.5195225418, 64.0, 797829.5002699184]
+        self.client.approach_pose = [761003.4985609235, 64.0, 797829.5000003378]
+        self.assertTrue(paving._player_body_clear(
+            {'pos': self.client.approach_pose}, tuple(pos)))
+        self.assertFalse(paving._player_body_clear(
+            {'pos': [pos[0] - .2, 64.0, pos[2] + .5]}, tuple(pos)))
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        self.assertEqual(self.client.navigation_params, [])
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+
+    def test_corner_overlap_exits_north_of_protected_house_buffer(self):
+        pos = [761004, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'corner', pos=pos)
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.client.block_after_mine = False
+        self.client.player_feet = [pos[0] + 1.2500004, 64.0, pos[2] + 1.2527]
+        self.assertFalse(paving._player_body_clear(self.client.status(), tuple(pos)))
+        self.assertTrue(paving._protected((pos[0], pos[1], pos[2] + 2), self.client.site))
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        targets = [row['target'] for row in self.client.navigation_params]
+        self.assertEqual(len(targets), 4)
+        self.assertEqual(targets[1][0], pos[0] + 1.2500004)
+        self.assertEqual(targets[1][2], pos[2] - 1.5)
+        self.assertEqual(targets[-1][0], pos[0] + .5)
+        self.assertEqual(targets[-1][2], pos[2] - 1.5)
+        self.assertTrue(all(target[2] <= pos[2] + 1.2527 for target in targets))
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+
+    def test_corner_starting_column_obstruction_stays_recovered(self):
+        pos = [761004, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'corner-obstructed', pos=pos)
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.client.block_after_mine = False
+        self.client.player_feet = [pos[0] + 1.2500004, 64.0, pos[2] + 1.2527]
+        self.client.air_obstacles = {(pos[0]+1, 64, pos[2]+1)}
+        with self.assertRaisesRegex(PavingBlocked, 'No freshly scanned dry axis route'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('navigate', self.client.operations)
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_corner_never_uses_protected_south_when_other_routes_close(self):
+        pos = [761004, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'corner-protected', pos=pos)
+        self.client.block_after_mine = True
+        with self.assertRaises(PavingBlocked):
+            self.run_one()
+        self.client.block_after_mine = False
+        self.client.player_feet = [pos[0] + 1.2500004, 64.0, pos[2] + 1.2527]
+        self.client.air_obstacles = {(pos[0]+1, 64, pos[2])}
+        with self.assertRaisesRegex(PavingBlocked, 'No freshly scanned dry axis route'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('navigate', self.client.operations)
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_recovered_cell_waits_for_nearby_animal_and_logs_anonymous_evidence(self):
+        self.client.pickup_inside = True
+        self.client.animal_after_pickup = True
+        with self.assertRaisesRegex(PavingBlocked, 'animal, player, or unowned drop'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('interact', self.client.operations)
+        evidence = (self.client.out / 'paving-blockers.jsonl').read_text()
+        blocker = json.loads(evidence.splitlines()[-1])
+        self.assertEqual(blocker['journal_phase'], 'recovered')
+        self.assertEqual(blocker['nearby'],
+                         [{'type': 'minecraft:cow', 'distance_blocks': 2.0}])
+        self.assertIs(blocker['player_body_clear'], False)
+        self.assertNotIn('nearby-private-identity', evidence)
+        self.client.entities = []
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+
+    def test_unconfirmed_safe_navigation_never_writes_placement_intent(self):
+        self.client.pickup_inside = True
+        self.client.navigation_refused = True
+        with self.assertRaisesRegex(PavingBlocked, 'reposition did not finish'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_no_scanned_clear_corridor_leaves_recovered_cell_untouched(self):
+        self.client.pickup_inside = True
+        x, y, z = self.client.pos
+        self.client.air_obstacles = {(x-1, y+1, z), (x+1, y+1, z),
+                                     (x, y+1, z-1), (x, y+1, z+1),
+                                     (x, y+3, z)}
+        with self.assertRaisesRegex(PavingBlocked, 'No freshly scanned dry axis route'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertNotIn('navigate', self.client.operations)
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_edge_cell_uses_verified_vertical_pose_when_horizontal_ring_is_blocked(self):
+        pos = [761021, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'edge-vertical', pos=pos)
+        self.client.pickup_inside = True
+        x, y, z = pos
+        self.client.air_obstacles = {(x-1, y+1, z), (x+1, y+1, z),
+                                     (x, y+1, z-1), (x, y+1, z+1)}
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        self.assertEqual(len(self.client.navigation_params), 1)
+        waypoint = self.client.navigation_params[0]['target']
+        self.assertEqual(waypoint, [x+.5, y+1.45, z+.5])
+        self.assertIs(self.client.navigation_params[0]['air_only'], True)
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+
+    def test_vertical_column_obstruction_keeps_edge_cell_recovered(self):
+        pos = [761021, 63, 797829]
+        self.client = FakeClient(Path(self.temp.name) / 'edge-no-route', pos=pos)
+        self.client.pickup_inside = True
+        x, y, z = pos
+        self.client.air_obstacles = {(x-1, y+1, z), (x+1, y+1, z),
+                                     (x, y+1, z-1), (x, y+1, z+1),
+                                     (x, y+3, z)}
+        with self.assertRaisesRegex(PavingBlocked, 'No freshly scanned dry axis route'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.assertEqual(self.client.navigation_params, [])
+        self.assertNotIn('interact', self.client.operations)
 
     def test_nearby_animal_blocks_mutation(self):
         self.client.entities = [{'type': 'minecraft:salmon', 'uuid': 'pet-fish',

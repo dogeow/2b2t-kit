@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from material_jobs_backend import Backend
 from material_jobs.protocol import JobBlocked
+from container_access import OutdoorChestChanged
 
 
 def inventory(counts):
@@ -135,6 +136,64 @@ class ProjectionSupplyTest(unittest.TestCase):
             result=self.job.fetch({self.deep:128})
         self.assertEqual(2,open.call_count);self.assertNotIn('ready_for_build',result)
         self.client.request.assert_not_called()
+
+    def test_stale_one_of_four_depots_does_not_hide_finished_stock_elsewhere(self):
+        self.job.profile['depots']=[[1,64,1],[2,64,2],[3,64,3],[4,64,4]]
+        self.client.chests[(2,64,2)]=Counter({self.smooth:115})
+        self.client.chests[(3,64,3)]=Counter()
+        self.client.chests[(4,64,4)]=Counter()
+        def opening(client,pos,**options):
+            if pos==[1,64,1]:
+                raise OutdoorChestChanged(pos,'minecraft:chest','Block{minecraft:air}',
+                                          [{'pos':pos,'state':'Block{minecraft:air}'}])
+            return self.client.open(client,pos,**options)
+        with patch('container_access.open_grounded_chest',side_effect=opening):
+            result=self.job.fetch({self.deep:128})
+        self.assertTrue(result['ready_for_build'])
+        self.assertEqual({self.smooth:115},result['provided_finished'])
+        self.assertEqual([[1,64,1]],result['unavailable_sources'])
+        self.assertEqual([(2,64,2),(3,64,3),(4,64,4)],self.client.opened)
+        record=json.loads((self.root/'finished-supply-pass.json').read_text())
+        self.assertFalse(record['complete'])
+        self.assertEqual('Block{minecraft:air}',record['visited'][0]['scan_evidence']['observed_state'])
+        self.job.fetch_packed.assert_not_called()
+
+    def test_all_four_depots_stale_preserves_shortfall_and_incomplete_pass(self):
+        self.job.profile['depots']=[[1,64,1],[2,64,2],[3,64,3],[4,64,4]]
+        def stale(client,pos,**options):
+            raise OutdoorChestChanged(pos,'minecraft:chest','Block{minecraft:air}',
+                                      [{'pos':pos,'state':'Block{minecraft:air}'}])
+        with patch('container_access.open_grounded_chest',side_effect=stale):
+            result=self.job.fetch({self.deep:128})
+        self.assertEqual('waiting',result['phase'])
+        self.assertEqual({self.deep:128},result['missing'])
+        self.assertEqual(4,len(result['unavailable_sources']))
+        self.assertFalse(self.client.opened)
+        record=json.loads((self.root/'finished-supply-pass.json').read_text())
+        self.assertFalse(record['complete'])
+        self.assertEqual(4,len(record['visited']))
+        self.assertEqual(0,self.client.held[self.deep])
+
+    def test_finished_stock_stops_if_chest_block_changes_during_open_menu(self):
+        self.job.profile['depots']=[[1,64,1],[2,64,2],[3,64,3],[4,64,4]]
+        block={'state':'Block{minecraft:chest}[facing=north]'}
+        def opening(client,pos,**options):
+            state=self.client.open(client,pos,**options)
+            return {**state,'_verified_chest':{'pos':list(pos),'state':block['state']}}
+        self.client.request=Mock(side_effect=lambda op,**params:{'blocks':[
+            {'pos':params['min'],'state':block['state']}]})
+        def changed(item,target):
+            block['state']='Block{minecraft:air}'
+        self.client.transfer=Mock(side_effect=changed)
+        with patch('container_access.open_grounded_chest',side_effect=opening):
+            with self.assertRaisesRegex(JobBlocked,'登记箱已变化'):
+                self.job.fetch({self.deep:128})
+        self.client.transfer.assert_called_once()
+        self.assertEqual([(1,64,1)],self.client.opened)
+        record=json.loads((self.root/'finished-supply-pass.json').read_text())
+        self.assertFalse(record['complete'])
+        self.assertEqual('blocked',record['visited'][0]['phase'])
+        self.assertEqual('Block{minecraft:air}',record['visited'][0]['scan_evidence']['observed_state'])
 
 
 if __name__=='__main__':unittest.main()

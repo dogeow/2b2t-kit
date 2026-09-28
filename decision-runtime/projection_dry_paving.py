@@ -9,7 +9,9 @@ from collections import Counter
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import json
 import math
+import os
 from pathlib import Path
 import time
 from types import MappingProxyType
@@ -236,7 +238,38 @@ def _geometry(cells, pos, actual):
     return support
 
 
-def _entities(state, pos):
+def _player_body_clear(state, pos):
+    """Conservative standing-player envelope; the native guard checks the real AABB."""
+    player = state.get('pos')
+    if (not isinstance(player, list) or len(player) != 3
+            or any(type(v) not in (int, float) or not math.isfinite(v) for v in player)):
+        return False
+    # Normal native body is 0.6 blocks wide; retain clearance beyond its
+    # half-width without rejecting a visible pose with a real 0.2-block gap.
+    body = ((player[0] - .35, player[0] + .35),
+            (player[1] - .1, player[1] + 2),
+            (player[2] - .35, player[2] + .35))
+    destination = ((pos[0] - .1, pos[0] + 1.1),
+                   (pos[1] - .1, pos[1] + 1.1),
+                   (pos[2] - .1, pos[2] + 1.1))
+    return any(own[1] <= target[0] or own[0] >= target[1]
+               for own, target in zip(body, destination))
+
+
+def _log_blocker(client, pos, phase, kind, state, nearby=()):
+    # Keep identities and absolute entity/player positions out of advisor logs.
+    event = {'at_ns': time.time_ns(), 'cell': list(pos), 'journal_phase': phase,
+             'kind': kind, 'player_body_clear': _player_body_clear(state, pos),
+             'nearby': list(nearby)}
+    path = Path(client.out) / 'paving-blockers.jsonl'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a', encoding='utf-8') as stream:
+        stream.write(json.dumps(event, ensure_ascii=False) + '\n')
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _entities(state, pos, *, client=None, phase=None):
     player = state.get('pos')
     if (not isinstance(player, list) or len(player) != 3
             or any(type(v) not in (int, float) or not math.isfinite(v) for v in player)
@@ -245,12 +278,19 @@ def _entities(state, pos):
         # Native status covers only rendered entities within 16 blocks of the
         # actor. The 12-block bound leaves room for our four-block work ring.
         raise PavingBlocked('Passive-entity coverage near this cell is unverified')
+    nearby = []
     for entity in state['entities']:
         p = entity.get('pos')
-        if not isinstance(p, list) or len(p) != 3 or entity.get('type') is None:
+        if (not isinstance(p, list) or len(p) != 3 or not isinstance(entity.get('type'), str)
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in p)):
             raise PavingBlocked('Nearby entity observation is malformed')
-        if math.dist(p, [pos[0] + .5, pos[1] + .5, pos[2] + .5]) <= 4:
-            raise PavingBlocked('An animal, player, or unowned drop is near this cell')
+        distance = math.dist(p, [pos[0] + .5, pos[1] + .5, pos[2] + .5])
+        if distance <= 4:
+            nearby.append({'type': entity['type'], 'distance_blocks': round(distance, 2)})
+    if nearby:
+        if client is not None:
+            _log_blocker(client, pos, phase, 'nearby_entity', state, nearby)
+        raise PavingBlocked('An animal, player, or unowned drop is near this cell')
 
 
 def _stock_and_tool(state, actual, expected):
@@ -268,7 +308,8 @@ def _stock_and_tool(state, actual, expected):
     return max(tools, key=lambda row: row['durability'])
 
 
-def _cell_check(client, site, pos, *, air=False, source=None, require_tool=False):
+def _cell_check(client, site, pos, *, air=False, source=None, require_tool=False,
+                journal_phase=None):
     state, model, audit = _fresh_context(client, site)
     if _protected(pos, site):
         raise PavingBlocked('Protected house, warehouse, or birch-tree buffer')
@@ -288,7 +329,7 @@ def _cell_check(client, site, pos, *, air=False, source=None, require_tool=False
         tool = None
         if _counts(state)[_block(row['expected'])] < 1:
             raise PavingBlocked('Replacement block is no longer held')
-    _entities(state, pos)
+    _entities(state, pos, client=client, phase=journal_phase)
     return state, model, row, support, tool
 
 
@@ -370,11 +411,164 @@ def _drop(client, pos, source, before, path, record):
     return _record(path, record, 'recovered', item=item, inventory_after=_counts(client.status())[item])
 
 
-def _place(client, site, pos, path, record, *, settle):
-    state, model, row, support, _ = _cell_check(client, site, pos, air=True)
+def _clear_pose_columns(client, pos):
+    """Observe the small air corridor used to leave an excavated paving cell."""
+    low = [pos[0] - 2, pos[1] + 1, pos[2] - 2]
+    high = [pos[0] + 2, pos[1] + 4, pos[2] + 2]
+    reply = client.request('scan', min=low, max=high, details=True)
+    if (reply.get('phase') not in (None, 'done') or reply.get('world_session') != client.world
+            or not isinstance(reply.get('blocks'), list)):
+        raise PavingBlocked('Safe paving approach corridor was not freshly scanned')
+    occupied = set()
+    for row in reply['blocks']:
+        point = _position(row.get('pos'))
+        if (point in occupied or any(point[i] < low[i] or point[i] > high[i]
+                                     for i in range(3))):
+            raise PavingBlocked('Safe paving approach scan is malformed')
+        occupied.add(point)
+    return occupied
+
+
+def _clear_axis_route(occupied, site, pos, start, middle, finish):
+    """Check every scanned column crossed by the conservative player envelope."""
+    origin = (math.floor(start[0]), math.floor(start[1]))
+    for before, after in ((start, start), (start, middle), (middle, finish)):
+        if before[0] != after[0] and before[1] != after[1]:
+            return False
+        x1 = math.floor(min(before[0], after[0]) - .5)
+        x2 = math.ceil(max(before[0], after[0]) + .5) - 1
+        z1 = math.floor(min(before[1], after[1]) - .5)
+        z2 = math.ceil(max(before[1], after[1]) + .5) - 1
+        if (x1 < pos[0] - 2 or x2 > pos[0] + 2
+                or z1 < pos[2] - 2 or z2 > pos[2] + 2):
+            return False
+        if any((x, y, z) in occupied for x in range(x1, x2 + 1)
+               for z in range(z1, z2 + 1)
+               for y in range(pos[1] + 1, pos[1] + 5)):
+            return False
+        # The actor may already be in a protected buffer; do not route deeper
+        # through it while leaving this one excavated cell.
+        for x in range(math.floor(min(before[0], after[0])),
+                       math.floor(max(before[0], after[0])) + 1):
+            for z in range(math.floor(min(before[1], after[1])),
+                           math.floor(max(before[1], after[1])) + 1):
+                if (x, z) != origin and _protected((x, pos[1], z), site):
+                    return False
+    return True
+
+
+def _vertical_placement_pose(client, site, pos, record, state):
+    """Try the open target column before traversing a crowded yard edge."""
+    player = state['pos']
+    if (abs(player[0] - pos[0] - .5) > .1
+            or abs(player[2] - pos[2] - .5) > .1):
+        return False
+    low = [pos[0], pos[1] + 1, pos[2]]
+    high = [pos[0], pos[1] + 3, pos[2]]
+    reply = client.request('scan', min=low, max=high, details=True)
+    if (reply.get('phase') not in (None, 'done') or reply.get('world_session') != client.world
+            or not isinstance(reply.get('blocks'), list)):
+        raise PavingBlocked('Vertical paving clearance was not freshly scanned')
+    for row in reply['blocks']:
+        point = _position(row.get('pos'))
+        if any(point[i] < low[i] or point[i] > high[i] for i in range(3)):
+            raise PavingBlocked('Vertical paving clearance scan is malformed')
+    if reply['blocks']:
+        return False
+    waypoint = [player[0], pos[1] + 1.45, player[2]]
+    moved = client.request('navigate', target=waypoint, arrival=.2,
+                           air_only=True, seconds=15)
+    if moved.get('phase') != 'done':
+        raise PavingBlocked('Native collision-checked vertical paving reposition did not finish')
+    observed, model, row, _, _ = _cell_check(client, site, pos, air=True,
+                                             journal_phase='recovered')
+    if (record['world_session'] != client.world or record['expected'] != row['expected']
+            or record['model_hash'] != model['content_hash']):
+        raise PavingPending('Recovered cell changed during vertical reposition')
+    if (math.dist(observed['pos'], waypoint) > .35
+            or not _player_body_clear(observed, pos)):
+        _log_blocker(client, pos, 'recovered', 'vertical_pose_unconfirmed', observed)
+        raise PavingBlocked('Vertical paving pose or body clearance was not confirmed')
+    return True
+
+
+def _reposition_for_placement(client, site, pos, record, state):
+    """Use native collision-checked air movement; stop if no exact clear pose is proven."""
+    player = state['pos']
+    start = (player[0], player[2])
+    if (abs(math.floor(start[0]) - pos[0]) > 1
+            or abs(math.floor(start[1]) - pos[2]) > 1):
+        raise PavingBlocked('Player overlaps paving from outside the bounded local corridor')
+    if _vertical_placement_pose(client, site, pos, record, state):
+        return
+    occupied = _clear_pose_columns(client, pos)
+    selected = middle = None
+    for dx, dz in ((0, -2), (-2, 0), (2, 0), (0, 2)):
+        if _protected((pos[0] + dx, pos[1], pos[2] + dz), site):
+            continue
+        candidate = (pos[0] + dx + .5, pos[2] + dz + .5)
+        for turn in ((start[0], candidate[1]), (candidate[0], start[1])):
+            if _clear_axis_route(occupied, site, pos, start, turn, candidate):
+                selected, middle = candidate, turn
+                break
+        if selected is not None:
+            break
+    if selected is None:
+        raise PavingBlocked('No freshly scanned dry axis route to a clear paving pose')
+    rise = pos[1] + 2.02
+    waypoints = [(start[0], rise, start[1])]
+    if middle != start:
+        waypoints.append((middle[0], rise, middle[1]))
+    if selected != middle:
+        waypoints.append((selected[0], rise, selected[1]))
+    waypoints.append((selected[0], pos[1] + 1.02, selected[1]))
+    for waypoint in waypoints:
+        reply = client.request('navigate', target=list(waypoint), arrival=.2,
+                               air_only=True, seconds=15)
+        if reply.get('phase') != 'done':
+            raise PavingBlocked('Native collision-checked paving reposition did not finish')
+        observed, model, row, _, _ = _cell_check(client, site, pos, air=True,
+                                                 journal_phase='recovered')
+        if (record['world_session'] != client.world or record['expected'] != row['expected']
+                or record['model_hash'] != model['content_hash']):
+            raise PavingPending('Recovered cell changed during safe reposition')
+        if math.dist(observed['pos'], waypoint) > .35:
+            raise PavingBlocked('Paving reposition stopped outside the verified pose')
+    if not _player_body_clear(observed, pos):
+        _log_blocker(client, pos, 'recovered', 'player_body_after_reposition', observed)
+        raise PavingBlocked('Player body still overlaps the paving destination')
+
+
+def _recovered_pre_approach(client, site, pos, record):
+    """Enter entity-observation range without replaying the recovered excavation."""
+    state, model, audit = _fresh_context(client, site)
+    if _protected(pos, site):
+        raise PavingBlocked('Protected house, warehouse, or birch-tree buffer')
+    row = _target(model, audit, pos, site, air=True)
     if (record['world_session'] != client.world or record['expected'] != row['expected']
             or record['model_hash'] != model['content_hash']):
         raise PavingPending('Recovered cell belongs to another world session or model')
+    support = _geometry(_scan(client, pos), pos, row['actual'])
+    if _counts(state)[_block(row['expected'])] < 1:
+        raise PavingBlocked('Replacement block is no longer held')
+    try:
+        approach_faces(client, [pos[0], pos[1] - 1, pos[2]], support['state'],
+                       ('up',), stand_distance=2.4)
+    except ApproachUnavailable as error:
+        raise PavingBlocked('No verified dry support-face approach; recovered cell stays pending') from error
+
+
+def _place(client, site, pos, path, record, *, settle):
+    state, model, row, support, _ = _cell_check(client, site, pos, air=True,
+                                               journal_phase='recovered')
+    if (record['world_session'] != client.world or record['expected'] != row['expected']
+            or record['model_hash'] != model['content_hash']):
+        raise PavingPending('Recovered cell belongs to another world session or model')
+    if not _player_body_clear(state, pos):
+        _log_blocker(client, pos, 'recovered', 'player_body_overlap', state)
+        _reposition_for_placement(client, site, pos, record, state)
+        state, model, row, support, _ = _cell_check(client, site, pos, air=True,
+                                                   journal_phase='recovered')
     support_pos = [pos[0], 62, pos[2]]
     item = _block(row['expected'])
     client.checked('select_item', item=item)
@@ -382,7 +576,14 @@ def _place(client, site, pos, path, record, *, settle):
         approach_faces(client, support_pos, support['state'], ('up',), stand_distance=2.4)
     except ApproachUnavailable as error:
         raise PavingBlocked('No verified dry support-face approach; recovered cell stays pending') from error
-    state, _, row, support, _ = _cell_check(client, site, pos, air=True)
+    state, model, row, support, _ = _cell_check(client, site, pos, air=True,
+                                               journal_phase='recovered')
+    if (record['world_session'] != client.world or record['expected'] != row['expected']
+            or record['model_hash'] != model['content_hash']):
+        raise PavingPending('Recovered cell changed during placement approach')
+    if not _player_body_clear(state, pos):
+        _log_blocker(client, pos, 'recovered', 'player_body_after_approach', state)
+        raise PavingBlocked('Player body overlaps the paving destination after approach')
     if state.get('hand', {}).get('item') != item:
         raise PavingBlocked('Replacement is not in the selected hand')
     before = _counts(state)[item]
@@ -419,6 +620,13 @@ def _one(client, site, pos, *, settle):
                 raise PavingPending('Previously completed paving was changed; preserve the player edit')
             return {'pos': list(pos), 'result': 'already_complete', 'expected': record['expected']}
         if record['phase'] == 'recovered':
+            player = state.get('pos')
+            if (not isinstance(player, list) or len(player) != 3
+                    or any(type(v) not in (int, float) or not math.isfinite(v)
+                           for v in player)):
+                raise PavingBlocked('Player position is unavailable for recovered paving')
+            if math.dist(player, [pos[0] + .5, pos[1] + .5, pos[2] + .5]) > 12:
+                _recovered_pre_approach(client, site, pos, record)
             return _place(client, site, pos, path, record, settle=settle)
         raise PavingPending('Existing uncertain paving intent must be inspected; no action repeated')
     model_hash = model['content_hash']

@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from material_jobs_backend import Backend
 from material_jobs.protocol import JobBlocked
 from material_plan import inventory_counts
+from container_access import OutdoorChestChanged
 from test_material_depots import StorageClient
 
 
@@ -138,12 +139,70 @@ class TargetedSupplyTest(unittest.TestCase):
 
     def test_changed_menu_cannot_authorize_second_transfer(self):
         self.client.put(0,'minecraft:stone',64)
+        self.job.profile['depots'] = [[1,64,1],[2,64,2],[3,64,3],[4,64,4]]
         def changed(item,target):
             self.client.menu['id'] += 1
         self.client.transfer = Mock(side_effect=changed)
-        with self.assertRaisesRegex(JobBlocked,'容器或光标'):
-            self.fetch({'minecraft:stone':16})
+        with patch('container_access.open_grounded_chest',side_effect=lambda *a,**k:self.client.status()) as opened:
+            with self.assertRaisesRegex(JobBlocked,'容器或光标'):
+                self.job.fetch({'minecraft:stone':16})
         self.client.transfer.assert_called_once()
+        self.assertEqual(1,opened.call_count)
+        self.job.fetch_packed.assert_not_called()
+
+    def test_stale_one_of_four_approved_depots_continues_with_remaining_source(self):
+        self.client.put(0,'minecraft:stone',64)
+        self.job.profile['depots'] = [[1,64,1],[2,64,2],[3,64,3],[4,64,4]]
+        def opening(client,pos,**options):
+            if pos == [1,64,1]:
+                raise OutdoorChestChanged(pos,'minecraft:chest','Block{minecraft:air}',
+                                          [{'pos':pos,'state':'Block{minecraft:air}'}])
+            return client.status()
+        with patch('container_access.open_grounded_chest',side_effect=opening) as opened:
+            result=self.job.fetch({'minecraft:stone':16})
+        self.assertEqual('done',result['phase'])
+        self.assertEqual([[1,64,1]],result['unavailable_sources'])
+        self.assertEqual(2,opened.call_count)
+        self.assertTrue(self.client.calls)
+        sources=json.loads((self.root/'sources.json').read_text())
+        self.assertEqual('unavailable',sources[0]['phase'])
+        self.assertEqual('Block{minecraft:air}',sources[0]['scan_evidence']['observed_state'])
+        self.assertEqual({'minecraft:stone':16},sources[1]['provided'])
+
+    def test_block_changes_while_menu_id_stays_same_stops_before_next_depot(self):
+        self.client.put(0,'minecraft:stone',64)
+        self.job.profile['depots'] = [[1,64,1],[2,64,2],[3,64,3],[4,64,4]]
+        block={'state':'Block{minecraft:chest}[facing=north]'}
+        def opening(client,pos,**options):
+            return {**client.status(), '_verified_chest':{'pos':list(pos),'state':block['state']}}
+        self.client.request=Mock(side_effect=lambda op,**params:{'blocks':[
+            {'pos':params['min'],'state':block['state']}]})
+        def changed(item,target):
+            block['state']='Block{minecraft:air}'
+        self.client.transfer=Mock(side_effect=changed)
+        with patch('container_access.open_grounded_chest',side_effect=opening) as opened:
+            with self.assertRaisesRegex(JobBlocked,'登记箱已变化'):
+                self.job.fetch({'minecraft:stone':16})
+        self.client.transfer.assert_called_once()
+        self.assertEqual(1,opened.call_count)
+        self.job.fetch_packed.assert_not_called()
+        source=json.loads((self.root/'sources.json').read_text())[0]
+        self.assertEqual('blocked',source['phase'])
+        self.assertEqual('Block{minecraft:air}',source['scan_evidence']['observed_state'])
+
+    def test_all_four_registered_depots_stale_waits_with_real_shortfall(self):
+        self.job.profile['depots'] = [[1,64,1],[2,64,2],[3,64,3],[4,64,4]]
+        def stale(client,pos,**options):
+            raise OutdoorChestChanged(pos,'minecraft:chest','Block{minecraft:air}',
+                                      [{'pos':pos,'state':'Block{minecraft:air}'}])
+        with patch('container_access.open_grounded_chest',side_effect=stale) as opened:
+            result=self.job.fetch({'minecraft:stone':16})
+        self.assertEqual('waiting',result['phase'])
+        self.assertEqual({'minecraft:stone':16},result['missing'])
+        self.assertEqual(4,len(result['unavailable_sources']))
+        self.assertEqual(4,opened.call_count)
+        self.assertEqual([],self.client.calls)
+        self.assertEqual(4,len(json.loads((self.root/'sources.json').read_text())))
 
     def test_already_satisfied_single_item_never_travels_or_opens(self):
         self.client.put(27,'minecraft:stone',64)

@@ -8,6 +8,7 @@ import time
 from kit_runtime.journal import write_json
 from material_plan import quantities, inventory_counts
 from .planning import plan
+from .projection_advice import material_choices
 from .protocol import JobBlocked, JobCancelled, JobPaused, fingerprint, server_key, validate_request
 from projection_wood import POST_ITEM, POST_RAW, post_work
 
@@ -34,6 +35,7 @@ class MaterialJob:
         self.fetch_tried, self.no_progress = {}, Counter()
         self.snapshot, self.held = {}, {}
         self.batch_item, self.batch_count = None, 0
+        self.active_advice = None
         self.context = dict(self.request['context'])
         self.prerequisites = {}
         self.pending_ready_build = None
@@ -340,14 +342,47 @@ class MaterialJob:
             # Work on carried useful output first, then ordinary shell material.
             # Fixed batches keep several hundred sand/gravel ingredients from
             # becoming a single backpack request for the entire projection.
-            self.batch_item = min(targets, key=lambda item: (
-                not bool(self.held.get(item, 0)), not item.endswith('_concrete'), item))
+            self.active_advice = None
+            ranked = sorted((item for item, count in targets.items()
+                             if self.held.get(item, 0) < count), key=lambda item: (
+                                 not bool(self.held.get(item, 0)),
+                                 not item.endswith('_concrete'), item))
+            if not ranked:
+                raise JobBlocked('投影差料已有现货，但原生施工尚未确认可继续')
+            self.batch_item = ranked[0]
+            adviser = getattr(self.backend, 'advise_projection_supply', None)
+            enabled = getattr(self.backend, 'projection_jev_enabled', False) is True
+            offer = (material_choices(self.snapshot.get('projection_audit'),
+                                      self.request['projection_key'], targets,
+                                      self.held, ranked)
+                     if enabled and callable(adviser) else None)
+            if offer is not None:
+                decision = adviser(offer, dict(self.held))
+                key = decision.get('choice') if isinstance(decision, dict) else None
+                source = decision.get('source') if isinstance(decision, dict) else 'local'
+                reason = decision.get('reason') if isinstance(decision, dict) else 'invalid_answer'
+                if isinstance(decision, dict) and decision.get('model_call_scheduled') is True:
+                    self._write(ai_calls=self.state['ai_calls'] + 1)
+                if key == 'wait':
+                    self._event('projection_advice', decision_id=decision.get('id'),
+                                source=source, choice='wait', reason=reason,
+                                audit_fingerprint=offer['audit_fingerprint'])
+                    raise JobPaused('材料建议等待；保持原生防护，暂停本轮任务')
+                self.batch_item = offer['mapping'].get(key, ranked[0])
+                self.active_advice = decision if isinstance(decision, dict) else None
+                self._event('projection_advice', decision_id=decision.get('id') if isinstance(decision, dict) else None,
+                            source=source,
+                            choice=key if key in offer['mapping'] else offer['fallback'],
+                            selected_item=self.batch_item,
+                            reason=reason,
+                            audit_fingerprint=offer['audit_fingerprint'])
             self.batch_count = self._fit_batch(self.batch_item, targets[self.batch_item])
         return {self.batch_item: min(self.batch_count, targets[self.batch_item])}
 
     def _build_batch(self):
         self._call('build', [self.request['projection_key']], 'building')
         self.batch_item, self.batch_count = None, 0
+        self.active_advice = None
         self.fetch_tried.clear()
 
     def _record_ready_build(self, receipt, before):
@@ -461,6 +496,16 @@ class MaterialJob:
             self.prerequisites.update(requirements)
             self._write(requirements=self.prerequisites)
         self._observe()
+        if self.request['mode'] == 'projection' and self.active_advice:
+            recorder = getattr(self.backend, 'record_projection_advice_outcome', None)
+            if callable(recorder):
+                item = self.batch_item
+                recorder(self.active_advice, 'native_step_observed', operation=operation,
+                         phase=receipt['phase'], selected_item=item,
+                         item_before=before['stock'].get(item, 0),
+                         item_after=self.held.get(item, 0),
+                         matched_before=before['matched'],
+                         matched_after=self.snapshot.get('projection_audit', {}).get('matched'))
         if self._work_active():
             raise JobBlocked('动作仍有未收回的在制品；不能开始下一轮投料')
         (self.out / 'inflight.json').unlink()

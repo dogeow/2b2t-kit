@@ -22,6 +22,7 @@ from kit_runtime.journal import write_json
 from material_jobs.protocol import JobBlocked, JobCancelled, JobPaused, fingerprint, server_key
 from material_jobs.profile import load as load_profile
 from material_jobs.navigation import leave_projection, leave_quarry, local_park, move, outside_station, settled_state
+from material_jobs.projection_advice import audit_fingerprint
 
 KIT_SCREENS = {'KitFormScreen', 'KitCollectionScreen', 'KitWorkspaceScreen', 'ClickGuiScreen'}
 
@@ -106,8 +107,8 @@ class JobClient(MaterialClient):
         return super().request(op, **params)
 
     def advise(self, goal, candidates, scene=None, fallback='wait'):
-        # Base finish/recovery has an optional adviser. A materials-only task
-        # always chooses its documented local fallback, with zero API calls.
+        # Keep base finish/recovery deterministic. Projection supply choices
+        # use Backend.advise_projection_supply's separate, audited boundary.
         if fallback not in candidates:
             fallback = next(iter(candidates))
         return {'choice': fallback, 'source': 'local_material_job', 'ai_calls': 0}
@@ -156,6 +157,12 @@ def observed_warehouse_stock(rows):
                 if type(n) is int and n > 0 and key.startswith('minecraft:'):
                     result[key] += n
     return dict(result)
+
+
+def unavailable_registered_source(pos, error):
+    """Keep a failed registered source distinct from a verified empty chest."""
+    return {'pos': list(pos), 'phase': 'unavailable',
+            'reason': 'registered_chest_changed', 'scan_evidence': error.evidence}
 
 
 def next_sequence(out):
@@ -251,6 +258,7 @@ class Backend:
                 self.baseline[item]=max(self.baseline.get(item,0),count)
             write_json(baseline,{'world_session':self.latest['world_session'],'counts':self.baseline})
         self.profile = load_profile(self.root, request['context'])
+        self.projection_jev_enabled = self.profile['projection_jev_advice']
         self.catalog = ProcessingCatalog(self.profile['recipe_jar'])
         self.crafting_catalog = RecipeCatalog(self.profile['recipe_jar'])
         self.sequence = next_sequence(self.out)
@@ -374,6 +382,70 @@ class Backend:
             self.busy = previous
         return self.audit
 
+    def advise_projection_supply(self, offer, expected_stock):
+        """Rank prechecked material batches without giving Jev a game action.
+
+        The native audit and inventory must agree both before and after the
+        bounded model call. If either changes, the worker pauses and replans
+        only after an explicit resume. No position or placement key is sent.
+        """
+        # This is an explicit per-world opt-in. A direct caller cannot bypass
+        # the engine gate or spend a model call using a default profile.
+        if self.profile.get('projection_jev_advice') is not True:
+            return {'choice': offer['fallback'], 'source': 'local',
+                    'reason': 'projection_jev_disabled', 'model_call_scheduled': False}
+        from decision_advisor import Advisor, safe_to_consult
+
+        c = self.ensure_client()
+        key = self.request['projection_key']
+        fingerprint_before = offer['audit_fingerprint']
+
+        def current_fingerprint():
+            audit = self.refresh_audit()
+            observed = audit.get('observed_at')
+            if (type(observed) is not int
+                    or not -1000 <= time.time() * 1000 - observed <= 5000):
+                raise JobPaused('投影审计不是当前现场，请重新规划')
+            try:
+                targets = dict(quantities(audit['replacement_items']))
+            except (KeyError, TypeError, ValueError) as error:
+                raise JobPaused('投影差料已改变，请重新规划') from error
+            return audit_fingerprint(audit, key, targets)
+
+        def current_state():
+            state = read_fresh(self.root, wait_seconds=.25)
+            require_unlocked(self.root, state)
+            require_scope(state, self.request['context'])
+            if (not owns_material_state(c, state)
+                    or (state.get('projection_selection') or {}).get('key') != key):
+                raise JobPaused('材料控制权或选定投影已改变，请重新规划')
+            return state
+
+        if current_fingerprint() != fingerprint_before:
+            raise JobPaused('投影差料在建议前已改变，请重新规划')
+        if dict(inventory_counts(current_state())) != expected_stock:
+            raise JobPaused('背包在建议前已改变，请重新规划')
+        if not hasattr(self, 'projection_advisor'):
+            self.projection_advisor = Advisor(self.out)
+        decision = self.projection_advisor.select(
+            'Choose one useful next material batch for the selected projection; native planning and safety gates decide all execution.',
+            offer['choices'], current_state, offer['scene'], offer['fallback'])
+        fresh_fingerprint = current_fingerprint()
+        fresh_state = current_state()
+        if (fresh_fingerprint != fingerprint_before
+                or dict(inventory_counts(fresh_state)) != expected_stock
+                or not safe_to_consult(fresh_state)):
+            self.projection_advisor.outcome(decision, 'discarded_changed_audit_or_stock',
+                                            audit_fingerprint=fingerprint_before)
+            raise JobPaused('投影或背包在建议期间已改变，请重新规划')
+        self.projection_advisor.outcome(decision, 'selected_for_local_material_plan',
+                                        audit_fingerprint=fingerprint_before)
+        return decision
+
+    def record_projection_advice_outcome(self, decision, result, **evidence):
+        if hasattr(self, 'projection_advisor'):
+            self.projection_advisor.outcome(decision, result, **evidence)
+
     def close_owned_menu(self):
         c = self.client
         if c is None:
@@ -421,21 +493,41 @@ class Backend:
                 # continue to Ender/raw ingredient errands before using it.
                 return ready
             visited = []
+            unavailable = list(ready.get('unavailable_sources', [])) if ready is not None else []
             for pos in ([] if ready is not None else self.profile['depots']):
                 from construction_materials import supply_targets
-                from container_access import open_grounded_chest
+                from container_access import OutdoorChestChanged, open_grounded_chest, verify_opened_chest
                 self.checkpoint()
-                missing = {i:n for i,n in targets.items() if self.stock().get(i,0) < n}
+                held = self.stock()
+                missing = {i:n for i,n in targets.items() if held.get(i,0) < n}
                 if not missing:
                     break
                 # Verify the actual chest and clear landing column. A recorded
                 # indoor/obstructed position cannot authorize a blind approach.
-                state = open_grounded_chest(c, list(pos), allow_empty=True)
+                try:
+                    state = open_grounded_chest(c, list(pos), allow_empty=True)
+                except OutdoorChestChanged as error:
+                    entry = unavailable_registered_source(pos, error)
+                    visited.append(entry)
+                    unavailable.append(list(pos))
+                    write_json(out/'sources.json', visited)
+                    continue
                 menu_id = (state.get('menu') or {}).get('id')
                 if menu_id is None or menu_id != c.owned_material_menu:
                     raise JobBlocked('仓库取料的容器归属未确认，不发送取料动作')
 
+                entry = {'pos':list(pos), 'requested':{}, 'provided':{}, 'phase':'waiting'}
+                visited.append(entry)
+                write_json(out/'sources.json', visited)
+
                 def observed():
+                    try:
+                        verify_opened_chest(c, state.get('_verified_chest'))
+                    except OutdoorChestChanged as error:
+                        entry.update(phase='blocked', reason='opened_chest_changed',
+                                     scan_evidence=error.evidence)
+                        write_json(out/'sources.json', visited)
+                        raise JobBlocked('仓库取料中登记箱已变化，停止取料') from error
                     fresh = c.status()
                     menu = fresh.get('menu') or {}
                     rows = menu.get('slots', [])
@@ -465,8 +557,6 @@ class Backend:
 
                 initial, stored, sizes = observed()
                 selected = supply_targets(initial, missing, stored, reserve_empty=1, stack_sizes=sizes)
-                entry = {'pos':list(pos), 'requested':{}, 'provided':{}, 'phase':'waiting'}
-                visited.append(entry)
                 for item, planned_target in selected.items():
                     fresh, source, sizes = observed()
                     # Recheck capacity after each transfer in case another
@@ -488,10 +578,15 @@ class Backend:
                 self.close_owned_menu()
                 write_json(out/'sources.json', visited)
             packed_receipt=self.fetch_packed(targets)
-            missing = {i:n-self.stock().get(i,0) for i,n in targets.items() if self.stock().get(i,0)<n}
+            held = self.stock()
+            missing = {i:n-held.get(i,0) for i,n in targets.items() if held.get(i,0)<n}
             if isinstance(packed_receipt,dict) and packed_receipt.get('phase')=='waiting':
-                return {**packed_receipt,'missing':missing}
-            return {'phase':'waiting' if missing else 'done', 'detail':'仓库现货已核对', 'missing':missing}
+                return {**packed_receipt,'missing':missing,'unavailable_sources':unavailable}
+            all_unavailable = bool(unavailable) and len(unavailable) == len(self.profile['depots'])
+            detail = ('登记仓库均已失效，现场扫描已记录' if all_unavailable else
+                      '仓库现货已核对，部分登记箱失效' if unavailable else '仓库现货已核对')
+            return {'phase':'waiting' if missing else 'done', 'detail':detail,
+                    'missing':missing, 'unavailable_sources':unavailable}
 
     def finished_supply_pass(self,c,out,targets):
         """Once per observed projection deficit, fill with real finished stock.
@@ -500,7 +595,7 @@ class Backend:
         outdoor depots and checks source loss and backpack gain before credit.
         """
         from construction_materials import supply_targets
-        from container_access import open_grounded_chest
+        from container_access import OutdoorChestChanged, open_grounded_chest, verify_opened_chest
         audit=self.audit if self.audit is not None and not self.audit_dirty else self.refresh_audit()
         key=self.request['projection_key']
         if (audit.get('placement_key')!=key or not audit.get('loaded_chunks_verified')
@@ -515,18 +610,33 @@ class Backend:
             previous=json.loads(record_path.read_text())
             if previous.get('token')==token and previous.get('complete') is True:
                 return None
-        before=dict(inventory_counts(c.status()));credited=Counter();visited=[]
+        before=dict(inventory_counts(c.status()));credited=Counter();visited=[];unavailable=[]
         record={'schema':1,'token':token,'world_session':c.world,'projection_key':key,
                 'needed':needed,'before':before,'visited':visited,'complete':False}
         write_json(record_path,record)
         for pos in self.profile['depots']:
             self.checkpoint()
-            state=open_grounded_chest(c,list(pos),allow_empty=True);menu=state.get('menu') or {}
+            try:
+                state=open_grounded_chest(c,list(pos),allow_empty=True)
+            except OutdoorChestChanged as error:
+                visited.append(unavailable_registered_source(pos,error))
+                unavailable.append(list(pos))
+                write_json(record_path,record)
+                continue
+            menu=state.get('menu') or {}
             if (menu.get('type')!='ChestMenu' or len(menu.get('slots',[])) not in (63,90)
                     or menu.get('cursor',{}).get('count')!=0 or menu.get('id')!=c.owned_material_menu):
                 raise JobBlocked('现货补料的箱子或光标状态未确认，不发送新的取料动作')
             menu_id=menu['id'];entry={'pos':list(pos),'provided_finished':{},'requested':{}}
+            visited.append(entry);write_json(record_path,record)
             def observed():
+                try:
+                    verify_opened_chest(c, state.get('_verified_chest'))
+                except OutdoorChestChanged as error:
+                    entry.update(phase='blocked', reason='opened_chest_changed',
+                                 scan_evidence=error.evidence)
+                    write_json(record_path,record)
+                    raise JobBlocked('现货补料中登记箱已变化，停止取料') from error
                 fresh=c.status();current=fresh.get('menu') or {}
                 if (current.get('id')!=menu_id or current.get('type')!='ChestMenu'
                         or current.get('cursor',{}).get('count')!=0):
@@ -558,15 +668,21 @@ class Backend:
                     # inputs for the previously selected material chain.
                     break
             self.close_owned_menu()
-            visited.append(entry);write_json(record_path,record)
+            entry['phase']='done';write_json(record_path,record)
         after=dict(inventory_counts(c.status()))
         provided={item:min(count,max(0,after.get(item,0)-before.get(item,0)))
                   for item,count in credited.items() if after.get(item,0)>before.get(item,0)}
-        record.update(complete=True,after=after,provided_finished=provided)
+        record.update(complete=not unavailable,after=after,provided_finished=provided,
+                      unavailable_sources=unavailable)
         write_json(record_path,record);write_json(Path(out)/'finished-supply.json',record)
         missing={item:amount-after.get(item,0) for item,amount in targets.items() if after.get(item,0)<amount}
-        return {'phase':'waiting' if missing else 'done','detail':'已核对本轮现货，优先施工' if provided else '本轮批准仓库现货已核对',
-                'missing':missing,'ready_for_build':bool(provided),'provided_finished':provided,'projection_key':key}
+        all_unavailable=bool(unavailable) and len(unavailable)==len(self.profile['depots'])
+        detail=('已核对本轮现货，优先施工' if provided else
+                '登记仓库均已失效，现场扫描已记录' if all_unavailable else
+                '本轮批准仓库现货已核对，部分登记箱失效' if unavailable else '本轮批准仓库现货已核对')
+        return {'phase':'waiting' if missing else 'done','detail':detail,
+                'missing':missing,'ready_for_build':bool(provided),'provided_finished':provided,
+                'unavailable_sources':unavailable,'projection_key':key}
 
     def fetch_packed(self, targets):
         if not self.profile.get('ender_chest') or not self.profile.get('shulker_pad'):

@@ -4,6 +4,32 @@ import time
 import json
 
 
+class OutdoorChestChanged(RuntimeError):
+    """A registered source failed its read-only block scan before approach."""
+
+    def __init__(self, pos, block_id, observed_state, rows, scan_max=None):
+        x, y, z = pos
+        self.evidence = {
+            'pos': list(pos), 'expected_block': block_id,
+            'observed_state': observed_state or None,
+            'scan': {'min': list(pos), 'max': list(scan_max) if scan_max is not None else [x, y + 6, z],
+                     'blocks': [{'pos': row.get('pos'), 'state': row.get('state')}
+                                for row in rows]},
+        }
+        super().__init__('Expected outdoor chest changed')
+
+
+def verify_opened_chest(client, source):
+    """Recheck the exact block before trusting an open menu or transfer."""
+    if source is None:
+        return  # Offline clients may replace the opener with a menu fixture.
+    pos, expected = source['pos'], source['state']
+    rows = client.request('scan', min=pos, max=pos, details=True)['blocks']
+    observed = next((r['state'] for r in rows if r['pos'] == pos), '')
+    if observed != expected:
+        raise OutdoorChestChanged(pos, 'minecraft:chest', observed, rows, scan_max=pos)
+
+
 def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=False):
     if block_id not in ('minecraft:chest','minecraft:ender_chest'):
         raise ValueError('Only ordinary or Ender chests use this landing approach')
@@ -11,7 +37,7 @@ def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=
     rows=client.request('scan',min=pos,max=[x,y+6,z],details=True)['blocks']
     expected=next((r['state'] for r in rows if r['pos']==pos),'')
     if not expected.startswith('Block{'+block_id+'}'):
-        raise RuntimeError('Expected outdoor chest changed')
+        raise OutdoorChestChanged(pos, block_id, expected, rows)
     if any(r['pos'][1]>y and r['state']!='Block{minecraft:air}' for r in rows):
         raise RuntimeError('Chest landing column is obstructed')
     if client.status()['hand']['item']!='minecraft:diamond_sword':
@@ -28,7 +54,8 @@ def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=
         if time.monotonic()>=until:raise RuntimeError('Chest approach did not settle on the ground')
         time.sleep(.15)
     client.checked('interact',pos=pos,face='up',expected_state=expected,expected_hand='minecraft:diamond_sword')
-    return wait_container_contents(client,'ChestMenu',require_nonempty=not allow_empty)
+    state = wait_container_contents(client,'ChestMenu',require_nonempty=not allow_empty)
+    return {**state, '_verified_chest': {'pos': list(pos), 'state': expected}}
 
 
 def wait_container_contents(client,kind,require_nonempty=True):

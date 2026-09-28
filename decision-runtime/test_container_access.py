@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from container_access import open_grounded_chest
+from container_access import OutdoorChestChanged, open_grounded_chest
 
 
 class FakeClient:
@@ -44,6 +44,8 @@ class ContainerAccessTest(unittest.TestCase):
              patch('container_access.time.sleep',side_effect=lambda duration:clock.__setitem__(0,clock[0]+duration)):
             result=open_grounded_chest(client,[1,64,2])
         self.assertEqual('ChestMenu',result['menu']['type'])
+        self.assertEqual({'pos':[1,64,2],'state':'Block{minecraft:chest}[facing=south]'},
+                         result['_verified_chest'])
         self.assertEqual(7,client.owned_material_menu)
         self.assertEqual(['approach_block','walk','interact'],[name for name,_ in client.actions])
         self.assertFalse(client.actions[1][1]['restore_flight'])
@@ -52,6 +54,19 @@ class ContainerAccessTest(unittest.TestCase):
     def test_obstructed_landing_is_rejected_before_movement(self):
         client=FakeClient([0],blocked=True)
         with self.assertRaisesRegex(RuntimeError,'obstructed'):open_grounded_chest(client,[1,64,2])
+        self.assertEqual([],client.actions)
+
+    def test_registered_chest_changed_records_exact_scan_without_approach(self):
+        client=FakeClient([0])
+        rows=[{'pos':[1,64,2],'state':'Block{minecraft:air}'},
+              {'pos':[1,65,2],'state':'Block{minecraft:air}'}]
+        client.request=lambda op,**params:{'blocks':rows}
+        with self.assertRaises(OutdoorChestChanged) as caught:
+            open_grounded_chest(client,[1,64,2])
+        self.assertEqual({'pos':[1,64,2],'expected_block':'minecraft:chest',
+                          'observed_state':'Block{minecraft:air}',
+                          'scan':{'min':[1,64,2],'max':[1,70,2],'blocks':rows}},
+                         caught.exception.evidence)
         self.assertEqual([],client.actions)
 
     def test_explicit_inventory_sweep_accepts_a_stable_empty_chest(self):

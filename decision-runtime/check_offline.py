@@ -9,7 +9,7 @@ TESTS = (
     'test_container_access', 'test_material_depots', 'test_concrete_soil', 'test_shore_concrete', 'test_concrete_shelter',
     'test_furnace_batches', 'test_furnace_bank', 'test_smelting_workflow', 'test_journal', 'test_decision_advisor',
     'test_construction_materials', 'test_goal_workflow',
-    'test_projection_material_plan', 'test_material_jobs', 'test_material_processing',
+    'test_projection_material_plan', 'test_projection_advice', 'test_material_jobs', 'test_material_processing',
     'test_material_jobs_backend', 'test_projection_ready_supply', 'test_targeted_supply', 'test_material_jobs_acquisition', 'test_material_discovery',
     'test_construction_access_plan', 'test_construction_access_journal', 'test_construction_access_receipts', 'test_construction_access',
     'test_material_task_client', 'test_quarry_vegetation', 'test_approved_supply',

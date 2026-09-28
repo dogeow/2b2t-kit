@@ -5,6 +5,7 @@ choose or approve a block. Each batch comes from a fresh complete projection
 audit; ``projection_dry_paving.pave_batch`` remains the sole mutating path.
 """
 import argparse
+from collections import Counter
 import hashlib
 import json
 import math
@@ -103,7 +104,7 @@ def verify_high_park(client, park_high):
     validate_park(park_high, client.status())
     x, y, z = map(math.floor, park_high)
     reply = client.request('scan', min=[x, -64, z], max=[x, 320, z], details=True)
-    if (reply.get('phase') != 'done' or reply.get('world_session') != client.world
+    if (reply.get('phase') not in (None, 'done') or reply.get('world_session') != client.world
             or not isinstance(reply.get('blocks'), list)):
         raise paving.PavingBlocked('High park column scan is incomplete')
     seen = set()
@@ -137,7 +138,7 @@ def _journal_record(client, pos, state, model):
 
 
 def select_batch(client, limit, allowed_cells=None):
-    """Name up to four audited cells; reject any unresolved old intent first."""
+    """Name stocked audited cells; reject old intents before considering supplies."""
     if type(limit) is not int or not 1 <= limit <= 4:
         raise ValueError('One batch names one to four cells')
     state, model, audit = paving._fresh_context(client, paving.SITE)
@@ -157,18 +158,34 @@ def select_batch(client, limit, allowed_cells=None):
             continue
         if paving._protected(pos, paving.SITE):
             continue
+        recovered = record is not None and record['phase'] == 'recovered'
         try:
-            paving._target(model, audit, pos, paving.SITE,
-                           air=record is not None and record['phase'] == 'recovered')
+            row = paving._target(model, audit, pos, paving.SITE, air=recovered)
         except paving.PavingBlocked:
             if record is not None:
                 raise paving.PavingPending('Recovered cell changed at %s' % (pos,))
             continue
-        candidates.append(pos)
+        candidates.append((pos, paving._block(row['expected']), recovered))
     player = state['pos']
-    candidates.sort(key=lambda pos: ((pos[0] + .5 - player[0]) ** 2
-                                     + (pos[2] + .5 - player[2]) ** 2, pos[2], pos[0]))
-    return [list(pos) for pos in candidates[:limit]], receipt
+    candidates.sort(key=lambda entry: (not entry[2],
+                                       (entry[0][0] + .5 - player[0]) ** 2
+                                       + (entry[0][2] + .5 - player[2]) ** 2,
+                                       entry[0][2], entry[0][0]))
+    available = paving._counts(state)
+    missing = Counter()
+    selected = []
+    for pos, item, recovered in candidates:
+        if available[item] < 1:
+            if recovered:
+                raise paving.PavingPending('Recovered cell at %s awaits its replacement item' % (pos,))
+            missing[item] += 1
+            continue
+        if len(selected) < limit:
+            selected.append(list(pos))
+            available[item] -= 1
+    receipt['selection'] = {'audited_candidates': len(candidates),
+                            'missing_replacement_cells': dict(sorted(missing.items()))}
+    return selected, receipt
 
 
 def _cell_receipt(client, pos, state, model, audit):
@@ -245,7 +262,13 @@ def run(client, out, *, minutes=20, max_cells, batch_size=4, allowed_cells=None,
             cells, before = select_batch(client, limit, allowed_cells)
             progress['last_audit'] = before
             if not cells:
-                progress['status'] = 'no_eligible_cells'
+                missing = before['selection']['missing_replacement_cells']
+                if missing:
+                    progress['status'] = 'materials_exhausted'
+                    progress['reason'] = 'No held replacement blocks for audited paving cells: ' \
+                        + ', '.join('%s=%d' % (item, count) for item, count in missing.items())
+                else:
+                    progress['status'] = 'no_eligible_cells'
                 break
             batch = {'positions': cells, 'before_audit': before,
                      'started_at': wall_time(), 'status': 'in_progress',
@@ -376,13 +399,15 @@ def main(argv=None):
                 result['finish_error'] = str(error)
             if (args.out / 'progress.json').exists():
                 result['finish'] = _finish_receipt(client, args.out)
-                if (result['status'] in ('completed', 'time_limit', 'no_eligible_cells')
+                if (result['status'] in ('completed', 'time_limit', 'no_eligible_cells',
+                                         'materials_exhausted')
                         and result['finish']['state'] != 'high_guard_confirmed'):
                     result['work_status'], result['status'] = result['status'], 'finish_unconfirmed'
                 result['terminal'] = True
                 _write_progress(args.out, result)
     print(json.dumps(result, ensure_ascii=False), flush=True)
-    return 0 if result['status'] in ('completed', 'time_limit', 'no_eligible_cells') \
+    return 0 if result['status'] in ('completed', 'time_limit', 'no_eligible_cells',
+                                     'materials_exhausted') \
         and result.get('finish', {}).get('state') == 'high_guard_confirmed' else 2
 
 

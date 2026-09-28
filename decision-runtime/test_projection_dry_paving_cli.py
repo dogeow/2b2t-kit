@@ -22,7 +22,11 @@ class AuditClient:
         self.key = 'pinned-eight-regions'
         self.state = {'world_session': self.world,
                       'projection_selection': {'key': self.key},
-                      'pos': [self.positions[0][0] + .5, 64, self.positions[0][2] + .5]}
+                      'pos': [self.positions[0][0] + .5, 64, self.positions[0][2] + .5],
+                      'inventory': [
+                          {'slot': 0, 'item': 'minecraft:stone_bricks', 'count': 64},
+                          {'slot': 1, 'item': 'minecraft:polished_andesite', 'count': 64},
+                      ]}
         self.model = {'content_hash': 'pinned-model', 'observed_at': 1000,
                       'expected': [{'pos': list(pos),
                                     'state': paving.SITE['pinned_conflicts'][pos][0]}
@@ -148,12 +152,14 @@ class PavingCliTests(unittest.TestCase):
     def test_pending_intent_outside_explicit_cell_still_blocks_run(self):
         named, other = self.client.positions[:2]
         self.client.write_journal(other, 'place_intent')
+        self.client.state['inventory'] = []
         with self.assertRaisesRegex(paving.PavingPending, 'Uncertain prior intent'):
             cli.select_batch(self.client, 1, frozenset({named}))
         self.assertEqual(self.client.calls, [])
 
     def test_completed_cell_changed_by_player_is_not_replayed(self):
         self.client.write_journal(self.client.positions[0], 'complete')
+        self.client.state['inventory'] = []
         with self.assertRaisesRegex(paving.PavingPending, 'Previously completed'):
             cli.select_batch(self.client, 4)
 
@@ -166,6 +172,38 @@ class PavingCliTests(unittest.TestCase):
         self.client.audit['mismatches'][0]['actual'] = 'Block{minecraft:stone}'
         with self.assertRaisesRegex(paving.PavingPending, 'Recovered cell changed'):
             cli.select_batch(self.client, 1)
+
+    def test_unheld_replacement_is_skipped_before_a_new_cell_is_touched(self):
+        client = AuditClient(self.temp.name, count=79)
+        client.state['pos'] = [760987.5, 64, 797828.5]
+        client.state['inventory'] = [
+            {'slot': 0, 'item': 'minecraft:stone_bricks', 'count': 1}]
+        with patch.object(paving, '_fresh_context', client.context):
+            selected, receipt = cli.select_batch(client, 4)
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(paving._block(paving.SITE['pinned_conflicts'][tuple(selected[0])][0]),
+                         'minecraft:stone_bricks')
+        self.assertGreater(receipt['selection']['missing_replacement_cells'][
+            'minecraft:polished_andesite'], 0)
+        self.assertEqual(client.calls, [])
+
+    def test_only_unheld_replacements_end_without_dispatching_a_batch(self):
+        self.client.state['inventory'] = []
+        result = cli.run(self.client, Path(self.temp.name) / 'out', minutes=1,
+                         max_cells=2, pave=self.client.pave, monotonic=lambda: 0)
+        self.assertEqual(result['status'], 'materials_exhausted')
+        self.assertEqual(result['done'], 0)
+        self.assertEqual(result['batches'], [])
+        self.assertIn('minecraft:stone_bricks=', result['reason'])
+        self.assertEqual(self.client.calls, [])
+
+    def test_recovered_cell_with_unheld_replacement_remains_pending(self):
+        pos = self.client.positions[0]
+        self.client.write_journal(pos, 'recovered')
+        self.client.audit['mismatches'][0].update(actual='Block{minecraft:air}', kind='missing')
+        self.client.state['inventory'] = []
+        with self.assertRaisesRegex(paving.PavingPending, 'awaits its replacement'):
+            cli.select_batch(self.client, 4)
 
     def test_player_changed_untouched_cell_is_skipped(self):
         pos = self.client.positions[0]
@@ -266,7 +304,9 @@ class PavingCliTests(unittest.TestCase):
 
             def request(self, op, **kwargs):
                 self.requests.append((op, kwargs))
-                return {'phase': 'done', 'world_session': self.world,
+                # Native successful scans provide blocks and world scope but
+                # do not set a phase field.
+                return {'world_session': self.world,
                         'blocks': [{'pos': [761020, 70, 797854],
                                     'passable': False, 'fluid': False}]}
 
@@ -286,6 +326,13 @@ class PavingCliTests(unittest.TestCase):
 
         client.request = wrong_column
         with self.assertRaisesRegex(paving.PavingBlocked, 'unexpected cells'):
+            cli.verify_high_park(client, park)
+
+        client.request = lambda op, **kwargs: {
+            'phase': 'error', 'world_session': client.world,
+            'blocks': [{'pos': [761020, 70, 797854],
+                        'passable': False, 'fluid': False}]}
+        with self.assertRaisesRegex(paving.PavingBlocked, 'incomplete'):
             cli.verify_high_park(client, park)
 
     def test_material_client_assertion_is_json_blocked_and_no_work_runs(self):
@@ -425,6 +472,35 @@ class PavingCliTests(unittest.TestCase):
                              '--cell', *map(str, self.client.positions[0])])
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(output.getvalue())['status'], 'finish_unconfirmed')
+
+    def test_material_exhaustion_is_normal_only_after_high_guard_receipt(self):
+        class FinishClient:
+            def __init__(self, root, evidence, **kwargs):
+                self.evidence = Path(evidence)
+                self.evidence.mkdir(parents=True)
+
+            def finish(self):
+                (self.evidence / 'stock-safety.json').write_text(
+                    json.dumps({'action': 'KEEP_PVE_GUARD'}))
+
+        def fake_run(client, evidence, **kwargs):
+            result = {'status': 'materials_exhausted', 'done': 0,
+                      'reason': 'No held replacement blocks'}
+            cli._write_progress(evidence, result)
+            return result
+
+        output = io.StringIO()
+        with (patch.object(cli, 'preflight'),
+              patch.object(cli, 'verify_high_park', return_value={'ground_clearance': 30}),
+              patch.object(cli, 'DeterministicPavingClient', FinishClient),
+              patch.object(cli, 'run', fake_run), redirect_stdout(output)):
+            code = cli.main(['--root', str(self.temp.name),
+                             '--out', str(Path(self.temp.name) / 'material-exhaustion'),
+                             '--park-high', '761020.5', '100', '797854.5',
+                             '--max-cells', '1',
+                             '--cell', *map(str, self.client.positions[0])])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue())['status'], 'materials_exhausted')
 
     def test_outer_failure_preserves_already_durable_cell_count(self):
         out = Path(self.temp.name) / 'outer-failure'

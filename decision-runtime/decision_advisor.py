@@ -103,8 +103,10 @@ class Advisor:
         if not isinstance(goal,str) or not 1<=len(goal)<=500:raise ValueError('A short goal is required')
         before=deepcopy(read_state());candidates=deepcopy(candidates);scene=deepcopy(scene)
         decision_id=uuid.uuid4().hex
+        model_call_scheduled=False
         def finish(choice,source,reason=None,answer=None):
-            result={'id':decision_id,'choice':choice,'source':source,'reason':reason}
+            result={'id':decision_id,'choice':choice,'source':source,'reason':reason,
+                    'model_call_scheduled':model_call_scheduled}
             if answer:result.update({k:answer[k] for k in ('model','elapsed_ms','confidence','probabilities','usage')})
             if source=='cache':result.update(elapsed_ms=0,usage={'input_tokens':0,'output_tokens':0})
             result['log_written']=self.log('decision',goal=goal,candidates=candidates,scene=scene or {},health=before.get('health'),**result)
@@ -135,6 +137,7 @@ class Advisor:
                 return choose(model,goal,candidates,observation)
             finally:model.close()
         mailbox.submit(context(before),work)
+        model_call_scheduled=True
         start=time.monotonic()
         try:
             while time.monotonic()-start<self.config['timeout_seconds']:

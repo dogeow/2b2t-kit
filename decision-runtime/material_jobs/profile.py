@@ -50,6 +50,9 @@ def load(automation, context):
         jar = str(candidates[0])
     if not Path(jar).is_file():
         raise JobBlocked('当前版本的配方文件不存在')
+    if type(profile.get('projection_jev_advice', False)) is not bool:
+        raise JobBlocked('投影 Jev 建议开关必须为 true 或 false')
+    profile.setdefault('projection_jev_advice', False)
     for key in ('workbench', 'workbench_staging', 'supply_staging', 'park_target', 'ender_chest', 'shulker_pad'):
         if key in profile and not point(profile[key]):
             raise JobBlocked('无效工位坐标：' + key)
