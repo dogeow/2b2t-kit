@@ -225,6 +225,19 @@ class BorerAreaHorizontalTest {
         assertEquals(Action.WAIT, sim.tick().action()); assertEquals(Phase.RETURN, sim.plan.phase());
         assertNotEquals(Action.DOWN, sim.tick().action());
     }
+    @Test void stallRescanKeepsTheProtectedWaterColumnReserved() {
+        var sim = new Sim(BlockPos.ZERO, new BlockPos(1, 2, 0), true);
+        sim.until(() -> sim.plan.phase() == Phase.HORIZONTAL);
+        var water = new BlockPos(0, 0, 0); sim.world.cells.put(water, Cell.LIQUID);
+        sim.plan.skipLiquid(sim.pose, water);
+        assertEquals(1, sim.plan.skipped());
+        sim.pose = new Pose(.5, 3.25, .5, 0, 0, 0);
+        sim.plan.rescanAfterStall();
+        assertEquals(Phase.SURVEY, sim.plan.phase());
+        sim.tick(); sim.tick();
+        assertEquals(1, sim.plan.skipped());
+        assertEquals(Cell.LIQUID, sim.world.cell(water));
+    }
 
     private record Trace(Phase phase, Pose before, Command command) {}
     private static final class World implements BorerAreaPlan.World {

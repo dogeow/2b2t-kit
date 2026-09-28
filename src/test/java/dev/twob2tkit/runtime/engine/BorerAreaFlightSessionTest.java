@@ -110,6 +110,22 @@ final class BorerAreaFlightSessionTest {
 		session.close();
 		assertFalse(f.flight.active);
 	}
+	@Test void delayedRecoveryRequiresTheSameOwnedHoverLease() {
+		Fixture fixture = new Fixture();
+		BorerAreaFlightSession session = fixture.session();
+		assertFalse(session.ownsHoverLease());
+		assertNull(session.acquire());
+		session.hover();
+		assertTrue(session.ownsHoverLease());
+		session.digOnFoot();
+		assertFalse(session.ownsHoverLease());
+		session.hover();
+		assertTrue(session.ownsHoverLease());
+		fixture.flight.speed.set(0.17); // User changed a borrowed Meteor setting.
+		assertFalse(session.ownsHoverLease());
+		assertEquals(0.17, fixture.flight.speed.get());
+		session.close();
+	}
 	@Test
 	void stoppingGroundDigRestoresOriginallyEnabledFlight() {
 		Fixture f = new Fixture();

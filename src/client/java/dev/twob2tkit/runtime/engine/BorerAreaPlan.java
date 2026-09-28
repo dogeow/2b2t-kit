@@ -105,6 +105,18 @@ final class BorerAreaPlan {
 	}
 
 	Phase phase() { return phase; }
+	/** Re-observe the bounded area without erasing protected or skipped columns. */
+	void rescanAfterStall() {
+		if (phase == Phase.DONE || phase == Phase.BLOCKED) throw new IllegalStateException("Cannot rescan a finished area");
+		survey = new BorerAreaSurvey(min, max);
+		phase = Phase.SURVEY;
+		verifyIndex = 0;
+		pendingAir = null;
+		streamingColumn = null;
+		streamingAirSamples = 0;
+		horizontalWalking = null;
+		miningAdvance = false;
+	}
 	boolean horizontal() { return horizontal; }
 	BlockPos miningTravelGoal() { return phase == Phase.HORIZONTAL ? (horizontalWalking != null ? horizontalWalking : pending != null ? pending : column) : null; }
 	void miningAdvanced(World world, Pose p) {

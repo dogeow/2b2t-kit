@@ -151,6 +151,17 @@ public final class BorerAreaFlightSession implements AutoCloseable {
 		catch (ReflectiveOperationException e) { throw new IllegalStateException("无法切换放置潜行状态", e); }
 	}
 
+	/** Read-only check before a delayed advisory result may resume work. */
+	boolean ownsHoverLease() {
+		if (!acquired || grounded) return false;
+		try {
+			if (!flight.active()) return false;
+			checkConflicts();
+			for (SettingHandle setting : leasedSettings) setting.checkOwned();
+			return true;
+		} catch (Exception | LinkageError failure) { return false; }
+	}
+
 	/** 暂停时悬停；尚未接管或已经结束的会话不重新启飞。 */
 	public void hover() {
 		if (acquired) { fly(); speed(0.0); }
