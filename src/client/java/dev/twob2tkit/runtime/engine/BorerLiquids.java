@@ -282,7 +282,7 @@ final class BorerLiquids {
 
 	/**
 	 * 真的泡进岩浆流体才处理。旁边岩浆湖不算接触。
-	 * 绕道模式不因此停机：飞离、走到安全格、拐弯或铺路。
+	 * 优先停挖并在地面退开；不要为了逃生新开 Meteor 飞行 thrash 进火里。
 	 */
 	boolean handleLavaContact(Minecraft client, LocalPlayer player) {
 		if (!BorerHazards.playerTouchedLava(client, player)) {
@@ -300,32 +300,28 @@ final class BorerLiquids {
 		}
 		engine.releaseMine(client);
 		client.options.keyUp.setDown(false);
-		if (engine.enableMeteorFlight(player)) {
-			client.options.keyJump.setDown(true);
-			client.options.keyShift.setDown(false);
-			engine.tryTurnAroundLava(client, player, true);
-			engine.status = "踩到岩浆，飞离并绕道";
-			engine.overlay(client, engine.status, 0xFF5555);
-			return true;
-		}
-		if (BorerFlight.isFlying(player)) {
-			engine.enableMeteorFlight(player);
-			client.options.keyJump.setDown(true);
-			client.options.keyShift.setDown(false);
-			engine.tryTurnAroundLava(client, player, true);
-			engine.status = "踩到岩浆，飞离并绕道";
-			engine.overlay(client, engine.status, 0xFF5555);
-			return true;
-		}
-		client.options.keyJump.setDown(true);
-		if (tryStepOffMagma(client, player)) {
-			engine.status = "踩到岩浆，走到安全格";
+		client.options.keyJump.setDown(false);
+		// Ground back-away first. Never enable Meteor flight for lava contact.
+		if (BorerLiquidPolicy.preferGroundRetreatFromLava(true, tryStepOffMagma(client, player))) {
+			engine.status = "踩到岩浆，地面退到安全格";
 			engine.overlay(client, engine.status, 0xFFFF55);
 			return true;
 		}
-		engine.tryTurnAroundLava(client, player, true);
+		if (engine.tryTurnAroundLava(client, player, true)) {
+			client.options.keyUp.setDown(true);
+			engine.attemptedForward = true;
+			engine.status = "踩到岩浆，转向后退，不启飞行";
+			engine.overlay(client, engine.status, 0xFF5555);
+			return true;
+		}
 		if (engine.place.shouldBridgeDrops(player)) engine.place.placeWalkingSupport(client, player);
-		engine.status = "踩到岩浆，正在绕开，不挖岩浆下的方块";
+		if (BorerLiquidPolicy.stopInsteadOfFlightThrash(true, false)
+			&& engine.host.borerStopOnLava()) {
+			engine.stop(client, "踩到岩浆且地面退不开，已停挖停步，不启飞行 "
+				+ BorerText.block(player.blockPosition()));
+			return true;
+		}
+		engine.status = "踩到岩浆，已停挖停步，等待绕开，不启飞行";
 		engine.overlay(client, engine.status, 0xFF5555);
 		return true;
 	}

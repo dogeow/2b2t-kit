@@ -61,11 +61,14 @@ public final class EmergencyExit {
             MeteorModules.disable(AUTO_RECONNECT);restoreAutoLog=MeteorModules.disable(MeteorModules.AUTO_LOG);
             GuardFoodLease.acquire(c);MeteorModules.enablePveAura();MeteorModules.enable("meteordevelopment.meteorclient.systems.modules.player.AutoEat");
             if(c.player.getHealth()<=6){finish(c,"血量危急，不等待起飞");return;}
+            // Plan a fluid-free ascent before enabling flight. Acquiring flight first
+            // then finding no route thrashing into lava/fire near the hazard.
+            route=findRoute(c);
+            if(EmergencyExitPolicy.abortWithoutFlight(route.isEmpty())){finish(c,"没有可通行的安全上升路线");return;}
+            if(!EmergencyExitPolicy.acquireFlightForEscape(!route.isEmpty())){finish(c,"没有可通行的安全上升路线");return;}
             flight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/emergency-flight.bak"));
             if(flight.acquire(c.player)!=null){finish(c,"无法启飞");return;}
-            route=findRoute(c);
-            if(route.isEmpty()){finish(c,"没有可通行的上升路线");return;}
-            c.player.sendSystemMessage(net.minecraft.network.chat.Component.literal("[保护] 血量不足：先升高撤离，再离线锁定，等你手动回来。"));
+            c.player.sendSystemMessage(net.minecraft.network.chat.Component.literal("[保护] 血量不足：先沿已确认的安全路线升高撤离，再离线锁定，等你手动回来。"));
         }catch(Exception e){finish(c,"飞行不可用");}
     }
     public static void observeHealth(Minecraft c){

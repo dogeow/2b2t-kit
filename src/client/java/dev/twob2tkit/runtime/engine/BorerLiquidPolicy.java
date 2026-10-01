@@ -47,4 +47,22 @@ public final class BorerLiquidPolicy {
 		if (placed) return 6;
 		return area ? 0 : 4;
 	}
+
+	/**
+	 * 真踩进岩浆流体：优先停挖并在地面退开，不要为了逃生新开 Meteor 飞行。
+	 * 靠近岩浆湖本身不是接触，接触判定仍由 {@code player.isInLava()} 负责。
+	 */
+	public static boolean preferGroundRetreatFromLava(boolean touchedLavaFluid, boolean groundStepAvailable) {
+		return touchedLavaFluid && groundStepAvailable;
+	}
+
+	/** 岩浆接触时不要新启飞行；已在飞只保留既有状态，避免 thrash 进更多岩浆。 */
+	public static boolean allowEnableFlightForLava(boolean alreadyFlying) {
+		return false;
+	}
+
+	/** 地面退不开时：停机/停步，而不是强行起飞。 */
+	public static boolean stopInsteadOfFlightThrash(boolean touchedLavaFluid, boolean groundStepAvailable) {
+		return touchedLavaFluid && !groundStepAvailable;
+	}
 }

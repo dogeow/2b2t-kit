@@ -33,4 +33,15 @@ final class BorerLiquidPolicyTest {
 		assertEquals(0, BorerLiquidPolicy.settleTicks(false, true));
 		assertEquals(4, BorerLiquidPolicy.settleTicks(false, false));
 	}
+	@Test
+	void lavaContactPrefersGroundRetreatAndNeverEnablesFlight() {
+		assertTrue(BorerLiquidPolicy.preferGroundRetreatFromLava(true, true));
+		assertFalse(BorerLiquidPolicy.preferGroundRetreatFromLava(true, false));
+		assertFalse(BorerLiquidPolicy.preferGroundRetreatFromLava(false, true));
+		assertFalse(BorerLiquidPolicy.allowEnableFlightForLava(false));
+		assertFalse(BorerLiquidPolicy.allowEnableFlightForLava(true));
+		assertTrue(BorerLiquidPolicy.stopInsteadOfFlightThrash(true, false));
+		assertFalse(BorerLiquidPolicy.stopInsteadOfFlightThrash(true, true));
+		assertFalse(BorerLiquidPolicy.stopInsteadOfFlightThrash(false, false));
+	}
 }
