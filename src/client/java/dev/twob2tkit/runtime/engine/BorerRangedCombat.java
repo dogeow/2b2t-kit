@@ -25,6 +25,8 @@ final class BorerRangedCombat {
     private boolean miningMeleeLease;
     private final BorerMeleeProgress miningMeleeProgress = new BorerMeleeProgress();
     private boolean miningMeleeFallback;
+    private boolean zombieMeleeLease, zombieMeleeFallback;
+    private final BorerMeleeProgress zombieMeleeProgress = new BorerMeleeProgress();
 	private boolean escaping, escapeFlightFailed,hoverMelee;
 	private final BorerAreaFlightSession escapeFlight = new BorerAreaFlightSession();
 	private boolean releasePending;
@@ -164,6 +166,7 @@ final class BorerRangedCombat {
 		peek.close(c);
 		holdReason = "";
 		if (next != target) {
+            releaseZombieMelee();
             if (minerCombat) resetMiningMelee();
 			cancelDraw(c);
 			target = next; blockedTicks = 0;
@@ -205,9 +208,9 @@ final class BorerRangedCombat {
         if (miningMeleeLease) resetMiningMelee();
 
 		boolean zombieOnly=engine.standaloneGuard
-			&&target instanceof net.minecraft.world.entity.monster.zombie.Zombie&&onlyZombiesNearby(c,nearby);
+			&&ordinaryZombie(target)&&onlyZombiesNearby(c,nearby);
 		if(zombieOnly){if(swordZombieFromHover(c,nearby))return true;}
-		else zombieApproach.reset();
+		else { zombieApproach.reset(); releaseZombieMelee(); }
 		if (engine.standaloneGuard && elevateBeforeCombat(c, threats)) return true;
         if (escaping) { releaseEscape(c); engine.status="已拉开距离，建造保持停止"; }
 		if (GuardWeaponPolicy.groundSwordAllowed(engine.standaloneGuard,zombieOnly)
@@ -432,10 +435,16 @@ final class BorerRangedCombat {
                     ||mob.getMainHandItem().is(Items.BOW)||mob.getMainHandItem().is(Items.CROSSBOW)
                     ||mob.getMainHandItem().is(Items.TRIDENT))return false;
             if(c.player.distanceTo(mob)>12)continue;
-            if(!(mob instanceof net.minecraft.world.entity.monster.zombie.Zombie))return false;
+            if(!ordinaryZombie(mob))return false;
             found=true;
         }
         return found;
+    }
+    private static boolean ordinaryZombie(LivingEntity mob) {
+        return GuardWeaponPolicy.ordinaryZombie(
+            net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()).toString(),
+            mob.getMainHandItem().is(Items.BOW) || mob.getMainHandItem().is(Items.CROSSBOW)
+                || mob.getMainHandItem().is(Items.TRIDENT));
     }
     private boolean durableSwordAvailable(Minecraft c){
         for(int slot=0;slot<36;slot++){
@@ -449,13 +458,13 @@ final class BorerRangedCombat {
         var p=c.player;
         if(p.getHealth()<19||p.hurtTime>0||p.isInWater()||p.isInLava()||p.isOnFire()
                 ||!durableSwordAvailable(c)||p.distanceTo(target)>=9||!p.hasLineOfSight(target)){
-            zombieApproach.reset();return false;
+            zombieApproach.reset();releaseZombieMelee();return false;
         }
-        double highest=nearby.stream().filter(e->e instanceof net.minecraft.world.entity.monster.zombie.Zombie
+        double highest=nearby.stream().filter(e->ordinaryZombie(e)
                 &&e.isAlive()&&p.distanceTo(e)<=12).mapToDouble(LivingEntity::getY).max().orElse(target.getY());
         double safeFeet=highest+3.0;
         double horizontal=Math.hypot(target.getX()-p.getX(),target.getZ()-p.getZ());
-        if(horizontal>3.6){
+        if(horizontal>9.0){
             var unavailable=zombieApproach.step(target.getUUID(),p.tickCount,p.getX(),p.getZ(),
                 target.getX(),target.getZ(),false,true,false);
             if(!unavailable.reason().equals("retry_cooldown"))engine.fileLog(c,"guard-zombie-approach-unavailable reason="+unavailable.reason());
@@ -463,22 +472,28 @@ final class BorerRangedCombat {
         }
         double projectedFeet=p.getY()+Math.min(0,p.getDeltaMovement().y)*10;
         double rise=Math.max(0,safeFeet-p.getY());
-        var choice=GuardWeaponPolicy.hover(projectedFeet,highest,rise<=0||clearWholeRise(c,rise));
-        if(choice==GuardWeaponPolicy.Hover.FALLBACK){zombieApproach.reset();return false;}
+        double verticalStep=GuardWeaponPolicy.hoverVerticalStep(p.getY(),projectedFeet,highest);
+        boolean columnClear=verticalStep>=0 ? rise<=0||clearWholeRise(c,rise)
+            : clearZombieVerticalStep(c,verticalStep,highest);
+        var choice=GuardWeaponPolicy.hover(projectedFeet,highest,columnClear);
+        if(choice==GuardWeaponPolicy.Hover.FALLBACK){zombieApproach.reset();releaseZombieMelee();return false;}
         try{
             escapeFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/guard-hover-flight.bak"));
-            if(escapeFlight.acquire(p)!=null)return false;
+            if(escapeFlight.acquire(p)!=null){releaseZombieMelee();return false;}
             escaping=true;
-            hoverMelee=false;cancelDraw(c);rangedMode(true);engine.pauseGuardMovement(c);
-            look=RotationAim.lookAt(p,target.getEyePosition());lookTick=p.tickCount;RotationAim.apply(p,look);
-            if(choice==GuardWeaponPolicy.Hover.RISE){
-                escapeFlight.speed(.04);c.options.keyJump.setDown(true);
-                engine.status="先升高避开僵尸，再用剑反击";return true;
+            cancelDraw(c);engine.pauseGuardMovement(c);
+            if(choice==GuardWeaponPolicy.Hover.RISE || choice==GuardWeaponPolicy.Hover.DESCEND){
+                releaseZombieMelee(); hoverMelee=false; rangedMode(true);
+                escapeFlight.speed(Math.abs(verticalStep)/5);
+                c.options.keyJump.setDown(verticalStep>0);
+                c.options.keyShift.setDown(verticalStep<0);
+                engine.status=verticalStep<0 ? "缓降到僵尸头顶安全高度，再交给杀戮光环" : "先升高避开僵尸，再交给杀戮光环";
+                return true;
             }
             escapeFlight.hover();
             if(!BorerItems.selectWeapon(c,p,GuardWeaponPolicy.SWORD_RESERVE)
                     ||c.level.getEntity(target.getId())!=target||!target.isAlive()||!p.hasLineOfSight(target)){
-                releaseEscape(c);return false;
+                releaseZombieMelee();releaseEscape(c);return false;
             }
             boolean safeHover=GuardWeaponPolicy.safeHoverHeight(
                 Boolean.TRUE.equals(BorerFlight.meteorFlightActive()),p.getY(),projectedFeet,highest);
@@ -498,22 +513,51 @@ final class BorerRangedCombat {
             if(step.decision()==GuardZombieApproach.Decision.UNAVAILABLE){
                 if(!step.reason().equals("retry_cooldown"))
                     engine.fileLog(c,"guard-zombie-approach-unavailable reason="+step.reason());
-                releaseEscape(c);return false;
+                releaseZombieMelee();releaseEscape(c);return false;
             }
             if(step.decision()==GuardZombieApproach.Decision.MOVE){
+                releaseZombieMelee(); hoverMelee=false; rangedMode(true);
                 escapeFlight.speed(GuardZombieApproach.sprintSafeSpeed(input.speed()));
                 look=new RotationAim.Look(input.yaw(),0);lookTick=p.tickCount;RotationAim.apply(p,look);
                 c.options.keyUp.setDown(true);
                 engine.status="安全悬停靠近僵尸，路径逐格核验";return true;
             }
-            if(p.getAttackStrengthScale(0)>=.95F){
-                engine.mobs.lowerShield(c);
-                if(p.isUsingItem()&&p.getUseItem().is(Items.SHIELD))p.stopUsingItem();
-                c.gameMode.attack(p,target);p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+            engine.mobs.lowerShield(c);
+            if(p.isUsingItem()&&p.getUseItem().is(Items.SHIELD))p.stopUsingItem();
+            // The installed host already exposes the verified Meteor target lease.
+            // Never disable its aura or overwrite its rotation while it owns melee.
+            boolean meteorReady=false, stalled=false;
+            if(!zombieMeleeFallback) {
+                rangedMode(false);
+                zombieMeleeLease=true;
+                meteorReady=BorerMeteorThreatLease.acquire(engine.host,c,target);
+                stalled=zombieMeleeProgress.stalled(target.getUUID(),p.tickCount,target.getHealth());
             }
-            engine.status="安全悬停，用剑反击 "+target.getName().getString();
+            if(zombieMeleeFallback || !meteorReady || stalled) {
+                if(!zombieMeleeFallback)engine.fileLog(c,"guard-zombie-melee-owner id="+target.getId()
+                    +" meteorReady="+meteorReady+" noDamageGraceExpired="+stalled+" fallback=true");
+                zombieMeleeFallback=true; hoverMelee=false; rangedMode(true);
+                look=RotationAim.lookAt(p,target.getEyePosition());lookTick=p.tickCount;RotationAim.apply(p,look);
+                if(p.getAttackStrengthScale(0)>=.95F){
+                    c.gameMode.attack(p,target);p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+                }
+                engine.status="安全悬停，杀戮光环无进展后用剑反击 "+target.getName().getString();
+            } else {
+                hoverMelee=true;look=null;
+                engine.status="安全悬停，杀戮光环用剑清除 "+target.getName().getString()+"；施工暂停";
+            }
             return true;
-        }catch(IllegalStateException unavailable){releaseEscape(c);return false;}
+        }catch(IllegalStateException unavailable){releaseZombieMelee();releaseEscape(c);return false;}
+    }
+    private boolean clearZombieVerticalStep(Minecraft c,double delta,double highest) {
+        if(!Double.isFinite(delta)||Math.abs(delta)>.151||c.player.getY()+delta<highest+3.0)return false;
+        var swept=c.player.getBoundingBox().expandTowards(0,delta,0).inflate(.02);
+        if(!c.level.noCollision(c.player,swept))return false;
+        for(var pos:net.minecraft.core.BlockPos.betweenClosed(
+                net.minecraft.core.BlockPos.containing(swept.minX,swept.minY,swept.minZ),
+                net.minecraft.core.BlockPos.containing(swept.maxX,swept.maxY,swept.maxZ)))
+            if(!safeAir(c,pos))return false;
+        return true;
     }
     private boolean clearZombieApproachStep(Minecraft c,Vec3 delta){
         if(Math.abs(delta.y)>1e-6||delta.horizontalDistanceSqr()>.201*.201)return false;
@@ -596,6 +640,10 @@ final class BorerRangedCombat {
         miningMeleeProgress.clear();
         miningMeleeFallback = false;
     }
+    private void releaseZombieMelee() {
+        if(zombieMeleeLease)BorerMeteorThreatLease.release(engine.host);
+        zombieMeleeLease=false;zombieMeleeFallback=false;zombieMeleeProgress.clear();
+    }
     private void releaseMiningMelee() {
         if (!miningMeleeLease) return;
         BorerMeteorThreatLease.release(engine.host);
@@ -603,6 +651,7 @@ final class BorerRangedCombat {
     }
 	private void releaseControls(Minecraft c) {
 		zombieApproach.reset();
+        releaseZombieMelee();
 		peek.close(c);
         rangedMode(false);
         releaseMiningMelee();

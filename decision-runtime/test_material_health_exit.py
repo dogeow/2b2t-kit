@@ -35,7 +35,7 @@ class FakeClient(MaterialClient):
                     'snapshot':snapshot}))
         self.heartbeat=Heartbeat()
     def advise(self,*args,**kwargs):return {'id':'test','choice':'wait'}
-    def status(self):
+    def status(self,*args,**kwargs):
         self._observe_owned_health(self.state)
         if not self.state.get('connected') or self.state.get('manual_movement'):
             raise Handoff('Control or world changed')
@@ -209,8 +209,13 @@ class MaterialHealthExitTest(unittest.TestCase):
                             if scans[0]==2:client.state['guard_busy']=True
                         return reply
                     client.request=request
-                self.finish(client)
-                self.assertEqual(client.actions,['scan','scan','material_job_park','safe_logout'])
+                if 'guard_busy' in change:
+                    with patch.object(client,'_wait_guarded_finish',side_effect=Handoff('manual takeover')):
+                        self.finish(client)
+                    self.assertEqual(client.actions,['scan','scan'])
+                else:
+                    self.finish(client)
+                    self.assertEqual(client.actions,['scan','scan','material_job_park','safe_logout'])
 
     def test_critical_health_never_enters_canopy_route_and_caps_straight_ascent_to_eight_seconds(self):
         with tempfile.TemporaryDirectory() as directory:

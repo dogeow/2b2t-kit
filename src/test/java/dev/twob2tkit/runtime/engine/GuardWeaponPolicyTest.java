@@ -21,7 +21,21 @@ class GuardWeaponPolicyTest {
   assertEquals(GuardWeaponPolicy.Hover.FALLBACK,GuardWeaponPolicy.hover(67.1,65,false));
   assertEquals(GuardWeaponPolicy.Hover.RISE,GuardWeaponPolicy.hover(65,65,true));
   assertEquals(GuardWeaponPolicy.Hover.HOLD,GuardWeaponPolicy.hover(68,65,false));
-  assertEquals(GuardWeaponPolicy.Hover.FALLBACK,GuardWeaponPolicy.hover(70,65,true));
+  assertEquals(GuardWeaponPolicy.Hover.DESCEND,GuardWeaponPolicy.hover(70,65,true));
+ }
+ @Test void descentStopsAboveZombieReachAndBrakeProjectionCannotSendUsDown(){
+  assertEquals(-.15,GuardWeaponPolicy.hoverVerticalStep(70,70,64),1e-9);
+  assertEquals(-.05,GuardWeaponPolicy.hoverVerticalStep(67.15,67.15,64),1e-9);
+  assertEquals(0,GuardWeaponPolicy.hoverVerticalStep(67.5,66.8,64),1e-9);
+  assertEquals(.15,GuardWeaponPolicy.hoverVerticalStep(65,65,64),1e-9);
+  assertEquals(GuardWeaponPolicy.Hover.FALLBACK,GuardWeaponPolicy.hover(70,64,false));
+ }
+ @Test void ordinaryZombieScopeExcludesConversionCandidatesAndRangedDrowned(){
+  for(String type:java.util.List.of("minecraft:zombie","minecraft:husk","minecraft:drowned"))
+   assertTrue(GuardWeaponPolicy.ordinaryZombie(type,false));
+  for(String type:java.util.List.of("minecraft:zombie_villager","minecraft:zombified_piglin","minecraft:skeleton","minecraft:creeper"))
+   assertFalse(GuardWeaponPolicy.ordinaryZombie(type,false));
+  assertFalse(GuardWeaponPolicy.ordinaryZombie("minecraft:drowned",true));
  }
  @Test void zombieHoverNeverCommandsADescentIntoMelee(){
   assertTrue(GuardWeaponPolicy.needsRise(64,64));assertTrue(GuardWeaponPolicy.needsRise(66.9,64));

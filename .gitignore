@@ -49,3 +49,6 @@ __pycache__/
 /decision-runtime/*.key
 /decision-runtime/.env
 /decision-runtime/.env.*
+
+# Local automation runs, logs, and generated worker bundles
+/work/

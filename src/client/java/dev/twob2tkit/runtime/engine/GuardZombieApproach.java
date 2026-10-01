@@ -27,10 +27,10 @@ final class GuardZombieApproach {
             started = lastProgress = tick;
             originX = x; originZ = z; bestDistance = distance;
         }
-        if (distance > 3.6) return unavailable(tick, "target_out_of_range");
-        if (Math.hypot(x - originX, z - originZ) > 3.25) return unavailable(tick, "travel_limit");
-        if (tick - started > 80) return unavailable(tick, "time_limit");
+        if (distance > 9.0) return unavailable(tick, "target_out_of_range");
+        if (Math.hypot(x - originX, z - originZ) > 8.5) return unavailable(tick, "travel_limit");
         if (attackReach) return new Step(Decision.ATTACK, "within_reach");
+        if (tick - started > 160) return unavailable(tick, "time_limit");
         if (distance < bestDistance - .05) {
             bestDistance = distance;
             lastProgress = tick;

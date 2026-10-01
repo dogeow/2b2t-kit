@@ -754,8 +754,80 @@ class MaterialClient(Client):
    if self.owned_material_menu==m.get('id') and (clean_workbench or clean_anvil or clean_brewer or storage or furnace) and not m['cursor']['count']:
     self.checked('close_menu')
   except (Handoff,RuntimeError,KeyError):pass
+  if self.remote_finish=='guard' and not self._prepare_guarded_finish():return
+  self.heartbeat.close()
+  p=self.root/('supervision-receipt-'+self.heartbeat.id+'.json')
+  for _ in range(200 if self.remote_finish=='guard' else 600):
+   pending_disconnect=False
+   if p.exists():
+    d=json.loads(p.read_text())
+    if self.remote_finish=='guard' and d.get('action')=='KEEP_PVE_GUARD':
+     try:s=self.raw()
+     except RuntimeError:break
+     if self._owned_guarded_finish_state(s,'parking') and self.park_near(s):
+      (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('HIGH_GUARD_CONFIRMED',flush=True);return
+    pending_disconnect=d.get('action')=='LOGOUT' and not d.get('confirmed')
+    if d.get('confirmed'):
+     if d.get('action')=='LOGOUT' and d.get('lease')==self.heartbeat.id and d.get('job_session')==self.task:
+      if isinstance(d.get('snapshot'),dict):self._observe_owned_health(d['snapshot'])
+      self._record_health_stop('Native material finish logged out after health loss',logout_attempted=True)
+     (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('DISCONNECT_CONFIRMED',d['action'],d['cause'],flush=True);return
+   try:s=self.raw()
+   except RuntimeError:
+    print('Native finish acknowledgement unavailable; heartbeat has stopped',flush=True);return
+   lease=s.get('supervision_lease',{})
+   if lease.get('id')==self.heartbeat.id and lease.get('kind')=='parking':self.rev=s['control_revision']
+   if s.get('world_session')!=self.world or s.get('manual_movement') or s.get('control_revision')!=self.rev and not pending_disconnect:
+    self._record_health_stop('Material finish lost its connection after health loss');return
+   if lease and lease.get('id')!=self.heartbeat.id:return
+   time.sleep(.15)
   if self.remote_finish=='guard':
-   health_exit_state=None;guard_finish_started=time.monotonic()
+   try:
+    s=self.raw();lease=s.get('supervision_lease') or {}
+    kind=lease.get('kind')
+    if kind in ('materials','parking') and self._owned_guarded_finish_state(s,kind) and self.park_near(s):
+     (self.out/'stock-safety.json').write_text(json.dumps({
+      'action':'KEEP_PVE_GUARD','lease':lease.get('id'),
+      'job_session':lease.get('job_session'),'snapshot':s,
+      'confirmed':False,'local_verified':True,
+      'lease_transition_pending':kind=='materials'},ensure_ascii=False,indent=2))
+     print('HIGH_GUARD_CONFIRMED',flush=True);return
+   except (Handoff,RuntimeError,KeyError,OSError,ValueError):pass
+   attempted=False;previous=getattr(self,'last',None)
+   try:self.request('safe_logout');attempted=True
+   except (Handoff,RuntimeError):attempted=getattr(self,'last',None)!=previous
+   finally:self._record_health_stop('High hover acknowledgement failed after health loss',logout_attempted=attempted)
+   print('High hover was not confirmed; requested safe logout',flush=True)
+ def _wait_guarded_finish(self,error,seconds=30):
+  """Remain a live, stoppable owner while native defense settles.
+
+  Each observation window is bounded. A healthy combat timeout is not permission
+  to disconnect, finish the heartbeat, replay the interrupted action, or let the
+  caller start another batch. The native parking receipt is still required.
+  """
+  deadline=time.monotonic()+seconds
+  while True:
+   state=self._observe_owned_health(self.status(wait_interface=False))
+   if not self._owned_guarded_finish_state(state,'materials'):return False
+   if not state.get('guard_busy') and not state.get('navigating') and not state.get('native_material_busy'):
+    return True
+   now=time.monotonic()
+   if now>=deadline:
+    (self.out/'park-defense-wait.json').write_text(json.dumps({
+     'reason':str(error),'action':'WAIT_OWNED_PVE_GUARD','confirmed':False,
+     'world_session':self.world,'lease':self.heartbeat.id,'job_session':self.task,
+     'revision':self.rev,'health':state.get('health'),'pos':state.get('pos'),
+     'guard_busy':state.get('guard_busy'),'navigating':state.get('navigating'),
+     'native_material_busy':state.get('native_material_busy'),
+     'heartbeat_retained':True,'observation_window_seconds':seconds},
+     ensure_ascii=False,indent=2))
+    print('GUARD_FINISH_WAITING: native defense continues; parking unconfirmed',flush=True)
+    deadline=now+seconds
+   time.sleep(.25)
+ def _prepare_guarded_finish(self):
+  guard_finish_started=time.monotonic()
+  while True:
+   health_exit_state=None
    try:
     s=self._observe_owned_health(self.status())
     if not s.get('guard_armed'):raise RuntimeError('High parking needs PvE guard')
@@ -803,15 +875,29 @@ class MaterialClient(Client):
      raise RuntimeError('High parking position or guard not verified')
    except Handoff:
     self._record_health_stop('Owned material work disconnected after health loss')
-    self.heartbeat.close();return
+    self.heartbeat.close();return False
    except (RuntimeError,KeyError) as error:
+    latest={}
     if health_exit_state is None:
      try:
       latest=self._observe_owned_health(self.status())
       if latest.get('health',20)<18:health_exit_state=latest
      except (Handoff,RuntimeError,KeyError):pass
-    try:kept=self._rebase_guarded_finish(error)
+    # Do not send a park update while defense or the original native action
+    # still owns the controls. This is observation, not a replacement request.
+    busy=bool(health_exit_state is None and (latest.get('guard_busy')
+     or str(error) in ('Defense stayed busy before high parking','Defense remains busy')
+     or 'Construction guard is defending or eating; wait before changing items or starting work' in str(error)))
+    try:kept=False if busy else self._rebase_guarded_finish(error)
     except (Handoff,RuntimeError,KeyError,OSError,ValueError):kept=False
+    if not kept and busy:
+     try:
+      if self._wait_guarded_finish(error):continue
+     except Handoff:
+      self._record_health_stop('Guarded finish yielded to control or world change')
+      self.heartbeat.close();return False
+     except (RuntimeError,KeyError,OSError,ValueError):
+      pass
     if kept:
      health_exit_state=None
     else:
@@ -826,50 +912,8 @@ class MaterialClient(Client):
        from safety_interlock import record_material_health_exit
        record_material_health_exit(self.root,health_exit_state,str(error))
       else:self._record_health_stop(str(error),logout_attempted=attempted)
-     self.heartbeat.close();return
-  self.heartbeat.close()
-  p=self.root/('supervision-receipt-'+self.heartbeat.id+'.json')
-  for _ in range(200 if self.remote_finish=='guard' else 600):
-   pending_disconnect=False
-   if p.exists():
-    d=json.loads(p.read_text())
-    if self.remote_finish=='guard' and d.get('action')=='KEEP_PVE_GUARD':
-     try:s=self.raw()
-     except RuntimeError:break
-     if self._owned_guarded_finish_state(s,'parking') and self.park_near(s):
-      (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('HIGH_GUARD_CONFIRMED',flush=True);return
-    pending_disconnect=d.get('action')=='LOGOUT' and not d.get('confirmed')
-    if d.get('confirmed'):
-     if d.get('action')=='LOGOUT' and d.get('lease')==self.heartbeat.id and d.get('job_session')==self.task:
-      if isinstance(d.get('snapshot'),dict):self._observe_owned_health(d['snapshot'])
-      self._record_health_stop('Native material finish logged out after health loss',logout_attempted=True)
-     (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('DISCONNECT_CONFIRMED',d['action'],d['cause'],flush=True);return
-   try:s=self.raw()
-   except RuntimeError:
-    print('Native finish acknowledgement unavailable; heartbeat has stopped',flush=True);return
-   lease=s.get('supervision_lease',{})
-   if lease.get('id')==self.heartbeat.id and lease.get('kind')=='parking':self.rev=s['control_revision']
-   if s.get('world_session')!=self.world or s.get('manual_movement') or s.get('control_revision')!=self.rev and not pending_disconnect:
-    self._record_health_stop('Material finish lost its connection after health loss');return
-   if lease and lease.get('id')!=self.heartbeat.id:return
-   time.sleep(.15)
-  if self.remote_finish=='guard':
-   try:
-    s=self.raw();lease=s.get('supervision_lease') or {}
-    kind=lease.get('kind')
-    if kind in ('materials','parking') and self._owned_guarded_finish_state(s,kind) and self.park_near(s):
-     (self.out/'stock-safety.json').write_text(json.dumps({
-      'action':'KEEP_PVE_GUARD','lease':lease.get('id'),
-      'job_session':lease.get('job_session'),'snapshot':s,
-      'confirmed':False,'local_verified':True,
-      'lease_transition_pending':kind=='materials'},ensure_ascii=False,indent=2))
-     print('HIGH_GUARD_CONFIRMED',flush=True);return
-   except (Handoff,RuntimeError,KeyError,OSError,ValueError):pass
-   attempted=False;previous=getattr(self,'last',None)
-   try:self.request('safe_logout');attempted=True
-   except (Handoff,RuntimeError):attempted=getattr(self,'last',None)!=previous
-   finally:self._record_health_stop('High hover acknowledgement failed after health loss',logout_attempted=attempted)
-   print('High hover was not confirmed; requested safe logout',flush=True)
+     self.heartbeat.close();return False
+   return True
  def fetch(self,pos,materials):
   r=self.request('collect_supply',source_key='minecraft:overworld:'+':'.join(map(str,pos)),materials={'minecraft:'+k:v for k,v in materials.items()},seconds=180)
   if r.get('phase')=='done':

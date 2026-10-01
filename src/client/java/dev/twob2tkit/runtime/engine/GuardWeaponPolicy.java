@@ -9,11 +9,22 @@ final class GuardWeaponPolicy {
         return !standaloneGuard||!onlyZombies;
     }
     static boolean needsRise(double feet,double mobFeet){return feet<mobFeet+3.0;}
-    enum Hover{RISE,HOLD,FALLBACK}
+    enum Hover{RISE,DESCEND,HOLD,FALLBACK}
     static Hover hover(double feet,double mobFeet,boolean wholeColumnClear){
-        if(feet>mobFeet+3.4)return Hover.FALLBACK;
+        if(feet>mobFeet+3.4)return wholeColumnClear?Hover.DESCEND:Hover.FALLBACK;
         if(needsRise(feet,mobFeet))return wholeColumnClear?Hover.RISE:Hover.FALLBACK;
         return Hover.HOLD;
+    }
+    /** Conversion candidates and armed drowned retain their existing combat paths. */
+    static boolean ordinaryZombie(String type, boolean rangedWeapon) {
+        return !rangedWeapon && ("minecraft:zombie".equals(type) || "minecraft:husk".equals(type)
+            || "minecraft:drowned".equals(type));
+    }
+    /** Never descend below the melee safety margin, even with residual downward momentum. */
+    static double hoverVerticalStep(double feet, double projectedFeet, double highestMobFeet) {
+        double desired = highestMobFeet + 3.1;
+        if (feet > desired) return -Math.min(.15, Math.max(0, Math.min(feet, projectedFeet) - desired));
+        return Math.min(.15, desired - feet);
     }
 	/** A sword swing is allowed only from a stable, flying hover above every nearby zombie. */
 	static boolean swordHoverReady(boolean onlyZombies,boolean flight,boolean usableSword,
