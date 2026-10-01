@@ -20,13 +20,23 @@ public final class DefaultBuildNavigation implements BuildNavigation {
         // Feet waypoints sit 0.02 above the grid; accept the real collision floor
         // and tiny Flight rounding instead of blocking horizontal movement on a micro-step.
         // The host still collision-checks every proposed movement.
-        double horizontal=Math.hypot(delta.x,delta.z);boolean vertical=Math.abs(delta.y)>.025001;
+        double horizontal=Math.hypot(delta.x,delta.z);double absY=Math.abs(delta.y);
+        boolean vertical=absY>.025001;
         boolean arrived=horizontal<.005001&&!vertical;
+        if(arrived)return new Motion(true,false,0,Vec3.ZERO);
+        // Steep open-air legs: follow the continuous 3D vector so descent is not
+        // deferred until after a pure vertical hover, and hosts drive both axes
+        // from the probe. Micro floor lips stay vertical-first below 0.5 blocks.
+        if(vertical&&horizontal>=.005001&&absY>=.5){
+            double length=Math.sqrt(horizontal*horizontal+delta.y*delta.y);
+            double speed=Math.min(.024,length/20);
+            return new Motion(false,true,speed,delta.normalize().scale(Math.min(.24,speed*10)));
+        }
         // Move briskly between path cells, then taper before the exact station.
         // The collision probe below remains ahead of the actual movement.
-        double speed=arrived?0:vertical?Math.min(.024,Math.abs(delta.y)/10):Math.min(.024,horizontal/20);
-        Vec3 probe=arrived?Vec3.ZERO:vertical?new Vec3(0,Math.copySign(speed*5,delta.y),0):new Vec3(delta.x,0,delta.z).normalize().scale(speed*10);
-        return new Motion(arrived,vertical,speed,probe);
+        double speed=vertical?Math.min(.024,absY/10):Math.min(.024,horizontal/20);
+        Vec3 probe=vertical?new Vec3(0,Math.copySign(speed*5,delta.y),0):new Vec3(delta.x,0,delta.z).normalize().scale(speed*10);
+        return new Motion(false,vertical,speed,probe);
     }
     public static final class GoalSearch implements BuildNavigation.Search {
         private record Node(BlockPos pos,int g,int h){}
@@ -46,6 +56,19 @@ public final class DefaultBuildNavigation implements BuildNavigation {
             // then exhausts its own small component instead of pulling a search
             // through the player's entire surrounding volume of open sky.
             if(destinations.contains(this.start)){destinations.clear();destinations.add(this.start);}
+            // Prefer a single continuous leg when the body sweep and every
+            // intermediate cell stay clear; otherwise keep the 6-neighbor A*.
+            BlockPos direct=null;double best=Double.POSITIVE_INFINITY;
+            for(var goal:destinations){
+                if(!world.clear(goal)||!lineClear(this.start,goal))continue;
+                double dist=this.start.distSqr(goal);
+                if(dist<best||dist==best&&(direct==null||goal.asLong()<direct.asLong())){best=dist;direct=goal;}
+            }
+            if(direct!=null){
+                result=direct.equals(this.start)?new BuildNavigation.Result(List.of(this.start),0)
+                    :new BuildNavigation.Result(List.of(this.start,direct),0);
+                return;
+            }
             for(var goal:destinations){
                 if(!world.clear(goal))continue;
                 open.add(new Node(goal,0,heuristic(goal)));costs.put(goal,0);parent.put(goal,null);
@@ -54,6 +77,46 @@ public final class DefaultBuildNavigation implements BuildNavigation {
         }
         private int heuristic(BlockPos p){
             return p.distManhattan(start);
+        }
+        /** True when every voxel the segment crosses is clear and directed edges allow travel. */
+        private boolean lineClear(BlockPos from,BlockPos to){
+            if(from.equals(to))return true;
+            if(!world.edge(from,to))return false;
+            int dx=to.getX()-from.getX(),dy=to.getY()-from.getY(),dz=to.getZ()-from.getZ();
+            int steps=Math.max(Math.abs(dx),Math.max(Math.abs(dy),Math.abs(dz)));
+            BlockPos prev=from;
+            for(int i=1;i<=steps;i++){
+                var p=new BlockPos(from.getX()+(dx*i)/steps,from.getY()+(dy*i)/steps,from.getZ()+(dz*i)/steps);
+                if(p.equals(prev))continue;
+                if(!stepClear(prev,p))return false;
+                prev=p;
+            }
+            return prev.equals(to);
+        }
+        /** Rejects corner cuts through solid rings so sealed one-cell goals stay unreachable. */
+        private boolean stepClear(BlockPos prev,BlockPos next){
+            if(!world.clear(next)||!world.edge(prev,next))return false;
+            int sx=Integer.signum(next.getX()-prev.getX()),sy=Integer.signum(next.getY()-prev.getY()),sz=Integer.signum(next.getZ()-prev.getZ());
+            int man=Math.abs(next.getX()-prev.getX())+Math.abs(next.getY()-prev.getY())+Math.abs(next.getZ()-prev.getZ());
+            if(man<=1)return true;
+            if(sx!=0&&!world.clear(prev.offset(sx,0,0)))return false;
+            if(sy!=0&&!world.clear(prev.offset(0,sy,0)))return false;
+            if(sz!=0&&!world.clear(prev.offset(0,0,sz)))return false;
+            if(sx!=0&&sy!=0&&!world.clear(prev.offset(sx,sy,0)))return false;
+            if(sx!=0&&sz!=0&&!world.clear(prev.offset(sx,0,sz)))return false;
+            if(sy!=0&&sz!=0&&!world.clear(prev.offset(0,sy,sz)))return false;
+            return true;
+        }
+        private List<BlockPos> shortcut(List<BlockPos> path){
+            if(path.size()<=2)return path;
+            var out=new ArrayList<BlockPos>();
+            int i=0;out.add(path.get(i));
+            while(i<path.size()-1){
+                int j=path.size()-1;
+                while(j>i+1&&!lineClear(path.get(i),path.get(j)))j--;
+                out.add(path.get(j));i=j;
+            }
+            return List.copyOf(out);
         }
         public int expanded(){return expanded;}
         /** Limits both expanded nodes and elapsed slice time; frontier survives between ticks. */
@@ -67,7 +130,7 @@ public final class DefaultBuildNavigation implements BuildNavigation {
                 expanded++;
                 if(p.equals(start)){
                     var path=new ArrayList<BlockPos>();for(var q=p;q!=null;q=parent.get(q))path.add(q);
-                    return result=new BuildNavigation.Result(List.copyOf(path),expanded);
+                    return result=new BuildNavigation.Result(shortcut(path),expanded);
                 }
                 for(var direction:Direction.values()){
                     var q=p.relative(direction);int cost=node.g+1;

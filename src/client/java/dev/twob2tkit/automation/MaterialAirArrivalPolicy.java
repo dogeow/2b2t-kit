@@ -6,7 +6,7 @@ import net.minecraft.world.phys.Vec3;
 final class MaterialAirArrivalPolicy {
     static final int STABLE_TICKS=8;
     static final int RESTORED_TICKS=8;
-    record Motion(boolean vertical,boolean moving,double speed) {}
+    record Motion(boolean vertical,boolean horizontal,boolean moving,double speed) {}
     enum Decision { WAIT, RESTORE, REACQUIRE, CONFIRMED }
     static final class Settlement {
         private final double arrival;
@@ -41,10 +41,14 @@ final class MaterialAirArrivalPolicy {
         return !cruising||Math.hypot(error.x,error.z)<=Math.max(3,Math.hypot(velocity.x,velocity.z)*8+.5);
     }
     static Motion motion(Vec3 error){
-        if(Math.abs(error.y)>.06)return new Motion(true,true,Math.min(.08,Math.abs(error.y)/10));
-        double horizontal=Math.hypot(error.x,error.z);
-        if(horizontal>.06)return new Motion(false,true,Math.min(.06,horizontal/20));
-        return new Motion(false,false,0);
+        double horizontal=Math.hypot(error.x,error.z);double absY=Math.abs(error.y);
+        if(absY>.06&&horizontal>.06&&absY>=.5){
+            double length=Math.sqrt(horizontal*horizontal+error.y*error.y);
+            return new Motion(true,true,true,Math.min(.08,length/10));
+        }
+        if(absY>.06)return new Motion(true,false,true,Math.min(.08,absY/10));
+        if(horizontal>.06)return new Motion(false,true,true,Math.min(.06,horizontal/20));
+        return new Motion(false,false,false,0);
     }
     static boolean inside(Vec3 error,double arrival){
         return Double.isFinite(error.lengthSqr())&&Math.hypot(error.x,error.z)<=arrival
