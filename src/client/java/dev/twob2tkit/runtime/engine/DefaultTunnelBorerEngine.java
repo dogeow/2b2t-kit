@@ -1342,13 +1342,33 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			recoverFromUnsafeFloor(client, player);
 		}
 
-		if (currentTarget != null && shouldMine(client, currentTarget)) {
+		// Refuse digging into lava/water before any "server cleared" path.
+		// shouldMine() already returns false for wouldOpenLava, so the old
+		// shouldMine&&openedLava gate was dead and the !shouldMine branch
+		// wrongly treated lava-adjacent solid blocks as cleared, then walked in.
+		if (currentTarget != null) {
 			BlockPos openedLava = BorerHazards.lavaOpenedByMining(client, currentTarget);
-			if (openedLava != null && handleOpenedLava(client, player, openedLava)) return;
 			BlockPos openedWater = BorerHazards.waterOpenedByMining(client, currentTarget);
-			if (openedWater != null && handleOpenedWater(client, player, openedWater)) return;
+			if (BorerMiningPolicy.refuseOpenedHazard(openedLava != null, openedWater != null)) {
+				releaseMine(client);
+				client.options.keyUp.setDown(false);
+				if (openedLava != null && handleOpenedLava(client, player, openedLava)) return;
+				if (openedWater != null && handleOpenedWater(client, player, openedWater)) return;
+				clearMiningTarget(client, "hazard-refuse");
+				return;
+			}
 		}
 		if (currentTarget != null && !shouldMine(client, currentTarget)) {
+			boolean gone = isReplaceable(client, currentTarget);
+			if (!BorerMiningPolicy.treatAsServerCleared(gone)) {
+				releaseMine(client);
+				client.options.keyUp.setDown(false);
+				suppressMiningTarget(client, currentTarget, SIDE_WALL_SUPPRESS_TICKS, "unmineable-replan");
+				clearMiningTarget(client, "unmineable-replan");
+				status = "当前目标不可挖，停步改规划，不前进踩险";
+				overlay(client, status, 0xFFFF55);
+				return;
+			}
 			recordMineTiming(client);
 			BlockPos adjacentOre = mode == Mode.ORE ? corridor.adjacentOreToMine(client, player) : null;
 			boolean dropsVisible = mode == Mode.ORE && miningSelectedOre && !skipExperienceLoot()

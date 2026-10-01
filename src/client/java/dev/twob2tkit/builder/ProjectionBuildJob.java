@@ -313,14 +313,19 @@ public final class ProjectionBuildJob {
         if(motion.arrived()){pathIndex++;stall=0;bestDistance=Double.POSITIVE_INFINITY;release(c);flight.hover();return;}
         if(!clear(c,path.get(pathIndex))){replan(c,"通道变化");return;}
         if(dist<bestDistance-.015){bestDistance=dist;stall=0;}else if(++stall>navigation.policy().stallTicks()){replan(c,"走位没有进展");return;}
-        release(c);boolean vertical=motion.vertical();
-        Vec3 probe=motion.probe();
+        release(c);Vec3 probe=motion.probe();
         if(!c.level.noCollision(c.player,c.player.getBoundingBox().expandTowards(probe))){
             navigationDebug.addProperty("blocked_from",c.player.position().toString());navigationDebug.addProperty("blocked_destination",dest.toString());
             navigationDebug.addProperty("blocked_probe",probe.toString());replan(c,"身体前方有障碍");return;
         }
-        if(vertical){flight.speed(motion.speed());c.options.keyJump.setDown(delta.y>0);c.options.keyShift.setDown(delta.y<0);}
-        else{look=new RotationAim.Look((float)(Math.toDegrees(Math.atan2(delta.z,delta.x))-90),0);RotationAim.apply(c.player,look);flight.speed(motion.speed());c.options.keyUp.setDown(true);}
+        // Drive axes from the probe so steep 3D legs descend diagonally instead of
+        // finishing all vertical motion before any horizontal key is held.
+        flight.speed(motion.speed());
+        if(Math.abs(probe.y)>1e-9){c.options.keyJump.setDown(probe.y>0);c.options.keyShift.setDown(probe.y<0);}
+        if(Math.hypot(probe.x,probe.z)>1e-9){
+            look=new RotationAim.Look((float)(Math.toDegrees(Math.atan2(delta.z,delta.x))-90),0);
+            RotationAim.apply(c.player,look);c.options.keyUp.setDown(true);
+        }
         phase="自动走位";reason=(pathIndex+1)+" / "+path.size()+" · "+station.toShortString();
     }
     private void replan(Minecraft c,String why){discardSearch();release(c);flight.hover();if(station!=null)blocked.put(station,tick+600);path=List.of();station=null;reason=why;}

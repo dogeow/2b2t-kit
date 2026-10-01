@@ -31,4 +31,13 @@ class EmergencyExitWiringTest {
  @Test void bothHeldAndInventoryBowsAreVerified()throws Exception{
   var c=calls("runtime/engine/BorerRangedCombat","selectBow");assertEquals(2,c.stream().filter(x->x.endsWith(".usableBow")).count());
  }
+
+ @Test void findRouteBeforeFlightAcquireSoEmptyAscentNeverLaunchesFlight()throws Exception{
+  var c=calls("combat/EmergencyExit","begin");
+  int route=c.indexOf("dev/twob2tkit/combat/EmergencyExit.findRoute");
+  int acquire=c.indexOf("dev/twob2tkit/runtime/engine/BorerAreaFlightSession.acquire");
+  assertTrue(route>=0,"begin must plan the ascent");
+  assertTrue(acquire>=0,"begin still acquires flight when a route exists");
+  assertTrue(route<acquire,"safe ascent must be planned before enabling flight");
+ }
 }

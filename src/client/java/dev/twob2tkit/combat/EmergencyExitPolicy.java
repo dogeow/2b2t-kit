@@ -6,6 +6,17 @@ public final class EmergencyExitPolicy {
     public static Decision decide(double health,double rise,long elapsed,boolean routeAvailable){
         return health<=6 || rise>=11.7 || elapsed>=8000 || !routeAvailable?Decision.DISCONNECT:Decision.CLIMB;
     }
+    /**
+     * Only enable emergency flight after a verified fluid-free ascent exists.
+     * Launching flight first, then discovering no route, thrashing into lava.
+     */
+    public static boolean acquireFlightForEscape(boolean safeAscentAvailable){
+        return safeAscentAvailable;
+    }
+    /** No safe ascent: disconnect/hold without enabling flight thrash. */
+    public static boolean abortWithoutFlight(boolean ascentEmpty){
+        return ascentEmpty;
+    }
     public static boolean safeStep(double x,double y,double z,double tx,double ty,double tz,double mx,double my,double mz,double radius){
         double before=(x-mx)*(x-mx)+(y-my)*(y-my)+(z-mz)*(z-mz);
         double after=(tx-mx)*(tx-mx)+(ty-my)*(ty-my)+(tz-mz)*(tz-mz);
