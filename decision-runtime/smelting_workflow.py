@@ -17,7 +17,7 @@ def inspect_batch(journal, world, positions, source, output, amount):
     actual = job.get('furnaces', [])
     if [(e.get('pos'), e.get('amount')) for e in actual] != expected:
         raise RuntimeError('Smelting receipts do not cover the expected bank and quantity')
-    if any(e.get('stage') not in ('loaded', 'collected') for e in actual):
+    if any(e.get('stage') not in ('loaded', 'output_collected', 'collected') or e.get('pending') for e in actual):
         raise RuntimeError('Partially loaded furnace requires inspection; do not restock or replay')
     if job.get('complete') and any(e['stage'] != 'collected' for e in actual):
         raise RuntimeError('Smelting completion lacks collection receipts')

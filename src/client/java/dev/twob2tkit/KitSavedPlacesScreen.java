@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Locale;
 import dev.twob2tkit.structure.StructureGuide;
 
-/** 地点收藏：按维度筛选、搜索、飞往或开指引。 */
+/** 地点收藏：按维度筛选、搜索、设置唯一的家、飞往或开指引。 */
 final class KitSavedPlacesScreen extends KitHudScreen {
 	private static final String FILTER_ALL = "ALL";
 
@@ -279,6 +279,16 @@ final class KitSavedPlacesScreen extends KitHudScreen {
 		this.minecraft.setScreen(null);
 	}
 
+	/** 把收藏设为唯一的家；不改变当前巡航目标，也不立刻起飞。 */
+	private void setHome(KitConfig.SavedPlace place) {
+		if (!config.setHomePlace(place.name)) {
+			showNotice("地点已不存在，请刷新列表", 0xFF5555);
+			return;
+		}
+		showNotice("已设为家：" + place.name, 0x55FF55);
+		rebuildWidgets();
+	}
+
 	/** 地点维度与当前世界是否不符。 */
 	private boolean wrongDimension(KitConfig.SavedPlace place) {
 		String dest = KitConfig.normalizeDimension(place.dimension);
@@ -370,6 +380,7 @@ final class KitSavedPlacesScreen extends KitHudScreen {
 		/** 地点行：指引/编辑/飞往/删除。 */
 		private final class PlaceRow extends Row {
 			private final KitConfig.SavedPlace place;
+			private final Button home;
 			private final Button guide;
 			private final Button edit;
 			private final Button go;
@@ -377,6 +388,13 @@ final class KitSavedPlacesScreen extends KitHudScreen {
 
 			private PlaceRow(KitConfig.SavedPlace place) {
 				this.place = place;
+				this.home = Button.builder(Component.literal(place.home ? "家" : "设家"), button -> setHome(place))
+					.bounds(0, 0, 36, 20)
+					.tooltip(Tooltip.create(Component.literal(place.home
+						? "当前唯一的家"
+						: "设为唯一的家；会替换原来的家，不会立刻起飞。")))
+					.build();
+				home.active = !place.home;
 				this.guide = Button.builder(Component.literal("指引"), button -> startGuide(place))
 					.bounds(0, 0, 36, 20)
 					.tooltip(Tooltip.create(Component.literal("不自动走。字幕和箭头显示方向、距离。")))
@@ -394,8 +412,8 @@ final class KitSavedPlacesScreen extends KitHudScreen {
 			/** 画地点摘要与右侧按钮。 */
 			@Override
 			public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float delta) {
-				String description = String.format(Locale.ROOT, "%s  X %.0f  Z %.0f  Y %.0f",
-					place.name, place.x, place.z, place.cruiseY);
+				String description = String.format(Locale.ROOT, "%s%s  X %.0f  Z %.0f  Y %.0f",
+					place.home ? "家 · " : "", place.name, place.x, place.z, place.cruiseY);
 				graphics.text(font, KitUi.fit(font, description, SavedPlacesLayout.textWidth(getContentRight() - getContentX())),
 					getContentX(), getContentYMiddle() - 4, KitUi.argb(hovered ? 0xFFFF55 : 0xFFFFFF));
 				int buttonY = getContentYMiddle() - 10;
@@ -403,6 +421,8 @@ final class KitSavedPlacesScreen extends KitHudScreen {
 				go.setPosition(getContentRight() - 78, buttonY);
 				edit.setPosition(getContentRight() - 118, buttonY);
 				guide.setPosition(getContentRight() - 158, buttonY);
+				home.setPosition(getContentRight() - 198, buttonY);
+				home.extractRenderState(graphics, mouseX, mouseY, delta);
 				guide.extractRenderState(graphics, mouseX, mouseY, delta);
 				edit.extractRenderState(graphics, mouseX, mouseY, delta);
 				go.extractRenderState(graphics, mouseX, mouseY, delta);
@@ -412,13 +432,13 @@ final class KitSavedPlacesScreen extends KitHudScreen {
 			/** 行内指引/编辑/前往/删除按钮。 */
 			@Override
 			public List<? extends GuiEventListener> children() {
-				return List.of(guide, edit, go, remove);
+				return List.of(home, guide, edit, go, remove);
 			}
 
 			/** 旁白包含行内按钮。 */
 			@Override
 			public List<? extends NarratableEntry> narratables() {
-				return List.of(guide, edit, go, remove);
+				return List.of(home, guide, edit, go, remove);
 			}
 		}
 	}

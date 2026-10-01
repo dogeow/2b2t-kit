@@ -49,9 +49,65 @@ class SkillsTest(unittest.TestCase):
         r=learn_transaction(self.m,e['actions'][0]['request'],e['before'],e['after'])
         self.assertEqual(r['status'],'lesson');self.assertEqual(self.m.summary()['episodes'],0)
     def test_print_confirmation_is_batch_success_not_full_house(self):
-        s,e=episode(req('print1','professional_print',seconds=5));e['after']['professional_printer']={'server_confirmed':3,'waiting_for_server':False,'failure':''}
+        s,e=episode(req('print1','professional_print',seconds=5));e['after']['professional_printer']={'server_confirmed':3,'waiting_for_server':False,'failure':'','travel_pending':0,'enabled':False,'owned':False}
         self.assertTrue(verify_episode(s,e)[0]);self.assertIn('不代表整栋',s['description'])
         e['after']['professional_printer']['waiting_for_server']=True;self.assertFalse(verify_episode(s,e)[0])
+    def printer_episode(self,rid='printer-case',**changes):
+        s,e=episode(req(rid,'professional_print',seconds=3))
+        e['after']['professional_printer']={'server_confirmed':6,'waiting_for_server':False,
+            'failure':'','travel_pending':0,'enabled':False,'owned':False,
+            'fast_proposals':6,'complex_proposals':0,**changes}
+        return s,e
+    def test_printer_done_with_late_sent_block_is_not_success(self):
+        s,e=self.printer_episode(travel_pending=1,fast_proposals=7)
+        self.assertEqual('done',e['after']['phase'])
+        self.assertFalse(verify_episode(s,e)[0])
+    def test_printer_running_failure_or_waiting_flags_prevent_success(self):
+        for changes in ({'waiting_for_server':True},{'failure':'server did not confirm'},
+                        {'enabled':True},{'owned':True}):
+            with self.subTest(changes=changes):
+                s,e=self.printer_episode(**changes)
+                self.assertFalse(verify_episode(s,e)[0])
+    def test_printer_missing_actual_host_fields_is_unknown_not_success(self):
+        for key in ('server_confirmed','travel_pending','waiting_for_server','failure','enabled','owned'):
+            with self.subTest(key=key):
+                s,e=self.printer_episode();del e['after']['professional_printer'][key]
+                self.assertFalse(verify_episode(s,e)[0])
+    def test_printer_counters_and_stopped_flags_require_actual_json_types(self):
+        for changes in ({'server_confirmed':True},{'server_confirmed':6.0},
+                        {'travel_pending':False},{'travel_pending':0.0},
+                        {'waiting_for_server':0},{'enabled':0},{'owned':0}):
+            with self.subTest(changes=changes):
+                s,e=self.printer_episode(**changes)
+                self.assertFalse(verify_episode(s,e)[0])
+    def test_printer_insufficient_and_zero_confirmations_never_succeed(self):
+        s,e=self.printer_episode(server_confirmed=3);s['success'][0]['count']=4
+        self.assertFalse(verify_episode(s,e)[0])
+        e['after']['professional_printer']['server_confirmed']=4
+        self.assertTrue(verify_episode(s,e)[0])
+        s,e=self.printer_episode(server_confirmed=0)
+        self.assertFalse(verify_episode(s,e)[0])
+        for count in (0,False,1.0):
+            s,e=self.printer_episode();s['success'][0]['count']=count
+            self.assertFalse(verify_episode(s,e)[0])
+    def test_printer_malformed_status_never_supplies_success(self):
+        for status in (None,[],True,'done'):
+            with self.subTest(status=status):
+                s,e=self.printer_episode();e['after']['professional_printer']=status
+                self.assertFalse(verify_episode(s,e)[0])
+    def test_two_partial_printer_windows_cannot_promote_a_skill(self):
+        for i in range(2):
+            s,e=self.printer_episode('pending-print'+str(i),travel_pending=1,fast_proposals=7)
+            result=learn_transaction(self.m,e['actions'][0]['request'],e['before'],e['after'])
+        self.assertEqual('candidate',result['status'])
+        self.assertEqual(0,result['successful_runs'])
+        self.assertEqual([],self.m.retrieve_skills('打印投影'))
+    def test_two_fully_settled_stopped_print_windows_still_promote(self):
+        for i in range(2):
+            s,e=self.printer_episode('settled-print'+str(i))
+            result=learn_transaction(self.m,e['actions'][0]['request'],e['before'],e['after'])
+        self.assertEqual('verified',result['status'])
+        self.assertEqual(2,result['successful_runs'])
     def test_collection_requires_inventory_not_only_done(self):
         s,e=episode(req('chop1','chop',item='minecraft:oak_log',target_count=16,seconds=60))
         self.assertFalse(verify_episode(s,e)[0]);e['after']['inventory']=[{'slot':0,'item':'minecraft:oak_log','count':16}]

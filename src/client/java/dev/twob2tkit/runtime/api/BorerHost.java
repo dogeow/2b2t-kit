@@ -9,6 +9,10 @@ import net.minecraft.client.Minecraft;
 public interface BorerHost {
 	default boolean requestEmergencyExit(Minecraft client,String reason){return false;}
     default void enablePveMelee(){}
+	/** Add the detected melee threat to Meteor for this combat. False means use normal attack fallback. */
+	default boolean prepareMeleeTarget(net.minecraft.world.entity.EntityType<?> type) { return false; }
+	/** Release temporary Meteor target and attack settings after combat, stopping, or reload. */
+	default void releaseMeleeTarget() {}
 	default boolean borerAutoDefend() { return true; }
 	default boolean borerAreaDiscardStone() { return false; }
 	default boolean borerAreaStoreDrops() { return false; }

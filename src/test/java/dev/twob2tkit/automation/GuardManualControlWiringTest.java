@@ -34,9 +34,43 @@ class GuardManualControlWiringTest {
     }
     @Test void everyStopReasonUnconditionallyDisarmsBeforeWorkCleanup()throws Exception{
         var m=method("automation/AutomationBridge","cancel");var c=calls(m);
-        assertEquals(List.of("stop","disarmGuard","reset","cancelWork"),c);
+        assertEquals(List.of("stop","disarmGuard","reset","cancelWork","releaseMaterialMiningLease"),c);
         // The old root-button reason "工具箱停止全部" did not match contains("紧急停止").
         for(var n:m.instructions)assertFalse(n instanceof JumpInsnNode,"No translated reason may bypass cancellation");
+    }
+    @Test void miningModuleRestorationWaitsForControlCleanupAndDoesNotRunFromFinally()throws Exception{
+        var cancel=method("automation/AutomationBridge","cancel");
+        assertTrue(cancel.tryCatchBlocks.isEmpty(),"A failed stop must not restore mining from finally");
+        var cleanup=method("automation/AutomationBridge","cancelWork");var c=calls(cleanup);
+        assertTrue(c.indexOf("releaseWalk")>=0&&c.indexOf("releaseWalk")<c.indexOf("releaseMaterialMiningLease"));
+        int releaseWalk=-1,cleared=-1,restore=-1,index=0;
+        for(var instruction:cleanup.instructions){
+            if(instruction instanceof MethodInsnNode call&&call.name.equals("releaseWalk"))releaseWalk=index;
+            if(instruction instanceof FieldInsnNode field&&field.name.equals("materialMiningCleanupPending")
+                    &&field.getOpcode()==Opcodes.PUTSTATIC){
+                var value=instruction.getPrevious();
+                if(value.getOpcode()==Opcodes.ICONST_0)cleared=index;
+            }
+            if(instruction instanceof MethodInsnNode call&&call.name.equals("releaseMaterialMiningLease"))restore=index;
+            index++;
+        }
+        assertTrue(releaseWalk>=0&&cleared>releaseWalk&&restore>cleared,
+            "Cleanup success must be recorded only after keys and mining controls are released");
+        var sync=method("automation/AutomationBridge","syncMaterialMiningLease");
+        assertTrue(sync.tryCatchBlocks.isEmpty(),"User-toggle cleanup failure cannot restore from finally");
+    }
+    @Test void unfinishedCleanupRetainsQueuedSuppressionAndCannotBeAutomaticallyReleased()throws Exception{
+        for(String name:List.of("cancel","cancelWork")){
+            var body=method("automation/AutomationBridge",name);
+            assertTrue(java.util.stream.StreamSupport.stream(body.instructions.spliterator(),false).anyMatch(i->
+                i instanceof FieldInsnNode f&&f.name.equals("materialMiningCleanupPending")
+                &&f.getOpcode()==Opcodes.PUTSTATIC&&i.getPrevious().getOpcode()==Opcodes.ICONST_1));
+        }
+        for(String name:List.of("releaseMaterialMiningLease","syncMaterialMiningLease","materialMiningPacketBlocked")){
+            assertTrue(java.util.stream.StreamSupport.stream(method("automation/AutomationBridge",name).instructions.spliterator(),false)
+                .anyMatch(i->i instanceof FieldInsnNode f&&f.name.equals("materialMiningCleanupPending")
+                    &&f.getOpcode()==Opcodes.GETSTATIC),name);
+        }
     }
     @Test void disarmClearsScopeAndBusyAndEndsTheRuntimeGuardImmediately()throws Exception{
         var m=method("automation/AutomationBridge","disarmGuard");var fields=new ArrayList<String>();

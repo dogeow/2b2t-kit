@@ -161,6 +161,52 @@ class ProjectionAdviceTests(unittest.TestCase):
             with self.assertRaises(JobBlocked):
                 load_profile(automation, context)
 
+    def test_world_profile_rejects_malformed_resource_and_search_shapes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            automation=Path(tmp)/'config'/'twob2tkit'/'automation';automation.mkdir(parents=True)
+            jar=Path(tmp)/'recipes.jar';jar.write_bytes(b'fixture')
+            context={'server':'private.example','dimension':'minecraft:overworld'}
+            path=profile_path(automation,context);path.parent.mkdir(parents=True)
+            region={'item':'minecraft:cobbled_deepslate','min':[0,-18,0],'max':[1,-1,1],
+                    'source':'natural_survey','future_extension':{'kept':True},
+                    'access_shaft':{'min':[0,0,0],'max':[1,80,1]}}
+            base={**context,'schema':1,'recipe_jar':str(jar),'resource_regions':[region],
+                  'search_origin':[0,80,0],'search_radius':256}
+            path.write_text(json.dumps(base))
+            loaded=load_profile(automation,context)
+            self.assertEqual({'kept':True},loaded['resource_regions'][0]['future_extension'])
+            malformed=([],{**base,'schema':2},{**base,'resource_regions':{}},
+                       {**base,'resource_regions':[None]},
+                       {**base,'resource_regions':[{**region,'item':'cobbled_deepslate'}]},
+                       {**base,'resource_regions':[{**region,'min':[0.5,-18,0]}]},
+                       {**base,'resource_regions':[{**region,'min':[2,-18,0]}]},
+                       {**base,'resource_regions':[{**region,'access_shaft':[]}]},
+                       {**base,'search_origin':[0,float('nan'),0]},
+                       {**base,'search_radius':True},{**base,'search_radius':0},
+                       {**base,'search_radius':385})
+            for value in malformed:
+                with self.subTest(value=value):
+                    path.write_text(json.dumps(value))
+                    with self.assertRaises(JobBlocked):load_profile(automation,context)
+
+    def test_world_profile_rejects_malformed_registered_supply_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            automation=Path(tmp)/'config'/'twob2tkit'/'automation';automation.mkdir(parents=True)
+            jar=Path(tmp)/'recipes.jar';jar.write_bytes(b'fixture')
+            context={'server':'private.example','dimension':'minecraft:overworld'}
+            path=profile_path(automation,context);path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({**context,'schema':1,'recipe_jar':str(jar)}))
+            config=automation.parent.parent/'twob2tkit.json'
+            malformed=([],{'projectionSupplySources':{}},
+                       {'projectionSupplySources':[None]},
+                       {'projectionSupplySources':[{'server':'other.example','dimension':'minecraft:overworld',
+                                                     'x':True,'y':64,'z':0}]},
+                       {'projectionSupplySources':[{'server':'other.example','x':0,'y':64,'z':0}]})
+            for value in malformed:
+                with self.subTest(value=value):
+                    config.write_text(json.dumps(value))
+                    with self.assertRaises(JobBlocked):load_profile(automation,context)
+
     def test_backend_uses_shared_adviser_and_rechecks_full_audit(self):
         with tempfile.TemporaryDirectory() as tmp:
             backend = material_jobs_backend.Backend.__new__(material_jobs_backend.Backend)

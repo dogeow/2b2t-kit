@@ -64,7 +64,17 @@ public final class SeedScout {
 	private static final Path REPORT = FabricLoader.getInstance().getConfigDir().resolve("twob2tkit/seed-report.txt");
 
 	private Store store = new Store();
-	private int ticks;
+	private long ticks;
+	private final SeedScoutScanBudget<BlockState> scanBudget = new SeedScoutScanBudget<>();
+	private ClientLevel scanLevel;
+	private net.minecraft.client.gui.screens.Screen scanScreen;
+	private BlockPos nearbyOrigin;
+	private int nearbyCursor, surfaceCursor, entityChunkCursor, entityCursor;
+	private int surfaceChunkX, surfaceChunkZ;
+	private List<BlockEntity> entityBatch = List.of();
+	private static final class UnloadedEvidence extends RuntimeException {
+		private UnloadedEvidence() { super(null,null,false,false); }
+	}
 	private String notice = "";
 	private int noticeColor = 0xA0A0A0;
 	private BlockPos lastBiomeSample = BlockPos.ZERO;
@@ -114,31 +124,68 @@ public final class SeedScout {
 		save();
 	}
 
-	/** 周期性扫描实体/地表/地图/群系，并尝试导入 Seedcracker。 */
+	/** An explicit preference only runs while its scouting page or a structure guide needs it. */
+	public void requestScanningFor(net.minecraft.client.gui.screens.Screen screen) { scanScreen=screen; }
 	public void tick(Minecraft client) {
 		ticks++;
-		if (client.player == null || client.level == null) return;
+		if(client.player==null || client.level==null) { resetScan(null);return; }
 		trySingleplayerSeed(client);
-		if (hasWorldSeed()) return;
-		if (ticks % 40 == 0) importSeedcrackerIfReady();
-		if (ticks % 10 == 0) scanNearby(client);
-		if (ticks % 20 == 0) {
-			scanChunkEntities(client);
-			scanLoadedSurfaces(client);
+		boolean needed=client.screen==scanScreen && scanScreen!=null
+			|| KitClient.structureGuide()!=null && KitClient.structureGuide().isActive();
+		var config=KitClient.config();
+		if(!SeedScoutScanBudget.shouldScan(config!=null && config.seedScoutEnabled,needed,hasWorldSeed())) {
+			resetScan(null);return;
 		}
-		if (ticks % 40 == 0) scanMaps(client);
-		if (ticks % 30 == 0) sampleBiome(client);
-		if (ticks % 10 == 0) {
-			try {
-				emitGizmos(client);
-			} catch (IllegalStateException ignored) {
+		if(scanLevel!=client.level) resetScan(client.level);
+		scanBudget.beginTick(ticks);
+		try {
+			if(ticks%40==0) importSeedcrackerIfReady();
+			if(hasWorldSeed()) return;
+			scanNearby(client);scanLoadedSurfaces(client);scanChunkEntities(client);
+			if(ticks%40==0) scanMaps(client);
+			if(ticks%30==0) sampleBiome(client);
+			if(ticks%10==0) {
+				try { emitGizmos(client); } catch(IllegalStateException ignored) {}
 			}
+		} catch(SeedScoutScanBudget.Exhausted | UnloadedEvidence ignored) {
+			// Retry the current classifier with cached observations on the next tick.
 		}
+	}
+	private void resetScan(ClientLevel level) {
+		scanLevel=level;scanBudget.clear();nearbyOrigin=null;
+		nearbyCursor=surfaceCursor=entityChunkCursor=entityCursor=0;entityBatch=List.of();
+	}
+	private BlockState readBlock(ClientLevel level,BlockPos pos) {
+		if(pos.getY()<level.getMinY() || pos.getY()>=level.getMaxY() || !level.hasChunkAt(pos)) throw new UnloadedEvidence();
+		return scanBudget.block(pos.asLong(),()->level.getBlockState(pos));
+	}
+	private Holder<Biome> readBiome(ClientLevel level,BlockPos pos) {
+		if(!level.hasChunkAt(pos)) throw new UnloadedEvidence();
+		return scanBudget.uncached(()->level.getBiome(pos));
 	}
 
 	/** 是否已有破解出的世界种子。 */
 	public boolean hasWorldSeed() {
 		return store.crackedSeed != null;
+	}
+
+	/** Whether a stored full seed exists for read-only location hints. */
+	public boolean hasStoredWorldSeed() {
+		return SeedHintPolicy.available(store.crackedSeed,store.hasHashedSeed,
+			store.crackedSeed!=null&&store.hasHashedSeed&&matchesHash(store.crackedSeed));
+	}
+
+	/**
+	 * Produce bounded snowy-biome coordinate hints without exposing the saved seed.
+	 * The current login hash may differ (for example through a proxy), so this is
+	 * only a hint. Loaded server biome and block scans remain authoritative.
+	 */
+	public OverworldSnowLocator.Batch snowyBiomeCandidates(
+		int originX, int originZ, int radius, int cursor, int budget) {
+		if (!hasStoredWorldSeed())
+			throw new IllegalStateException("No stored full world seed is available for hints");
+		return OverworldSnowLocator.batch(store.crackedSeed,
+			originX, originZ, radius, cursor, budget);
 	}
 
 	/** 持久化状态对象。 */
@@ -302,20 +349,24 @@ public final class SeedScout {
 		if (store.crackedSeed == null) store.crackedSeed = seed;
 	}
 
-	/** 扫已加载区块方块实体。 */
+	/** One loaded chunk and at most eight block entities per tick. */
 	private void scanChunkEntities(Minecraft client) {
-		LocalPlayer player = client.player;
-		ClientLevel level = client.level;
-		int cx = player.chunkPosition().x();
-		int cz = player.chunkPosition().z();
-		for (int dx = -6; dx <= 6; dx++) {
-			for (int dz = -6; dz <= 6; dz++) {
-				if (!level.hasChunk(cx + dx, cz + dz)) continue;
-				LevelChunk chunk = level.getChunk(cx + dx, cz + dz);
-				for (BlockEntity entity : chunk.getBlockEntities().values()) {
-					inspectBlockEntity(level, entity);
-				}
+		ClientLevel level=client.level;
+		if(entityCursor>=entityBatch.size()) {
+			entityBatch=List.of();entityCursor=0;
+			for(int n=0;n<169;n++) {
+				int index=entityChunkCursor++%169;
+				int cx=client.player.chunkPosition().x()+index/13-6, cz=client.player.chunkPosition().z()+index%13-6;
+				if(!level.hasChunk(cx,cz)) continue;
+				entityBatch=level.getChunk(cx,cz).getBlockEntities().values().stream().limit(256).toList();break;
 			}
+		}
+		for(int n=0;n<8 && entityCursor<entityBatch.size() && scanBudget.inspect();n++) {
+			BlockEntity entity=entityBatch.get(entityCursor);
+			try {
+				if(scanBudget.uncached(()->level.getBlockEntity(entity.getBlockPos()))==entity) inspectBlockEntity(level,entity);
+			} catch(UnloadedEvidence ignored) {}
+			entityCursor++;
 		}
 	}
 
@@ -345,58 +396,41 @@ public final class SeedScout {
 		}
 	}
 
-	/** 扫玩家附近方块证据。 */
+	/** Resume a bounded volume rather than restarting a 20k-cell scan every ten ticks. */
 	private void scanNearby(Minecraft client) {
-		LocalPlayer player = client.player;
-		ClientLevel level = client.level;
-		BlockPos origin = player.blockPosition();
-		for (int dx = -16; dx <= 16; dx++) {
-			for (int dz = -16; dz <= 16; dz++) {
-				for (int dy = -8; dy <= 10; dy++) {
-					inspectStructureBlock(level, origin.offset(dx, dy, dz));
-				}
-			}
+		BlockPos current=client.player.blockPosition();
+		if(nearbyOrigin==null || nearbyOrigin.distSqr(current)>=64) { nearbyOrigin=current.immutable();nearbyCursor=0; }
+		for(int n=0;n<32 && scanBudget.inspect();n++) {
+			int index=nearbyCursor;
+			BlockPos pos=nearbyOrigin.offset(index/(33*19)-16,index%19-8,index/19%33-16);
+			try { inspectStructureBlock(client.level,pos); } catch(UnloadedEvidence ignored) {}
+			nearbyCursor=(nearbyCursor+1)%(33*33*19);
+			if(nearbyCursor==0) nearbyOrigin=current.immutable();
 		}
 	}
-
-	/** Scans the ground of loaded chunks so flying at Y=333 still sees temples and huts. */
+	/** Resume sixteen samples per tick, sharing all neighborhood reads with the same budget. */
 	private void scanLoadedSurfaces(Minecraft client) {
-		LocalPlayer player = client.player;
-		ClientLevel level = client.level;
-		int cx = player.chunkPosition().x();
-		int cz = player.chunkPosition().z();
-		for (int dx = -6; dx <= 6; dx++) {
-			for (int dz = -6; dz <= 6; dz++) {
-				if (!level.hasChunk(cx + dx, cz + dz)) continue;
-				scanChunkSurface(level, level.getChunk(cx + dx, cz + dz));
-			}
-		}
-	}
-
-	/** 扫一个区块地表结构迹象。 */
-	private void scanChunkSurface(ClientLevel level, LevelChunk chunk) {
-		var heightmap = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
-		int minX = chunk.getPos().getMinBlockX();
-		int minZ = chunk.getPos().getMinBlockZ();
-		int minY = level.getMinY();
-		int maxY = level.getMaxY();
-		for (int lx = 2; lx < 16; lx += 4) {
-			for (int lz = 2; lz < 16; lz += 4) {
-				int surface = heightmap.getFirstAvailable(lx, lz) - 1;
-				if (surface < minY || surface > maxY) continue;
-				for (int dy = -20; dy <= 3; dy++) {
-					int y = surface + dy;
-					if (y < minY || y > maxY) continue;
-					inspectStructureBlock(level, new BlockPos(minX + lx, y, minZ + lz));
+		ClientLevel level=client.level;
+		int cx=client.player.chunkPosition().x(),cz=client.player.chunkPosition().z();
+		if(cx!=surfaceChunkX || cz!=surfaceChunkZ) { surfaceChunkX=cx;surfaceChunkZ=cz;surfaceCursor=0; }
+		for(int n=0;n<16 && scanBudget.inspect();n++) {
+			int index=surfaceCursor,chunk=index/(16*24),column=index/24%16;
+			int x=(cx+chunk/13-6)*16+2+(column/4)*4,z=(cz+chunk%13-6)*16+2+(column%4)*4;
+			try {
+				if(level.hasChunk(x>>4,z>>4)) {
+					int surface=scanBudget.surface(BlockPos.asLong(x,0,z),()->level.getChunk(x>>4,z>>4)
+						.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE).getFirstAvailable(x&15,z&15)-1);
+					inspectStructureBlock(level,new BlockPos(x,surface+index%24-20,z));
 				}
-			}
+			} catch(UnloadedEvidence ignored) {}
+			surfaceCursor=(surfaceCursor+1)%(169*16*24);
 		}
 	}
 
 	/** 根据方块形态分类结构。 */
 	private void inspectStructureBlock(ClientLevel level, BlockPos pos) {
 		if (!level.hasChunkAt(pos)) return;
-		BlockState state = level.getBlockState(pos);
+		BlockState state = readBlock(level,pos);
 		if (state.isAir()) return;
 		if (state.is(Blocks.BLUE_TERRACOTTA) && sandstoneAround(level, pos)) {
 			addFinding(Kind.DESERT_PYRAMID, level.dimension(), pos, "蓝色陶瓦");
@@ -439,7 +473,7 @@ public final class SeedScout {
 		for (int dx = -2; dx <= 2; dx++) {
 			for (int dy = -2; dy <= 2; dy++) {
 				for (int dz = -2; dz <= 2; dz++) {
-					if (!level.getBlockState(pos.offset(dx, dy, dz)).getFluidState().isEmpty()) return true;
+					if (!readBlock(level,pos.offset(dx, dy, dz)).getFluidState().isEmpty()) return true;
 				}
 			}
 		}
@@ -452,7 +486,7 @@ public final class SeedScout {
 		for (int dx = -3; dx <= 3; dx++) {
 			for (int dy = -2; dy <= 2; dy++) {
 				for (int dz = -3; dz <= 3; dz++) {
-					if (isShipwreckPlank(level.getBlockState(pos.offset(dx, dy, dz))) && ++n >= 6) return true;
+					if (isShipwreckPlank(readBlock(level,pos.offset(dx, dy, dz))) && ++n >= 6) return true;
 				}
 			}
 		}
@@ -491,8 +525,8 @@ public final class SeedScout {
 	private void sampleBiome(Minecraft client) {
 		BlockPos pos = client.player.blockPosition();
 		if (pos.distSqr(lastBiomeSample) < 96 * 96) return;
+		Holder<Biome> biome = readBiome(client.level,pos);
 		lastBiomeSample = pos.immutable();
-		Holder<Biome> biome = client.level.getBiome(pos);
 		addFinding(Kind.BIOME, client.level.dimension(), pos, biome.getRegisteredName());
 		save();
 	}
@@ -513,7 +547,7 @@ public final class SeedScout {
 		int y = spawner.getY() - 1;
 		for (int dz = -4; dz <= 4; dz++) {
 			for (int dx = -4; dx <= 4; dx++) {
-				BlockState state = level.getBlockState(new BlockPos(spawner.getX() + dx, y, spawner.getZ() + dz));
+				BlockState state = readBlock(level,new BlockPos(spawner.getX() + dx, y, spawner.getZ() + dz));
 				if (state.is(Blocks.MOSSY_COBBLESTONE)) builder.append('M');
 				else if (state.is(Blocks.COBBLESTONE)) builder.append('C');
 				else builder.append('.');
@@ -527,7 +561,7 @@ public final class SeedScout {
 		int n = 0;
 		for (int dx = -3; dx <= 3; dx++) {
 			for (int dz = -3; dz <= 3; dz++) {
-				if (level.getBlockState(pos.offset(dx, 0, dz)).is(Blocks.SANDSTONE) && ++n >= 8) return true;
+				if (readBlock(level,pos.offset(dx, 0, dz)).is(Blocks.SANDSTONE) && ++n >= 8) return true;
 			}
 		}
 		return false;
@@ -540,7 +574,7 @@ public final class SeedScout {
 		for (int dx = -4; dx <= 4; dx++) {
 			for (int dy = -2; dy <= 4; dy++) {
 				for (int dz = -4; dz <= 4; dz++) {
-					BlockState state = level.getBlockState(pos.offset(dx, dy, dz));
+					BlockState state = readBlock(level,pos.offset(dx, dy, dz));
 					if (state.is(Blocks.SEA_LANTERN)) lanterns++;
 					if (state.is(Blocks.PRISMARINE) || state.is(Blocks.DARK_PRISMARINE) || state.is(Blocks.PRISMARINE_BRICKS)) {
 						prism++;
@@ -556,7 +590,7 @@ public final class SeedScout {
 		int snow = 0;
 		for (int dx = -3; dx <= 3; dx++) {
 			for (int dz = -3; dz <= 3; dz++) {
-				if (level.getBlockState(pos.offset(dx, 0, dz)).is(Blocks.SNOW_BLOCK) && ++snow >= 6) return true;
+				if (readBlock(level,pos.offset(dx, 0, dz)).is(Blocks.SNOW_BLOCK) && ++snow >= 6) return true;
 			}
 		}
 		return false;
@@ -564,7 +598,7 @@ public final class SeedScout {
 
 	/** 是否像沼泽小屋环境。 */
 	private boolean swampy(ClientLevel level, BlockPos pos) {
-		Holder<Biome> biome = level.getBiome(pos);
+		Holder<Biome> biome = readBiome(level,pos);
 		return biome.is(BiomeTags.HAS_SWAMP_HUT) || biome.getRegisteredName().contains("swamp");
 	}
 
@@ -603,7 +637,7 @@ public final class SeedScout {
 		for (int dx = -radius; dx <= radius; dx++) {
 			for (int dy = -2; dy <= 3; dy++) {
 				for (int dz = -radius; dz <= radius; dz++) {
-					if (level.getBlockState(pos.offset(dx, dy, dz)).is(block)) n++;
+					if (readBlock(level,pos.offset(dx, dy, dz)).is(block)) n++;
 				}
 			}
 		}
@@ -616,7 +650,7 @@ public final class SeedScout {
 		for (int dx = -4; dx <= 4; dx++) {
 			for (int dy = -1; dy <= 3; dy++) {
 				for (int dz = -4; dz <= 4; dz++) {
-					if (level.getBlockState(pos.offset(dx, dy, dz)).is(Blocks.MOSSY_COBBLESTONE) && ++mossy >= 8) return true;
+					if (readBlock(level,pos.offset(dx, dy, dz)).is(Blocks.MOSSY_COBBLESTONE) && ++mossy >= 8) return true;
 				}
 			}
 		}
@@ -626,13 +660,13 @@ public final class SeedScout {
 	/** 是否末地柱。 */
 	private boolean endPillar(ClientLevel level, BlockPos pos) {
 		if (!level.dimension().identifier().getPath().contains("end")) return false;
-		return level.getBlockState(pos.above()).is(Blocks.OBSIDIAN) || level.getBlockState(pos.below()).is(Blocks.OBSIDIAN);
+		return readBlock(level,pos.above()).is(Blocks.OBSIDIAN) || readBlock(level,pos.below()).is(Blocks.OBSIDIAN);
 	}
 
 	/** 末地柱顶坐标。 */
 	private BlockPos pillarTop(ClientLevel level, BlockPos pos) {
 		BlockPos top = pos;
-		while (level.getBlockState(top.above()).is(Blocks.OBSIDIAN) && top.getY() < pos.getY() + 50) {
+		while (readBlock(level,top.above()).is(Blocks.OBSIDIAN) && top.getY() < pos.getY() + 50) {
 			top = top.above();
 		}
 		return top;

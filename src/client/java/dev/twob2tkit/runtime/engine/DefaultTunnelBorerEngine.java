@@ -1062,6 +1062,29 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		return false;
 	}
 
+    /** Reuse existing contact escape, preserving crouch/escape movement after combat pauses. */
+    private boolean handleMiningContactRescue(Minecraft client, LocalPlayer player) {
+        boolean lavaContact = BorerHazards.playerTouchedLava(client, player);
+        if (!lavaContact) lavaContactTicks = 0;
+        boolean contact = lavaContact || player.isInWater() || BorerHazards.playerOnMagma(client, player);
+        if (!contact) return false;
+        rangedCombat.pause(client);
+        releaseMine(client);
+        if (liquids.handleLavaContact(client, player)) return true;
+        if (liquids.handleWaterContact(client, player)) return true;
+        if (BorerHazards.playerOnMagma(client, player)) {
+            if (!liquids.handleMagmaBurn(client, player)
+                    && currentTarget != null && BorerHazards.isMagma(client, currentTarget)) {
+                // This is the existing emergency exit selected by handleMagmaBurn,
+                // never an ore/loot/tunnel task while an encounter is unresolved.
+                keepMiningInReach(client, player, currentTarget);
+                client.options.keyShift.setDown(true);
+            }
+            return true;
+        }
+        return false;
+    }
+
 	private boolean handleMiningTimeout(Minecraft client, LocalPlayer player) {
 		if (mode == Mode.ORE && miningTargetTicks >= MINING_STALL_TICKS) {
 			logDiagnostic(client, player, "mining-timeout");
@@ -1115,8 +1138,24 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
             if(!player.isUsingItem())BorerItems.selectWeapon(client,player);
             fileLog(client,"surround-abort health="+player.getHealth()+" reason=damaged-or-timeout; shelter suppressed for this mining session");
         }
-		if (!(mode == Mode.AREA && rangedCombat.hasCreeperEmergency(client))
+        if (flyToggleCooldown > 0) flyToggleCooldown--;
+        // Physical contact escape has priority over food and combat; its escape
+        // jump/crouch is applied after combat releases input and survives this tick.
+        if (mode != Mode.AREA && handleMiningContactRescue(client, player)) return;
+        boolean imminentMiningCreeper = mode != Mode.AREA && mobs.findImminentCreeper(client, player) != null;
+		if (!(mode == Mode.AREA && rangedCombat.hasCreeperEmergency(client)) && !imminentMiningCreeper
                 && pauseForMeteorFood(client, player)) return;
+        // Combat owns this tick before any target update, loot movement, liquid work
+        // or tunnel input. Keep the mining goal while unresolved enemies remain.
+        if (mode != Mode.AREA && rangedCombat.tick(client)) {
+            attemptedForward = false;
+            lastForwardPosition = player.position();
+            noMovementTicks = 0;
+            resetMineTimingSample();
+            resetAimMissProgress();
+            overlay(client, status, 0xFF5555);
+            return;
+        }
 		try { toolPolicy = meteorAutomation.tools(); }
 		catch (IllegalStateException error) {
 			fileLog(client, "meteor-tool-error " + error); stop(client, error.getMessage()); return;
@@ -1140,7 +1179,6 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			diagnosticTicks = 0;
 			logDiagnostic(client, player, "periodic");
 		}
-		if (flyToggleCooldown > 0) flyToggleCooldown--;
 		if (!goingHome) trail.record(client, player);
 		if (returningToPortal) {
 			if (pauseTicks > 0) pauseTicks--;
@@ -1167,9 +1205,11 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			return;
 		}
 
-		if (liquids.handleLavaContact(client, player)) return;
-		if (liquids.handleWaterContact(client, player)) return;
-		if (liquids.handleMagmaBurn(client, player)) return;
+        if (mode == Mode.AREA) {
+		    if (liquids.handleLavaContact(client, player)) return;
+		    if (liquids.handleWaterContact(client, player)) return;
+		    if (liquids.handleMagmaBurn(client, player)) return;
+        }
 		if (turnCooldown > 0) turnCooldown--;
 		turnedThisTick = false;
 		boolean turnedFromLava = mode == Mode.FORWARD && !goingHome && !loot.active()

@@ -81,8 +81,16 @@ def check_success(check,before,after):
         old,new=inventory(before),inventory(after);targets=check['materials']
         return all(new.get(i,0)>=n for i,n in targets.items()) and any(new.get(i,0)>old.get(i,0) for i in targets)
     if kind=='server_placements_at_least':
-        p=after.get('professional_printer',{})
-        return not p.get('failure') and not p.get('waiting_for_server') and p.get('server_confirmed',0)>=check.get('count',1)
+        p=after.get('professional_printer')
+        if not isinstance(p,dict):return False
+        required=check.get('count',1);confirmed=p.get('server_confirmed')
+        # Native DONE ends a time window. It does not settle a sent placement.
+        # Require the actual stopped host fields; missing/legacy data is unknown.
+        return (type(required) is int and required>=1
+                and type(confirmed) is int and confirmed>=required
+                and type(p.get('travel_pending')) is int and p['travel_pending']==0
+                and p.get('failure')=='' and p.get('waiting_for_server') is False
+                and p.get('enabled') is False and p.get('owned') is False)
     return False
 def verify_episode(skill,episode):
     """Both transport completion and independent state evidence are necessary."""

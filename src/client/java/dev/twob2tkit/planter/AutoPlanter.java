@@ -1,9 +1,7 @@
 package dev.twob2tkit.planter;
 
-import com.mojang.blaze3d.platform.InputConstants;
 import dev.twob2tkit.runtime.api.RotationAim;
 import dev.twob2tkit.runtime.engine.BorerAim;
-import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -74,6 +72,8 @@ public final class AutoPlanter {
 	private final PlanterLoot loot = new PlanterLoot();
 	private final Map<BlockPos, Integer> skipUntilTick = new HashMap<>();
 	private boolean active;
+	private net.minecraft.client.multiplayer.ClientLevel sessionLevel;
+	private LocalPlayer sessionPlayer;
 	private String status = "";
 	private Item lockedCrop;
 	private Spot target;
@@ -85,6 +85,7 @@ public final class AutoPlanter {
 	private final ApproachTracker approach = new ApproachTracker();
 	private BlockPos harvestPos;
 	private int harvestTicks;
+	private boolean harvestStarted;
 	private int logTicks;
 	private String lastFileLog = "";
 	private PlanterPolicy.RowPlan rowPlan;
@@ -97,6 +98,24 @@ public final class AutoPlanter {
 	/** 是否正在种田。 */
 	public boolean isActive() {
 		return active;
+	}
+
+	/** Only this session's verified mature crop may retain vanilla break progress. */
+	public boolean ownsMining() {
+		Minecraft client = Minecraft.getInstance();
+		if (!active || !harvestStarted || target == null || !target.harvest() || lockedCrop == null
+			|| client.player == null || client.level == null || client.gameMode == null || client.screen != null
+			|| client.level != sessionLevel || client.player != sessionPlayer || client.player.isUsingItem()
+			|| client.player.isDeadOrDying() || !client.gameMode.isDestroying()
+			|| !target.pos.equals(harvestPos)) return false;
+		if (client.isWindowActive() && (KitKeys.manualMovementDown(client)
+			|| KitKeys.isPhysicallyDown(client, client.options.keyAttack)
+			|| KitKeys.isPhysicallyDown(client, client.options.keyUse))) return false;
+		Block plant = plantBlock(lockedCrop);
+		if (plant == null || !stillHarvestTarget(client, target, plant)) return false;
+		BlockHitResult hit = BorerAim.clipView(client, client.player);
+		return hit != null && hit.getBlockPos().equals(harvestPos) && BorerAim.hitInReach(client.player, hit)
+			&& !entityInHarvestRay(client, client.player, hit);
 	}
 
 	/** 最近状态文案。 */
@@ -133,6 +152,8 @@ public final class AutoPlanter {
 	public void start(Minecraft client) {
 		if (client.player == null || client.level == null) return;
 		active = true;
+		sessionLevel = client.level;
+		sessionPlayer = client.player;
 		cooldown = 0;
 		plantedCount = 0;
 		tilledCount = 0;
@@ -142,6 +163,7 @@ public final class AutoPlanter {
 		approach.reset();
 		harvestPos = null;
 		harvestTicks = 0;
+		harvestStarted = false;
 		logTicks = 0;
 		lastFileLog = "";
 		skipUntilTick.clear();
@@ -171,10 +193,13 @@ public final class AutoPlanter {
 	public void stop(Minecraft client, String reason) {
 		if (!active) return;
 		active = false;
+		sessionLevel = null;
+		sessionPlayer = null;
 		target = null;
 		approachPos = null;
 		approach.reset();
 		harvestPos = null;
+		harvestStarted = false;
 		lockedCrop = null;
 		rowPlan = null;
 		int pickedLoot = loot.picked();
@@ -195,6 +220,10 @@ public final class AutoPlanter {
 		if (!active) return;
 		if (client.player == null || client.level == null || client.gameMode == null) {
 			stop(client, "离开世界");
+			return;
+		}
+		if (client.level != sessionLevel || client.player != sessionPlayer) {
+			stop(client, "世界或角色已变化");
 			return;
 		}
 		if (client.screen != null) {
@@ -382,25 +411,36 @@ public final class AutoPlanter {
 		releaseAttack(client);
 		holdSneak(client, player, false);
 		lookAt(player, dest);
-		ApproachTracker.walkToward(client, player, dest, STUCK_TICKS, approach);
+		PlanterApproachTracker.walkToward(client, player, dest);
 		return true;
 	}
 
 	/** 收成熟作物。 */
 	private boolean harvest(Minecraft client, LocalPlayer player, Spot spot, Block plant, int now) {
-		if (!stillHarvestTarget(client, spot, plant)) {
+		if (player.isUsingItem() || player.isDeadOrDying()) {
 			releaseAttack(client);
+			harvestStarted = false;
+			return false;
+		}
+		if (!stillHarvestTarget(client, spot, plant)) {
+			boolean removed = harvestStarted && spot.pos.equals(harvestPos)
+				&& client.level.getBlockState(spot.pos).isAir();
+			releaseAttack(client);
+			harvestStarted = false;
 			skipUntilTick.put(spot.pos.immutable(), now + 8);
-			return true;
+			return removed;
 		}
 		if (harvestPos == null || !harvestPos.equals(spot.pos)) {
+			releaseAttack(client);
 			harvestPos = spot.pos.immutable();
 			harvestTicks = 0;
+			harvestStarted = false;
 		} else {
 			harvestTicks++;
 			if (harvestTicks >= HARVEST_STALL_TICKS) {
 				skipUntilTick.put(spot.pos.immutable(), now + SKIP_TICKS);
 				harvestPos = null;
+				harvestStarted = false;
 				releaseAttack(client);
 				fileLog(client, "harvest-stall crop=" + format(spot.pos)
 					+ " player=" + precisePosition(player));
@@ -419,6 +459,7 @@ public final class AutoPlanter {
 				+ " player=" + precisePosition(player));
 			harvestPos = null;
 			harvestTicks = 0;
+			harvestStarted = false;
 			if (config.planterWalk && player.position().distanceTo(Vec3.atCenterOf(spot.pos)) > 0.85) {
 				if (approach(client, player, spot, now)) {
 					status = "换角度收，避免打到围墙";
@@ -431,12 +472,40 @@ public final class AutoPlanter {
 			overlay(client, status, 0xFFFF55);
 			return false;
 		}
-		client.hitResult = hit;
-		client.crosshairPickEntity = null;
-		if (harvestTicks == 0 || harvestTicks % 8 == 0) {
-			KeyMapping.click(InputConstants.getKey(client.options.keyAttack.saveString()));
+		if (PlanterPolicy.skipHarvestWhenEntityInWay(entityInHarvestRay(client, player, hit))) {
+			releaseAttack(client);
+			harvestStarted = false;
+			status = "实体挡住作物，等它走开再收";
+			return false;
 		}
-		client.options.keyAttack.setDown(true);
+		// Send only the verified crop position through vanilla block destruction.
+		// Never replace the crosshair entity or synthesize an attack-key click.
+		client.options.keyAttack.setDown(false);
+		if (!harvestStarted || !client.gameMode.isDestroying()) {
+			harvestStarted = client.gameMode.startDestroyBlock(spot.pos, hit.getDirection());
+		} else {
+			client.gameMode.continueDestroyBlock(spot.pos, hit.getDirection());
+		}
+		if (harvestStarted) player.swing(InteractionHand.MAIN_HAND);
+		boolean removed = harvestStarted && client.level.getBlockState(spot.pos).isAir();
+		if (removed) {
+			releaseAttack(client);
+			harvestStarted = false;
+		}
+		return removed; // UI estimate only; native inventory/field audits prove supply.
+	}
+
+	/** Exact segment test shared with focused entity-obstruction regression. */
+	public static boolean harvestRayBlocked(Vec3 eye, Vec3 hit, AABB entityBox) {
+		return entityBox.contains(eye) || entityBox.clip(eye, hit).isPresent();
+	}
+
+	private static boolean entityInHarvestRay(Minecraft client, LocalPlayer player, BlockHitResult hit) {
+		Vec3 eye = player.getEyePosition(), end = hit.getLocation();
+		for (var entity : client.level.getEntities(player, new AABB(eye, end).inflate(1.0),
+			e -> !e.isSpectator() && e.isPickable())) {
+			if (harvestRayBlocked(eye, end, entity.getBoundingBox().inflate(entity.getPickRadius()))) return true;
+		}
 		return false;
 	}
 
@@ -1051,6 +1120,7 @@ public final class AutoPlanter {
 		client.options.keyDown.setDown(forward < -0.12);
 		client.options.keyLeft.setDown(right < -0.12);
 		client.options.keyRight.setDown(right > 0.12);
+		client.options.keyJump.setDown(false);
 	}
 
 	/** 瞬间对准。 */

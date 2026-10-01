@@ -1,0 +1,407 @@
+{
+  "source": "native Kit 26.1.2 starting snapshot, only vanilla item/count/slot metadata retained",
+  "inventory": [
+    {
+      "slot": 0,
+      "item": "minecraft:diamond_sword",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 1232,
+      "max_durability": 1561,
+      "enchantments": [
+        {
+          "id": "minecraft:unbreaking",
+          "level": 3
+        },
+        {
+          "id": "minecraft:smite",
+          "level": 3
+        }
+      ]
+    },
+    {
+      "slot": 1,
+      "item": "minecraft:diamond_axe",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 1543,
+      "max_durability": 1561,
+      "enchantments": [
+        {
+          "id": "minecraft:silk_touch",
+          "level": 1
+        }
+      ]
+    },
+    {
+      "slot": 2,
+      "item": "minecraft:diamond_shovel",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 753,
+      "max_durability": 1561
+    },
+    {
+      "slot": 3,
+      "item": "minecraft:diamond_pickaxe",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 1561,
+      "max_durability": 1561,
+      "enchantments": [
+        {
+          "id": "minecraft:efficiency",
+          "level": 4
+        },
+        {
+          "id": "minecraft:unbreaking",
+          "level": 3
+        }
+      ]
+    },
+    {
+      "slot": 4,
+      "item": "minecraft:iron_hoe",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 250,
+      "max_durability": 250
+    },
+    {
+      "slot": 5,
+      "item": "minecraft:shulker_box",
+      "count": 1,
+      "max_stack": 1
+    },
+    {
+      "slot": 6,
+      "item": "minecraft:cooked_beef",
+      "count": 12,
+      "max_stack": 64
+    },
+    {
+      "slot": 7,
+      "item": "minecraft:bow",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 379,
+      "max_durability": 384,
+      "enchantments": [
+        {
+          "id": "minecraft:punch",
+          "level": 1
+        },
+        {
+          "id": "minecraft:infinity",
+          "level": 1
+        }
+      ]
+    },
+    {
+      "slot": 8,
+      "item": "minecraft:wheat_seeds",
+      "count": 15,
+      "max_stack": 64
+    },
+    {
+      "slot": 9,
+      "item": "minecraft:potato",
+      "count": 32,
+      "max_stack": 64
+    },
+    {
+      "slot": 10,
+      "item": "minecraft:bone_meal",
+      "count": 32,
+      "max_stack": 64
+    },
+    {
+      "slot": 11,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 12,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 13,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 14,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 15,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 16,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 17,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 18,
+      "item": "minecraft:diamond_pickaxe",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 155,
+      "max_durability": 1561,
+      "enchantments": [
+        {
+          "id": "minecraft:efficiency",
+          "level": 5
+        },
+        {
+          "id": "minecraft:unbreaking",
+          "level": 3
+        },
+        {
+          "id": "minecraft:mending",
+          "level": 1
+        },
+        {
+          "id": "minecraft:fortune",
+          "level": 3
+        }
+      ]
+    },
+    {
+      "slot": 19,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 20,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 21,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 22,
+      "item": "minecraft:torch",
+      "count": 47,
+      "max_stack": 64
+    },
+    {
+      "slot": 23,
+      "item": "minecraft:bucket",
+      "count": 1,
+      "max_stack": 16
+    },
+    {
+      "slot": 24,
+      "item": "minecraft:cooked_mutton",
+      "count": 8,
+      "max_stack": 64
+    },
+    {
+      "slot": 25,
+      "item": "minecraft:chest",
+      "count": 2,
+      "max_stack": 64
+    },
+    {
+      "slot": 26,
+      "item": "minecraft:torch",
+      "count": 64,
+      "max_stack": 64
+    },
+    {
+      "slot": 27,
+      "item": "minecraft:dirt",
+      "count": 64,
+      "max_stack": 64
+    },
+    {
+      "slot": 28,
+      "item": "minecraft:arrow",
+      "count": 26,
+      "max_stack": 64
+    },
+    {
+      "slot": 29,
+      "item": "minecraft:oak_log",
+      "count": 54,
+      "max_stack": 64
+    },
+    {
+      "slot": 30,
+      "item": "minecraft:ender_chest",
+      "count": 1,
+      "max_stack": 64
+    },
+    {
+      "slot": 31,
+      "item": "minecraft:stick",
+      "count": 3,
+      "max_stack": 64
+    },
+    {
+      "slot": 32,
+      "item": "minecraft:bone",
+      "count": 2,
+      "max_stack": 64
+    },
+    {
+      "slot": 33,
+      "item": "minecraft:baked_potato",
+      "count": 3,
+      "max_stack": 64
+    },
+    {
+      "slot": 34,
+      "item": "minecraft:diamond_shovel",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 1044,
+      "max_durability": 1561,
+      "enchantments": [
+        {
+          "id": "minecraft:silk_touch",
+          "level": 1
+        }
+      ]
+    },
+    {
+      "slot": 35,
+      "item": "minecraft:oak_planks",
+      "count": 1,
+      "max_stack": 64
+    },
+    {
+      "slot": 36,
+      "item": "minecraft:netherite_boots",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 481,
+      "max_durability": 481,
+      "enchantments": [
+        {
+          "id": "minecraft:depth_strider",
+          "level": 3
+        },
+        {
+          "id": "minecraft:unbreaking",
+          "level": 3
+        },
+        {
+          "id": "minecraft:mending",
+          "level": 1
+        },
+        {
+          "id": "minecraft:thorns",
+          "level": 3
+        },
+        {
+          "id": "minecraft:protection",
+          "level": 4
+        }
+      ]
+    },
+    {
+      "slot": 37,
+      "item": "minecraft:diamond_leggings",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 367,
+      "max_durability": 495,
+      "enchantments": [
+        {
+          "id": "minecraft:unbreaking",
+          "level": 3
+        },
+        {
+          "id": "minecraft:blast_protection",
+          "level": 4
+        }
+      ]
+    },
+    {
+      "slot": 38,
+      "item": "minecraft:diamond_chestplate",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 433,
+      "max_durability": 528,
+      "enchantments": [
+        {
+          "id": "minecraft:unbreaking",
+          "level": 3
+        }
+      ]
+    },
+    {
+      "slot": 39,
+      "item": "minecraft:netherite_helmet",
+      "count": 1,
+      "max_stack": 1,
+      "durability": 407,
+      "max_durability": 407,
+      "enchantments": [
+        {
+          "id": "minecraft:respiration",
+          "level": 3
+        },
+        {
+          "id": "minecraft:aqua_affinity",
+          "level": 1
+        },
+        {
+          "id": "minecraft:mending",
+          "level": 1
+        },
+        {
+          "id": "minecraft:thorns",
+          "level": 3
+        },
+        {
+          "id": "minecraft:protection",
+          "level": 4
+        }
+      ]
+    },
+    {
+      "slot": 40,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 41,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    },
+    {
+      "slot": 42,
+      "item": "minecraft:air",
+      "count": 0,
+      "max_stack": 1
+    }
+  ]
+}

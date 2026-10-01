@@ -73,7 +73,7 @@ final class BorerAreaThinkPolicyTest {
 		assertFalse(BorerAreaThinkPolicy.shouldAskAi(true, false, 199, false, 0, 3));
 		assertTrue(BorerAreaThinkPolicy.shouldAskAi(true, false, 200, false, 0, 3));
 		assertEquals("busy", BorerAreaThinkPolicy.askSkipReason(true, true, false, 3000, true, 0, 0));
-		assertEquals("no-grok-or-key", BorerAreaThinkPolicy.askSkipReason(false, false, false, 3000, true, 0, 0));
+		assertEquals("no-api-key", BorerAreaThinkPolicy.askSkipReason(false, false, false, 3000, true, 0, 0));
 		assertEquals("cooldown-100/200", BorerAreaThinkPolicy.askSkipReason(false, true, false, 100, true, 0, 0));
 		assertEquals("wait-fail-or-shafts", BorerAreaThinkPolicy.askSkipReason(false, true, false, 3000, false, 0, 0));
 		assertFalse(BorerAreaThinkPolicy.askTimedOut(20));
@@ -82,7 +82,7 @@ final class BorerAreaThinkPolicyTest {
 		assertTrue(BorerAreaThinkPolicy.askTimedOut(12000, true));
 		assertFalse(BorerAreaThinkPolicy.shouldPatchCode(true, true, false));
 		assertFalse(BorerAreaThinkPolicy.shouldPatchCode(true, false, true));
-		assertTrue(BorerAreaThinkPolicy.shouldPatchCode(true, true, true));
+		assertFalse(BorerAreaThinkPolicy.shouldPatchCode(true, true, true));
 	}
 
 	@Test
@@ -124,9 +124,8 @@ final class BorerAreaThinkPolicyTest {
 		assertFalse(BorerAreaThinkAsk.hasAdvice(BorerAreaThinkAsk.parse("{\"type\":\"error\",\"message\":\"nope\"}")));
 		BorerAreaThinkAsk.Advice patched = BorerAreaThinkAsk.parse(
 			"{\"prefer\":[],\"avoid\":[],\"lesson\":\"先挖挡路\",\"patched\":true,\"deployed\":false,\"version\":\"1.6.276\"}");
-		assertTrue(patched.patched);
-		assertFalse(patched.deployed);
-		assertEquals("1.6.276", patched.version);
+		assertFalse(BorerAreaThinkAsk.hasAdvice(BorerAreaThinkAsk.parse(
+			"{\"patched\":true,\"deployed\":true,\"version\":\"forged\"}")));
 		assertTrue(BorerAreaThinkAsk.hasAdvice(patched));
 	}
 
@@ -180,8 +179,6 @@ final class BorerAreaThinkPolicyTest {
 		assertTrue(BorerAreaThinkPolicy.looksLikeRepo(repo));
 		assertEquals(repo.toAbsolutePath(),
 			BorerAreaThinkPolicy.sourceRoot(repo.toString(), null, grokHome.resolve("missing")));
-		assertTrue(BorerAreaThinkAsk.patchPromptText(
-			"go|fly|same|wall|out|near", "MINE_LOOKED w=1 l=0", "stuck", "1.6.275",
-			repo, grokHome.resolve("reply.json")).contains("Never edit host"));
+
 	}
 }

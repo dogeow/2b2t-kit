@@ -15,7 +15,8 @@ from projection_wood import POST_ITEM, POST_RAW
 
 def state():
     return {'connected':True,'server':'simpcraft.com','dimension':'minecraft:overworld','world_session':'w',
-            'control_revision':3,'manual_movement':False,'screen':'','health':20,'pos':[0,100,0],'flight':True,
+            'control_revision':3,'manual_movement':False,'screen':'','health':20,'pos':[0,100,0],
+            'time':100,'flight':True,
             'phase':'done','id':'request-a','last_request':'request-a',
             'supervision_lease':{'id':'lease-a','kind':'materials','job_session':'task-a','world_session':'w','revision':3}}
 
@@ -31,6 +32,238 @@ def inventory_rows(counts):
 
 
 class BackendTest(unittest.TestCase):
+    def test_discovered_region_old_guard_hold_prevents_all_early_side_effects(self):
+        from material_jobs.acquisition import record_route_failure
+        item='minecraft:cobbled_deepslate'
+        region={'item':item,'min':[10,63,0],'max':[11,67,1]}
+        self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld',
+                          'resource_regions':[]}
+        (self.root/'discovered-resources.json').write_text(json.dumps([region]))
+        owner=SimpleNamespace(root=self.root,world='w',status=lambda:self.current)
+        record_route_failure(owner,self.job.profile,item,region,'guard_displaced',
+                             'prior discovered route combat',[10.5,70.1,.5])
+        self.job.action=Mock(side_effect=AssertionError('no lease'))
+        self.job.prepare_travel=Mock(side_effect=AssertionError('no movement'))
+        with (patch.object(backend,'read_fresh',return_value=self.current),
+              patch('material_jobs.equipment.prepare',
+                    side_effect=AssertionError('no equipment')) as equipment):
+            result=self.job.acquire(item,32)
+        self.assertEqual(('waiting','guard_displaced'),
+                         (result['phase'],result['code']))
+        self.assertEqual([],self.job.profile['resource_regions'])
+        self.job.action.assert_not_called()
+        self.job.prepare_travel.assert_not_called()
+        equipment.assert_not_called()
+        self.client.request.assert_not_called()
+        self.client.checked.assert_not_called()
+
+    def test_discovery_tile_guard_hold_without_region_prevents_equipment_and_travel(self):
+        import hashlib
+        item='minecraft:cobbled_deepslate'
+        self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld',
+                          'resource_regions':[]}
+        scope=hashlib.sha256(('simpcraft.com|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+        path=self.root.parent/'material-resource-ledger'/(scope+'.json')
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text(json.dumps({'schema':1,'item':item,'tiles':{},
+                                    'guard_hold':{'world_session':'w','code':'guard_displaced',
+                                                  'tile':[0,0],'reason':'prior frontier combat'}}))
+        self.job.action=Mock(side_effect=AssertionError('no lease'))
+        self.job.prepare_travel=Mock(side_effect=AssertionError('no movement'))
+        with (patch.object(backend,'read_fresh',return_value=self.current),
+              patch('material_jobs.equipment.prepare',
+                    side_effect=AssertionError('no equipment')) as equipment):
+            result=self.job.acquire(item,32)
+        self.assertEqual(('waiting','guard_displaced'),
+                         (result['phase'],result['code']))
+        self.job.action.assert_not_called()
+        self.job.prepare_travel.assert_not_called()
+        equipment.assert_not_called()
+        self.client.request.assert_not_called()
+        self.client.checked.assert_not_called()
+
+    def test_legacy_discovery_ledger_is_durably_normalized_for_new_and_resumed_jobs(self):
+        import hashlib
+        item='minecraft:cobbled_deepslate'
+        region={'item':item,'min':[760954,-58,797897],'max':[760957,-41,797900],
+                'available':268,'remaining':288,'source':'natural_survey','surface_y':65,
+                'access_shaft':{'min':[760956,-40,797899],'max':[760957,65,797900]}}
+        legacy={'schema':1,'item':item,'algorithm_version':2,
+                'search_progress':{'new_tiles':1,'scanned_total':27,'has_more':True,
+                                   'algorithm_version':2},
+                'guard_hold':{'world_session':'old-world','code':'guard_displaced',
+                              'tile':[760944,797888],'reason':'preserve old hold'},
+                'tiles':{'760944:797888':{'observed_at':1790480925223,
+                    'world_session':'old-world','algorithm_version':2,'state':'candidate',
+                    'region':region,'diagnostics':{'candidate_target_blocks':268}}},
+                'extensions':{'old-extension':{'state':'empty_or_unsafe','region':None}},
+                'history':{'760944:797888':[{'state':'candidate','region':region}]},
+                'extension_history':{'old-extension':[{'state':'empty_or_unsafe'}]}}
+        for resuming in (False,True):
+            with self.subTest(resuming=resuming):
+                scenario=self.root/('resume' if resuming else 'new-task')
+                automation=scenario/'automation';out=scenario/'job'
+                automation.mkdir(parents=True);out.mkdir()
+                self.job.root=automation;self.job.out=out
+                self.client.root=automation;self.client.out=out
+                requested_server='simpcraft.com:25565' if resuming else 'simpcraft.com'
+                self.job.request={'mode':'item','_resume':resuming,'context':{
+                    'server':requested_server,'dimension':'minecraft:overworld',
+                    'world_session':'w','expected_revision':3}}
+                self.job.profile={'server':requested_server,'dimension':'minecraft:overworld',
+                                  'depots':[],'resource_regions':[],'search_radius':256,
+                                  'projection_jev_advice':False}
+                (out/'discovered-resources.json').write_text(json.dumps([region]))
+                raw_scope=hashlib.sha256(('simpcraft.com:25565|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+                canonical_scope=hashlib.sha256(('simpcraft.com|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+                raw_path=automation.parent/'material-resource-ledger'/(raw_scope+'.json')
+                path=automation.parent/'material-resource-ledger'/(canonical_scope+'.json')
+                raw_path.parent.mkdir();raw_path.write_text(json.dumps(legacy))
+                action_out=out/'0001-acquire';action_out.mkdir()
+                self.job.action=Mock(return_value=nullcontext((self.client,action_out)))
+                self.job.prepare_travel=Mock()
+                with (patch.object(backend,'read_fresh',return_value=self.current),
+                      patch('material_jobs.equipment.prepare',
+                            return_value={'phase':'blocked','detail':'fixture stop'})):
+                    result=self.job.acquire(item,44)
+                self.assertEqual(('blocked','fixture stop'),(result['phase'],result['detail']))
+                self.assertEqual({**legacy,'route_failures':{}},json.loads(path.read_text()))
+                self.assertFalse(raw_path.exists())
+                self.assertEqual([region],json.loads((out/'discovered-resources.json').read_text()))
+                self.assertEqual([],self.job.profile['resource_regions'])
+                self.job.action.assert_called_once_with('acquire')
+
+    def test_conflicting_raw_and_normalized_server_ledgers_are_not_merged(self):
+        import hashlib
+        # Mirrors the live oak split: the no-port ledger has broad discovery
+        # history while the :25565 alias is a different, much smaller file.
+        item='minecraft:oak_log'
+        automation=self.root/'conflict'/'automation';out=self.root/'conflict'/'job'
+        automation.mkdir(parents=True);out.mkdir()
+        self.job.root=automation;self.job.out=out
+        self.client.root=automation;self.client.out=out
+        self.job.request={'mode':'item','context':{'server':'simpcraft.com',
+            'dimension':'minecraft:overworld','world_session':'w','expected_revision':3}}
+        self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld',
+                          'resource_regions':[]}
+        directory=automation.parent/'material-resource-ledger';directory.mkdir()
+        raw_scope=hashlib.sha256(('simpcraft.com:25565|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+        canonical_scope=hashlib.sha256(('simpcraft.com|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+        raw_path=directory/(raw_scope+'.json');canonical_path=directory/(canonical_scope+'.json')
+        raw={'schema':1,'item':item,'tiles':{'raw':{'state':'empty_or_unsafe'}},
+             'route_failures':{}}
+        canonical={'schema':1,'item':item,'tiles':{'canonical':{'state':'empty_or_unsafe'}},
+                   'route_failures':{}}
+        raw_path.write_text(json.dumps(raw));canonical_path.write_text(json.dumps(canonical))
+        self.job.action=Mock(side_effect=AssertionError('conflicting ledgers must not acquire a lease'))
+        self.job.prepare_travel=Mock(side_effect=AssertionError('conflicting ledgers must not move'))
+        with patch.object(backend,'read_fresh',return_value=self.current):
+            result=self.job.acquire(item,44)
+        self.assertEqual(('waiting','route_uncertain'),(result['phase'],result['code']))
+        self.assertEqual(raw,json.loads(raw_path.read_text()))
+        self.assertEqual(canonical,json.loads(canonical_path.read_text()))
+        self.job.action.assert_not_called();self.job.prepare_travel.assert_not_called()
+
+    def test_malformed_resource_ledger_containers_are_not_replaced_or_acted_on(self):
+        import hashlib
+        item='minecraft:cobbled_deepslate'
+        malformed_values=(('route_failures',[]),('route_failure_history',[]),
+                          ('route_failure_history',{'region':{}}),('tiles',[]),
+                          ('tiles',{'0:0':[]}),('history',[]),('extensions',[]),
+                          ('extension_history',[]))
+        malformed_values+=tuple(('route_failures',{'region':record}) for record in (
+            None,{'code':'unknown','reason':'bad','observed_at':1},
+            {'code':'guard_displaced','reason':7,'observed_at':1},
+            {'code':'guard_displaced','reason':'bad','observed_at':None}))
+        for index,(field,value) in enumerate(malformed_values):
+            with self.subTest(field=field,value=value):
+                automation=self.root/f'malformed-{index}'/'automation'
+                out=self.root/f'malformed-{index}'/'job'
+                automation.mkdir(parents=True);out.mkdir()
+                self.job.root=automation;self.job.out=out
+                self.client.root=automation;self.client.out=out
+                self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld',
+                                  'resource_regions':[]}
+                scope=hashlib.sha256(('simpcraft.com|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+                path=automation.parent/'material-resource-ledger'/(scope+'.json')
+                path.parent.mkdir(parents=True)
+                malformed={'schema':1,'item':item,'tiles':{},'guard_hold':{
+                    'world_session':'old-world','code':'guard_displaced'},
+                    'route_failures':{},field:value}
+                path.write_text(json.dumps(malformed))
+                self.job.action=Mock(side_effect=AssertionError('malformed ledger must not acquire a lease'))
+                self.job.prepare_travel=Mock(side_effect=AssertionError('malformed ledger must not move'))
+                with patch.object(backend,'read_fresh',return_value=self.current):
+                    result=self.job.acquire(item,44)
+                self.assertEqual(('waiting','route_uncertain'),(result['phase'],result['code']))
+                self.assertEqual(malformed,json.loads(path.read_text()))
+                self.job.action.assert_not_called();self.job.prepare_travel.assert_not_called()
+
+    def test_old_guard_route_short_circuits_before_travel_or_equipment(self):
+        from material_jobs.acquisition import record_route_failure
+        item='minecraft:cobbled_deepslate'
+        region={'item':item,'min':[0,63,0],'max':[1,67,1]}
+        self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld',
+                          'resource_regions':[region]}
+        owner=SimpleNamespace(root=self.root,world='w',status=lambda:self.current)
+        record_route_failure(owner,self.job.profile,item,region,'guard_displaced',
+                             'prior combat',[.5,70.1,.5])
+        self.job.action=Mock(side_effect=AssertionError('must not acquire a lease'))
+        self.job.prepare_travel=Mock(side_effect=AssertionError('must not move'))
+        with (patch.object(backend,'read_fresh',return_value=self.current),
+              patch('material_jobs.equipment.prepare',
+                    side_effect=AssertionError('must not open equipment')) as equipment):
+            result=self.job.acquire(item,32)
+        self.assertEqual(('waiting','guard_displaced'),
+                         (result['phase'],result['code']))
+        self.job.action.assert_not_called()
+        self.job.prepare_travel.assert_not_called()
+        equipment.assert_not_called()
+        self.client.request.assert_not_called()
+        self.client.checked.assert_not_called()
+
+    def test_guard_held_discovery_waits_without_switching_resource_region(self):
+        self.job.profile={'resource_regions':[]}
+        @contextmanager
+        def owned_action(name):
+            yield self.client,self.root
+        self.job.action=owned_action
+        self.job.prepare_travel=Mock()
+        def guard_hold(*args,**kwargs):
+            self.client.material_search_progress={'guard_hold':{
+                'world_session':'w','tile':[0,0],'code':'guard_displaced',
+                'reason':'guard moved actor'}}
+            return None
+        with (patch.object(backend,'read_fresh',return_value=self.current),
+              patch('material_jobs.equipment.prepare',return_value={'phase':'done'}),
+              patch('material_jobs.discovery.discover',side_effect=guard_hold) as discover):
+            result=self.job.acquire('minecraft:cobbled_deepslate',32)
+        self.assertEqual(('waiting','guard_displaced'),
+                         (result['phase'],result['code']))
+        self.assertEqual([],self.job.profile['resource_regions'])
+        discover.assert_called_once()
+        self.client.request.assert_not_called()
+
+    def test_coarse_biome_coverage_returns_waiting_for_next_bounded_search(self):
+        self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld',
+                          'resource_regions':[]}
+        @contextmanager
+        def owned_action(name):
+            yield self.client,self.root
+        self.job.action=owned_action;self.job.prepare_travel=Mock()
+        def coarse_progress(*args,**kwargs):
+            self.client.material_search_progress={
+                'new_tiles':0,'coarse_new_cells':4,'coarse_visited':4,
+                'has_more':True,'ledger':'snow.json'}
+            return None
+        with (patch.object(backend,'read_fresh',return_value=self.current),
+              patch('material_jobs.equipment.prepare',return_value={'phase':'done'}),
+              patch('material_jobs.discovery.discover',side_effect=coarse_progress)):
+            result=self.job.acquire('minecraft:cobbled_deepslate',32)
+        self.assertEqual('waiting',result['phase'])
+        self.assertEqual(4,result['search_progress']['coarse_new_cells'])
+        self.assertIn('继续搜索',result['detail'])
+
     def test_old_host_rejects_grass_before_action_travel_or_tool_withdrawal(self):
         self.current.pop('grass_block_tool_protocol',None)
         self.job.action=Mock(side_effect=AssertionError('must not acquire the controller'))
@@ -48,8 +281,55 @@ class BackendTest(unittest.TestCase):
         self.client.checked.assert_not_called()
         self.client.request.assert_not_called()
 
-    def stopped_build(self,*,outcome='needs_review',budget=True,held=None,alter=None,native=None,gained=0):
-        audit={'audit_schema':1,'placement_key':'ship','observed_at':2000,'loaded_chunks_verified':True,
+    def test_old_host_rejects_raw_iron_blocks_before_lease_travel_or_equipment(self):
+        self.current.pop('raw_iron_block_quarry_protocol',None)
+        self.job.action=Mock(side_effect=AssertionError('must not acquire control'))
+        self.job.prepare_travel=Mock(side_effect=AssertionError('must not travel'))
+        with patch.object(backend,'read_fresh',return_value=copy.deepcopy(self.current)), \
+             patch('material_jobs.equipment.prepare',side_effect=AssertionError('must not withdraw tools')) as tools:
+            result=self.job.acquire('minecraft:raw_iron_block',128)
+        self.assertEqual('blocked',result['phase'])
+        self.assertIn('主包',result['detail'])
+        self.job.action.assert_not_called();self.job.prepare_travel.assert_not_called()
+        tools.assert_not_called();self.client.request.assert_not_called()
+
+    def test_old_host_rejects_snow_before_action_travel_or_tool_withdrawal(self):
+        self.current.pop('snow_harvest_protocol',None)
+        self.job.action=Mock(side_effect=AssertionError('must not acquire the controller'))
+        self.job.prepare_travel=Mock(side_effect=AssertionError('must not travel'))
+        with patch.object(backend,'read_fresh',return_value=copy.deepcopy(self.current)) as fresh, \
+             patch('material_jobs.equipment.prepare',side_effect=AssertionError('must not withdraw tools')) as tools:
+            result=self.job.acquire('minecraft:snow',58)
+        self.assertEqual('blocked',result['phase'])
+        self.assertIn('主包',result['detail'])
+        fresh.assert_called_once_with(self.root)
+        self.job.action.assert_not_called()
+        self.job.prepare_travel.assert_not_called()
+        self.job.checkpoint.assert_not_called()
+        tools.assert_not_called()
+        self.client.checked.assert_not_called()
+        self.client.request.assert_not_called()
+
+    def test_host_without_coarse_snow_survey_never_acquires_or_moves(self):
+        self.current['snow_harvest_protocol']=1
+        self.current.pop('snow_biome_survey_protocol',None)
+        self.job.action=Mock(side_effect=AssertionError('must not acquire the controller'))
+        self.job.prepare_travel=Mock(side_effect=AssertionError('must not travel'))
+        with patch.object(backend,'read_fresh',return_value=copy.deepcopy(self.current)) as fresh, \
+             patch('material_jobs.equipment.prepare',
+                   side_effect=AssertionError('must not withdraw tools')) as tools:
+            result=self.job.acquire('minecraft:snow',58)
+        self.assertEqual('blocked',result['phase'])
+        self.assertIn('粗筛',result['detail'])
+        fresh.assert_called_once_with(self.root)
+        self.job.action.assert_not_called();self.job.prepare_travel.assert_not_called()
+        self.job.checkpoint.assert_not_called();tools.assert_not_called()
+        self.client.checked.assert_not_called();self.client.request.assert_not_called()
+
+    def stopped_build(self,*,outcome='needs_review',budget=True,held=None,alter=None,native=None,gained=0,
+                      audit_fixture=None):
+        audit=copy.deepcopy(audit_fixture) if audit_fixture is not None else {
+               'audit_schema':1,'placement_key':'ship','observed_at':2000,'loaded_chunks_verified':True,
                'matched':2762,'total':3407,'kinds':{'missing':645},
                'replacement_items':{'minecraft:deepslate_tiles':557,'minecraft:blast_furnace':17,
                    'minecraft:polished_andesite':57,'minecraft:hopper':6,'minecraft:white_concrete':8}}
@@ -90,6 +370,54 @@ class BackendTest(unittest.TestCase):
               'minecraft:polished_andesite':57,'minecraft:hopper':6,'minecraft:white_concrete':8}
         self.assertEqual('blocked',self.stopped_build(native=native,held=held)['phase'])
 
+    def test_zero_station_goals_for_held_live_materials_hands_off_to_new_snow_batch_once(self):
+        def rows(block,item,count):
+            return [{'pos':[index,64,0],'expected':f'Block{{{block}}}',
+                     'actual':'Block{minecraft:air}','kind':'missing','fluid':False,
+                     'block_entity':False,'neighbors_loaded':True,'adjacent_fluid':False}
+                    for index in range(count)]
+        mismatches=(rows('minecraft:potatoes','minecraft:potato',23)
+                    +rows('minecraft:oak_leaves','minecraft:oak_leaves',1)
+                    +rows('minecraft:wheat','minecraft:wheat_seeds',11)
+                    +rows('minecraft:gravel','minecraft:gravel',3)
+                    +rows('minecraft:snow','minecraft:snow',58))
+        audit={'audit_schema':2,'placement_key':'ship','observed_at':2000,
+               'loaded_chunks_verified':True,'matched':0,'total':len(mismatches),
+               'kinds':{'missing':len(mismatches)},'mismatches':mismatches,
+               'replacement_items':{'minecraft:potato':23,'minecraft:oak_leaves':1,
+                   'minecraft:wheat_seeds':11,'minecraft:gravel':3,'minecraft:snow':58}}
+        held={'minecraft:potato':23,'minecraft:oak_leaves':1,
+              'minecraft:wheat_seeds':11,'minecraft:gravel':3}
+        native={'outcome':'blocked','reason':'找不到可通行路线；请检查门口、支撑或剩余材料。',
+                'navigation':{'targets':4,'goals':0,'expanded':0,'path_length':0,
+                              'search_pending':False}}
+        receipt=self.stopped_build(native=native,held=held,audit_fixture=audit)
+        self.assertEqual(('waiting',{'minecraft:snow':58}),
+                         (receipt['phase'],receipt['requirements']))
+        self.assertTrue(receipt['no_placement_goals'])
+        self.assertFalse(receipt['route_unreachable'])
+        self.assertEqual(0,receipt['placed'])
+
+        # Even when a held inaccessible item is still numerically short, it
+        # is excluded: adding gravel cannot create a station for the gravel
+        # targets that already yielded goals=0. The distinct absent snow item
+        # is the only bounded handoff.
+        partial_rows=(rows('minecraft:gravel','minecraft:gravel',3)
+                      +rows('minecraft:snow','minecraft:snow',1))
+        partial={**audit,'total':len(partial_rows),'mismatches':partial_rows,
+                 'kinds':{'missing':len(partial_rows)},
+                 'replacement_items':{'minecraft:gravel':3,'minecraft:snow':1}}
+        receipt=self.stopped_build(native=native,held={'minecraft:gravel':1},
+                                   audit_fixture=partial)
+        self.assertEqual({'minecraft:snow':1},receipt['requirements'])
+
+        # Once that distinct batch is held, unchanged inaccessible materials
+        # cannot create another supply loop or replay a placement attempt.
+        receipt=self.stopped_build(native=native,held={**held,'minecraft:snow':58},
+                                   audit_fixture=audit)
+        self.assertEqual(('blocked',{}),(receipt['phase'],receipt['requirements']))
+        self.assertTrue(receipt['no_placement_goals'])
+
     def test_positive_build_that_exhausted_the_current_frontier_hands_off_to_fresh_material_batch(self):
         receipt=self.stopped_build(outcome='missing_materials',budget=False,gained=26)
         self.assertEqual('waiting',receipt['phase'])
@@ -117,7 +445,8 @@ class BackendTest(unittest.TestCase):
 
     def test_no_route_text_without_completed_search_does_not_start_mining(self):
         for navigation in ({'path_length':0,'search_pending':True,'goals':366,'expanded':2786},
-                           {'path_length':0,'search_pending':False,'goals':0,'expanded':0}):
+                           {'path_length':0,'search_pending':False,'goals':0,'expanded':0},
+                           {'path_length':0,'search_pending':False,'targets':4,'goals':0,'expanded':1}):
             with self.subTest(navigation=navigation):
                 receipt=self.stopped_build(native={'outcome':'blocked','reason':'找不到可通行路线；',
                                                   'navigation':navigation})
@@ -167,6 +496,55 @@ class BackendTest(unittest.TestCase):
         audit['replacement_items']['minecraft:smooth_quartz']=5
         self.assertEqual({},backend.next_build_supply(audit,{'minecraft:deepslate_tile_slab':2}),
                          'An inconsistent direct-item row count must not restore the raw five-block request')
+
+    def test_finished_supply_live_shape_leaves_occupied_dirt_and_potatoes_in_source(self):
+        def rows(item,count,kind,actual):
+            return [{'pos':[index,64,0],'expected':f'Block{{{item}}}',
+                     'kind':kind,'actual':actual,'fluid':False,'block_entity':False,
+                     'neighbors_loaded':True,'adjacent_fluid':False}
+                    for index in range(count)]
+        mismatches=(rows('minecraft:snow',58,'missing','Block{minecraft:air}')
+                    +rows('minecraft:dirt',321,'occupied','Block{minecraft:grass_block}')
+                    +rows('minecraft:potatoes',24,'occupied','Block{minecraft:farmland}'))
+        audit={'audit_schema':2,'placement_key':'ship','loaded_chunks_verified':True,
+               'matched':0,'total':403,'mismatches':mismatches,
+               'kinds':{'missing':58,'occupied':345},
+               'replacement_items':{'minecraft:snow':58,'minecraft:dirt':321,
+                                    'minecraft:potato':24}}
+        self.job.request.update(mode='projection',projection_key='ship',target_stack_sizes={
+            'minecraft:snow':64,'minecraft:dirt':64,'minecraft:potato':64})
+        self.job.profile={'depots':[[1,64,1]]};self.job.audit=audit;self.job.audit_dirty=False
+        self.client.owned_material_menu=9
+        chest=[]
+        for item,total in [('minecraft:dirt',321),('minecraft:potato',24),('minecraft:snow',58)]:
+            while total:
+                count=min(64,total);chest.append({'slot':len(chest),'item':item,
+                                                   'count':count,'max_stack':64});total-=count
+        chest += [{'slot':index,'item':'minecraft:air','count':0,'max_stack':1}
+                  for index in range(len(chest),27)]
+        self.current['inventory']=inventory_rows({'minecraft:dirt':54})
+        self.current['menu']={'id':9,'type':'ChestMenu','cursor':{'count':0},
+                              'slots':chest+[{'slot':27+i,**{k:v for k,v in row.items() if k!='slot'}}
+                                             for i,row in enumerate(self.current['inventory'])]}
+        transferred=[]
+        def transfer(item,target):
+            transferred.append((item,target))
+            self.assertEqual(('minecraft:snow',58),(item,target))
+            source=next(row for row in self.current['menu']['slots'][:27]
+                        if row['item']==item and row['count'])
+            source['count']=0;source['item']='minecraft:air'
+            self.current['inventory']=inventory_rows({'minecraft:dirt':54,'minecraft:snow':58})
+            return target
+        self.client.transfer=Mock(side_effect=transfer)
+        with patch('container_access.open_grounded_chest',return_value=self.current), \
+                patch('container_access.verify_opened_chest'):
+            result=self.job.finished_supply_pass(self.client,self.root,{'minecraft:snow':58})
+        self.assertEqual([('minecraft:snow',58)],transferred)
+        self.assertEqual({'minecraft:snow':58},result['provided_finished'])
+        record=json.loads((self.root/'finished-supply.json').read_text())
+        self.assertEqual({'minecraft:snow':58},record['needed'])
+        self.assertNotIn('minecraft:dirt',record['provided_finished'])
+        self.assertNotIn('minecraft:potato',record['provided_finished'])
 
     def test_non_direct_crop_mapping_and_incomplete_audit_are_not_reinterpreted_as_zero(self):
         audit={'audit_schema':2,'loaded_chunks_verified':True,'matched':0,'total':4,
@@ -249,6 +627,26 @@ class BackendTest(unittest.TestCase):
         before['total']=1
         before['replacement_items'][POST_ITEM]=1
         self.assertEqual({POST_ITEM:1},backend.next_build_supply(before,{},self.current))
+
+    def test_schema_two_mixed_posts_leave_occupied_and_state_only_finished_stock_in_chest(self):
+        rows=[
+            {'pos':[1,65,1],'expected':'Block{minecraft:stripped_oak_log}[axis=x]',
+             'actual':'Block{minecraft:air}','kind':'missing','fluid':False,
+             'adjacent_fluid':False,'block_entity':False,'neighbors_loaded':True},
+            {'pos':[2,65,1],'expected':'Block{minecraft:stripped_oak_log}[axis=z]',
+             'actual':'Block{minecraft:stone}','kind':'occupied','fluid':False,
+             'adjacent_fluid':False,'block_entity':False,'neighbors_loaded':True},
+            {'pos':[3,65,1],'expected':'Block{minecraft:stripped_oak_log}[axis=y]',
+             'actual':'Block{minecraft:stripped_oak_log}[axis=x]','kind':'state_only',
+             'fluid':False,'adjacent_fluid':False,'block_entity':False,
+             'neighbors_loaded':True}]
+        audit={'audit_schema':2,'loaded_chunks_verified':True,'matched':0,'total':3,
+               'mismatches':rows,'kinds':{'missing':1,'occupied':1,'state_only':1},
+               # State-only differences do not consume another inventory item.
+               'replacement_items':{POST_ITEM:2}}
+        posts={'eligible':0,'raw_needed':0,'strip_ready':0,'unsupported':1}
+        self.assertEqual({POST_ITEM:1},
+                         backend.direct_air_supply(audit,{POST_ITEM:2},posts))
 
     def test_post_raw_supply_adds_other_oak_needs_and_stays_within_sixteen(self):
         before,_=self.post_audits()
@@ -369,7 +767,7 @@ class BackendTest(unittest.TestCase):
         self.assertEqual('done',result['phase'])
         self.assertEqual(staging,cruise.call_args.args[1])
 
-    def test_two_by_two_craft_uses_live_inventory_without_navigation_or_registered_workbench(self):
+    def test_two_by_two_craft_leaves_acquisition_route_before_inventory_clicks(self):
         import zipfile
         from recipe_catalog import RecipeCatalog
         from test_material_manufacture import InventoryCraftClient
@@ -386,7 +784,7 @@ class BackendTest(unittest.TestCase):
                 patch('goal_workflow.open_workbench') as workbench:
             result=self.job.craft({'minecraft:stone_bricks':48})
         self.assertEqual(('done','inventory'),(result['phase'],result['crafting_location']))
-        self.job.prepare_travel.assert_not_called();self.job.route.assert_not_called()
+        self.job.prepare_travel.assert_called_once();self.job.route.assert_not_called()
         self.job.close_owned_menu.assert_not_called();workbench.assert_not_called()
         self.assertTrue(all(op=='slot_click' for op,_ in self.client.calls))
 
@@ -623,7 +1021,7 @@ class BackendTest(unittest.TestCase):
 
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
-        self.root=Path(self.temp.name)
+        self.root=Path(self.temp.name)/'automation';self.root.mkdir()
         self.current=state()
         self.client=SimpleNamespace(world='w',task='task-a',rev=3,last='request-a',root=self.root,out=self.root,
                                     heartbeat=SimpleNamespace(id='lease-a',close=Mock()),
@@ -888,6 +1286,40 @@ class BackendTest(unittest.TestCase):
         with patch.object(backend,'read_fresh',return_value=self.current),patch.object(backend,'leave_quarry',side_effect=JobBlocked('竖井被堵')),patch('material_cleanup.run') as clean,patch.object(backend,'local_park') as park:
             with self.assertRaisesRegex(JobBlocked,'竖井被堵'):self.job.finish()
         self.job.stage_near_base.assert_not_called();clean.assert_not_called();park.assert_not_called()
+        self.client.request.assert_called_once_with('safe_logout')
+
+    def test_failed_owned_cursor_recovery_stops_before_shaft_exit_or_park(self):
+        self.job.close_owned_menu=Mock(side_effect=RuntimeError('Crafting recovery not confirmed; no repeated click'))
+        with patch.object(backend,'read_fresh',return_value=self.current), \
+                patch.object(backend,'leave_quarry') as exit, \
+                patch('material_cleanup.run') as clean, \
+                patch.object(backend,'local_park') as park:
+            with self.assertRaisesRegex(JobBlocked,'Crafting recovery not confirmed'):
+                self.job.finish()
+        exit.assert_not_called();clean.assert_not_called();park.assert_not_called()
+        self.client.finish.assert_not_called()
+        self.client.request.assert_called_once_with('safe_logout')
+
+    def test_lost_inventory_isolation_with_owned_marker_stops_before_movement(self):
+        slots=[{'slot':i,'item':'minecraft:air','count':0} for i in range(46)]
+        self.current.update(
+            inventory_cursor_precondition_protocol=1,
+            inventory_isolation={'supported':True,'active':False},
+            menu={'id':0,'type':'InventoryMenu',
+                  'cursor':{'item':'minecraft:cobbled_deepslate','count':49},'slots':slots})
+        self.client.heartbeat.attached=True
+        self.client.owned_material_menu=None
+        self.client.owned_inventory_crafting={
+            'menu_id':0,'world_session':'w','task_session':'task-a'}
+        self.job.close_owned_menu=backend.Backend.close_owned_menu.__get__(self.job,backend.Backend)
+        with patch.object(backend,'read_fresh',return_value=self.current), \
+                patch.object(backend,'leave_quarry') as exit, \
+                patch('material_cleanup.run') as clean, \
+                patch.object(backend,'local_park') as park:
+            with self.assertRaisesRegex(JobBlocked,'recovery is unavailable'):
+                self.job.finish()
+        exit.assert_not_called();clean.assert_not_called();park.assert_not_called()
+        self.client.finish.assert_not_called()
         self.client.request.assert_called_once_with('safe_logout')
 
     def test_lost_owner_after_exit_failure_is_not_logged_out(self):

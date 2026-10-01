@@ -207,13 +207,23 @@ def settled_state(client, target=None, tolerance=.6, seconds=4):
 
 
 def _below_vertical_start(row, position):
-    """Known chest collision tops are below feet even when Flight reports airborne."""
+    """Known partial collision tops are below feet even when Flight reports airborne.
+
+    Keep this deliberately limited to shapes whose collision height is fixed by
+    the observed state.  In particular, only a dry bottom slab is proven here;
+    top/double/waterlogged slabs remain obstacles.
+    """
     from .acquisition import block_id
-    return (block_id(row) in {'minecraft:chest','minecraft:trapped_chest','minecraft:ender_chest'}
-            and row.get('solid') is False and row.get('fluid') is False
-            and row.get('block_entity') is True and 'waterlogged=true' not in row.get('state','')
-            and row['pos'][1]==math.floor(position[1])
-            and position[1]>=row['pos'][1]+.875-1e-7)
+    name,state=block_id(row),row.get('state','')
+    if (row.get('solid') is not False or row.get('fluid') is not False
+            or row['pos'][1]!=math.floor(position[1])):
+        return False
+    if (name in {'minecraft:chest','minecraft:trapped_chest','minecraft:ender_chest'}
+            and row.get('block_entity') is True and 'waterlogged=true' not in state):
+        return position[1]>=row['pos'][1]+.875-1e-7
+    return (name.endswith('_slab') and row.get('block_entity') is False
+            and '[type=bottom,' in state and 'waterlogged=false]' in state
+            and position[1]>=row['pos'][1]+.5)
 
 
 def leave_projection(client):

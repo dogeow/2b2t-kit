@@ -7,7 +7,7 @@ import net.minecraft.client.Minecraft;
 /** Delegate placement to the installed Litematica Printer, never to two placers. */
 public final class ProfessionalPrinter {
     private static final String CONFIG="me.aleksilassila.litematica.printer.config.Configs";
-    private static final String AIR="meteordevelopment.meteorclient.systems.modules.world.AirPlace";
+    private static final String AIR=MeteorModules.AIR_PLACE;
     private static boolean owned, paused,placementSneak,recheck;
     private static net.minecraft.world.item.Item expectedHand;
     private static long lastOwnedClick;
@@ -42,6 +42,10 @@ public final class ProfessionalPrinter {
     private static boolean fastEnabled=true;
     private static ConfirmedPlacementPacer pacing=new ConfirmedPlacementPacer();
     private static PlacementTravelBarrier<net.minecraft.core.BlockPos,net.minecraft.world.level.block.state.BlockState> travel=new PlacementTravelBarrier<>(PrinterStateConfirmation::matches);
+    private static final PrinterBatchCompletion<net.minecraft.core.BlockPos,net.minecraft.world.level.block.state.BlockState> batchCompletion=new PrinterBatchCompletion<>();
+    static boolean batchServerConfirmed(java.util.Set<net.minecraft.core.BlockPos> currentTargets){
+        return owned&&!paused&&failure.isEmpty()&&batchCompletion.complete(currentTargets)&&readyForTravel();
+    }
     /** Used only to finish a station early. It does not alter native placement pacing. */
     public static boolean readyForTravel(){return travel.settled()&&queueIdleForTravel();}
     public static boolean queueIdleForTravel(){
@@ -137,6 +141,7 @@ public final class ProfessionalPrinter {
             if(pendingTarget==null||pendingState==null)throw new IllegalStateException("Printer action has no verified target");
             lastProposal.addProperty("target",pendingTarget.toShortString());lastProposal.addProperty("expected",pendingState.toString());lastProposal.addProperty("final_target",pendingFinalState.toString());
             lastProposal.addProperty("hand",String.valueOf(expectedHand));lastProposal.addProperty("anchor",pendingAnchor==null?"":pendingAnchor.toShortString());
+            batchCompletion.queued(pendingTarget);
             travel.queued(pendingTarget,pendingState);
             pacing.queued(elapsedTicks,simple);setInterval(simple&&fastEnabled?2:4);
             if(simple&&fastEnabled)fastProposals++;else complexProposals++;
@@ -148,11 +153,15 @@ public final class ProfessionalPrinter {
     }
     public static void serverBlock(net.minecraft.core.BlockPos pos,net.minecraft.world.level.block.state.BlockState state){
         if(!owned)return;
+        batchCompletion.serverBlock(pos,state);
         if(pendingTarget==null||!pos.equals(pendingTarget)||!pacing.sent())return;
         boolean finalMatch=pendingFinalState!=null&&PrinterStateConfirmation.matches(pendingFinalState,state);
         if(PrinterStateConfirmation.matches(pendingState,state)||finalMatch){
-            travel.acknowledge(pos);lastProposal.addProperty("ack_actual",state.toString());lastProposal.addProperty("ack_final",finalMatch);
-            if(pacing.acknowledge()){confirmedPlacements++;if(confirmationSeconds.size()<64)confirmationSeconds.add((System.nanoTime()-sessionNanos)/1e9);}
+            boolean travelAcknowledged=travel.acknowledge(pos);lastProposal.addProperty("ack_actual",state.toString());lastProposal.addProperty("ack_final",finalMatch);
+            boolean pacingAcknowledged=pacing.acknowledge();
+            if(pacingAcknowledged){confirmedPlacements++;if(confirmationSeconds.size()<64)confirmationSeconds.add((System.nanoTime()-sessionNanos)/1e9);}
+            batchCompletion.acknowledge(pos,pendingFinalState,travelAcknowledged,pacingAcknowledged,
+                pendingFinalState!=null&&pendingFinalState.equals(state));
         }else if(!state.isAir()&&!state.canBeReplaced())fail(Minecraft.getInstance(),"服务器返回的方块与当前放置动作不一致，已停止放置");
     }
     private static void setInterval(int value)throws ReflectiveOperationException{
@@ -185,7 +194,9 @@ public final class ProfessionalPrinter {
         j.add("last_proposal",lastProposal.deepCopy());j.addProperty("last_hand_mismatch",lastHandMismatch);j.addProperty("action_interval_unit","client_ticks");j.addProperty("owned_menu_recoveries",recoveredMenus);j.addProperty("placement_sneak",placementSneak);j.addProperty("air_place",MeteorModules.isActive(AIR));j.addProperty("owned",owned);j.addProperty("proposal_period_ticks",fastEnabled?8:20);j.addProperty("fast_proposals",fastProposals);j.addProperty("complex_proposals",complexProposals);j.addProperty("server_confirmed",confirmedPlacements);j.addProperty("waiting_for_server",owned&&pacing.awaiting());j.addProperty("travel_pending",travel.pendingCount());j.addProperty("ready_for_travel",owned&&readyForTravel());j.addProperty("failure",failure);j.add("confirmation_seconds",new com.google.gson.Gson().toJsonTree(confirmationSeconds));return j;
     }
     public static void start(){start(true);}
-    public static void start(boolean acceleratePlainBlocks){
+    public static void start(boolean acceleratePlainBlocks){start(acceleratePlainBlocks,java.util.Set.of());}
+    static void start(boolean acceleratePlainBlocks,java.util.Collection<net.minecraft.core.BlockPos> completionTargets){
+        batchCompletion.begin(completionTargets);
         try{
             if(!PrinterGateInstalled.class.isAssignableFrom(Class.forName("me.aleksilassila.litematica.printer.Printer")))throw new IllegalStateException("Native printer safety gate is not installed");
             if(!PrinterCandidateGateInstalled.class.isAssignableFrom(Class.forName("me.aleksilassila.litematica.printer.guides.Guides")))throw new IllegalStateException("Native printer target observer is not installed");

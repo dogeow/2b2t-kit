@@ -89,7 +89,7 @@ def preflight(root, park_high):
     key = selection.get('key')
     if (not state.get('connected') or state.get('server', '').removesuffix(':25565') != site['server']
             or state.get('dimension') != site['dimension'] or state.get('manual_movement')
-            or state.get('screen') != '' or state.get('dry_paving_protocol') != 1
+            or state.get('screen') != '' or state.get('dry_paving_protocol') != 2
             or type(state.get('dry_paving_protocol')) is not int
             or tuple(selection.get('min') or ()) != site['bounds']['min']
             or tuple(selection.get('max') or ()) != site['bounds']['max']
@@ -190,7 +190,7 @@ def select_batch(client, limit, allowed_cells=None):
             continue
         if paving._protected(pos, paving.SITE):
             continue
-        recovered = record is not None and record['phase'] == 'recovered'
+        recovered = record is not None and record['phase'] in ('recovered', 'drop_lost')
         try:
             row = paving._target(model, audit, pos, paving.SITE, air=recovered)
         except paving.PavingBlocked:
@@ -309,7 +309,7 @@ def _first_trip_descent(client, cells, before, initial_state, verified_high_park
     for pos in cells:
         _, record = _journal_record(client, tuple(pos), state, model)
         if record is not None:
-            if record['phase'] == 'recovered':
+            if record['phase'] in ('recovered', 'drop_lost'):
                 return {'used': False, 'reason': 'Recovered cell requires cautious approach'}
             raise paving.PavingPending('Selected cell already has a journal at %s' % (tuple(pos),))
     result = descend_if_clear(client, target_y=63, braking_margin=16)
@@ -340,6 +340,7 @@ def _finish_receipt(client, out):
 
 def run(client, out, *, minutes=20, max_cells, batch_size=4, allowed_cells=None,
         fast_first_descent=False, initial_state=None, verified_high_park=None,
+        reconcile_evidence=None,
         monotonic=time.monotonic, wall_time=time.time, pave=paving.pave_batch):
     """Run a bounded session, writing durable progress before every batch."""
     validate_limits(minutes, max_cells, batch_size)
@@ -361,6 +362,14 @@ def run(client, out, *, minutes=20, max_cells, batch_size=4, allowed_cells=None,
     _write_progress(out, progress)
     first_trip_checked = False
     try:
+        if reconcile_evidence is not None:
+            if max_cells != 1 or allowed_cells is None or len(allowed_cells) != 1:
+                raise ValueError('Mining reconciliation requires one exact --cell and --max-cells 1')
+            pos = next(iter(allowed_cells))
+            recovery = paving.reconcile_mine_intent(client, pos, reconcile_evidence)
+            progress['reconciliation'] = recovery
+            _write_progress(out, progress)
+            _append_event(out, {'event': 'mine_intent_reconciled', **recovery})
         while progress['done'] < max_cells:
             if monotonic() - started >= minutes * 60:
                 progress['status'] = 'time_limit'
@@ -494,6 +503,8 @@ def main(argv=None):
     parser.add_argument('--batch-size', type=int, default=4)
     parser.add_argument('--fast-first-descent', action='store_true',
                         help='Opt in to one guarded clear-column descent on a new first batch')
+    parser.add_argument('--reconcile-evidence', type=Path,
+                        help='Explicit JSON proof for one previously mined exact cell')
     args = parser.parse_args(argv)
     client = None
     park_verified = False
@@ -514,7 +525,9 @@ def main(argv=None):
         result = run(client, args.out, minutes=args.minutes, max_cells=args.max_cells,
                      batch_size=args.batch_size, allowed_cells=allowed_cells,
                      fast_first_descent=args.fast_first_descent, initial_state=initial,
-                     verified_high_park=park)
+                     verified_high_park=park,
+                     reconcile_evidence=(json.loads(args.reconcile_evidence.read_text(encoding='utf-8'))
+                                         if args.reconcile_evidence else None))
         result['verified_high_park'] = park
     except (Handoff, paving.PavingBlocked, RuntimeError, OSError,
             ValueError, KeyError, TypeError, AttributeError,

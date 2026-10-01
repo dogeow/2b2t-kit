@@ -3,7 +3,7 @@
 This module deliberately has no clear/unlock API. A later native Kit user
 acknowledgement can satisfy a hold; unattended callers never clear one.
 """
-import json,time,os,tempfile
+import json,time,os,tempfile,math
 from pathlib import Path
 
 def require_assistant_control_allowed(root):
@@ -38,7 +38,7 @@ def require_unlocked(root, status=None):
     if script.exists():
         try:
             hold=json.loads(script.read_text())
-            if not isinstance(hold.get('active'),bool) or not isinstance(hold.get('time'),int):
+            if not isinstance(hold.get('active'),bool) or type(hold.get('time')) is not int or hold['time']<0:
                 raise ValueError('Invalid material health record')
         except (OSError,ValueError,AttributeError) as error:
             raise RuntimeError('Material health record unreadable; await manual confirmation') from error
@@ -46,6 +46,39 @@ def require_unlocked(root, status=None):
                       and native.get('cleared_at',0)>hold['time'])
         if hold['active'] and not acknowledged:
             raise RuntimeError('Material task exited for health; player must recover and explicitly confirm before automation resumes')
+
+
+class OwnedHealthExitEvidence:
+    """Small per-client witness; historical hurt markers never create an exit cause."""
+    def __init__(self,world,task):
+        self.world,self.task=world,task
+        self.last=None;self.decline=None;self.disconnected=False
+    def observe(self,state):
+        if state.get('connected') is False:
+            self.disconnected=self.last is not None
+            return
+        lease=state.get('supervision_lease') or {}
+        health,stamp=state.get('health'),state.get('time')
+        if (state.get('connected') is not True or state.get('world_session')!=self.world
+                or state.get('manual_movement') or not isinstance(lease,dict)
+                or lease.get('kind') not in ('materials','parking') or lease.get('job_session')!=self.task
+                or lease.get('world_session')!=self.world
+                or lease.get('revision')!=state.get('control_revision')
+                or type(health) not in (int,float) or not math.isfinite(health)
+                or type(stamp) is not int or self.last and stamp<=self.last['time']):
+            return
+        current={key:state.get(key) for key in ('time','health','pos','server','world_session','recent_hurt_at')}
+        if self.last and health<self.last['health']:
+            self.decline=current
+        if health>=20:self.decline=None
+        self.last=current;self.disconnected=False
+    def recovered(self,state):
+        # Only the caller's verified guarded recovery routine invokes this.
+        if type(state.get('health')) in (int,float) and state['health']>=19:
+            self.decline=None
+    def exit_state(self):
+        if self.last and self.last['health']<18:return dict(self.last)
+        return dict(self.decline) if self.decline else None
 
 
 def record_material_health_exit(root,state,reason):

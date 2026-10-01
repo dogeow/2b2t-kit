@@ -20,14 +20,19 @@ public final class KitRecordPages {
     private static void confirm(Screen parent, String title, String message, Runnable action) { mc().setScreen(new KitConfirmScreen(parent, title, message, action)); }
     private static void requireName(String name) { if (name == null || name.isBlank()) throw new IllegalArgumentException("名称不能为空"); }
 
-    public static void places(Screen parent, KitConfig c) {
-        var list = new KitCollectionScreen<KitConfig.SavedPlace>(parent, c, "places", "地点收藏", "点名称查看详情；编辑不会改变当前目标",
-            () -> c.savedPlaces, p -> p.name + "  " + KitConfig.dimensionLabel(p.dimension), KitRecordPages::placeSummary,
+	public static void places(Screen parent, KitConfig c) {
+		var list = new KitCollectionScreen<KitConfig.SavedPlace>(parent, c, "places", "地点收藏", "点名称查看详情；编辑不会改变当前目标",
+			() -> c.savedPlaces, p -> (p.home ? "家 · " : "") + p.name + "  " + KitConfig.dimensionLabel(p.dimension), KitRecordPages::placeSummary,
             p -> p.name + " " + placeSummary(p)).key(p -> p.name);
         dimensionFilters(list, p -> p.dimension);
         list.onOpen(p -> placeDetails(list, c, p));
         list.add("新增地点", () -> placeEditor(list, c, null));
-        list.action("编辑", "只编辑收藏，不起飞。", p -> placeEditor(list, c, p), p -> true);
+		list.action("编辑", "只编辑收藏，不起飞。", p -> placeEditor(list, c, p), p -> true);
+		list.action("设家", "设为自动远行返航使用的唯一地点，不会立刻起飞。", p -> {
+			if(c.setHomePlace(p.name))list.message("已设为唯一的家："+p.name);
+			else list.message("地点已不存在，请刷新列表");
+			list.refresh();
+		}, p -> !p.home);
         list.action("前往", "按收藏巡航高度起飞；维度必须一致。", p -> {
             if (!sameDimension(p.dimension)) { list.message("当前维度不同，请先换维度"); return; }
             var guide = KitClient.structureGuide(); if (guide != null) guide.stop();
@@ -42,8 +47,13 @@ public final class KitRecordPages {
     private static String placeSummary(KitConfig.SavedPlace p) { return "X " + KitUi.formatNumber(p.x) + "  Y " + KitUi.formatNumber(p.cruiseY) + "  Z " + KitUi.formatNumber(p.z) + "\n" + KitConfig.dimensionLabel(p.dimension); }
     private static void placeDetails(Screen parent, KitConfig c, KitConfig.SavedPlace place) {
         var p = new KitFormScreen(parent, place.name, "地点详情；只查看不会更换目标。").bind(c).recordDraft().id("place-detail:" + place.name);
-        p.note(placeSummary(place));
-        p.action("编辑收藏", "修改后保存，不自动起飞。", () -> placeEditor(parent, c, place));
+		p.note(placeSummary(place));
+		if(place.home)p.note("当前唯一的家；材料远行完成后优先返回这里。");
+		p.action("编辑收藏", "修改后保存，不自动起飞。", () -> placeEditor(parent, c, place));
+		if(!place.home)p.action("设为唯一的家", "供材料远行返航使用，不会立刻起飞。", () -> {
+			if(c.setHomePlace(place.name)){p.showNotice("已设为唯一的家",0x55FF55);mc().setScreen(parent);}
+			else p.showNotice("地点已不存在",0xFF5555);
+		});
         p.action("显示方向指引", "仅显示箭头与距离，不移动。", () -> {
             if (!sameDimension(place.dimension)) { p.showNotice("当前维度不同", 0xFF7777); return; }
             if (KitClient.structureGuide() != null) { KitClient.structureGuide().start(place.name, (int)Math.round(place.x), (int)Math.round(place.z)); mc().setScreen(null); }

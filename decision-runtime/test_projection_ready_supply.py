@@ -61,7 +61,10 @@ class ProjectionSupplyTest(unittest.TestCase):
         self.job.out=self.root;self.job.client=self.client
         self.job.request={'mode':'projection','projection_key':'ship','target_stack_sizes':{self.deep:64,self.smooth:64,self.andesite:64}}
         self.job.profile={'dimension':'minecraft:overworld','depots':[[1,64,1],[2,64,2]]}
-        self.job.audit={'placement_key':'ship','loaded_chunks_verified':True,'kinds':{},
+        # These fixtures predate per-cell schema-2 audit rows and deliberately
+        # exercise the explicit legacy path. Schema-2 behavior is covered by
+        # the direct-air integration regression in test_material_jobs_backend.
+        self.job.audit={'audit_schema':1,'placement_key':'ship','loaded_chunks_verified':True,'kinds':{},
             'replacement_items':{self.deep:625,self.smooth:115,self.andesite:136,'minecraft:white_concrete':8,'minecraft:hopper':6}}
         self.job.audit_dirty=False;self.job.checkpoint=Mock();self.job.stock=Mock(side_effect=lambda:dict(self.client.held))
         self.job.close_owned_menu=self.client.close;self.job.prepare_travel=Mock();self.job.stage_near_base=Mock()

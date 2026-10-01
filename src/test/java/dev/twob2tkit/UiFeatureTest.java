@@ -6,8 +6,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class UiFeatureTest {
     @Test void oneCatalogContainsEveryPlannedFeatureAndSevenCategories() {
-        assertEquals(7, UiFeature.Category.values().length); assertEquals(35, UiFeature.values().length);
-        for (String id : List.of("AREA", "ORE", "GRAVEL", "FORWARD", "DOWN", "ROUTE", "BORER_SAFETY", "CRUISE", "CRUISE_OPTIONS", "PLACES", "SCENERY", "STRUCTURES", "STRUCTURE_MARKS", "DEATH", "CHOPPER", "PLANTER", "FEEDER", "FISHER", "CONCRETE", "MATERIALS", "SKILLS", "BUILDER", "VILLAGER", "BRAWLER", "STORAGE", "CHECKLIST", "RECIPES", "GUARD", "SURROUND", "SURVIVAL", "HEALING", "TRUSTED", "SETTINGS", "KEYBINDS", "DIAGNOSTICS"))
+        assertEquals(7, UiFeature.Category.values().length); assertEquals(36, UiFeature.values().length);
+        for (String id : List.of("AREA", "ORE", "GRAVEL", "FORWARD", "DOWN", "ROUTE", "BORER_SAFETY", "CRUISE", "CRUISE_OPTIONS", "PLACES", "SCENERY", "STRUCTURES", "STRUCTURE_MARKS", "DEATH", "CHOPPER", "PLANTER", "FEEDER", "FISHER", "CONCRETE", "CARETAKER", "MATERIALS", "SKILLS", "BUILDER", "VILLAGER", "BRAWLER", "STORAGE", "CHECKLIST", "RECIPES", "GUARD", "SURROUND", "SURVIVAL", "HEALING", "TRUSTED", "SETTINGS", "KEYBINDS", "DIAGNOSTICS"))
             assertNotNull(UiFeature.find(id), id);
     }
     @Test void searchMatchesOldNamesAndCommonTermsWithoutLaunchingActions() {

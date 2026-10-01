@@ -17,5 +17,5 @@ record SavedPlacesLayout(int left, int width, int toolbarY, int filterY, int lis
 	int buttonX(int index) { return left + index * (buttonWidth() + 6); }
 	boolean listVisible() { return listHeight >= ROW_HEIGHT + 8; }
 	int fullRows() { return Math.max(0, (listHeight - 8) / ROW_HEIGHT); }
-	static int textWidth(int contentWidth) { return Math.max(1, contentWidth - 166); }
+	static int textWidth(int contentWidth) { return Math.max(1, contentWidth - 206); }
 }

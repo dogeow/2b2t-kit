@@ -74,3 +74,9 @@ python3 -m unittest discover -v
 ```
 
 测试使用隔离的临时文件和虚拟 Kit 回包，不控制当前游戏。实际连接验收使用只读 `inspect` 与短时 `watch`。
+
+## 材料后端共用经验
+
+材料 profile 的 `skill_memory_state` 可指向本观察器正在使用的绝对 `--state` 目录，使原生交易和流水线 lesson 进入同一经验库。未配置时，材料后端写入当前游戏 `config/twob2tkit/skill-memory`；查询该库时须使用对应 `--state`，不要把另一个空库当成没有记录。流水线模块的 `reported_done` 只记为诊断 lesson，不晋升技能。打印成功还需明确确认服务器队列已清空、模块已停止，未知字段不算成功；历史库中旧版打印记录须按新规则复核后再用。
+
+工序的数量语义、未确认动作和安全收尾规则见 [自动化经验](../decision-runtime/AUTOMATION-EXPERIENCE.md)。

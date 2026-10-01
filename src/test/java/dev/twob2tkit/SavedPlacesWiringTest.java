@@ -39,6 +39,13 @@ class SavedPlacesWiringTest {
 		assertTrue(fieldIndex(edit, "placeName") < callIndex(edit, "rebuildWidgets"));
 		assertEquals(-1, callIndex(edit, "start")); assertEquals(-1, callIndex(edit, "travel"));
 	}
+	@Test void settingHomeOnlyUpdatesTheSavedPlaceRoleAndDoesNotStartTravel() throws Exception {
+		var home = method("setHome");
+		assertTrue(callIndex(home, "setHomePlace") >= 0);
+		assertTrue(callIndex(home, "rebuildWidgets") > callIndex(home, "setHomePlace"));
+		assertEquals(-1, callIndex(home, "start"));
+		assertEquals(-1, callIndex(home, "travel"));
+	}
 	private static MethodNode method(String name) throws Exception {
 		var node = new ClassNode();
 		try (var input = SavedPlacesWiringTest.class.getResourceAsStream("/dev/twob2tkit/KitSavedPlacesScreen.class")) {

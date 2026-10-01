@@ -60,8 +60,8 @@ class SavedPlacesLayoutTest {
 	}
 	@Test void longTextStopsBeforeTheFirstActionButton() {
 		for (int contentWidth : new int[]{264, 560, 624}) {
-			int guideLeft = contentWidth - 158;
-			assertEquals(guideLeft - 8, SavedPlacesLayout.textWidth(contentWidth));
+			int homeLeft = contentWidth - 198;
+			assertEquals(homeLeft - 8, SavedPlacesLayout.textWidth(contentWidth));
 		}
 		assertEquals(1, SavedPlacesLayout.textWidth(0));
 	}

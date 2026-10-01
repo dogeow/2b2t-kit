@@ -10,7 +10,9 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -103,7 +105,7 @@ public final class PlanterLoot {
 		double best = Double.MAX_VALUE;
 		for (ItemEntity entity : client.level.getEntitiesOfClass(ItemEntity.class, search)) {
 			if (!entity.isAlive() || ignored.containsKey(entity.getId())) continue;
-			if (!PlanterPolicy.isFarmLoot(entity.getItem(), crop, plant)) continue;
+			if (!isFarmLoot(entity.getItem(), crop, plant)) continue;
 			if (inLava(client, entity)) continue;
 			double dist = player.distanceTo(entity);
 			if (dist < best) {
@@ -179,15 +181,7 @@ public final class PlanterLoot {
 		}
 		Vec3 dest = loot.position();
 		lookAt(player, dest);
-		double horiz = Math.hypot(dest.x - player.getX(), dest.z - player.getZ());
-		client.options.keyUp.setDown(horiz > 0.2);
-		client.options.keyDown.setDown(false);
-		client.options.keyLeft.setDown(false);
-		client.options.keyRight.setDown(false);
-		double dy = dest.y - player.getY();
-		boolean stepUp = dy > 0.45 && dy <= 1.25;
-		boolean jumpStuck = stuckTicks > 8 && horiz > 0.5 && player.onGround();
-		client.options.keyJump.setDown((stepUp && player.onGround()) || jumpStuck);
+		PlanterApproachTracker.walkToward(client, player, dest);
 		status = String.format(Locale.ROOT, "去捡 %s  距离 %.1f",
 			loot.getItem().getHoverName().getString(), distance);
 		return true;
@@ -208,7 +202,7 @@ public final class PlanterLoot {
 			Entity existing = client.level.getEntity(entityId);
 			boolean alive = existing instanceof ItemEntity item
 				&& item.isAlive()
-				&& PlanterPolicy.isFarmLoot(item.getItem(), cropItem, plantBlock);
+				&& isFarmLoot(item.getItem(), cropItem, plantBlock);
 			if (alive && !ignored.containsKey(entityId)) return (ItemEntity) existing;
 			if (existing == null) return null;
 			resetLockedTarget();
@@ -227,7 +221,7 @@ public final class PlanterLoot {
 		double bestFound = Double.MAX_VALUE;
 		for (ItemEntity entity : client.level.getEntitiesOfClass(ItemEntity.class, search)) {
 			if (!entity.isAlive() || ignored.containsKey(entity.getId())) continue;
-			if (!PlanterPolicy.isFarmLoot(entity.getItem(), cropItem, plantBlock)) continue;
+			if (!isFarmLoot(entity.getItem(), cropItem, plantBlock)) continue;
 			double dist = player.distanceTo(entity);
 			if (dist < bestFound) {
 				bestFound = dist;
@@ -235,6 +229,19 @@ public final class PlanterLoot {
 			}
 		}
 		return best;
+	}
+
+	/** Wheat/beetroot plants map to seed items, so include their actual produce. */
+	public static boolean isFarmLoot(ItemStack stack, Item crop, Block plant) {
+		return !stack.isEmpty() && isFarmLoot(stack.getItem(), crop, plant);
+	}
+
+	/** Item identity is enough for loot filtering, independent of stack components. */
+	public static boolean isFarmLoot(Item item, Item crop, Block plant) {
+		if (item == null || item == Items.AIR || crop == null) return false;
+		if (item == crop || plant != null && plant.asItem() != Items.AIR && item == plant.asItem()) return true;
+		return (crop == Items.WHEAT_SEEDS && plant == Blocks.WHEAT && item == Items.WHEAT)
+			|| (crop == Items.BEETROOT_SEEDS && plant == Blocks.BEETROOTS && item == Items.BEETROOT);
 	}
 
 	/** 锁定掉落物实体与数量。 */

@@ -215,6 +215,88 @@ class InventorySessionTest(unittest.TestCase):
         with patch('kit_runtime.inventory.time.sleep'):
             InventorySession(c).place_cell(c.state, copy.deepcopy(c.state['menu']['slots'][10]), 1, 1)
         self.assertEqual(3, len(c.calls)); self.assertEqual(63, c.state['menu']['slots'][10]['count'])
+    def test_live_pickup_growth_uses_observed_cursor_total_without_replaying_pickup(self):
+        class DelayedCollection(Client):
+            def __init__(self):
+                super().__init__();self.stale=[]
+            def checked(self,op,**args):
+                old=copy.deepcopy(self.state);result=super().checked(op,**args)
+                if len(self.calls)==1:
+                    self.state['menu']['cursor']['count']+=2
+                    self.stale=[old,old]
+                    return old
+                return result
+            def status(self):
+                return self.stale.pop(0) if self.stale else self.state
+        for amount,expected_source,expected_calls in ((1,48,3),(44,5,7)):
+            with self.subTest(amount=amount):
+                c=DelayedCollection();c.state['menu']['slots'][10]['count']=47
+                with patch('kit_runtime.inventory.time.sleep'):
+                    InventorySession(c).place_cell(
+                        c.state,copy.deepcopy(c.state['menu']['slots'][10]),1,amount)
+                self.assertEqual(amount,c.state['menu']['slots'][1]['count'])
+                self.assertEqual(expected_source,c.state['menu']['slots'][10]['count'])
+                self.assertEqual(0,c.state['menu']['cursor']['count'])
+                pickups=[call for call in c.calls if call['slot']==10
+                         and call['expected_count']==47 and call['expected_cursor_count']==0]
+                self.assertEqual(1,len(pickups));self.assertEqual(expected_calls,len(c.calls))
+    def test_final_grid_cell_waits_through_optimistic_rollback_before_returning_remainder(self):
+        class FinalCellRollback(Client):
+            def __init__(self):
+                super().__init__();self.pending=[];self.clock=100
+                self.state['time']=self.clock
+                self.state['menu']['slots'][10]['count']=6
+            def checked(self,op,**args):
+                before=copy.deepcopy(self.state)
+                result=super().checked(op,**args)
+                self.clock+=1;self.state['time']=self.clock
+                # Reproduce the live final-cell sequence: the checked reply is
+                # the optimistic cursor=5/cell=1 state, one fresh status rolls
+                # back to cursor=6/cell=air, then the authoritative result lands.
+                if args['slot']==1 and args.get('button')==1:
+                    optimistic=copy.deepcopy(self.state)
+                    rollback=copy.deepcopy(before);rollback['time']=self.clock+1
+                    authoritative=copy.deepcopy(optimistic);authoritative['time']=self.clock+2
+                    confirmed=copy.deepcopy(optimistic);confirmed['time']=self.clock+3
+                    self.clock+=3;self.pending=[rollback,authoritative,confirmed]
+                return result
+            def status(self):
+                if self.pending:return self.pending.pop(0)
+                self.clock+=1;self.state['time']=self.clock
+                return self.state
+        c=FinalCellRollback()
+        with patch('kit_runtime.inventory.time.sleep'):
+            InventorySession(c).place_cell(
+                c.state,copy.deepcopy(c.state['menu']['slots'][10]),1,1)
+        self.assertEqual((1,5,0),(c.state['menu']['slots'][1]['count'],
+                         c.state['menu']['slots'][10]['count'],
+                         c.state['menu']['cursor']['count']))
+        cell_clicks=[call for call in c.calls if call['slot']==1 and call.get('button')==1]
+        self.assertEqual(1,len(cell_clicks))
+        return_clicks=[call for call in c.calls if call['slot']==10
+                       and call['expected_cursor_count']==5]
+        self.assertEqual(1,len(return_clicks))
+    def test_full_pickup_allows_late_same_item_source_refill_and_preserves_total(self):
+        class SourceRefill(Client):
+            def checked(self,op,**args):
+                result=super().checked(op,**args)
+                if len(self.calls)==1:self.state['menu']['slots'][10].update(item='minecraft:coal',count=2)
+                return result
+        c=SourceRefill();c.state['menu']['slots'][10]['count']=47
+        InventorySession(c).place_cell(c.state,copy.deepcopy(c.state['menu']['slots'][10]),1,1)
+        self.assertEqual((1,48,0),(c.state['menu']['slots'][1]['count'],
+                         c.state['menu']['slots'][10]['count'],c.state['menu']['cursor']['count']))
+        self.assertEqual(1,sum(call['slot']==10 and call['expected_count']==47 for call in c.calls))
+    def test_refilled_source_overflow_stops_before_any_followup_click(self):
+        class Overflow(Client):
+            def checked(self,op,**args):
+                result=super().checked(op,**args)
+                if len(self.calls)==1:self.state['menu']['slots'][10].update(item='minecraft:coal',count=40)
+                return result
+        c=Overflow();c.state['menu']['slots'][10]['count']=47
+        with self.assertRaisesRegex(RuntimeError,'no longer fit'):
+            InventorySession(c).place_cell(c.state,copy.deepcopy(c.state['menu']['slots'][10]),1,1)
+        self.assertEqual(1,len(c.calls));self.assertEqual(47,c.state['menu']['cursor']['count'])
     def test_missing_pickup_acknowledgement_is_not_replayed(self):
         class NoReply(Client):
             def checked(self, op, **args):
@@ -225,6 +307,18 @@ class InventorySessionTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'no action replay'):
                 InventorySession(c).place_cell(c.state, copy.deepcopy(c.state['menu']['slots'][10]), 1, 1)
         self.assertEqual(1, len(c.calls))
+    def test_ambiguous_full_pickup_delta_times_out_without_replay(self):
+        class Ambiguous(Client):
+            def checked(self,op,**args):
+                self.calls.append(args)
+                self.state['menu']['cursor'].update(item='minecraft:coal',count=46)
+                self.state['menu']['slots'][10].update(item='minecraft:coal',count=1)
+                return self.state
+        c=Ambiguous();c.state['menu']['slots'][10]['count']=47
+        with patch('kit_runtime.inventory.time.monotonic',side_effect=[0,7]):
+            with self.assertRaisesRegex(RuntimeError,'no action replay'):
+                InventorySession(c).place_cell(c.state,copy.deepcopy(c.state['menu']['slots'][10]),1,1)
+        self.assertEqual(1,len(c.calls))
     def test_destination_changed_after_pickup_is_not_swapped_or_overwritten(self):
         class Changed(Client):
             def checked(self, op, **args):

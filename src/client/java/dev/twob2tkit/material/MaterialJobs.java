@@ -48,6 +48,7 @@ public final class MaterialJobs {
     }
     private static void start(Minecraft client, KitConfig config, String mode, Map<String, Integer> targets, String projectionKey) {
         if (workerProcess.occupied()) throw new IllegalStateException("已有材料任务或后台仍在收尾，请先完成取消");
+        if (CaretakerJobs.occupied()) throw new IllegalStateException("农场周期后台仍在运行或收尾，请先停止并核对记录");
         Path root = root(client), worker = worker(client, config);
         Path python = MaterialJobProtocol.resolvePython(config.materialJobsPython, worker, System.getenv("HOME"), System.getProperty("user.home"));
         String nextId = "material-job-" + UUID.randomUUID();

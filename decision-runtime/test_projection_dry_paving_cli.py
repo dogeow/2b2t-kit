@@ -106,7 +106,7 @@ class PavingCliTests(unittest.TestCase):
             'dimension': 'minecraft:overworld', 'screen': '',
             'manual_movement': False, 'health': 20, 'food': 20,
             'guard_armed': True, 'guard_pve_only': True,
-            'flight': True, 'dry_paving_protocol': 1,
+            'flight': True, 'dry_paving_protocol': 2,
             'supervision_lease': {'kind': 'materials', 'job_session': self.client.task},
             'projection_selection': {
                 'key': self.client.key,
@@ -311,6 +311,31 @@ class PavingCliTests(unittest.TestCase):
             cli.select_batch(self.client, 1, frozenset({named}))
         self.assertEqual(self.client.calls, [])
         self.assertEqual(self.scanned, [])
+
+    def test_explicit_one_cell_reconciliation_flows_into_one_placement(self):
+        pos = self.client.positions[0]
+        self.client.write_journal(pos, 'mine_intent')
+        proof = {'accept_one_original_drop_loss': True}
+
+        def reconcile(client, selected, evidence):
+            self.assertIs(client, self.client)
+            self.assertEqual(selected, pos)
+            self.assertIs(evidence, proof)
+            self.client.write_journal(pos, 'drop_lost')
+            self.client.audit['mismatches'][0].update(
+                actual='Block{minecraft:air}', kind='missing')
+            return {'pos': list(pos), 'result': 'drop_lost', 'loss_count': 1}
+
+        with patch.object(paving, 'reconcile_mine_intent', side_effect=reconcile) as recovery:
+            result = cli.run(self.client, Path(self.temp.name) / 'reconciled',
+                             minutes=1, max_cells=1, allowed_cells=[pos],
+                             reconcile_evidence=proof, pave=self.client.pave,
+                             monotonic=lambda: 0)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['done'], 1)
+        self.assertEqual(result['reconciliation']['loss_count'], 1)
+        self.assertEqual(recovery.call_count, 1)
+        self.assertEqual(self.client.calls, [[list(pos)]])
 
     def test_completed_cell_changed_by_player_is_not_replayed(self):
         self.client.write_journal(self.client.positions[0], 'complete')
@@ -536,7 +561,7 @@ class PavingCliTests(unittest.TestCase):
               patch.object(cli, 'read_fresh', return_value=state)):
             with self.assertRaisesRegex(paving.PavingBlocked, 'protocol'):
                 cli.preflight(Path(self.temp.name), [761020.5, 100, 797854.5])
-            state['dry_paving_protocol'] = 1
+            state['dry_paving_protocol'] = 2
             cli.preflight(Path(self.temp.name), [761020.5, 100, 797854.5])
             state['professional_printer'] = {'enabled': True}
             with self.assertRaises(paving.PavingBlocked):

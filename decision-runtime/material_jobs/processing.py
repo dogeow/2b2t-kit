@@ -20,6 +20,7 @@ from concrete_soil import resolve as resolve_support
 from drop_collection import collect_drop
 from .planning import COLORS
 from .protocol import JobBlocked, JobCancelled, JobPaused
+from smelting_fuel import FuelCatalog, policy as fuel_policy, select_fuels
 
 
 class CheckpointClient:
@@ -99,16 +100,22 @@ def _manifest(c, out, specification, filename):
     return path, job
 
 
-def _load_batch(c, positions, spec, amount, journal):
+def _load_batch(c, positions, spec, amount, journal, fuel_plan=None):
     """Generalize the existing stone loader using its verified slot primitives."""
     if journal.exists():
         raise JobBlocked('已有装炉账本，不能重复投料')
     parts = distribution(amount, len(positions))
-    entries = [{'pos': pos, 'amount': n, 'fuel': math.ceil(n * spec['cooking_ticks'] / 1600),
-                'stage': 'planned'} for pos, n in zip(positions, parts) if n]
+    if fuel_plan is None:
+        fuel_plan={'ready':True,'entries':[{'fuel_item':'minecraft:coal','fuel':math.ceil(n*spec['cooking_ticks']/1600),
+                   'burn_ticks_per_fuel':1600} if n else None for n in parts],
+                   'retained_counts':{},'evidence':{'kind':'legacy_coal_only'}}
+    if not fuel_plan.get('ready') or len(fuel_plan.get('entries',[]))!=len(parts):
+        raise JobBlocked('整批实际燃料尚未准备，不装入部分炉子')
+    entries = [{'pos': pos, 'amount': n, **choice, 'stage':'planned'}
+               for pos,n,choice in zip(positions,parts,fuel_plan['entries']) if n]
     job = {'world_session': c.world, 'source': spec['source'], 'output': spec['output'],
            'amount': amount, 'recipe_id': spec['recipe_id'], 'cooking_ticks': spec['cooking_ticks'],
-           'furnaces': entries, 'complete': False}
+           'furnaces': entries, 'complete': False, 'fuel_plan':fuel_plan}
     write_json(journal, job)
     for entry in entries:
         state = snapshot(c, entry['pos'])
@@ -118,16 +125,21 @@ def _load_batch(c, positions, spec, amount, journal):
         entry.update(stage='prepared', loaded_source=0, loaded_fuel=0)
         write_json(journal, job)
         for item, cell, total, key in ((spec['source'], 0, entry['amount'], 'loaded_source'),
-                                       ('minecraft:coal', 1, entry['fuel'], 'loaded_fuel')):
+                                       (entry['fuel_item'], 1, entry['fuel'], 'loaded_fuel')):
             while entry[key] < total:
                 state = wait_loading_balance(c, c.status(), spec['source'], spec['output'],
-                                             entry['loaded_source'], entry['loaded_fuel'], menu)
+                                             entry['loaded_source'], entry['loaded_fuel'], menu,entry['fuel_item'])
                 source = max((r for r in state['menu']['slots'][3:] if r['item'] == item and r['count']),
                              key=lambda row: row['count'], default=None)
                 if source is None:
                     raise JobBlocked('装炉期间材料不足，保留已装物品，不重发')
                 count = min(total - entry[key], source['count'])
                 before = stocks(state).get(item, 0)
+                if cell==1:
+                    kept=fuel_plan.get('retained_counts',{}).get(item,0)
+                    remaining_input=amount-sum(e.get('loaded_source',0) for e in entries) if item==spec['source'] else 0
+                    if item==spec['output'] or before-kept-remaining_input<count:
+                        raise JobBlocked('实际余量触及保留材料；不继续装燃料')
                 entry.update(stage='input_loading' if cell == 0 else 'fuel_loading',
                              pending={'item': item, 'count': count, 'inventory_before': before})
                 write_json(journal, job)
@@ -136,7 +148,7 @@ def _load_batch(c, positions, spec, amount, journal):
                     raise JobBlocked('装炉库存变化未确认，保留未完成回执')
                 loaded_source = entry['loaded_source'] + (count if cell == 0 else 0)
                 loaded_fuel = entry['loaded_fuel'] + (count if cell == 1 else 0)
-                wait_loading_balance(c, state, spec['source'], spec['output'], loaded_source, loaded_fuel, menu)
+                wait_loading_balance(c, state, spec['source'], spec['output'], loaded_source, loaded_fuel, menu,entry['fuel_item'])
                 entry[key] += count
                 entry['pending'] = None
                 write_json(journal, job)
@@ -154,7 +166,7 @@ def _wait_collect(c, journal, spec, checkpoint):
             or job.get('output') != spec['output'] or job.get('recipe_id') != spec['recipe_id']
             or not job.get('furnaces')
             or sum(e['amount'] for e in job['furnaces']) != job.get('amount')
-            or any(e.get('stage') not in ('loaded', 'collected') or e.get('pending') for e in job['furnaces'])):
+            or any(e.get('stage') not in ('loaded', 'output_collected', 'collected') or e.get('pending') for e in job['furnaces'])):
         raise JobBlocked('装炉只完成一部分或含未知操作，先核对炉内现物，不能自动重投')
     deadline = time.monotonic() + max(120, max(e['amount'] for e in job['furnaces']) * spec['cooking_ticks'] / 20 + 120)
     next_poll = 0
@@ -192,18 +204,33 @@ def smelt(c, recipe, target_count, profile, out, checkpoint):
             if held.get(spec['output'], 0) >= target_count:
                 job['complete'] = True
                 job['verified_output_count'] = held.get(spec['output'], 0)
+                consumption={}
+                for batch in job['batches']:
+                    for furnace in batch.get('receipt',{}).get('furnaces',[]):
+                        item=furnace.get('fuel_item','minecraft:coal')
+                        row=consumption.setdefault(item,{'loaded':0,'returned':0,'consumed':0,'known':True})
+                        values=(furnace.get('loaded_fuel',furnace.get('fuel')),furnace.get('fuel_returned'),furnace.get('fuel_consumed'))
+                        if any(type(n) is not int for n in values):
+                            row['known']=False
+                        else:
+                            for key,n in zip(('loaded','returned','consumed'),values):row[key]+=n
+                for row in consumption.values():
+                    if not row['known']:row.update(loaded=None,returned=None,consumed=None)
+                job['fuel_consumption']=consumption
                 write_json(path, job)
-                return {'phase':'done', 'item':spec['output'], 'count':held[spec['output']], 'journal':str(path)}
+                return {'phase':'done', 'item':spec['output'], 'count':held[spec['output']],
+                        'fuel_consumption':consumption,'journal':str(path)}
             if job.get('complete'):
                 raise JobBlocked('这份加工账本已经完成，成品随后已移动；不能重复生产同一回执')
             per_furnace = min(64, 102400 // spec['cooking_ticks'])
             amount = min(target_count - held.get(spec['output'], 0), len(positions) * per_furnace)
             parts = distribution(amount, len(positions))
-            coal = sum(math.ceil(n * spec['cooking_ticks'] / 1600) for n in parts if n)
-            requirements = {item: n for item, n in ((spec['source'],amount),('minecraft:coal',coal))
-                            if held.get(item, 0) < n}
-            if requirements:
-                return {'phase':'waiting', 'detail':'先补齐本批熔炼原料与燃料', 'requirements':requirements, 'journal':str(path)}
+            catalog=FuelCatalog(profile['recipe_jar'])
+            keep,allowed=fuel_policy(catalog,profile,recipe,client)
+            fuels=select_fuels(catalog,held,parts,spec['cooking_ticks'],spec['source'],spec['output'],keep,allowed)
+            if not fuels['ready']:
+                return {'phase':'waiting', 'detail':'先补齐本批实际原料与合法燃料',
+                        'requirements':fuels['requirements'],'fuel_choices':fuels,'journal':str(path)}
             # Inspect every furnace before the first loading click.
             for pos in positions:
                 observed = snapshot(client, pos)
@@ -213,7 +240,7 @@ def smelt(c, recipe, target_count, profile, out, checkpoint):
             entry = {'journal':'batch-%04d.json' % (len(job['batches']) + 1), 'complete':False, 'amount':amount}
             job['batches'].append(entry)
             write_json(path, job)
-            _load_batch(client, positions, spec, amount, Path(out) / entry['journal'])
+            _load_batch(client, positions, spec, amount, Path(out) / entry['journal'],fuels)
     except (JobCancelled, JobPaused):
         raise
     except (RuntimeError, ValueError, KeyError, OSError) as error:
@@ -445,7 +472,7 @@ def recover(c, operation, args, profile, original_out, checkpoint):
                 raise JobBlocked('没有完整装炉回执，不能把未知动作当成已执行')
             for batch in manifest['batches']:
                 ledger=json.loads((Path(original_out)/batch['journal']).read_text())
-                if any(entry.get('stage') not in ('loaded','collected') or entry.get('pending') for entry in ledger.get('furnaces',[])):
+                if any(entry.get('stage') not in ('loaded','output_collected','collected') or entry.get('pending') for entry in ledger.get('furnaces',[])):
                     raise JobBlocked('存在半投料或未知点击，保留炉内物品，不重投')
             result=smelt(client,recipe,target,profile,original_out,checkpoint)
             item=recipe.get('output',recipe.get('item'))

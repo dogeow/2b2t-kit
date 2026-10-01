@@ -6,7 +6,9 @@ import unittest
 from unittest.mock import patch, Mock
 from types import SimpleNamespace
 
-from material_jobs.navigation import leave_quarry, quarry_exit_candidates, shaft_path, settled_state, leave_projection
+from material_jobs.navigation import (_below_vertical_start, leave_quarry,
+                                      quarry_exit_candidates, shaft_path,
+                                      settled_state, leave_projection)
 from material_jobs.protocol import JobBlocked
 
 
@@ -303,6 +305,11 @@ class ProjectionExitTest(unittest.TestCase):
         return {'pos':[x,y,z],'state':'Block{minecraft:chest}[facing=south,type=single,waterlogged=false]',
                 'solid':False,'passable':False,'fluid':False,'block_entity':True,**extra}
 
+    def slab(self,x,y,z,kind='bottom',waterlogged=False,**extra):
+        return {'pos':[x,y,z],
+                'state':f'Block{{minecraft:deepslate_tile_slab}}[type={kind},waterlogged={str(waterlogged).lower()}]',
+                'solid':False,'passable':False,'fluid':waterlogged,'block_entity':False,**extra}
+
     def test_full_courtyard_protected_warehouse_chest_top_exits_vertically_with_airborne_flight(self):
         self.selection.update(min=[760982,61,797819],max=[761023,70,797865])
         self.client.pos=[761021.4973341001,64.875,797852.4999999573]
@@ -328,6 +335,26 @@ class ProjectionExitTest(unittest.TestCase):
         horizontal.assert_not_called()
         self.assertEqual([.5,73.,.5],self.client.pos)
         self.assertEqual(319,self.client.calls[0][1]['max'][1])
+
+    def test_dry_bottom_slab_below_feet_allows_open_sky_vertical_exit(self):
+        self.selection.update(min=[760982,61,797819],max=[761023,70,797865])
+        self.client.pos=[761017.497,67.838,797823.5]
+        self.client.blocks[(761017,67,797823)]=self.slab(761017,67,797823)
+        with patch('material_jobs.navigation.horizontal_exit') as horizontal:
+            leave_projection(self.client)
+        horizontal.assert_not_called()
+        moves=[params for op,params in self.client.calls if op=='navigate']
+        self.assertEqual([[761017.497,73.,797823.5]],[params['target'] for params in moves])
+
+    def test_bottom_slab_support_requires_dry_bottom_shape_and_collision_top(self):
+        accepted=self.slab(0,67,0)
+        self.assertTrue(_below_vertical_start(accepted,[.5,67.5,.5]))
+        self.assertFalse(_below_vertical_start(accepted,[.5,67.5-1e-9,.5]))
+        for row in (self.slab(0,67,0,kind='top'),
+                    self.slab(0,67,0,kind='double'),
+                    self.slab(0,67,0,waterlogged=True)):
+            with self.subTest(state=row['state']):
+                self.assertFalse(_below_vertical_start(row,[.5,67.838,.5]))
 
     def test_open_sky_scan_starts_from_settled_position(self):
         waits=[]

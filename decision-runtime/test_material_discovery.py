@@ -3,6 +3,7 @@ from collections import defaultdict
 from pathlib import Path
 from unittest.mock import patch
 from material_jobs.discovery import tiles, excluded, choose_region, frontier, representative_seeds, discover, ALGORITHM_VERSION, _entrance
+from material_jobs.acquisition import record_route_failure
 
 
 def row(x,y,z,name='deepslate',**extra):
@@ -79,6 +80,85 @@ class DiscoveryTests(unittest.TestCase):
 
 
 class DiscoveryContinuationTests(unittest.TestCase):
+    def test_same_session_failed_entrance_is_skipped_but_new_session_requires_fresh_survey(self):
+        with tempfile.TemporaryDirectory() as folder:
+            c=self.client();c.root=Path(folder)/'automation';c.root.mkdir()
+            profile=self.profile();item='minecraft:cobbled_deepslate'
+            region={'item':item,'min':[0,-18,0],'max':[1,-1,1],
+                    'source':'natural_survey','surface_y':10,
+                    'access_shaft':{'min':[0,0,0],'max':[1,10,1]}}
+            record_route_failure(c,profile,item,region,'guard_displaced','defense displaced player',[.5,13.1,.5])
+            directory=Path(folder)/'material-resource-ledger'
+            scope=hashlib.sha256((profile['server']+'|'+profile['dimension']+'|'+item).encode()).hexdigest()[:20]
+            path=directory/(scope+'.json')
+            ledger=json.loads(path.read_text())
+            ledger['tiles']={'0:0':{'state':'candidate','algorithm_version':ALGORITHM_VERSION,'region':region}}
+            path.write_text(json.dumps(ledger))
+            with patch('material_jobs.discovery.frontier',return_value=[(0,0)]),\
+                 patch('material_jobs.discovery._travel') as travel,\
+                 patch('material_jobs.discovery.choose_region',return_value=region):
+                self.assertIsNone(discover(c,item,profile,directory,lambda:None,max_tiles=1))
+                self.assertEqual('guard_displaced',c.material_search_progress['guard_hold']['code'])
+                travel.assert_not_called()
+                c.world='new-world'
+                self.assertEqual(region,discover(c,item,profile,directory,lambda:None,max_tiles=1))
+                self.assertEqual(1,travel.call_count)
+
+    def test_guard_displacement_during_new_tile_travel_holds_same_frontier(self):
+        from material_jobs.acquisition import Unavailable
+        with tempfile.TemporaryDirectory() as folder:
+            c=self.client();c.root=Path(folder)/'automation';c.root.mkdir()
+            profile=self.profile();item='minecraft:cobbled_deepslate'
+            with patch('material_jobs.discovery.frontier',return_value=[(0,0),(16,0)]),\
+                 patch('material_jobs.discovery._travel',side_effect=Unavailable(
+                     'guard moved actor','waiting','guard_displaced',
+                     {'terminal_verified':True,'replans':2})) as travel:
+                self.assertIsNone(discover(c,item,profile,folder,lambda:None,max_tiles=2))
+                self.assertEqual([0,0],c.material_search_progress['guard_hold']['tile'])
+                self.assertIsNone(discover(c,item,profile,folder,lambda:None,max_tiles=2))
+                self.assertEqual(1,travel.call_count)
+
+    def test_checkpoint_pause_after_guard_stop_keeps_original_discovery_tile(self):
+        from material_jobs.protocol import JobPaused
+        with tempfile.TemporaryDirectory() as folder:
+            c=self.client();c.root=Path(folder)/'automation';c.root.mkdir()
+            profile=self.profile();item='minecraft:cobbled_deepslate'
+            def paused_travel(client,target,checkpoint,trace):
+                trace.append({'target':list(target),'route_code':'guard_displaced',
+                              'terminal_verified':True,'request_id':'nav-owned',
+                              'combat_confirmed':True,'observed_at':100})
+                raise JobPaused('health below 18 after combat')
+            with patch('material_jobs.discovery.frontier',return_value=[(0,0),(16,0)]),\
+                 patch('material_jobs.discovery._travel',side_effect=paused_travel) as travel:
+                with self.assertRaises(JobPaused):
+                    discover(c,item,profile,folder,lambda:None,max_tiles=2)
+                self.assertEqual([0,0],c.material_search_progress['guard_hold']['tile'])
+                self.assertIsNone(discover(c,item,profile,folder,lambda:None,max_tiles=2))
+                self.assertEqual(1,travel.call_count)
+
+    def test_actual_geometry_hold_still_skips_unsafe_known_route(self):
+        with tempfile.TemporaryDirectory() as folder:
+            c=self.client();c.root=Path(folder)/'automation';c.root.mkdir()
+            profile=self.profile();item='minecraft:cobbled_deepslate'
+            region={'item':item,'min':[0,-18,0],'max':[1,-1,1],
+                    'source':'natural_survey','surface_y':10,
+                    'access_shaft':{'min':[0,0,0],'max':[1,10,1]}}
+            record_route_failure(c,profile,item,region,'route_geometry_blocked',
+                                 'solid wall',[.5,13.1,.5])
+            scope=hashlib.sha256((profile['server']+'|'+profile['dimension']+'|'+item).encode()).hexdigest()[:20]
+            path=Path(folder)/'material-resource-ledger'/(scope+'.json')
+            ledger=json.loads(path.read_text())
+            ledger['tiles']={'0:0':{'state':'candidate',
+                                    'algorithm_version':ALGORITHM_VERSION,
+                                    'region':region}}
+            path.write_text(json.dumps(ledger))
+            with patch('material_jobs.discovery.frontier',return_value=[(0,0)]),\
+                 patch('material_jobs.discovery._travel') as travel:
+                self.assertIsNone(discover(c,item,profile,path.parent,
+                                           lambda:None,max_tiles=1))
+            self.assertNotIn('guard_hold',c.material_search_progress)
+            travel.assert_not_called()
+
     def test_new_job_reobserves_known_resource_before_exploring_new_tiles(self):
         with tempfile.TemporaryDirectory() as folder,patch('material_jobs.discovery._travel'):
             c=self.client();profile=self.profile();item='minecraft:cobbled_deepslate'
@@ -161,6 +241,38 @@ class DiscoveryContinuationTests(unittest.TestCase):
             c=self.client();discover(c,'minecraft:cobbled_deepslate',profile,folder,lambda:None)
             travel.assert_not_called();self.assertEqual([],c.requests)
             self.assertEqual(0,c.material_search_progress['new_tiles']);self.assertFalse(c.material_search_progress['has_more'])
+
+    def test_snow_candidate_at_search_origin_48_boundary_is_rejected_and_search_continues(self):
+        item='minecraft:snow'
+        near={'item':item,'min':[48,64,0],'max':[63,79,15],
+              'source':'natural_survey','surface_y':64}
+        safe={'item':item,'min':[64,64,0],'max':[79,79,15],
+              'source':'natural_survey','surface_y':64}
+        with tempfile.TemporaryDirectory() as folder:
+            c=self.client();c.root=Path(folder)/'automation';c.root.mkdir()
+            status=c.status;c.status=lambda:{**status(),'snow_biome_survey_protocol':1}
+            profile={'server':'test','dimension':'minecraft:overworld','search_radius':128,
+                     'search_origin':[0,145,0],'resource_regions':[],
+                     'protected_regions':[{'min':[-100,50,-100],'max':[-80,95,-80]}]}
+            def selected(rows,requested,x,z,*args,**kwargs):
+                self.assertEqual(item,requested)
+                return near if x==48 else safe if x==64 else None
+            with patch('material_jobs.discovery.frontier',return_value=[(48,0),(64,0)]),\
+                 patch('material_jobs.discovery._coarse_snow_frontier',return_value={
+                     'available':False,'tiles':[],'new_cells':0,'visited':0,
+                     'has_more':False,'held':False,'reason':'fixture_fallback'}),\
+                 patch('material_jobs.discovery._travel') as travel,\
+                 patch('material_jobs.discovery.choose_region',side_effect=selected):
+                self.assertEqual(safe,discover(c,item,profile,folder,lambda:None,max_tiles=2))
+            self.assertEqual(2,travel.call_count)
+            scope=hashlib.sha256(('test|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+            ledger=json.loads((Path(folder)/(scope+'.json')).read_text())
+            self.assertEqual(('empty_or_unsafe',None,'candidate',safe),
+                             (ledger['tiles']['48:0']['state'],ledger['tiles']['48:0']['region'],
+                              ledger['tiles']['64:0']['state'],ledger['tiles']['64:0']['region']))
+            self.assertEqual(1,ledger['tiles']['48:0']['diagnostics']
+                             ['reject_reasons']['protected_site_buffer'])
+            self.assertIn('too close',ledger['tiles']['48:0']['diagnostics']['region_validation'])
 
 
 class ExistingShaftExtensionTests(unittest.TestCase):

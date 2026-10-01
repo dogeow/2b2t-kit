@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "authorized": true,
+  "server": "simpcraft.com",
+  "dimension": "minecraft:overworld",
+  "interval_seconds": 300,
+  "adult_keep": 20,
+  "potato_reserve": 4,
+  "cooked_food_reserve": 8,
+  "potato_fields": [
+    {
+      "authorized": true,
+      "center": [
+        761021,
+        63,
+        797869
+      ],
+      "radius": 2
+    }
+  ],
+  "livestock_region": {
+    "min": [
+      761016,
+      61,
+      797807
+    ],
+    "max": [
+      761047,
+      68,
+      797838
+    ]
+  },
+  "livestock_types": [
+    "minecraft:cow",
+    "minecraft:sheep"
+  ],
+  "depots": [
+    [
+      761019,
+      64,
+      797852
+    ],
+    [
+      761015,
+      64,
+      797852
+    ],
+    [
+      761011,
+      64,
+      797852
+    ]
+  ],
+  "park_target": [
+    761022,
+    140,
+    797838
+  ]
+}

@@ -111,7 +111,7 @@ def _counts(state):
 
 
 def _safe_state(client, state, site):
-    if type(state.get('dry_paving_protocol')) is not int or state['dry_paving_protocol'] != 1:
+    if type(state.get('dry_paving_protocol')) is not int or state['dry_paving_protocol'] != 2:
         raise PavingBlocked('The active Kit mod does not support guarded dry paving')
     if (not state.get('connected') or state.get('world_session') != client.world
             or _server(state.get('server')) != site['server']
@@ -362,7 +362,7 @@ def _load_journal(path, site, pos, key, model_hash):
             or record.get('placement_key') != key or record.get('model_hash') != model_hash
             or (record.get('expected'), record.get('actual')) != site['pinned_conflicts'].get(pos)
             or record.get('phase') not in ('mine_intent', 'mined', 'pickup_intent',
-                                           'recovered', 'place_intent', 'complete')):
+                                           'recovered', 'drop_lost', 'place_intent', 'complete')):
         raise PavingPending('Existing cell journal belongs to another projection; inspect it')
     return record
 
@@ -373,6 +373,38 @@ def _record(path, record, phase, **evidence):
     path.parent.mkdir(parents=True, exist_ok=True)
     write_json(path, record)
     return record
+
+
+def _record_transitions(path, record, transitions):
+    """Durably publish a reconciled history without an intermediate phase."""
+    receipts = list(record.get('receipts', []))
+    for phase, evidence in transitions:
+        receipts.append({'phase': phase, **evidence})
+    updated = {**record, 'phase': transitions[-1][0],
+               'updated_at_ns': time.time_ns(), 'receipts': receipts}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(path, updated)
+    return updated
+
+
+def _confirmed_native_paving_reply(reply, *, stage, pos, state):
+    """Require an exact post-send server block update, not a local action result."""
+    if (reply.get('phase') != 'done'
+            or reply.get('server_confirmed') is not True
+            or reply.get('confirmation_scope') != 'matched_server_block_update_after_native_send'
+            or reply.get('server_update_seen') is not True
+            or reply.get('dry_paving_stage') != stage
+            or reply.get('dry_paving_pos') != list(pos)
+            or reply.get('server_observed_state') != state):
+        raise PavingPending('Guarded paving lacks an exact server block confirmation')
+
+
+def _paving_reply_receipt(reply):
+    """Retain the exact native fields needed after a client scan lags the server."""
+    return {key: reply.get(key) for key in (
+        'id', 'world_session', 'control_revision', 'phase', 'server_confirmed',
+        'confirmation_scope', 'server_update_seen', 'server_observed_state',
+        'dry_paving_stage', 'dry_paving_pos')}
 
 
 def _native_request_settled(client, state):
@@ -413,24 +445,262 @@ def _confirmed_recovered_journal(record):
         raise PavingPending('Recovered journal lacks a confirmed excavation and pickup receipt')
 
 
+def _confirmed_drop_lost_journal(record):
+    receipts = record.get('receipts')
+    if not isinstance(receipts, list) or any(not isinstance(row, dict) for row in receipts):
+        raise PavingPending('Loss journal lacks a confirmed air hole and one-item loss receipt')
+    mined = [(index, row) for index, row in enumerate(receipts)
+             if row.get('phase') == 'mined']
+    lost = [(index, row) for index, row in enumerate(receipts)
+            if row.get('phase') == 'drop_lost'
+            and row.get('event') != 'world_session_rebind']
+    if (len(mined) != 1 or len(lost) != 1 or mined[0][0] >= lost[0][0]
+            or mined[0][1].get('server_air') is not True
+            or lost[0][1].get('item') != 'minecraft:grass_block'
+            or lost[0][1].get('amount') != 1
+            or not isinstance(lost[0][1].get('original_drop_uuid'), str)
+            or not lost[0][1]['original_drop_uuid']
+            or type(lost[0][1].get('inventory_unchanged')) is not int
+            or lost[0][1]['inventory_unchanged'] < 0
+            or any(row.get('phase') in ('pickup_intent', 'recovered', 'place_intent', 'complete')
+                   for row in receipts)):
+        raise PavingPending('Loss journal lacks a confirmed air hole and one-item loss receipt')
+
+
+def _exact_item_drop(state, pos, allowed, previous):
+    center = [pos[0] + .5, pos[1] + .5, pos[2] + .5]
+    entities = state.get('entities')
+    if not isinstance(entities, list):
+        raise PavingPending('Drop entity evidence is unavailable')
+    nearby = [entity for entity in entities
+              if isinstance(entity, dict) and isinstance(entity.get('pos'), list)
+              and len(entity['pos']) == 3
+              and all(type(value) in (int, float) and math.isfinite(value)
+                      for value in entity['pos'])
+              and math.dist(entity['pos'], center) <= 4]
+    if (len(nearby) != 1 or nearby[0].get('type') != 'minecraft:item'
+            or nearby[0].get('uuid') in previous
+            or not isinstance(nearby[0].get('uuid'), str)
+            or nearby[0].get('stack', {}).get('item') not in allowed
+            or nearby[0]['stack'].get('count') != 1):
+        raise PavingPending('Original paving drop is not uniquely identified')
+    return nearby[0]
+
+
+def reconcile_mine_intent(client, pos, evidence, *, settle=time.sleep):
+    """Promote one old mining intent from durable evidence, without mining again.
+
+    This opt-in operation only changes the per-cell journal. The ordinary
+    recovered-cell path must still rebind and verify the hole before placement.
+    Legacy v1 mining requires a new world session, which reloads the chunk;
+    a v2 native reply may instead prove the matching server block packet.
+    """
+    pos = _position(pos)
+    if not isinstance(evidence, dict):
+        raise PavingPending('Mining reconciliation evidence is missing')
+    with _batch_lock(client):
+        state, model, audit = _fresh_context(client, SITE)
+        path = _journal_path(client, SITE, pos)
+        record = _load_journal(path, SITE, pos, state['projection_selection']['key'],
+                               model['content_hash'])
+        if record is None or record['phase'] != 'mine_intent':
+            raise PavingPending('Exact mining intent is unavailable for reconciliation')
+        receipts = record.get('receipts')
+        if (not isinstance(receipts, list) or not receipts
+                or not isinstance(receipts[0], dict)
+                or receipts[0].get('phase') != 'mine_intent'
+                or type(receipts[0].get('replacement_before')) is not int
+                or receipts[0]['replacement_before'] < 1
+                or not isinstance(record.get('nearby_before'), list)):
+            raise PavingPending('Original mining intent lacks stock or entity evidence')
+        if _protected(pos, SITE):
+            raise PavingPending('Protected paving cell cannot be reconciled')
+        events = evidence.get('events')
+        if not isinstance(events, list):
+            raise PavingPending('Original mining event log is missing')
+        matching = [event for event in events if isinstance(event, dict)
+                    and event.get('op') == 'mine_block'
+                    and (event.get('params') or {}).get('pos') == list(pos)]
+        if len(matching) != 1:
+            raise PavingPending('Original single mining request is not proven')
+        event = matching[0]
+        params = event.get('params') or {}
+        if (event.get('world_session') != record['world_session']
+                or event.get('phase') != 'done'
+                or event.get('detail') != 'target removed'
+                or event.get('evidence_scope') != 'native_operation_reply_not_goal_completion'
+                or not isinstance(event.get('request_id'), str)
+                or not event['request_id']
+                or params.get('expected_state') != record['actual']
+                or params.get('face') != 'up'
+                or params.get('dry_paving_guard') is not True
+                or type(event.get('revision_before')) is not int
+                or event.get('revision_after') != event['revision_before'] + 1
+                or any(other.get('op') == 'interact'
+                       and (other.get('params') or {}).get('pos') ==
+                       [pos[0], pos[1] - 1, pos[2]] for other in events
+                       if isinstance(other, dict))):
+            raise PavingPending('Original mining event does not match the cell intent')
+        before = evidence.get('before_reply')
+        after = evidence.get('after_reply')
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            raise PavingPending('Original pre/post mining observations are missing')
+        before_blocks = [row for row in before.get('blocks', [])
+                         if row.get('pos') == list(pos)]
+        support_pos = [pos[0], pos[1] - 1, pos[2]]
+        before_support = [row for row in before.get('blocks', [])
+                          if row.get('pos') == support_pos]
+        after_drops = _exact_item_drop(after, pos, DROPS[_block(record['actual'])],
+                                       record['nearby_before'])
+        drop_uuid = after_drops['uuid']
+        if (before.get('world_session') != record['world_session']
+                or after.get('world_session') != record['world_session']
+                or type(before.get('time')) is not int
+                or type(after.get('time')) is not int
+                or type(event.get('time')) not in (int, float)
+                or not before['time'] < event['time'] * 1000 < after['time']
+                or len(before_blocks) != 1
+                or before_blocks[0].get('state') != record['actual']
+                or len(before_support) != 1
+                or before_support[0].get('state') != receipts[0].get('support_state')
+                or (before.get('supervision_lease') or {}).get('job_session') !=
+                   params.get('task_session')
+                or _counts(before)[_block(record['expected'])] !=
+                   record['receipts'][0].get('replacement_before')
+                or _counts(after)[_block(record['expected'])] !=
+                   record['receipts'][0].get('replacement_before')):
+            raise PavingPending('Original mining observations do not match the intent')
+        drop_item = after_drops['stack']['item']
+        original_count = _counts(before)[drop_item]
+        if _counts(after)[drop_item] != original_count:
+            raise PavingPending('Original drop inventory changed before pickup')
+        native_reply = evidence.get('native_reply')
+        if native_reply is None:
+            if client.world == record['world_session']:
+                raise PavingPending('Legacy mining requires a fresh world session and chunk reload')
+            confirmation = 'legacy_rejoined_loaded_audit_and_exact_drop'
+        else:
+            stored_replies = [receipt.get('native_reply') for receipt in receipts
+                              if isinstance(receipt, dict)
+                              and receipt.get('phase') == 'mine_intent'
+                              and isinstance(receipt.get('native_reply'), dict)]
+            if (not isinstance(native_reply, dict)
+                    or _paving_reply_receipt(native_reply) not in stored_replies
+                    or native_reply.get('id') != event['request_id']
+                    or native_reply.get('world_session') != record['world_session']
+                    or native_reply.get('control_revision') != event['revision_after']):
+                raise PavingPending('Original native mining reply does not match its request')
+            _confirmed_native_paving_reply(native_reply, stage='mine', pos=pos,
+                                           state='Block{minecraft:air}')
+            confirmation = native_reply['confirmation_scope']
+        pickup = evidence.get('pickup')
+        loss = pickup is None and evidence.get('accept_one_original_drop_loss') is True
+        pickup_event = None
+        if isinstance(pickup, dict):
+            pickup_before, pickup_event, pickup_after = (pickup.get('before'),
+                                                         pickup.get('event'), pickup.get('after'))
+            if not all(isinstance(value, dict) for value in
+                       (pickup_before, pickup_event, pickup_after)):
+                raise PavingPending('Exact original drop pickup receipt is incomplete')
+            observed_drop = _exact_item_drop(pickup_before, pos, {drop_item},
+                                             record['nearby_before'])
+            if (observed_drop['uuid'] != drop_uuid
+                    or pickup_event.get('op') != 'collect_item'
+                    or pickup_event.get('phase') != 'done'
+                    or pickup_event.get('world_session') != pickup_before.get('world_session')
+                    or pickup_after.get('world_session') != pickup_before.get('world_session')
+                    or (pickup_event.get('params') or {}).get('expected_uuid') != drop_uuid
+                    or (pickup_event.get('params') or {}).get('expected_item') != drop_item
+                    or pickup_event.get('inventory_delta') != {drop_item: 1}
+                    or not isinstance(pickup_event.get('request_id'), str)
+                    or not pickup_event['request_id']
+                    or _counts(pickup_before)[drop_item] != original_count
+                    or _counts(pickup_after)[drop_item] != original_count + 1
+                    or any(entity.get('uuid') == drop_uuid
+                           for entity in pickup_after.get('entities', [])
+                           if isinstance(entity, dict))
+                    or _counts(state)[drop_item] != original_count + 1):
+                raise PavingPending('Exact original drop pickup or current inventory is unverified')
+        elif loss:
+            if (client.world == record['world_session']
+                    or drop_item != 'minecraft:grass_block'
+                    or _counts(state)[drop_item] != original_count):
+                raise PavingPending('One-item loss requires a new session and unchanged grass stock')
+        else:
+            raise PavingPending('Exact original drop pickup or explicit one-item loss is required')
+        if (_counts(state)[_block(record['expected'])] !=
+                receipts[0]['replacement_before']):
+            raise PavingPending('Replacement inventory changed before reconciliation')
+        first = _target(model, audit, pos, SITE, air=True)
+        _geometry(_scan(client, pos), pos, first['actual'])
+        if loss:
+            player = state.get('pos')
+            if (not isinstance(player, list) or len(player) != 3
+                    or math.dist(player, [pos[0]+.5, pos[1]+.5, pos[2]+.5]) > 12):
+                _recovered_pre_approach(client, SITE, pos, record,
+                                        allow_session_rebind=True)
+        settle(.8)
+        fresh, fresh_model, fresh_audit = _fresh_context(client, SITE)
+        second = _target(fresh_model, fresh_audit, pos, SITE, air=True)
+        support = _geometry(_scan(client, pos), pos, second['actual'])
+        if loss:
+            _entities(fresh, pos, client=client, phase='mine_intent')
+        expected_drop_count = original_count if loss else original_count + 1
+        if (fresh_model['content_hash'] != model['content_hash']
+                or fresh_audit['observed_at'] <= audit['observed_at']
+                or _counts(fresh)[drop_item] != expected_drop_count
+                or _counts(fresh)[_block(record['expected'])] !=
+                   receipts[0]['replacement_before']):
+            raise PavingPending('Current loaded audit or recovered inventory changed')
+        settled = _native_request_settled(client, client.status())
+        mined = {'old_state': record['actual'], 'server_air': True,
+                 'confirmation_scope': confirmation,
+                 'native_request_id': event['request_id'],
+                 'observed_world_session': client.world,
+                 'audit_observed_at': fresh_audit['observed_at'],
+                 'support_state': support['state'], 'settled_request_id': settled}
+        if loss:
+            _record_transitions(path, record, [
+                ('mined', mined),
+                ('drop_lost', {'item': drop_item, 'amount': 1,
+                               'original_drop_uuid': drop_uuid,
+                               'inventory_unchanged': original_count,
+                               'observed_world_session': client.world,
+                               'reason': 'Original drop not recovered after server chunk reload'})])
+            return {'pos': list(pos), 'result': 'drop_lost', 'drop_uuid': drop_uuid,
+                    'loss_count': 1, 'confirmation_scope': confirmation}
+        _record_transitions(path, record, [
+            ('mined', mined),
+            ('recovered', {'item': drop_item, 'inventory_after': original_count + 1,
+                           'drop_uuid': drop_uuid,
+                           'pickup_request_id': pickup_event['request_id'],
+                           'pickup_world_session': pickup_event['world_session']})])
+        return {'pos': list(pos), 'result': 'recovered', 'drop_uuid': drop_uuid,
+                'confirmation_scope': confirmation}
+
+
 def _rebind_recovered(client, site, pos, path, record):
     """Revalidate one confirmed air hole after reconnect; never replay mining."""
-    _confirmed_recovered_journal(record)
+    phase = record['phase']
+    if phase == 'drop_lost':
+        _confirmed_drop_lost_journal(record)
+    else:
+        _confirmed_recovered_journal(record)
     old_session = record['world_session']
     try:
         state, model, row, support, _ = _cell_check(
-            client, site, pos, air=True, journal_phase='recovered')
+            client, site, pos, air=True, journal_phase=phase)
         fresh = client.status()
         if (_safe_state(client, fresh, site) != state['projection_selection']['key']
                 or model['content_hash'] != record['model_hash']
                 or row['expected'] != record['expected']
                 or _counts(fresh)[_block(row['expected'])] < 1):
             raise PavingPending('Recovered cell or replacement changed across reconnect')
-        _entities(fresh, pos, client=client, phase='recovered')
+        _entities(fresh, pos, client=client, phase=phase)
         request_id = _native_request_settled(client, fresh)
     except PavingBlocked as error:
         raise PavingPending('Recovered cell cannot be safely rebound: ' + str(error)) from error
-    return _record(path, {**record, 'world_session': client.world}, 'recovered',
+    return _record(path, {**record, 'world_session': client.world}, phase,
                    event='world_session_rebind', previous_world_session=old_session,
                    current_world_session=client.world, model_hash=model['content_hash'],
                    observed_air=True, support_state=support['state'],
@@ -743,15 +1013,16 @@ def _recovered_pre_approach(client, site, pos, record, *, allow_session_rebind=F
 
 
 def _place(client, site, pos, path, record, *, settle):
+    journal_phase = record['phase']
     state, model, row, support, _ = _cell_check(client, site, pos, air=True,
-                                               journal_phase='recovered')
+                                               journal_phase=journal_phase)
     if (record['world_session'] != client.world or record['expected'] != row['expected']
             or record['model_hash'] != model['content_hash']):
         raise PavingPending('Recovered cell belongs to another world session or model')
     direct_vertical = _ready_vertical_pose(client, pos, state)
     if direct_vertical:
         state, model, row, support, _ = _cell_check(client, site, pos, air=True,
-                                                   journal_phase='recovered')
+                                                   journal_phase=journal_phase)
         if (record['world_session'] != client.world or record['expected'] != row['expected']
                 or record['model_hash'] != model['content_hash']):
             raise PavingPending('Recovered cell changed during low-canopy adjustment')
@@ -759,7 +1030,7 @@ def _place(client, site, pos, path, record, *, settle):
         _log_blocker(client, pos, 'recovered', 'player_body_overlap', state)
         direct_vertical = _reposition_for_placement(client, site, pos, record, state) == 'vertical'
         state, model, row, support, _ = _cell_check(client, site, pos, air=True,
-                                                   journal_phase='recovered')
+                                                   journal_phase=journal_phase)
     support_pos = [pos[0], 62, pos[2]]
     item = _block(row['expected'])
     client.checked('select_item', item=item)
@@ -769,7 +1040,7 @@ def _place(client, site, pos, path, record, *, settle):
         except ApproachUnavailable as error:
             raise PavingBlocked('No verified dry support-face approach; recovered cell stays pending') from error
     state, model, row, support, _ = _cell_check(client, site, pos, air=True,
-                                               journal_phase='recovered')
+                                               journal_phase=journal_phase)
     if (record['world_session'] != client.world or record['expected'] != row['expected']
             or record['model_hash'] != model['content_hash']):
         raise PavingPending('Recovered cell changed during placement approach')
@@ -784,9 +1055,10 @@ def _place(client, site, pos, path, record, *, settle):
     record = _record(path, record, 'place_intent', support_state=support['state'], material_before=before)
     reply = client.request('interact', pos=support_pos, face='up',
                            expected_state=support['state'], expected_hand=item,
-                           dry_paving_guard=True)
-    if reply.get('phase') != 'done':
-        raise PavingPending('Placement reply is uncertain; do not send another click')
+                           expected_placed_state=row['expected'], dry_paving_guard=True)
+    record = _record(path, record, 'place_intent',
+                     native_reply=_paving_reply_receipt(reply))
+    _confirmed_native_paving_reply(reply, stage='place', pos=pos, state=row['expected'])
     settle(.8)
     observed = _scan(client, pos).get(pos)
     after = client.status()
@@ -813,14 +1085,17 @@ def _one(client, site, pos, *, settle):
                             and r.get('state') == record['expected']]) != 1):
                 raise PavingPending('Previously completed paving was changed; preserve the player edit')
             return {'pos': list(pos), 'result': 'already_complete', 'expected': record['expected']}
-        if record['phase'] == 'recovered':
+        if record['phase'] in ('recovered', 'drop_lost'):
+            if record['phase'] == 'drop_lost':
+                _confirmed_drop_lost_journal(record)
             player = state.get('pos')
             if (not isinstance(player, list) or len(player) != 3
                     or any(type(v) not in (int, float) or not math.isfinite(v)
                            for v in player)):
                 raise PavingBlocked('Player position is unavailable for recovered paving')
             if record['world_session'] != client.world:
-                _confirmed_recovered_journal(record)
+                if record['phase'] == 'recovered':
+                    _confirmed_recovered_journal(record)
                 if math.dist(player, [pos[0] + .5, pos[1] + .5, pos[2] + .5]) > 12:
                     _recovered_pre_approach(client, site, pos, record,
                                             allow_session_rebind=True)
@@ -854,12 +1129,17 @@ def _one(client, site, pos, *, settle):
     reply = client.request('mine_block', pos=list(pos), face='up',
                            expected_state=row['actual'], seconds=20,
                            dry_paving_guard=True)
-    if reply.get('phase') != 'done':
-        raise PavingPending('Mining reply is uncertain; do not repeat the excavation')
+    record = _record(path, record, 'mine_intent',
+                     native_reply=_paving_reply_receipt(reply))
+    _confirmed_native_paving_reply(reply, stage='mine', pos=pos,
+                                   state='Block{minecraft:air}')
     settle(.8)
     if _scan(client, pos).get(pos) is not None:
         raise PavingPending('Server did not confirm air after the one mining request')
-    record = _record(path, record, 'mined', old_state=row['actual'], server_air=True)
+    record = _record(path, record, 'mined', old_state=row['actual'], server_air=True,
+                     server_confirmed=True,
+                     confirmation_scope=reply['confirmation_scope'],
+                     native_request_id=reply.get('id'))
     record = _drop(client, pos, row, before, path, record)
     return _place(client, site, pos, path, record, settle=settle)
 

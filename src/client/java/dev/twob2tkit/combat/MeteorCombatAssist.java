@@ -15,6 +15,11 @@ public final class MeteorCombatAssist {
 		boolean bowOwned = dev.twob2tkit.KitClient.borerCombatLook(client) != null
 			&& client.player != null && client.player.getMainHandItem().is(net.minecraft.world.item.Items.BOW);
 		if(dev.twob2tkit.automation.AutomationBridge.pveOnly()){if(!bowOwned)MeteorModules.enablePveAura();MeteorModules.enable(MeteorModules.AUTO_LOG);return;}
+        if(MeteorModules.hasMeleeTargetLease()){
+            MeteorModules.enablePveAura(); // Verify the scoped target; do not override settings or a module pause.
+            MeteorModules.enable(MeteorModules.AUTO_LOG);
+            return;
+        }
 		boolean ka = !bowOwned && MeteorModules.enable(MeteorModules.KILL_AURA);
 		boolean log = MeteorModules.enable(MeteorModules.AUTO_LOG);
 		if (!ka && !log) return;

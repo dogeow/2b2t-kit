@@ -20,6 +20,7 @@ public final class ProjectionBatchScope<P> {
     public boolean allowsStation(int y){return !active()||minFeetY==null||y>=minFeetY;}
     public boolean active(){return owner!=null;}
     public int count(){return positions.size();}
+    Set<P> positions(){return positions;} // Already immutable; completion cannot rewrite the mask.
     public Owner owner(){return owner;}
     public boolean current(Owner current){return owner!=null&&owner.equals(current);}
     public boolean allows(Owner current,P position){return owner==null||owner.equals(current)&&positions.contains(position);}

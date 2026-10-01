@@ -7,6 +7,9 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.monster.piglin.Piglin;
+import net.minecraft.world.entity.monster.piglin.PiglinArmPose;
+import net.minecraft.world.entity.monster.zombie.ZombifiedPiglin;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
@@ -68,6 +71,15 @@ final class BorerEngagement {
 		boolean attackPose = facing && e instanceof Mob mob && mob.isAggressive()
 			&& (ranged && living.isUsingItem() || !ranged && distance <= 3);
 		boolean visible = p.hasLineOfSight(e);
+        if (e instanceof Piglin piglin) {
+            return BorerPiglinPolicy.ordinaryThreat(visible, recentAttacker(p, e), other, target == p,
+                BorerThreats.wearingGold(p), piglin.isBaby(), piglin.getArmPose() == PiglinArmPose.ADMIRING_ITEM,
+                piglin.isAggressive(), facing, approaching.contains(e.getId()), distance, p.getY() - e.getY());
+        }
+        if (e instanceof ZombifiedPiglin piglin) {
+            return BorerPiglinPolicy.zombifiedThreat(visible, recentAttacker(p, e), other, target == p,
+                piglin.isAggressive(), facing, approaching.contains(e.getId()), distance, p.getY() - e.getY());
+        }
 		if (attackPose && visible && !other) aimingUntil.put(e.getId(), p.level().getGameTime() + 30);
 		return BorerDefensePolicy.engaged(visible, recentAttacker(p, e), other, target == p,
 			approaching.contains(e.getId()), aimingUntil.getOrDefault(e.getId(), Long.MIN_VALUE) >= p.level().getGameTime(), swell, distance, p.getY() - e.getY());

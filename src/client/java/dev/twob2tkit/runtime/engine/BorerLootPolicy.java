@@ -34,6 +34,25 @@ public final class BorerLootPolicy {
 	static boolean canStackDrop(boolean sameComponents, int count, int maximum) { return sameComponents && count < maximum; }
 	static int verticalSearchRadius(boolean noFall) { return Math.max(10, BorerFallPolicy.maxSafeFallBlocks(noFall) + 2); }
 	static boolean safeHop(boolean hop, boolean ceilingBlocked) { return hop && !ceilingBlocked; }
+	/** A high drop does not justify jumping while movement or the raised body is blocked. */
+	static boolean groundHop(boolean grounded, boolean moving, boolean supported, boolean bodyClear, boolean needed) {
+		return grounded && moving && supported && bodyClear && needed;
+	}
+	/** Two unsuccessful pulses at one location, with a release between them. Vertical bouncing is not progress. */
+	static final class HopControl {
+		private int attempts;
+		private long nextTick;
+		private double x, y, z;
+		void reset() { attempts = 0; nextTick = 0; }
+		boolean press(long tick, double currentX, double currentY, double currentZ, boolean allowed) {
+			if (!allowed) return false;
+			if (attempts > 0 && (Math.hypot(currentX - x, currentZ - z) >= .75 || currentY - y >= .75)) reset();
+			if (attempts >= 2 || tick < nextTick) return false;
+			if (attempts == 0) { x = currentX; y = currentY; z = currentZ; }
+			attempts++; nextTick = tick + 12;
+			return true;
+		}
+	}
 	static boolean trackDrop(boolean coalXp, boolean quartzXp, boolean coalDrop, boolean quartzDrop) {
 		return !(coalXp && coalDrop || quartzXp && quartzDrop);
 	}

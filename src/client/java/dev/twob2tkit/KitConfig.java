@@ -115,6 +115,8 @@ public final class KitConfig {
 	public boolean autoRestockFromOpenedContainers = false;
 	public boolean logReviewEnabled = true;
 	public boolean localRecipeHints = true;
+	/** Explicit loaded-structure scouting; inactive outside a scouting page or guide. */
+	public boolean seedScoutEnabled;
 	public Set<String> seenRecipeHints = new HashSet<>();
 	public Set<String> discoveredRecipeItems = new HashSet<>();
 	public Set<String> completedLocalAdvancements = new HashSet<>();
@@ -734,6 +736,36 @@ public final class KitConfig {
 		return added;
 	}
 
+	/** 唯一“家”地点；没有设置时返回 null。 */
+	public SavedPlace homePlace() {
+		return savedPlaces.stream().filter(place -> place.home).findFirst().orElse(null);
+	}
+
+	/** 子系统只读使用的唯一家坐标；不会暴露可变的 SavedPlace。 */
+	public HomeTarget homeTarget() {
+		SavedPlace place = homePlace();
+		return place == null ? null : new HomeTarget(place.x, place.z, place.cruiseY, place.dimension);
+	}
+
+	/** 把一个已存地点设为唯一的家；名称不存在时不改配置。 */
+	public boolean setHomePlace(String name) {
+		if (!applyHomeChoice(name)) return false;
+		sortSavedPlaces();
+		save();
+		return true;
+	}
+
+	/** 纯内存的唯一家切换，供迁移和测试复用。 */
+	boolean applyHomeChoice(String name) {
+		int selected = SavedPlaceHomePolicy.selectedIndex(
+			savedPlaces.stream().map(place -> place.name).toList(), name);
+		if (selected < 0) return false;
+		for (int index = 0; index < savedPlaces.size(); index++) {
+			savedPlaces.get(index).home = index == selected;
+		}
+		return true;
+	}
+
 	/** 按名删除地点。 */
 	public boolean removePlace(String name) {
 		boolean removed = savedPlaces.removeIf(place -> place.name.equalsIgnoreCase(name));
@@ -1025,6 +1057,7 @@ public final class KitConfig {
 	/** 迁移旧地点缺维度字段。 */
 	private static void migrateSavedPlaceDimensions(KitConfig config) {
 		boolean changed = false;
+		boolean foundHome = false;
 		for (SavedPlace place : config.savedPlaces) {
 			if (place.dimension == null) place.dimension = "";
 			String normalized = normalizeDimension(place.dimension);
@@ -1032,6 +1065,14 @@ public final class KitConfig {
 			if (!normalized.equals(place.dimension)) {
 				place.dimension = normalized;
 				changed = true;
+			}
+			if (place.home) {
+				if (foundHome) {
+					place.home = false;
+					changed = true;
+				} else {
+					foundHome = true;
+				}
 			}
 		}
 		if (changed) {
@@ -1047,6 +1088,8 @@ public final class KitConfig {
 		double z;
 		double cruiseY = 200.0;
 		String dimension = "";
+		/** 全部收藏中最多一个地点为家。 */
+		boolean home;
 
 		SavedPlace() {
 		}
@@ -1062,6 +1105,10 @@ public final class KitConfig {
 			this.cruiseY = cruiseY;
 			this.dimension = normalizeDimension(dimension);
 		}
+	}
+
+	/** 自动返程与巡航使用的不可变家坐标。 */
+	public record HomeTarget(double x, double z, double cruiseY, String dimension) {
 	}
 
 	/** 附近结构去过/备注标记。 */

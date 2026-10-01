@@ -8,6 +8,21 @@ public final class MeteorModules {
 	public static final String AUTO_LOG = "meteordevelopment.meteorclient.systems.modules.combat.AutoLog";
 	/** Flight 全类名。 */
 	public static final String FLIGHT = "meteordevelopment.meteorclient.systems.modules.movement.Flight";
+	/** Installed Meteor 26.1.2 AirPlace lives in player, not world. */
+	public static final String AIR_PLACE = "meteordevelopment.meteorclient.systems.modules.player.AirPlace";
+
+	private static final dev.twob2tkit.combat.MeteorCombatTargetLease meleeTargetLease =
+		new dev.twob2tkit.combat.MeteorCombatTargetLease();
+
+	/** Scope a detected melee threat without replacing the user's entity selections. */
+	public static boolean prepareMeleeTarget(net.minecraft.world.entity.EntityType<?> type) {
+		return meleeTargetLease.prepare(module(KILL_AURA), type);
+	}
+
+	public static void releaseMeleeTarget() { meleeTargetLease.release(); }
+
+	/** Generic protection must respect the active target lease and its temporary module pauses. */
+	public static boolean hasMeleeTargetLease() { return meleeTargetLease.active(); }
 
 	private MeteorModules() {
 	}
@@ -55,6 +70,7 @@ public final class MeteorModules {
     /** Requested unattended PvE: never include players, livestock or neutral piglins/endermen. */
     public static boolean enablePveAura(){
         Object aura=module(KILL_AURA);if(aura==null)return false;
+        if(meleeTargetLease.active())return meleeTargetLease.ready();
         try{
             var targets=new java.util.HashSet<net.minecraft.world.entity.EntityType<?>>();
             for(var type:net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE){

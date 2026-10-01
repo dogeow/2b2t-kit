@@ -24,6 +24,13 @@ final class MaterialJobControlPolicy {
         return "parking".equals(kind)&&world.equals(currentWorld)&&leaseRevision==revision
             &&verifiedHighPark&&pveGuard&&!defending;
     }
+    static boolean replaceableParking(String requestedLease,String leaseId,String kind,
+                                      String world,String currentWorld,long leaseRevision,long revision,
+                                      boolean verifiedHighPark,boolean pveGuard,boolean defending){
+        return requestedLease!=null&&!requestedLease.isBlank()&&requestedLease.equals(leaseId)
+            &&resumableParking(kind,world,currentWorld,leaseRevision,revision,
+                verifiedHighPark,pveGuard,defending);
+    }
     static double arrival(double requested,boolean materialOwned){
         if(!Double.isFinite(requested))throw new IllegalArgumentException("Invalid arrival radius");
         return Math.max(materialOwned?.2:1,Math.min(8,requested));

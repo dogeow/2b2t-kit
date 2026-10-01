@@ -144,7 +144,7 @@ class DryPavingPlacementPolicyTest {
             if (instruction instanceof LdcInsnNode key && "dry_paving_protocol".equals(key.cst)) {
                 var value = instruction.getNext();
                 while (value != null && value.getOpcode() < 0) value = value.getNext();
-                advertised = value != null && value.getOpcode() == Opcodes.ICONST_1;
+                advertised = value != null && value.getOpcode() == Opcodes.ICONST_2;
                 break;
             }
         }

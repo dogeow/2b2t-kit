@@ -337,6 +337,9 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 		page.choiceInput("方向", "以搜索时人物的位置判断方向。", java.util.Arrays.stream(CompassDir.values()).map(d -> d.label).toArray(String[]::new),
 			() -> CompassDir.from(config.structureSearchDir).label, value -> config.structureSearchDir = java.util.Arrays.stream(CompassDir.values()).filter(d -> d.label.equals(value)).findFirst().orElse(CompassDir.ALL).id);
 		page.bool("只看没去过的", "与结构标记里的访问状态共用。", () -> config.structureHideVisited, value -> { config.structureHideVisited = value; config.save(); });
+		page.bool("采集已加载结构线索", "默认关闭。仅在此侦察页或结构指引期间缓慢采集；已有完整种子时停止。",
+			() -> config.seedScoutEnabled, value -> { config.seedScoutEnabled=value;config.save(); });
+		if(scout!=null) scout.requestScanningFor(page);
 		page.submit("查找结构", () -> {
 			if (minecraft.player == null || minecraft.level == null || currentDimension() != dimension) { page.message("请进入对应维度后重新打开搜索", 0xFF7777); return; }
 			seedBox = KitUi.field(font, 0, 0, 100, "种子", seed[0], 24);

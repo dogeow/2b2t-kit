@@ -51,6 +51,29 @@ class MaterialJobControlPolicyTest {
             assertTrue(calls.containsAll(Set.of("resumableParking","highGuardPark","held")));
         }catch(Exception failure){throw new AssertionError(failure);}
     }
+    @Test void externalReplacementCannotConsumeAStaleOrSameTickInvalidParkingLease(){
+        assertTrue(MaterialJobControlPolicy.replaceableParking("lease","lease","parking",
+            "world","world",4,4,true,true,false));
+        assertFalse(MaterialJobControlPolicy.replaceableParking("old","lease","parking",
+            "world","world",4,4,true,true,false));
+        assertFalse(MaterialJobControlPolicy.replaceableParking("lease","lease","parking",
+            "old-world","new-world",4,4,true,true,false));
+        assertFalse(MaterialJobControlPolicy.replaceableParking("lease","lease","parking",
+            "world","world",3,4,true,true,false));
+        boolean flightOff=GuardParkingPolicy.ready(100.5,95,200.5,100.5,95,200.5,65,20,false,true);
+        boolean drifted=GuardParkingPolicy.ready(109.5,95,200.5,100.5,95,200.5,65,20,true,true);
+        assertFalse(MaterialJobControlPolicy.replaceableParking("lease","lease","parking",
+            "world","world",4,4,flightOff,true,false));
+        assertFalse(MaterialJobControlPolicy.replaceableParking("lease","lease","parking",
+            "world","world",4,4,drifted,true,false));
+        assertFalse(MaterialJobControlPolicy.replaceableParking("lease","lease","parking",
+            "world","world",4,4,true,true,true));
+    }
+    @Test void externalMaterialReplacementUsesTheAtomicParkingGate()throws Exception{
+        var calls=new HashSet<String>();for(var instruction:method("dispatch").instructions)
+            if(instruction instanceof MethodInsnNode call)calls.add(call.name);
+        assertTrue(calls.containsAll(Set.of("replaceableParking","highGuardPark","manualMovementDown")));
+    }
     private MethodNode method(String name)throws Exception{
         var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/AutomationBridge.class")){
             new ClassReader(in).accept(node,0);}

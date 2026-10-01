@@ -27,7 +27,6 @@ final class BorerAreaThink {
 	private int ticksSinceAsk = BorerAreaThinkPolicy.ASK_COOLDOWN_TICKS;
 	private int shaftsSinceAsk;
 	private boolean asking;
-	private boolean patching;
 	private int askingTicks;
 	private int liveGoodTicks;
 	private String lastStuckScene;
@@ -52,7 +51,6 @@ final class BorerAreaThink {
 		ticksSinceAsk = BorerAreaThinkPolicy.ASK_COOLDOWN_TICKS;
 		shaftsSinceAsk = 0;
 		asking = false;
-		patching = false;
 		askingTicks = 0;
 		liveGoodTicks = 0;
 		lastStuckScene = null;
@@ -89,9 +87,8 @@ final class BorerAreaThink {
 		ticksSinceAsk++;
 		if (asking) {
 			askingTicks++;
-			if (BorerAreaThinkPolicy.askTimedOut(askingTicks, patching) && !BorerAreaThinkAsk.busy()) {
+			if (BorerAreaThinkPolicy.askTimedOut(askingTicks) && !BorerAreaThinkAsk.busy()) {
 				asking = false;
-				patching = false;
 				askingTicks = 0;
 				engine.fileLog(client, "area-think-ask timeout");
 				BorerAiHud.end(engine.host, "Grok 超时", true);
@@ -381,46 +378,39 @@ final class BorerAreaThink {
 				busy, canAsk, asking, ticksSinceAsk, allFailed, shaftsSinceAsk, repeatStuckCycles);
 			engine.fileLog(client, "area-think-ask-skip reason=" + reason
 				+ " " + BorerAreaThinkAsk.probeText());
-			if ("no-grok-or-key".equals(reason)) {
+			if ("no-api-key".equals(reason)) {
 				BorerAiHud.begin(engine.host, "Grok · 盾构想想");
 				BorerAiHud.end(engine.host,
-					"游戏没读到 Grok 登录。命令行能聊也要 ~/.grok/auth.json；已改成读 HOME 而不只 user.home",
+					"未配置只读建议 API；卡住诊断已记入日志，可手动查看。自动模式不会运行 Grok 工具",
 					true);
 			}
 			return;
 		}
-		boolean patch = BorerAreaThinkPolicy.shouldPatchCode(
-			BorerAreaThinkAsk.grokAvailable(),
-			BorerAreaThinkAsk.sourceRoot(client) != null,
-			allFailed);
 		asking = true;
-		patching = patch;
 		askingTicks = 0;
 		ticksSinceAsk = 0;
 		shaftsSinceAsk = 0;
-		engine.status = patch ? "Grok 正在改挖矿代码" : "问问本地 Grok";
+		engine.status = "请求只读挖矿建议";
 		engine.overlay(client, engine.status, 0x55FFFF);
 		BorerAiHud.begin(engine.host, "Grok · 盾构想想");
-		BorerAiHud.note(engine.host, patch ? "准备改挖矿代码" : "准备问招数");
+		BorerAiHud.note(engine.host, "准备只读诊断");
 		engine.fileLog(client, "area-think-ask scene="
 			+ (scene == null ? sceneOf(client, player) : scene)
 			+ " grok=" + BorerAreaThinkAsk.grokAvailable()
-			+ " patch=" + patch
+			+ " mode=read_only_advice"
 			+ " repeat=" + repeatStuckCycles);
 		String scores = scoreSummary();
 		String logTail = BorerFileLog.tail(client, 40);
 		String askScene = scene == null ? sceneOf(client, player) : scene;
-		BorerAreaThinkAsk.ask(client, askScene, scores, logTail, patch, engine.runtimeVersion(),
+		BorerAreaThinkAsk.ask(client, askScene, scores, logTail, engine.runtimeVersion(),
 			step -> BorerAiHud.note(engine.host, step),
 			advice -> {
 				asking = false;
-				patching = false;
 				askingTicks = 0;
 				applyAdvice(client, askScene, advice);
 				BorerAiHud.end(engine.host, hudResult(advice), false);
 			}, () -> {
 				asking = false;
-				patching = false;
 				askingTicks = 0;
 				engine.fileLog(client, "area-think-ask-fail");
 				engine.status = "Grok 问问失败";
@@ -456,26 +446,17 @@ final class BorerAreaThink {
 		if (advice.lesson != null && !advice.lesson.isBlank()) {
 			BorerAreaThinkStore.appendLesson(client, advice.lesson);
 		}
-		if (advice.deployed) {
-			engine.status = "已编译新引擎 " + advice.version + "，等热加载";
-			engine.overlay(client, engine.status, 0x55FF55);
-		} else if (advice.patched) {
-			engine.status = "Grok 改了代码但还没装上";
-			engine.overlay(client, engine.status, 0xFFAA00);
-		} else if (advice.lesson != null && !advice.lesson.isBlank()) {
+		if (advice.lesson != null && !advice.lesson.isBlank()) {
 			engine.status = "Grok 课：" + advice.lesson;
 			engine.overlay(client, engine.status, 0x55FF55);
 		}
 		engine.fileLog(client, "area-think-ask-ok prefer=" + advice.prefer + " avoid=" + advice.avoid
-			+ " patched=" + advice.patched + " deployed=" + advice.deployed
-			+ " version=" + advice.version);
+			+ " mode=read_only_advice");
 	}
 
 	/** 建议结果的 HUD 文案。 */
 	private static String hudResult(BorerAreaThinkAsk.Advice advice) {
 		if (advice == null) return "看过了";
-		if (advice.deployed) return "已编译新引擎 " + advice.version;
-		if (advice.patched) return "改了代码但还没装上";
 		if (advice.lesson != null && !advice.lesson.isBlank()) return advice.lesson;
 		return "看过了";
 	}

@@ -40,6 +40,7 @@ final class BorerLoot {
 	private int pickupWait;
 	private long nextNearbyScan, lastRouteProgress;
 	private BorerLootPolicy.Progress progress = new BorerLootPolicy.Progress();
+	private final BorerLootPolicy.HopControl hops = new BorerLootPolicy.HopControl();
 	private final Map<BlockPos, Integer> clearanceStages = new HashMap<>();
 
 	BorerLoot(DefaultTunnelBorerEngine engine) {
@@ -91,7 +92,7 @@ final class BorerLoot {
 		seen = false;
 		sidestepSign = 1;
 		lastPickupTick = 0;
-		pickupWait = 0; clearanceStages.clear(); progress = new BorerLootPolicy.Progress();
+		pickupWait = 0; clearanceStages.clear(); progress = new BorerLootPolicy.Progress(); hops.reset();
 		engine.walkRoute.clear();
 	}
 
@@ -209,7 +210,7 @@ final class BorerLoot {
 			targetTicks = 0;
 			stuckTicks = 0;
 			bestDistance = Double.MAX_VALUE;
-			pickupWait = 0; progress = new BorerLootPolicy.Progress();
+			pickupWait = 0; progress = new BorerLootPolicy.Progress(); hops.reset();
 		}
 		targetTicks++;
 		seen = true;
@@ -239,11 +240,18 @@ final class BorerLoot {
 		pickupWait = pickupBox && !inventoryGrew ? pickupWait + 1 : 0;
 		boolean inPickup = pickupBox && BorerLootPolicy.waitInsidePickupBox(pickupWait);
 		long routeProgress = engine.walkRoute.progress();
-		boolean stalled = progress.tick(distance, inventoryGrew, clearanceProgress(client), routeProgress != lastRouteProgress);
+		boolean cleared = clearanceProgress(client);
+		boolean waypoint = routeProgress != lastRouteProgress;
+		if (inventoryGrew || cleared || waypoint) hops.reset();
+		boolean stalled = progress.tick(distance, inventoryGrew, cleared, waypoint);
 		lastRouteProgress = routeProgress; stuckTicks = progress.idleTicks();
 		if (ticks % 40 == 0) engine.fileLog(client, "loot-progress id=" + entityId + " item=" + precise(loot)
 			+ " player=" + precise(player) + " idle=" + stuckTicks + " inPickup=" + pickupBox + " targetTicks=" + targetTicks);
 		if (stalled) return abandon(client, player, loot, "连续 8 秒没有靠近、开路或拾取进展");
+
+		// Do not plan a new ray target halfway through a hop. Keep an existing
+		// obstruction for landing; the engine's general airborne guard clears it.
+		if (waitForLanding(client, player)) return true;
 
 		BlockPos lootPos = lootBlock.immutable();
 		engine.lockHeadingToward(player.blockPosition(), lootPos);
@@ -263,6 +271,7 @@ final class BorerLoot {
 
 		if (BorerLootPolicy.shouldMineHeadToEnterLootDrop(dy, feetPassable, headMineable)) {
 			stuckTicks = 0;
+			holdStill(client);
 			engine.setMiningTarget(client, player, dropHead, "loot-drop-head");
 			engine.status = "挖头开 1×2 下去捡 " + format(dropHead);
 			return false;
@@ -271,6 +280,7 @@ final class BorerLoot {
 		if (!preferDrop && (!inPickup || embedded || ceilingBlocked)) {
 			if (engine.currentTarget != null && engine.shouldMine(client, engine.currentTarget)) {
 				stuckTicks = 0;
+				holdStill(client);
 				engine.status = "清理掉落物前的遮挡 " + format(engine.currentTarget);
 				return false;
 			}
@@ -289,6 +299,7 @@ final class BorerLoot {
 			}
 			if (obstruction != null && (!inPickup || embedded || ceilingBlocked)) {
 				stuckTicks = 0;
+				holdStill(client);
 				engine.setMiningTarget(client, player, obstruction, "loot-obstruction");
 				engine.status = "清理掉落物前的遮挡 " + format(obstruction);
 				return false;
@@ -305,7 +316,7 @@ final class BorerLoot {
 		}
 
 		engine.releaseMine(client);
-		walkToward(client, player, loot, dropSafe, inPickup, horiz);
+		if (!walkToward(client, player, loot, dropSafe, inPickup, horiz)) return false;
 		engine.overlay(client, String.format(Locale.ROOT, "正在拾取%s掉落物（距离 %.1f） %s",
 			wanted.label, distance, precise(loot)), 0xFFFF55);
 		return true;
@@ -350,8 +361,16 @@ final class BorerLoot {
 		client.options.keyDown.setDown(false);
 	}
 
-	/** 转向掉落物并按走/飞策略靠近。 */
-	private void walkToward(Minecraft client, LocalPlayer player, ItemEntity loot, boolean dropSafe, boolean inPickup, double horiz) {
+	/** Preserve a planned blocker and release all movement until ordinary physics lands us. */
+	private boolean waitForLanding(Minecraft client, LocalPlayer player) {
+		if (BorerFlight.isFlying(player) || player.onGround()) return false;
+		holdStill(client);
+		engine.overlay(client, "拾取起跳后等待落稳，保留挡路方块再清理", 0xFFFF55);
+		return true;
+	}
+
+	/** 转向掉落物并按走/飞策略靠近；false 交回引擎挖起跳空间。 */
+	private boolean walkToward(Minecraft client, LocalPlayer player, ItemEntity loot, boolean dropSafe, boolean inPickup, double horiz) {
 		double dx = loot.getX() - player.getX();
 		double dz = loot.getZ() - player.getZ();
 		double dy = loot.getY() - player.getY();
@@ -367,7 +386,24 @@ final class BorerLoot {
 		boolean yawDrop = !lavaAhead && safeDropInYaw(client, player, yaw);
 		boolean canDrop = !lavaAhead && BorerLootPolicy.shouldWalkIntoLootDrop(dy, dropSafe || yawDrop);
 		boolean moving = horiz > 0.12 || Math.abs(dy) > 0.35;
-		if (moving && (lavaAhead || blocked && !canDrop) && !BorerFlight.isFlying(player)) {
+		boolean hopRim = BorerLootPolicy.shouldHopOffRim(player.onGround(), canDrop, horiz, inPickup);
+		boolean hopNeeded = hopRim || dy > 0.45 || stuckTicks > 10 && stuckTicks % 16 < 3;
+		boolean ceilingAbove = jumpBlocked(client, player, dy);
+		AABB ascent = hopBody(player.getBoundingBox(), yaw);
+		boolean bodyClear = !ceilingAbove && client.level.noCollision(player, ascent);
+		BlockPos dest = ahead(player, yaw);
+		boolean supported = canDrop || engine.isStandable(client, dest) || engine.isStandable(client, dest.below());
+		if (!BorerFlight.isFlying(player) && hopNeeded && !bodyClear && !lavaAhead) {
+			BlockPos blocker = hopObstruction(client, player, ascent);
+			if (blocker != null) {
+				holdStill(client);
+				engine.setMiningTarget(client, player, blocker, "loot-hop-clearance");
+				engine.status = "先清起跳通道，再拾取 " + format(blocker);
+				return false;
+			}
+		}
+		boolean safeAscent = hopNeeded && supported && bodyClear;
+		if (moving && (lavaAhead || blocked && !canDrop && !safeAscent) && !BorerFlight.isFlying(player)) {
 			if (!lavaAhead && dy >= -0.25 && engine.place.shouldBridgeDrops(player)) {
 				engine.place.placeWalkingSupport(client, player);
 			}
@@ -378,18 +414,17 @@ final class BorerLoot {
 			client.options.keyJump.setDown(dy > 0.2);
 			client.options.keyShift.setDown(dy < -0.2);
 		} else {
-			boolean ceilingAbove = jumpBlocked(client, player, dy);
-			boolean hopRim = BorerLootPolicy.shouldHopOffRim(player.onGround(), canDrop, horiz, inPickup);
 			client.options.keyShift.setDown(false);
-			client.options.keyJump.setDown(BorerLootPolicy.safeHop(hopRim, ceilingAbove) || player.onGround() && !ceilingAbove && (
-				dy > 0.45 || stuckTicks > 10 && stuckTicks % 16 < 3
-			));
+			boolean allowed = BorerLootPolicy.groundHop(player.onGround(), moving || canDrop,
+				!lavaAhead && supported, bodyClear, hopNeeded);
+			client.options.keyJump.setDown(hops.press(client.level.getGameTime(), player.getX(), player.getY(), player.getZ(), allowed));
 		}
 		client.options.keyUp.setDown(moving || canDrop);
 		client.options.keyLeft.setDown(false);
 		client.options.keyRight.setDown(false);
 		client.options.keyDown.setDown(false);
 		engine.rememberOreMove(player);
+		return true;
 	}
 
 	/** 选靠近掉落物且尽量安全的偏航。 */
@@ -428,6 +463,30 @@ final class BorerLoot {
 			if (safeDropInYaw(client, player, yaw) || !collisionInYaw(client, player, yaw)) return yaw;
 		}
 		return Float.NaN;
+	}
+
+	/** The raised body's full travel footprint, including the next column's headroom. */
+	static AABB hopBody(AABB box, float yaw) {
+		double rad = Math.toRadians(yaw);
+		return box.move(0, 1, 0).expandTowards(-Math.sin(rad) * .85, .25, Math.cos(rad) * .85);
+	}
+
+	/** Clear actual collision boxes in the hop footprint, never its supporting floor. */
+	private BlockPos hopObstruction(Minecraft client, LocalPlayer player, AABB body) {
+		BlockPos nearest = null;
+		double best = Double.MAX_VALUE;
+		for (BlockPos pos : BlockPos.betweenClosed(BlockPos.containing(body.minX, body.minY, body.minZ),
+			BlockPos.containing(body.maxX - 1e-5, body.maxY - 1e-5, body.maxZ - 1e-5))) {
+			if (!engine.canPlanMine(client, pos) || engine.isStandingSupport(client, player, pos)
+				|| engine.isUnsafeFloorMine(client, player, pos) || !BorerAim.inReach(player, pos)
+				|| !engine.canSeeBlock(client, player, pos)) continue;
+			boolean intersects = client.level.getBlockState(pos).getCollisionShape(client.level, pos).toAabbs().stream()
+				.anyMatch(box -> box.move(pos.getX(), pos.getY(), pos.getZ()).intersects(body));
+			if (!intersects) continue;
+			double distance = player.distanceToSqr(pos.getX() + .5, pos.getY() + .5, pos.getZ() + .5);
+			if (distance < best) { best = distance; nearest = pos.immutable(); }
+		}
+		return nearest;
 	}
 
 	/** 该偏航方向是否撞墙。 */

@@ -26,6 +26,7 @@ public enum UiFeature {
     FEEDER(Category.PRODUCTION, "自动喂养", "动物选择、繁殖和幼体喂食", "动物 饲料"),
     FISHER(Category.PRODUCTION, "自动钓鱼", "钓点、Meteor 配合与满包存箱", "鱼竿"),
     CONCRETE(Category.PRODUCTION, "混凝土制作", "定点放粉末、遇水硬化、挖掘循环", "混凝土 粉末 自动 放置 挖掉 concrete"),
+    CARETAKER(Category.PRODUCTION, "农场周期管家", "已登记土豆田与牛羊的本地周期收田、繁殖、烹饪存箱", "农场 牧场 土豆 循环 caretaker"),
     MATERIALS(Category.PRODUCTION, "材料任务", "指定物品与数量，自动取料、采集和制作", "沙砾 沙子 混凝土 熔炼 合成 自动 材料"),
     SKILLS(Category.PRODUCTION, "技能库", "查看已学技能、候选技能与验证记录", "Voyager skill 学习 经验 技能"),
     BUILDER(Category.PRODUCTION, "投影建造", "自动走位、打印、核对与缺料提示", "建筑 投影 打印 printer"),
@@ -78,6 +79,7 @@ public enum UiFeature {
             case SURROUND -> KitClient.surround() != null && KitClient.surround().isActive();
             case BRAWLER -> KitClient.brawler() != null && KitClient.brawler().isActive();
             case CONCRETE -> KitClient.concrete() != null && KitClient.concrete().isActive();
+            case CARETAKER -> dev.twob2tkit.material.CaretakerJobs.running();
             case MATERIALS -> dev.twob2tkit.material.MaterialJobs.running();
             case BUILDER -> KitClient.buildJob() != null && KitClient.buildJob().isActive();
             default -> false;
@@ -104,6 +106,7 @@ public enum UiFeature {
             case AREA -> mc.setScreen(new AreaSetupScreen(parent, c));
             case ORE, FORWARD, DOWN -> ClickGuiPages.mining(parent, c, TunnelBorer.Mode.valueOf(name()));
             case GRAVEL -> ClickGuiPages.gravel(parent, c);
+            case CARETAKER -> dev.twob2tkit.material.CaretakerPages.open(parent,c);
             case MATERIALS -> dev.twob2tkit.material.MaterialJobPages.open(parent, c);
             case ROUTE -> ClickGuiPages.routes(parent, c);
             case BORER_SAFETY -> ClickGuiPages.miningSafety(parent, c);

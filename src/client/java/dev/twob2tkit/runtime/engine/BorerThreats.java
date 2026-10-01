@@ -230,15 +230,15 @@ public final class BorerThreats {
 		String type = typeId(entity);
 		// 中立怪：没被激怒就不算威胁，否则下界挖矿会被满地僵尸猪灵打断。
 		if (type.equals("zombified_piglin")) return entity instanceof Mob mob && mob.isAggressive();
-		if (type.equals("piglin")) return !loadout.gold();
+		if (type.equals("piglin")) return !loadout.gold() || entity instanceof Mob mob && mob.isAggressive();
 		if (type.equals("enderman") && entity instanceof EnderMan enderman && !enderman.isCreepy()) return false;
 		return true;
 	}
 
 	/** 是否穿金装（猪灵中立）。 */
-	private static boolean wearingGold(LocalPlayer player) {
+	static boolean wearingGold(LocalPlayer player) {
 		for (EquipmentSlot slot : new EquipmentSlot[]{
-			EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET, EquipmentSlot.OFFHAND, EquipmentSlot.MAINHAND
+			EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET
 		}) {
 			Item item = player.getItemBySlot(slot).getItem();
 			if (isGoldGear(item)) return true;
@@ -248,10 +248,7 @@ public final class BorerThreats {
 
 	/** 物品是否金质装备。 */
 	private static boolean isGoldGear(Item item) {
-		return item == Items.GOLDEN_HELMET || item == Items.GOLDEN_CHESTPLATE
-			|| item == Items.GOLDEN_LEGGINGS || item == Items.GOLDEN_BOOTS
-			|| item == Items.GOLDEN_SWORD || item == Items.GOLDEN_AXE
-			|| item == Items.GOLDEN_PICKAXE || item == Items.GOLD_INGOT;
+		return BorerPiglinPolicy.goldArmorItem(BuiltInRegistries.ITEM.getKey(item).getPath());
 	}
 
 	/** 实体类型注册名。 */

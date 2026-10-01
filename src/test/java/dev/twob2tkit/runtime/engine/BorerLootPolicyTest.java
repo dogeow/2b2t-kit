@@ -12,6 +12,42 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 2026-08-25 13624 -53 9217，19→21 remaining=false，14 tick 收工，1.6 格外还掉着。
  */
 final class BorerLootPolicyTest {
+	@Test void highDropCannotTriggerAJumpAgainstABlockedBodyOrMissingFooting() {
+		assertFalse(BorerLootPolicy.groundHop(true, false, true, true, true));
+		assertFalse(BorerLootPolicy.groundHop(true, true, false, true, true));
+		assertFalse(BorerLootPolicy.groundHop(true, true, true, false, true));
+		assertFalse(BorerLootPolicy.groundHop(false, true, true, true, true));
+		assertTrue(BorerLootPolicy.groundHop(true, true, true, true, true));
+	}
+	@Test void failedLootHopsAreBoundedEvenAcrossBlockEdgesAndAirborneOscillation() {
+		var hops = new BorerLootPolicy.HopControl();
+		assertTrue(hops.press(0, 95113.30, 68, 99601.46, true));
+		assertFalse(hops.press(1, 95113.30, 69.25, 99601.46, false));
+		assertFalse(hops.press(11, 95112.99, 68, 99601.46, true));
+		assertTrue(hops.press(12, 95112.99, 68, 99601.46, true));
+		for (int tick = 13; tick < 400; tick++) {
+			boolean grounded = tick % 12 == 0;
+			assertFalse(hops.press(tick, 95113.05, grounded ? 68 : 69.25, 99601.46, grounded));
+		}
+	}
+	@Test void actualClearanceOrSuccessfulLandingAllowsTheNextLootHop() {
+		var hops = new BorerLootPolicy.HopControl();
+		assertTrue(hops.press(0, 0, 68, 0, true));
+		assertTrue(hops.press(12, 0, 68, 0, true));
+		assertFalse(hops.press(24, 0, 68, 0, true));
+		hops.reset(); // a confirmed clearance, inventory pickup or route waypoint
+		assertTrue(hops.press(25, 0, 68, 0, true));
+		assertTrue(hops.press(26, 0, 69, 0, true)); // landed on the raised support
+		assertTrue(hops.press(27, 1, 69, 0, true)); // genuinely advanced to the next step
+	}
+	@Test void hopFootprintSeesTheNextColumnsCeilingAndPreservesAOneBlockStep() {
+		var feet = new net.minecraft.world.phys.AABB(95113.0, 68, 99601.16, 95113.6, 69.8, 99601.76);
+		var hop = BorerLoot.hopBody(feet, 90);
+		assertTrue(hop.intersects(new net.minecraft.world.phys.AABB(95112, 70, 99601, 95113, 71, 99602)),
+			"A clear launch column cannot conceal the destination ceiling that caused the real loop");
+		assertFalse(hop.intersects(new net.minecraft.world.phys.AABB(95112, 68, 99601, 95113, 69, 99602)),
+			"The existing one-block step remains a foothold, not a clearance target");
+	}
 	@Test void realProgressKeepsACollectionAlivePastTheOldTenSecondLimit() {
 		var progress = new BorerLootPolicy.Progress();
 		for (int tick = 0; tick < 1200; tick++) assertFalse(progress.tick(20, false, tick % 40 == 0, false));

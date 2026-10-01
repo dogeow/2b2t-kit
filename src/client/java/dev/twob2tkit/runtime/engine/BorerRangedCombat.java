@@ -22,6 +22,9 @@ final class BorerRangedCombat {
     private Object combatWorld;
 	private String holdReason = "";
 	private boolean drawing;
+    private boolean miningMeleeLease;
+    private final BorerMeleeProgress miningMeleeProgress = new BorerMeleeProgress();
+    private boolean miningMeleeFallback;
 	private boolean escaping, escapeFlightFailed,hoverMelee;
 	private final BorerAreaFlightSession escapeFlight = new BorerAreaFlightSession();
 	private boolean releasePending;
@@ -33,10 +36,15 @@ final class BorerRangedCombat {
 	private int previousSlot = -1, cooldown, blockedTicks, passiveTicks;
 	BorerRangedCombat(DefaultTunnelBorerEngine engine) { this.engine = engine; this.peek=new BorerCombatPeek(engine); }
 	boolean tick(Minecraft c) {
+        var p = c.player;
+        boolean minerCombat = engine.active && engine.mode != DefaultTunnelBorerEngine.Mode.AREA;
+        var imminent = minerCombat ? engine.mobs.findImminentCreeper(c, p) : null;
 		boolean enabled;
-		try { enabled = engine.standaloneGuard || engine.host.borerAutoDefend(); } catch (LinkageError oldHost) { return false; }
+		try {
+            enabled = minerCombat ? engine.host.borerPauseOnMob() || BorerThreats.shouldYieldToCombat(p) || session.pending() || imminent != null
+                : engine.standaloneGuard || engine.host.borerAutoDefend();
+        } catch (LinkageError oldHost) { return false; }
 		if (!enabled) { end(c); return false; }
-		var p = c.player;
         if(combatWorld!=null&&combatWorld!=c.level)end(c);
         combatWorld=c.level;
 		boolean wasPending = session.pending();
@@ -61,6 +69,19 @@ final class BorerRangedCombat {
 			if (session.observe(e.getUUID(), e, engaged, e.isDeadOrDying(), eligible, e.getHealth()))
 				engine.fileLog(c, "area-defense-death-confirmed id=" + e.getId() + " uuid=" + e.getUUID());
 		}
+        if (minerCombat) {
+            if (imminent != null) {
+                session.observe(imminent.getUUID(), imminent, true, imminent.isDeadOrDying(),
+                    p.hasLineOfSight(imminent), imminent.getHealth());
+                continuation.save(c, session);
+                peek.close(c);
+                resetMiningMelee();
+                cancelDraw(c);
+                target = imminent;
+                engine.mobs.handleCreeper(c, p, imminent);
+                return true;
+            }
+        }
 		continuation.save(c,session);
         // Retain every unresolved UUID. Only a continuously verified safe height
         // permits other work; returning into reach/LOS makes this gate false immediately.
@@ -107,7 +128,11 @@ final class BorerRangedCombat {
 			end(c); return false;
 		}
 		if (previousSlot < 0) previousSlot = p.getInventory().getSelectedSlot();
-		if (engine.standaloneGuard || escaping && flightDefenseScope()) engine.pauseGuardMovement(c);
+        if (minerCombat) {
+            engine.releaseMine(c);
+            c.options.keyShift.setDown(false);
+            c.options.keySprint.setDown(false);
+        } else if (engine.standaloneGuard || escaping && flightDefenseScope()) engine.pauseGuardMovement(c);
 		else engine.areaRunner.suspendForCombat(c);
 		// An urgent creeper can require evasion even behind a corner or after the attack budget expires.
 		if (flightDefenseScope()) {
@@ -120,6 +145,8 @@ final class BorerRangedCombat {
             }
 		}
 		if (next == null) {
+            rangedMode(false);
+            releaseMiningMelee();
 			if (missingRestored) return holdForMissingObservation(c);
 			releaseEscape(c); cancelDraw(c); rangedMode(false); target = null;
 			if(engine.standaloneGuard){
@@ -137,11 +164,46 @@ final class BorerRangedCombat {
 		peek.close(c);
 		holdReason = "";
 		if (next != target) {
+            if (minerCombat) resetMiningMelee();
 			cancelDraw(c);
 			target = next; blockedTicks = 0;
 			engine.fileLog(c, "area-defense-target id=" + next.getId() + " rank=" + rank(next) + " name=" + next.getName().getString()
 				+ " engaged=true recentAttacker=" + engine.engagement.recentAttacker(p, next));
+            if (minerCombat) engine.fileLog(c, "mining-defense-pause mode=" + engine.mode
+                + " currentTarget=" + (engine.currentTarget == null ? "none" : BorerText.block(engine.currentTarget))
+                + " oreGoal=" + (engine.oreTargetPos == null ? "none" : BorerText.block(engine.oreTargetPos))
+                + " miningAttack=" + c.options.keyAttack.isDown()
+                + " miningMove=" + c.options.keyUp.isDown() + " id=" + next.getId());
 		}
+        boolean meleeTarget = BorerMiningCombatPolicy.meleeTarget(
+            target instanceof net.minecraft.world.entity.monster.piglin.Piglin,
+            target instanceof net.minecraft.world.entity.monster.piglin.PiglinBrute,
+            BorerThreats.isRangedCombatThreat(target) || target.getMainHandItem().is(Items.BOW)
+                || target.getMainHandItem().is(Items.CROSSBOW), p.distanceTo(target), p.getY() - target.getY());
+        if (minerCombat && meleeTarget) {
+            cancelDraw(c);
+            if (!miningMeleeFallback) {
+                rangedMode(false);
+                miningMeleeLease = true;
+                boolean meteorReady = BorerMeteorThreatLease.acquire(engine.host, c, target);
+                boolean stalled = miningMeleeProgress.stalled(target.getUUID(), p.tickCount, target.getHealth());
+                miningMeleeFallback = !meteorReady || stalled;
+                if (miningMeleeFallback) {
+                    engine.fileLog(c, "mining-defense-attack-owner id=" + target.getId()
+                        + " nativeReady=" + meteorReady + " noDamageGraceExpired=" + stalled + " fallback=true");
+                    rangedMode(true);
+                }
+            }
+            if (miningMeleeFallback) {
+                look = RotationAim.lookAt(p, target.getEyePosition());
+                lookTick = p.tickCount;
+                RotationAim.apply(p, look);
+            }
+            engine.status = engine.mobs.engageMiningThreat(c, p, target, !miningMeleeFallback);
+            return true;
+        }
+        if (miningMeleeLease) resetMiningMelee();
+
 		boolean zombieOnly=engine.standaloneGuard
 			&&target instanceof net.minecraft.world.entity.monster.zombie.Zombie&&onlyZombiesNearby(c,nearby);
 		if(zombieOnly){if(swordZombieFromHover(c,nearby))return true;}
@@ -484,7 +546,7 @@ final class BorerRangedCombat {
 	}
 	private static int rank(LivingEntity e) {
 		return BorerDefensePolicy.priority(e instanceof Creeper,
-			e.getMainHandItem().is(Items.BOW) || e.getMainHandItem().is(Items.CROSSBOW));
+            BorerThreats.isRangedCombatThreat(e) || e.getMainHandItem().is(Items.BOW) || e.getMainHandItem().is(Items.CROSSBOW));
 	}
 	private static boolean usableBow(net.minecraft.world.item.ItemStack stack){return GuardWeaponPolicy.usableBow(stack.is(Items.BOW),stack.isDamageableItem(),stack.getMaxDamage()-stack.getDamageValue());}
 	private boolean selectBow(Minecraft c) {
@@ -520,6 +582,7 @@ final class BorerRangedCombat {
 	void end(Minecraft c) {
         riseRetryAfter = 0; lastRiseFailure = "";
 		session.clear(); continuation.clear(); separation.clear(); combatWorld=null; holdReason = "";
+        miningMeleeProgress.clear(); miningMeleeFallback = false;
 		releaseControls(c);
 	}
 	/** A menu suspends input, not our knowledge of the unfinished fight. */
@@ -527,12 +590,25 @@ final class BorerRangedCombat {
 		if (c.player != null) session.pause(c.player.tickCount);
 		releaseControls(c);
 	}
+    private void resetMiningMelee() {
+        rangedMode(false);
+        releaseMiningMelee();
+        miningMeleeProgress.clear();
+        miningMeleeFallback = false;
+    }
+    private void releaseMiningMelee() {
+        if (!miningMeleeLease) return;
+        BorerMeteorThreatLease.release(engine.host);
+        miningMeleeLease = false;
+    }
 	private void releaseControls(Minecraft c) {
 		zombieApproach.reset();
 		peek.close(c);
+        rangedMode(false);
+        releaseMiningMelee();
 		if (target == null && !drawing && previousSlot < 0 && !escaping) return;
 		releaseEscape(c);
-		cancelDraw(c); rangedMode(false);
+		cancelDraw(c);
 		if (c.player != null && previousSlot >= 0) c.player.getInventory().setSelectedSlot(previousSlot);
 		previousSlot = -1; target = null; cooldown = 0;
 	}

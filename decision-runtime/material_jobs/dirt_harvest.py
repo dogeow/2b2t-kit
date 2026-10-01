@@ -255,7 +255,10 @@ def _nearby_hover(c, target, checkpoint, trace):
 
 def acquire_surface_soil(c, item, target, profile, regions, path, ledger, checkpoint):
     """Mine up to four nearby cells, persisting each server/inventory receipt."""
-    from .acquisition import Unavailable, _safe, _scan, _choose_tool, _travel
+    from .acquisition import (Unavailable, _safe, _scan, _choose_tool, _travel,
+                              _paused_guard_hold, _resource_route_scope,
+                              _route_region_key, record_route_failure)
+    from .protocol import JobPaused
 
     if item not in SOURCES:
         raise ValueError('Surface soil item must be dirt or grass_block')
@@ -297,8 +300,26 @@ def acquire_surface_soil(c, item, target, profile, regions, path, ledger, checkp
         try:
             destination = [pos[0] + .5, pos[1] + 3.1, pos[2] + .5]
             if not local or not _nearby_hover(c, destination, checkpoint, trace):
-                _travel(c, destination, checkpoint, trace)
+                _travel(c, destination, checkpoint, trace,
+                        route_scope=_resource_route_scope(profile, region))
+        except JobPaused as error:
+            _paused_guard_hold(c, ledger, path, region, pos, pos, destination,
+                               trace, str(error), profile, item)
+            raise
         except Unavailable as error:
+            if error.code in ('guard_displaced','route_geometry_blocked','route_uncertain'):
+                current = c.status()
+                ledger['visited'][key] = {
+                    'state': 'route_hold', 'pos': pos,
+                    'region_key': _route_region_key(region),
+                    'route_code': error.code, 'reason': error.detail,
+                    'entry_target': destination, 'player_pos': list(current['pos']),
+                    'world_session': c.world, 'observed_at': current.get('time'),
+                    'route': trace, 'route_evidence': error.evidence}
+                write_json(path, ledger)
+                record_route_failure(c, profile, item, region, error.code,
+                                     error.detail, destination, error.evidence)
+                raise
             if error.detail not in ('资源区入口或航线仍有障碍；不会穿越地层或挖开区域外建筑',
                                     '前往资源区的安全路线没有到达，保留本次位置'):
                 raise

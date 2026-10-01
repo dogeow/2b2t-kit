@@ -12,17 +12,19 @@ from pathlib import Path
 import time
 
 from live_snapshot import read_fresh
-from material_client import MaterialClient, Handoff
+from material_client import MaterialClient, Handoff, expected_native_revision
 from material_plan import inventory_counts, quantities
 from projection_material_plan import ProcessingCatalog
 from projection_wood import POST_ITEM, POST_RAW, finish_beams, post_work
 from recipe_catalog import RecipeCatalog
 from safety_interlock import require_unlocked
 from kit_runtime.journal import write_json
-from material_jobs.protocol import JobBlocked, JobCancelled, JobPaused, fingerprint, server_key
+from material_jobs.protocol import (JobBlocked, JobCancelled, JobPaused, fingerprint,
+                                    search_coverage, server_key)
 from material_jobs.profile import load as load_profile
 from material_jobs.navigation import leave_projection, leave_quarry, local_park, move, outside_station, settled_state
 from material_jobs.projection_advice import audit_fingerprint
+from material_jobs.projection_supply import direct_air_supply
 
 KIT_SCREENS = {'KitFormScreen', 'KitCollectionScreen', 'KitWorkspaceScreen', 'ClickGuiScreen'}
 
@@ -88,9 +90,9 @@ class JobClient(MaterialClient):
         self.owner.poll_control()
         return state
 
-    def status(self):
+    def status(self, *args, **kwargs):
         try:
-            return super().status()
+            return super().status(*args, **kwargs)
         except Handoff as error:
             state = self.owner.latest
             if (self.owner.cleaning and state.get('screen') in KIT_SCREENS
@@ -139,6 +141,29 @@ def owns_material_state(client, state):
         return False
     if state.get('control_revision') == client.rev:
         return True
+    if state.get('phase') == 'running':
+        inflight = getattr(client, 'native_inflight', None)
+        if not isinstance(inflight, dict):
+            return False
+        base, expected = inflight.get('base_revision'), inflight.get('expected_revision')
+        rid, op = inflight.get('request_id'), inflight.get('op')
+        stop = state.get('control_stop') or {}
+        return (state.get('connected') is True and state.get('manual_movement') is False
+                and isinstance(stop, dict)
+                and not (stop.get('kind') in ('manual', 'emergency') and stop.get('revision') == state.get('control_revision'))
+                and type(base) is int and type(expected) is int and type(state.get('control_revision')) is int
+                and type(lease.get('revision')) is int and type(inflight.get('request_revision')) is int
+                and base == client.rev == inflight['request_revision'] and expected > base
+                and isinstance(rid, str) and bool(rid) and rid == client.last == state.get('id') == state.get('last_request')
+                and isinstance(op, str) and bool(op) and state.get('op') == op
+                and expected == expected_native_revision(op, base) == state['control_revision']
+                and inflight.get('world_session') == client.world == state.get('world_session')
+                and inflight.get('task_session') == client.task == lease.get('job_session')
+                and inflight.get('lease_id') == client.heartbeat.id == lease.get('id')
+                and isinstance(inflight.get('server'), str) and bool(inflight['server'])
+                and server_key(inflight['server']) == server_key(state.get('server'))
+                and isinstance(inflight.get('dimension'), str) and bool(inflight['dimension'])
+                and inflight['dimension'] == state.get('dimension'))
     return (client.last is not None and state.get('last_request') == client.last
             and state.get('id') == client.last and state.get('phase') in ('done', 'stopped', 'waiting', 'error'))
 
@@ -157,6 +182,36 @@ def observed_warehouse_stock(rows):
                 if type(n) is int and n > 0 and key.startswith('minecraft:'):
                     result[key] += n
     return dict(result)
+
+
+def observed_packed_stack_sizes(rows, registered):
+    """Actual native sizes from Ender stacks and intact boxes, never guessed from counts."""
+    if not isinstance(registered,dict):
+        raise JobBlocked('登记堆叠上限格式无效')
+    sizes=dict(registered)
+    if any(type(value) is not int or not 1<=value<=99 for value in sizes.values()):
+        raise JobBlocked('登记堆叠上限无效，不能计算末影箱取料容量')
+    def observe(row):
+        if not isinstance(row,dict) or type(row.get('count')) is not int or row['count']<0:
+            raise JobBlocked('末影箱物品数量未确认')
+        if not row['count']:return
+        item=row.get('item');size=row.get('max_stack')
+        if not isinstance(item,str) or not item or item=='minecraft:air':
+            raise JobBlocked('末影箱物品身份未确认')
+        if size is None:return  # Only an explicit registered size can cover old metadata.
+        if type(size) is not int or not 1<=size<=99 or row['count']>size:
+            raise JobBlocked('末影箱实际堆叠上限或数量无效')
+        if item in sizes and sizes[item]!=size:
+            raise JobBlocked('末影箱实际堆叠上限与登记/先前观测冲突：'+item)
+        sizes[item]=size
+    for row in rows:
+        observe(row)
+        if row.get('count')==1 and row.get('item','').endswith('shulker_box'):
+            children=row.get('contains',[])
+            if not isinstance(children,list) or len(children)>27:
+                raise JobBlocked('潜影盒内容元数据未确认，不取盒')
+            for child in children:observe(child)
+    return sizes
 
 
 def unavailable_registered_source(pos, error):
@@ -190,69 +245,14 @@ def split_post_supply(audit, state=None):
     return needed,posts
 
 
-def direct_air_supply(audit, needed, posts=None):
-    """Cap verified schema-2 item counts to air holes, not occupied terrain.
-
-    This proves only a candidate shortage. The native builder still decides
-    support, survival and reach. Legacy audits retain their old planner path.
-    """
-    if type(audit.get('audit_schema')) is int and audit['audit_schema'] == 1:
-        return dict(needed)
-    if type(audit.get('audit_schema')) is not int or audit['audit_schema'] != 2:
-        return {}
-    rows=audit.get('mismatches');kinds=audit.get('kinds')
-    matched=audit.get('matched');total=audit.get('total')
-    if (audit.get('loaded_chunks_verified') is not True or not isinstance(rows,list)
-            or not isinstance(kinds,dict) or type(matched) is not int or type(total) is not int
-            or matched<0 or total<1 or matched+len(rows)!=total):
-        return {}
-    advertised=dict(quantities(audit.get('replacement_items',{})))
-    observed_kinds=Counter();mapped=Counter();air=Counter()
-    block_item_aliases={'minecraft:potatoes':'minecraft:potato',
-                        'minecraft:wheat':'minecraft:wheat_seeds',
-                        'minecraft:beetroots':'minecraft:beetroot_seeds',
-                        'minecraft:water_cauldron':'minecraft:cauldron'}
-    for row in rows:
-        if not isinstance(row,dict) or row.get('kind') not in ('missing','occupied','state_only'):
-            return {}
-        observed_kinds[row['kind']]+=1
-        expected=row.get('expected')
-        if not isinstance(expected,str):
-            return {}
-        if row['kind']=='state_only' or 'half=upper' in expected or 'part=head' in expected:
-            continue
-        match=re.match(r'^Block\{([a-z0-9_.-]+:[a-z0-9_./-]+)\}',expected)
-        if not match:
-            return {}
-        block=match.group(1)
-        if block in ('minecraft:water','minecraft:lava'):
-            continue  # Vanilla fluid blocks have no inventory item in ProjectionAudit.
-        item=block_item_aliases.get(block,block);mapped[item]+=1
-        if (row.get('kind')=='missing' and row.get('actual') in ('Block{minecraft:air}','Block{minecraft:cave_air}')
-                and row.get('fluid') is False and row.get('block_entity') is False
-                and row.get('neighbors_loaded') is True and row.get('adjacent_fluid') is False):
-            air[item]+=1
-    if (set(kinds)-{'missing','occupied','state_only'}
-            or any(type(count) is not int or count<0 for count in kinds.values())
-            or dict(observed_kinds)!={kind:count for kind,count in kinds.items() if count}
-            or dict(mapped)!=advertised):
-        return {}
-    result={}
-    for item,count in needed.items():
-        if item == POST_ITEM and posts is not None:
-            result[item]=count  # In-place post repair has its own verified ledger.
-        elif air[item]:
-            result[item]=min(count,air[item])
-    return result
-
-
-def next_build_supply(audit, held, state=None):
+def next_build_supply(audit, held, state=None, exclude_items=()):
     needed,posts=split_post_supply(audit,state)
     needed=direct_air_supply(audit,needed,posts)
     if posts and posts['raw_needed']:
         needed[POST_RAW]=needed.get(POST_RAW,0)+posts['raw_needed']
+    excluded=set(exclude_items)
     missing=[(count-held.get(item,0),item,count) for item,count in needed.items()
-             if count>held.get(item,0)]
+             if item not in excluded and count>held.get(item,0)]
     if not missing:
         return {}
     _,item,count=max(missing)
@@ -380,6 +380,10 @@ class Backend:
         require_scope(state, self.request['context'])
         return dict(inventory_counts(state))
 
+    def experience_state(self):
+        from experience_recording import state_for_backend
+        return state_for_backend(self)
+
     def ensure_client(self):
         if self.client is not None:
             return self.client
@@ -397,7 +401,8 @@ class Backend:
         self.busy = True
         try:
             client = JobClient(self, self.root, directory, server=state['server'],
-                               record_experience=False, remote_finish='guard', park_target=park)
+                               record_experience=True, experience_state=self.experience_state(),
+                               remote_finish='guard', park_target=park)
             self.client = client
         finally:
             self.busy = previous
@@ -508,7 +513,12 @@ class Backend:
         if c is None:
             return
         from craft_recovery import clear_owned_workbench
-        clear_owned_workbench(c)
+        inventory_owned = getattr(c, 'owned_inventory_crafting', None)
+        recovered = clear_owned_workbench(c)
+        if inventory_owned and not recovered:
+            if c.status().get('screen'):
+                raise JobPaused('玩家物品界面已打开，保留背包合成现场并交还控制')
+            raise RuntimeError('Owned inventory crafting recovery is unavailable; no movement permitted')
         state = c.status()
         menu = state.get('menu', {})
         if state.get('screen'):
@@ -660,7 +670,11 @@ class Backend:
             raise JobBlocked('当前投影缺料尚未完整核验，不能按旧记录批量取料')
         # The in-place worker supplies only repairable vertical cells. Finished
         # stock remains useful for other axes and occupied cells.
-        needed,_=split_post_supply(audit,c.status())
+        needed,posts=split_post_supply(audit,c.status())
+        # Opportunistic stock may only occupy backpack slots when the fresh,
+        # complete audit proves it can be placed into an empty dry cell now.
+        # Occupied terrain and state-only repairs stay in their source chest.
+        needed=direct_air_supply(audit,needed,posts)
         token=fingerprint({'world_session':c.world,'projection_key':key,'needed':needed})
         record_path=self.out/'finished-supply-pass.json'
         if record_path.is_file():
@@ -758,11 +772,11 @@ class Backend:
             # the existing place/recover/return journal and exact conservation.
             loose=Counter()
             packed=Counter()
-            sizes=dict(self.request.get('target_stack_sizes',{}))
+            sizes=observed_packed_stack_sizes(state['menu']['slots'][:-36],
+                                              self.request.get('target_stack_sizes',{}))
             for row in state['menu']['slots'][:-36]:
                 if row.get('count',0)>0:
                     loose[row['item']]+=row['count']
-                    if type(row.get('max_stack')) is int:sizes[row['item']]=row['max_stack']
                     if row.get('count')==1 and row.get('item','').endswith('shulker_box'):
                         for child in row.get('contains',[]):
                             if child.get('count',0)>0:packed[child['item']]+=child['count']
@@ -782,6 +796,13 @@ class Backend:
                         if row.get('count',0)>0:packed[row['item']]+=row['count']
             # First enforce take_box's actual admission requirement, including
             # targets that would otherwise fit into an existing partial stack.
+            sizes=observed_packed_stack_sizes(state['menu']['slots'][:-36],sizes)
+            unknown=sorted(item for item,count in targets.items()
+                           if count>inventory_counts(state).get(item,0) and packed.get(item,0)>0 and item not in sizes)
+            if unknown:
+                c.checked('close_menu')
+                return {'phase':'waiting','code':'packed_stack_metadata_unknown','items':unknown,
+                        'detail':'潜影盒内目标物品堆叠上限尚未实际观测，不猜容量或取盒'}
             needed=choose_box(state['menu']['slots'][:-36],targets,inventory_counts(state))
             space=workspace_requirement(state) if needed is not None else None
             if space:
@@ -820,6 +841,17 @@ class Backend:
             if inventory_plan(self.crafting_catalog, targets, inventory_counts(current)) is not None:
                 if current.get('screen') or current.get('menu', {}).get('type') != 'InventoryMenu':
                     raise JobPaused('背包合成等待当前物品界面由玩家关闭，不接管或关闭玩家界面')
+                if current.get('inventory_cursor_precondition_protocol',0)<1:
+                    raise JobPaused('背包合成需要支持光标前置核验的新主包；未发送物品点击')
+                # Quarry drops can arrive after a native pickup and join its
+                # cursor. Exit the proved shaft before binding the menu-0
+                # crafting preflight, then re-plan from the fresh inventory.
+                self.prepare_travel()
+                current = c.status()
+                if (current.get('screen') or current.get('menu', {}).get('type') != 'InventoryMenu'
+                        or inventory_plan(self.crafting_catalog, targets,
+                                          inventory_counts(current)) is None):
+                    raise JobPaused('离开采坑后背包或合成物料已变化，请按新现物重新规划')
                 result = manufacture(c, self.crafting_catalog, targets)
                 write_json(out/'result.json', result)
                 return {'phase':'done' if result['complete'] else 'waiting',
@@ -850,7 +882,7 @@ class Backend:
         from material_depots import exchange
         safe={'minecraft:'+name for name in ('stone','cobblestone','cobbled_deepslate','deepslate',
             'dirt','coarse_dirt','rooted_dirt','gravel','sand','red_sand','flint','granite','andesite','diorite',
-            'tuff','calcite','dripstone_block','raw_iron','raw_copper','raw_gold','coal','redstone','lapis_lazuli')}
+            'tuff','calcite','dripstone_block','raw_iron','raw_iron_block','raw_copper','raw_gold','coal','redstone','lapis_lazuli')}
         keep=set(keep_items)|set(targets)
 
         def preflight():
@@ -925,6 +957,35 @@ class Backend:
             raise JobBlocked('登记入口坐标无效')
         c=self.ensure_client();current=c.status()['pos']
         if math.dist(current,target)<=2:
+            return
+        if math.hypot(current[0]-target[0],current[2]-target[2])<=2.25 and abs(current[1]-target[1])<=1:
+            # A nearby one-block doorstep needs an ordinary ground step, not
+            # an air detour into the eaves. Check the entire swept footprint,
+            # including intervening support and the extra jumping headroom.
+            self.checkpoint()
+            low,high=_body_sweep(current,target)
+            low[1]=min(math.floor(current[1]+1e-6),math.floor(target[1]))-1
+            high[1]=max(math.floor(current[1]+1e-6),math.floor(target[1]))+2
+            observed=_air_scan(c,low,high);cells={tuple(row['pos']):row for row in observed}
+            preferred=max(math.floor(current[1]+.25),math.floor(target[1]))
+            heights={(x,z):_entry_height(cells,x,z,preferred)
+                     for x in range(low[0],high[0]+1) for z in range(low[2],high[2]+1)}
+            start_y=heights.get((math.floor(current[0]),math.floor(current[2])))
+            target_y=heights.get((math.floor(target[0]),math.floor(target[2])))
+            if (any(height is None for height in heights.values()) or start_y is None
+                    or abs(current[1]-start_y)>.25 or target_y!=target[1]
+                    or max(heights.values())-min(heights.values())>1):
+                raise JobBlocked('近距离入口台阶缺少完整干燥支撑或两格净空，保持当前位置')
+            walk_y=max(heights.values());ceiling=walk_y+(2 if min(heights.values())!=walk_y else 1)
+            if any(walk_y<=row['pos'][1]<=ceiling for row in observed):
+                raise JobBlocked('近距离入口台阶的身体扫掠或跳跃净空出现障碍，不改为空中绕行')
+            self.checkpoint()
+            if math.dist(c.status()['pos'],current)>.15:
+                raise JobBlocked('入口台阶核验后实际位置已改变，未发送步行')
+            c.checked('walk',target=target,arrival=.3,restore_flight=False,seconds=12)
+            actual=c.status()['pos']
+            if math.dist(actual,target)>.65 or abs(actual[1]-target[1])>.45:
+                raise JobBlocked('近距离入口台阶实际到点未确认，不继续工位路线')
             return
         x,z=math.floor(target[0]),math.floor(target[2]);y=math.floor(target[1])
         self.checkpoint()
@@ -1035,6 +1096,28 @@ class Backend:
             time.sleep(.1)
 
     def acquire(self, item, count):
+        from material_jobs.snow_harvest import PRODUCTS as SNOW_PRODUCTS
+        if item=='minecraft:raw_iron_block':
+            state=read_fresh(self.root)
+            require_unlocked(self.root,state)
+            require_scope(state,self.request['context'])
+            self.latest=state
+            if (type(state.get('raw_iron_block_quarry_protocol')) is not int
+                    or state['raw_iron_block_quarry_protocol']<1):
+                return {'phase':'blocked',
+                        'detail':'当前 Kit 主包缺少天然粗铁块采坑核验；未移动或整理装备，请先更新主包'}
+        if item in SNOW_PRODUCTS:
+            state=read_fresh(self.root)
+            require_unlocked(self.root,state)
+            require_scope(state,self.request['context'])
+            self.latest=state
+            if (type(state.get('snow_harvest_protocol')) is not int
+                    or state['snow_harvest_protocol']<1):
+                return {'phase':'blocked','detail':'当前 Kit 主包缺少雪地采集工具锁；请先更新主包'}
+            if (type(state.get('snow_biome_survey_protocol')) is not int
+                    or state['snow_biome_survey_protocol']<1):
+                return {'phase':'blocked',
+                        'detail':'当前 Kit 主包缺少雪地群系粗筛接口；未移动角色，请先更新主包'}
         if item=='minecraft:grass_block':
             # Reject an older main package before acquiring a client, traveling,
             # or withdrawing equipment. Its mine_block would ignore our tool gate.
@@ -1047,13 +1130,48 @@ class Backend:
                 return {'phase':'blocked','detail':'当前 Kit 主包缺少草方块精准采集工具核验；请先更新主包'}
         if item=='minecraft:gravel':
             return self.acquire_gravel(count)
-        from material_jobs.acquisition import acquire, ROCK_SOURCES, LOGS
+        from material_jobs.acquisition import acquire, held_resource_route, _bounds, Unavailable, ROCK_SOURCES, LOGS
         from material_jobs.discovery import discover
+        known=self.out/'discovered-resources.json'
+        known_regions=[]
+        if known.exists():
+            try:
+                if known.stat().st_size>1_000_000:
+                    raise ValueError('resource list exceeds the bounded read limit')
+                loaded=json.loads(known.read_text())
+                if not isinstance(loaded,list):
+                    raise ValueError('discovered resources must be a list')
+                for region in loaded:
+                    if not isinstance(region,dict) or not isinstance(region.get('item'),str):
+                        raise ValueError('discovered resource row is malformed')
+                    _bounds(region)
+                known_regions=loaded
+            except (OSError,ValueError,TypeError,KeyError,Unavailable):
+                return {'phase':'blocked','code':'route_uncertain',
+                        'detail':'旧资源区域记录损坏；未移动或整理装备'}
+        if (item in ROCK_SOURCES or item in LOGS
+                or item in ('minecraft:sand','minecraft:dirt','minecraft:grass_block')
+                or item in SNOW_PRODUCTS):
+            # Inspect an old same-world combat/unknown hold before action()
+            # acquires a lease, prepare_travel moves, or equipment opens a box.
+            current=read_fresh(self.root)
+            require_unlocked(self.root,current)
+            require_scope(current,self.request['context'])
+            combined=list(self.profile.get('resource_regions',[]))
+            combined.extend(region for region in known_regions if region not in combined)
+            checked_profile={**self.profile,'resource_regions':combined}
+            held=held_resource_route(self.root,current['world_session'],item,checked_profile,
+                                     self.out/'acquisition',current=current)
+            if held:
+                return {'phase':'waiting','code':held['code'],
+                        'detail':'原资源区路线待核；不会移动、换区或整理装备'}
         with self.action('acquire') as (c,out):
             self.prepare_travel()
-            if item not in ROCK_SOURCES and item not in LOGS and item not in ('minecraft:sand','minecraft:dirt','minecraft:grass_block'):
+            if (item not in ROCK_SOURCES and item not in LOGS
+                    and item not in ('minecraft:sand','minecraft:dirt','minecraft:grass_block')
+                    and item not in SNOW_PRODUCTS):
                 return {'phase':'blocked','detail':'此原料尚未提供自动采集方式：'+item}
-            if item in ('minecraft:dirt','minecraft:grass_block'):
+            if item in ('minecraft:dirt','minecraft:grass_block') or item in SNOW_PRODUCTS:
                 from material_jobs.dirt_harvest import _box
                 protected=self.profile.get('protected_regions')
                 if not isinstance(protected,list) or not protected or any(_box(box) is None for box in protected):
@@ -1063,11 +1181,9 @@ class Backend:
             if prepared.get('phase')!='done':
                 return prepared
             directory=self.out/'acquisition'
-            known=self.out/'discovered-resources.json'
-            if known.exists():
-                for region in json.loads(known.read_text()):
-                    if region not in self.profile['resource_regions']:
-                        self.profile['resource_regions'].append(region)
+            for region in known_regions:
+                if region not in self.profile['resource_regions']:
+                    self.profile['resource_regions'].append(region)
             if any(r.get('item')==item for r in self.profile['resource_regions']):
                 receipt=acquire(c,item,count,self.profile,directory,self.checkpoint)
                 if receipt.get('code')!='no_safe_candidate':
@@ -1075,9 +1191,19 @@ class Backend:
             found=discover(c,item,self.profile,self.root.parent/'material-resource-ledger',self.checkpoint)
             if found is None:
                 progress=getattr(c,'material_search_progress',{})
-                if (type(progress.get('new_tiles')) is int and progress['new_tiles']>0
+                if progress.get('coarse_fallback')=='host_protocol_unavailable':
+                    return {'phase':'blocked',
+                            'detail':'当前 Kit 主包缺少雪地群系粗筛接口；未移动角色，请更新主包后重试',
+                            'search_progress':progress}
+                if isinstance(progress.get('guard_hold'),dict):
+                    code=progress['guard_hold'].get('code')
+                    return {'phase':'waiting','code':code if code in ('guard_displaced','route_uncertain')
+                            else 'route_uncertain',
+                            'detail':'原资源区路线等待防护清怪或核对；不会换去其他矿区',
+                            'search_progress':progress}
+                if (search_coverage(progress)>0
                         and progress.get('has_more') is True):
-                    return {'phase':'waiting','detail':'本批区域无安全矿点，继续搜索尚未访问的区域',
+                    return {'phase':'waiting','detail':'本批粗筛或详细区域无安全矿点，继续搜索尚未访问的区域',
                             'search_progress':progress}
                 return {'phase':'blocked','detail':'本轮已扫描未访问的资源区，未找到安全矿点；记录已保存，下次从新区域继续'}
             self.profile['resource_regions'].append(found)
@@ -1096,6 +1222,23 @@ class Backend:
         with self.action('harden') as (c,out):
             self.prepare_travel()
             return harden(c,item,count,self.profile,out,self.checkpoint)
+
+    def run_pipeline(self, item, target_count, out, *, target_scope, checkpoint=None):
+        from material_jobs.pipeline_dispatch import run
+        from material_jobs.pipeline_experience import record_outcome
+        started = time.monotonic()
+        try:
+            result = run(self, item, target_count, out,
+                         self.checkpoint if checkpoint is None else checkpoint, target_scope)
+        except ValueError:
+            raise  # An invalid contract is not an observed game failure.
+        except Exception as error:
+            record_outcome(self, item, target_count, target_scope, out, error=error,
+                           duration_ms=(time.monotonic()-started)*1000)
+            raise
+        record_outcome(self, item, target_count, target_scope, out, result=result,
+                       duration_ms=(time.monotonic()-started)*1000)
+        return result
 
     def acquire_gravel(self, target):
         from kit_cli import make_request, send
@@ -1230,6 +1373,24 @@ class Backend:
                                and navigation.get('search_pending') is False
                                and navigation.get('path_length')==0 and navigation.get('goals',0)>0
                                and type(navigation.get('expanded')) is int and navigation['expanded']>0)
+            # The native planner can finish without expanding a node when the
+            # held items have live targets but none can generate a safe
+            # placement station. This must not be confused with a pending or
+            # incomplete search. Only a complete schema-2 audit may hand this
+            # state to exact-row supply selection.
+            no_placement_goals=(state.get('outcome')=='blocked'
+                                and state.get('reason','').startswith('找不到可通行路线；')
+                                and type(after.get('audit_schema')) is int
+                                and after['audit_schema']==2
+                                and navigation.get('search_pending') is False
+                                and type(navigation.get('path_length')) is int
+                                and navigation['path_length']==0
+                                and type(navigation.get('targets')) is int
+                                and navigation['targets']>0
+                                and type(navigation.get('goals')) is int
+                                and navigation['goals']==0
+                                and type(navigation.get('expanded')) is int
+                                and navigation['expanded']==0)
             fresh_missing=(after.get('placement_key')==projection_key
                            and after.get('loaded_chunks_verified') is True
                            and not after.get('kinds',{}).get('unloaded')
@@ -1237,17 +1398,30 @@ class Backend:
                            and after['observed_at']>before.get('observed_at',0)
                            and type(after.get('kinds',{}).get('missing')) is int
                            and after['kinds']['missing']>0)
-            if gained==0 and route_unreachable and fresh_missing:
+            route_blocked=route_unreachable or no_placement_goals
+            if gained==0 and route_blocked and fresh_missing:
                 from material_jobs.construction_access import attempt
                 access=attempt(self,after)
                 if access is not None:
                     return access
-            if gained==0 and (route_budget or route_unreachable) and fresh_missing:
-                requirements=next_build_supply(after,self.stock(),c.status())
+            if gained==0 and (route_budget or route_blocked) and fresh_missing:
+                held=self.stock()
+                # A held item whose targets produced zero placement stations
+                # cannot gain a station merely by adding more of that same
+                # item. Only a distinct absent item may open a new frontier.
+                exhausted_held={item for item,count in held.items() if count>0} if no_placement_goals else ()
+                requirements=next_build_supply(after,held,c.status(),exhausted_held)
+                if no_placement_goals:
+                    detail=('当前背包材料没有生成可核验的施工站位；先补新的缺料批次，再核验施工'
+                            if requirements else
+                            '当前背包材料没有可核验的施工站位，且没有新的安全补料批次；保留现场待检查')
+                else:
+                    detail=('当前材料没有已确认可达施工点；先补新的缺料批次，再核验施工'
+                            if requirements else '所需材料已在背包，需要检查入口或支撑')
                 return {'phase':'waiting' if requirements else 'blocked',
-                        'detail':'当前材料没有已确认可达施工点；先补新的缺料批次，再核验施工' if requirements else '所需材料已在背包，需要检查入口或支撑',
+                        'detail':detail,
                         'requirements':requirements,'placed':0,'route_budget_exhausted':route_budget,
-                        'route_unreachable':route_unreachable,
+                        'route_unreachable':route_unreachable,'no_placement_goals':no_placement_goals,
                         'navigation':navigation}
             if state.get('outcome')=='missing_materials':
                 # The native builder has already searched the current frontier

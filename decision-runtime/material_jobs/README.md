@@ -12,6 +12,8 @@ Jev 只收到材料 ID、汇总数量与固定动作说明，不收到坐标、�
 
 草方块需要实际手持、剩余耐久至少 33 的精准采集钻石或下界合金铲。工具按原背包槽位选取，主包 1.9.111 的原生命令在开始与逐帧挖掘时核对手持槽位、工具、附魔和耐久。仅更新 Python worker 而未更新主包时，不能执行此采集路径。
 
+天然粗铁块通过 `acquire("minecraft:raw_iron_block", count)` 直接回收为块，沿用已授权资源区、地下入口、风险缓冲、耐久与背包净增核验。只有原版铁矿脉高度 Y -60..-8 的粗铁块可出现在采坑内；表面建筑使用的粗铁块继续受保护。需要主包报告 `raw_iron_block_quarry_protocol=1`，主包变更须完整重启。原料不足时规划优先直接采块；背包已有足量粗铁时仍按九粗铁合成一块。完整单物品目标必须能放入背包，大单应分批施工或确认入库后新建下一批。
+
 ## 后端
 
 `material_jobs_backend.create_backend(request=..., automation=Path(...), out=Path(...), checkpoint=callback)` 返回：
@@ -67,3 +69,9 @@ Jev 只收到材料 ID、汇总数量与固定动作说明，不收到坐标、�
 围护工位正常结束会先退出。暂停、人工接管或异常时不在 `finally` 走位；`c.material_job_shelter` 与加工账本保存 entering／inside／exiting／outside 状态，`material_job_shelter_ledger` 提供原始布局。后端仅在原控制范围仍安全时收尾退出，再计算高空停靠，不能先尝试穿屋顶上升。
 
 离线回归：`python -m unittest test_material_jobs -q`。测试使用内存库存和炉子，不创建真实游戏客户端。
+
+## 可复用工序与经验
+
+矿物、木材、染色材料、自然块、泥砖和去皮木材通过 `Backend.run_pipeline(..., target_scope=...)` 复用唯一控制客户端；纯只读契约查询为 `material_jobs.pipeline_dispatch.describe(item)`。它与既有 `acquire/craft/smelt` 共同提供材料路径，不表示所有来源或工位已准备、已完成游戏验证。
+
+材料后端记录原生交易；多步流水线另外保存诊断 lesson 和 `pipeline-experiences.jsonl`。`reported_done` 不增加已验证技能次数，未知 pending 禁止重放。共用经验数据库可由 profile 的绝对路径 `skill_memory_state` 配置。详见 [可复用经验与验收规则](../AUTOMATION-EXPERIENCE.md)。

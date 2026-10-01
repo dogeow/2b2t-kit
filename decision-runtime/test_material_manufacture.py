@@ -36,16 +36,30 @@ class Client:
 
 class InventoryCraftClient:
     """Simulate native menu-0 slot semantics, using the real InventorySession."""
-    def __init__(self, root, stone=48):
-        self.root=self.out=root;self.calls=[];self.screen='';self.after_click=None
+    RECIPE_OUTPUTS = {
+        'minecraft:stone': ('minecraft:stone_bricks', 4),
+        'minecraft:cobbled_deepslate': ('minecraft:polished_deepslate', 4),
+        'minecraft:polished_deepslate': ('minecraft:deepslate_bricks', 4),
+        'minecraft:deepslate_bricks': ('minecraft:deepslate_tiles', 4),
+    }
+
+    def __init__(self, root, stone=48, stock=None):
+        self.root=self.out=root;self.calls=[];self.screen='';self.after_click=None;self.clock=12345
         self.slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':64} for i in range(46)]
-        self.slots[9].update(item='minecraft:stone',count=stone)
+        for slot,(item,count) in enumerate((stock or {'minecraft:stone':stone}).items(),start=9):
+            self.slots[slot].update(item=item,count=count)
         self.cursor={'item':'minecraft:air','count':0}
+        self.pending=[]
 
     def status(self):
-        ready=all(self.slots[i]['item']=='minecraft:stone' and self.slots[i]['count'] for i in range(1,5))
-        self.slots[0].update(item='minecraft:stone_bricks' if ready else 'minecraft:air',count=4 if ready else 0)
-        return copy.deepcopy({'time':12345,'screen':self.screen,
+        if self.pending:
+            return copy.deepcopy(self.pending.pop(0))
+        self.clock+=1
+        grid={self.slots[i]['item'] for i in range(1,5) if self.slots[i]['count']}
+        recipe=self.RECIPE_OUTPUTS.get(next(iter(grid))) if len(grid)==1 and all(self.slots[i]['count'] for i in range(1,5)) else None
+        self.slots[0].update(item=recipe[0] if recipe else 'minecraft:air',count=recipe[1] if recipe else 0)
+        return copy.deepcopy({'time':self.clock,'screen':self.screen,
+            'inventory_cursor_precondition_protocol':1,
             'inventory_isolation':{'supported':True,'active':True},
             'menu':{'id':0,'type':'InventoryMenu','cursor':self.cursor,'slots':self.slots},
             'inventory':[{**row,'slot':i} for i,row in enumerate(self.slots[9:45])]})
@@ -54,16 +68,25 @@ class InventoryCraftClient:
         assert op=='slot_click', 'Inventory manufacturing may not move, open, or close player UI'
         self.calls.append((op,dict(params)));row=self.slots[params['slot']]
         assert params['menu_id']==0 and row['item']==params['expected_item'] and row['count']==params['expected_count']
+        assert params['expected_cursor']==(self.cursor['item'] if self.cursor['count'] else 'minecraft:air')
+        assert params['expected_cursor_count']==self.cursor['count']
         if params['kind']=='quick_move':
-            item,amount=row['item'],row['count']
-            target=next((r for r in self.slots[9:45] if r['item']==item and r['count']+amount<=64),None)
-            if target is None:target=next((r for r in self.slots[9:45] if not r['count']),None)
-            assert target is not None, 'No output space'
-            target.update(item=item,count=target['count']+amount)
             if params['slot']==0:
+                crafts=min(self.slots[i]['count'] for i in range(1,5))
+                item,amount=row['item'],row['count']*crafts
                 for i in range(1,5):
-                    self.slots[i]['count']-=1
+                    self.slots[i]['count']-=crafts
                     if not self.slots[i]['count']:self.slots[i]['item']='minecraft:air'
+            else:
+                item,amount=row['item'],row['count']
+            left=amount
+            for target in [r for r in self.slots[9:45] if r['item']==item and r['count']<64]:
+                moved=min(left,64-target['count']);target['count']+=moved;left-=moved
+                if not left:break
+            for target in [r for r in self.slots[9:45] if not r['count']]:
+                moved=min(left,64);target.update(item=item,count=moved);left-=moved
+                if not left:break
+            assert not left, 'No output space'
             row.update(item='minecraft:air',count=0)
         elif params.get('button',0)==1:
             if self.cursor['count']:
@@ -101,6 +124,14 @@ class ManufactureTests(unittest.TestCase):
             z.writestr('data/minecraft/recipe/stone_bricks.json',json.dumps({
                 'type':'minecraft:crafting_shaped','pattern':['##','##'],'key':{'#':'minecraft:stone'},
                 'result':{'id':'minecraft:stone_bricks','count':4}}))
+            for name,source,output in (
+                ('polished_deepslate','minecraft:cobbled_deepslate','minecraft:polished_deepslate'),
+                ('deepslate_bricks','minecraft:polished_deepslate','minecraft:deepslate_bricks'),
+                ('deepslate_tiles','minecraft:deepslate_bricks','minecraft:deepslate_tiles'),
+            ):
+                z.writestr('data/minecraft/recipe/'+name+'.json',json.dumps({
+                    'type':'minecraft:crafting_shaped','pattern':['##','##'],'key':{'#':source},
+                    'result':{'id':output,'count':4}}))
         self.catalog = RecipeCatalog(jar)
 
     def test_inventory_plan_uses_native_two_by_two_cells_and_rejects_missing_or_three_by_three(self):
@@ -124,6 +155,152 @@ class ManufactureTests(unittest.TestCase):
         self.assertEqual('',c.screen);self.assertEqual(0,c.cursor['count'])
         self.assertEqual(12,sum(params['slot']==0 and params['kind']=='quick_move' for _,params in c.calls))
 
+    def test_allowlisted_two_by_two_chain_uses_one_output_click_per_44_item_stage(self):
+        c=InventoryCraftClient(self.root,stock={'minecraft:cobbled_deepslate':44})
+        with patch('kit_runtime.inventory.time.sleep'):
+            result=manufacture(c,self.catalog,{'minecraft:deepslate_tiles':44})
+        from material_plan import inventory_counts
+        stock=inventory_counts(c.status())
+        self.assertTrue(result['complete'])
+        self.assertEqual(44,stock['minecraft:deepslate_tiles'])
+        self.assertEqual(0,stock['minecraft:cobbled_deepslate'])
+        self.assertEqual(0,stock['minecraft:polished_deepslate'])
+        self.assertEqual(0,stock['minecraft:deepslate_bricks'])
+        output_clicks=[params for _,params in c.calls
+                       if params['slot']==0 and params['kind']=='quick_move']
+        self.assertEqual(3,len(output_clicks))
+        self.assertLess(len(c.calls),90)
+        self.assertEqual(0,c.cursor['count'])
+        self.assertTrue(all(not c.slots[i]['count'] for i in range(1,5)))
+
+    def test_allowlisted_batch_preserves_five_input_leftovers(self):
+        c=InventoryCraftClient(self.root,stock={'minecraft:cobbled_deepslate':49})
+        with patch('kit_runtime.inventory.time.sleep'):
+            result=manufacture(c,self.catalog,{'minecraft:polished_deepslate':44})
+        from material_plan import inventory_counts
+        stock=inventory_counts(c.status())
+        self.assertTrue(result['complete'])
+        self.assertEqual((5,44),(stock['minecraft:cobbled_deepslate'],
+                                 stock['minecraft:polished_deepslate']))
+        self.assertEqual(1,sum(params['slot']==0 and params['kind']=='quick_move'
+                               for _,params in c.calls))
+        self.assertEqual(0,c.cursor['count'])
+        self.assertTrue(all(not c.slots[i]['count'] for i in range(1,5)))
+
+    def test_full_inventory_executes_the_exact_small_sources_that_prove_output_room(self):
+        c=InventoryCraftClient(self.root,stock={'minecraft:cobbled_deepslate':64})
+        for slot in range(10,14):
+            c.slots[slot].update(item='minecraft:cobbled_deepslate',count=11)
+        for slot in range(14,45):
+            c.slots[slot].update(item='minecraft:diamond_sword',count=1,max_stack=1)
+        with patch('kit_runtime.inventory.time.sleep'):
+            result=manufacture(c,self.catalog,{'minecraft:polished_deepslate':44})
+        from material_plan import inventory_counts
+        stock=inventory_counts(c.status())
+        self.assertTrue(result['complete'])
+        self.assertEqual((64,44),(stock['minecraft:cobbled_deepslate'],
+                                  stock['minecraft:polished_deepslate']))
+        source_pickups=[params['slot'] for _,params in c.calls
+                        if params['kind']=='pickup' and params['slot']>=9
+                        and params['expected_cursor_count']==0]
+        self.assertEqual([10,11,12,13],source_pickups)
+        self.assertEqual(1,sum(params['slot']==0 and params['kind']=='quick_move'
+                               for _,params in c.calls))
+        self.assertEqual(0,c.cursor['count'])
+        self.assertTrue(all(not c.slots[i]['count'] for i in range(1,5)))
+
+    def test_batch_output_waits_through_optimistic_rollback_without_replay(self):
+        class OutputRollback(InventoryCraftClient):
+            def __init__(self,*args,**kwargs):
+                super().__init__(*args,**kwargs);self.rolled_back=False
+            def checked(self,op,**params):
+                before=super().status()
+                result=super().checked(op,**params)
+                if params['slot']==0 and params['kind']=='quick_move' and not self.rolled_back:
+                    self.rolled_back=True
+                    final=copy.deepcopy(result)
+                    rollback=copy.deepcopy(before)
+                    rollback['time']=final['time']+1
+                    authoritative=copy.deepcopy(final);authoritative['time']=final['time']+2
+                    confirmed=copy.deepcopy(final);confirmed['time']=final['time']+3
+                    self.pending=[rollback,authoritative,confirmed]
+                return result
+        c=OutputRollback(self.root,stock={'minecraft:cobbled_deepslate':44})
+        with patch('kit_runtime.inventory.time.sleep'):
+            result=manufacture(c,self.catalog,{'minecraft:polished_deepslate':44})
+        self.assertTrue(result['complete']);self.assertTrue(c.rolled_back)
+        self.assertEqual(1,sum(params['slot']==0 and params['kind']=='quick_move'
+                               for _,params in c.calls))
+        self.assertEqual(0,c.cursor['count'])
+        self.assertTrue(all(not c.slots[i]['count'] for i in range(1,5)))
+
+    def test_batch_output_timeout_never_replays_ambiguous_shift_click(self):
+        class OutputNeverAcknowledged(InventoryCraftClient):
+            def __init__(self,*args,**kwargs):
+                super().__init__(*args,**kwargs);self.block_output=False;self.block_ticks=0
+            def checked(self,op,**params):
+                before=super().status()
+                result=super().checked(op,**params)
+                if params['slot']==0 and params['kind']=='quick_move':
+                    # The native reply was optimistic, then the server rolled
+                    # the whole click back. Keep returning the authoritative
+                    # filled grid; the executor must time out without replay.
+                    self.slots=copy.deepcopy(before['menu']['slots'])
+                    self.cursor=copy.deepcopy(before['menu']['cursor'])
+                    self.block_output=True
+                return result
+        c=OutputNeverAcknowledged(self.root,stock={'minecraft:cobbled_deepslate':44})
+        def monotonic():
+            if not c.block_output:
+                return 0
+            c.block_ticks+=1
+            return 7 if c.block_ticks>=3 else 0
+        with patch('kit_runtime.inventory.time.sleep'),patch(
+                'kit_runtime.inventory.time.monotonic',side_effect=monotonic):
+            with self.assertRaisesRegex(RuntimeError,'inventory_output; no action replay'):
+                manufacture(c,self.catalog,{'minecraft:polished_deepslate':44})
+        self.assertEqual(1,sum(params['slot']==0 and params['kind']=='quick_move'
+                               for _,params in c.calls))
+        self.assertIsNotNone(c.owned_inventory_crafting)
+        self.assertEqual([11,11,11,11],[c.slots[i]['count'] for i in range(1,5)])
+
+    def test_live_like_47_to_49_pickup_preserves_extra_stock_and_completes_target(self):
+        c=InventoryCraftClient(self.root,stone=47);injected=False
+        def collect_two(client):
+            nonlocal injected
+            if not injected and client.cursor['item']=='minecraft:stone' and client.cursor['count']==47:
+                client.cursor['count']+=2;injected=True
+        c.after_click=collect_two
+        with patch('kit_runtime.inventory.time.sleep'),patch('material_manufacture.time.sleep'):
+            result=manufacture(c,self.catalog,{'minecraft:stone_bricks':44})
+        from material_plan import inventory_counts
+        stock=inventory_counts(c.status())
+        self.assertTrue(result['complete']);self.assertTrue(injected)
+        self.assertEqual((5,44),(stock['minecraft:stone'],stock['minecraft:stone_bricks']))
+        self.assertEqual(0,c.cursor['count']);self.assertTrue(all(not c.slots[i]['count'] for i in range(1,5)))
+        first=c.calls[0][1]
+        self.assertEqual((9,47,'minecraft:air',0),
+                         (first['slot'],first['expected_count'],first['expected_cursor'],
+                          first['expected_cursor_count']))
+        self.assertEqual(1,c.calls[1][1]['slot'])
+        self.assertIsNone(c.owned_inventory_crafting)
+
+    def test_inventory_craft_failure_persists_owned_cursor_evidence(self):
+        c=InventoryCraftClient(self.root,stone=47)
+        def corrupt_cursor(client):
+            if len(client.calls)==1:client.cursor.update(item='minecraft:diamond',count=47)
+        c.after_click=corrupt_cursor
+        with patch('kit_runtime.inventory.time.monotonic',side_effect=[0,7]):
+            with self.assertRaisesRegex(RuntimeError,'no action replay'):
+                manufacture(c,self.catalog,{'minecraft:stone_bricks':44})
+        records=list(self.root.glob('inventory-craft-failure-*.json'))
+        self.assertEqual(1,len(records));record=json.loads(records[0].read_text())
+        self.assertEqual('ingredient_pickup',record['detail'].split(' at ')[-1].split(';')[0])
+        self.assertEqual({'item':'minecraft:diamond','count':47},
+                         {k:record['observed']['cursor'][k] for k in ('item','count')})
+        self.assertEqual(0,record['observed']['grid'][1]['count'])
+        self.assertEqual(0,record['owned_inventory_crafting']['menu_id'])
+
     def test_inventory_manufacture_preserves_player_screen_cursor_and_preexisting_grid(self):
         for kind in ('screen','cursor','grid'):
             with self.subTest(kind=kind):
@@ -133,7 +310,17 @@ class ManufactureTests(unittest.TestCase):
                 else:c.slots[1].update(item='minecraft:diamond',count=1)
                 before=c.status()
                 with self.assertRaises(RuntimeError):manufacture(c,self.catalog,{'minecraft:stone_bricks':48})
-                self.assertEqual([],c.calls);self.assertEqual(before,c.status())
+                after=c.status();before.pop('time');after.pop('time')
+                self.assertEqual([],c.calls);self.assertEqual(before,after)
+
+    def test_inventory_manufacture_rejects_old_host_before_any_click(self):
+        c=InventoryCraftClient(self.root)
+        original=c.status
+        c.status=lambda:{k:v for k,v in original().items()
+                         if k!='inventory_cursor_precondition_protocol'}
+        with self.assertRaisesRegex(RuntimeError,'isolated inventory menu'):
+            manufacture(c,self.catalog,{'minecraft:stone_bricks':48})
+        self.assertEqual([],c.calls)
 
     def test_inventory_manufacture_stops_if_player_opens_screen_between_owned_clicks(self):
         c=InventoryCraftClient(self.root);c.after_click=lambda client:setattr(client,'screen','InventoryScreen')

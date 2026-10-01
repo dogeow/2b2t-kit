@@ -118,7 +118,7 @@ class BorerAutomationWiringTest {
 		assertFalse(calls(method("SceneryExplorer", "observe")).contains("renderDistance"));
 		assertTrue(calls(method("SceneryExplorer", "terrain")).contains("isReal"));
 		assertTrue(calls(method("SceneryExplorer", "safeStep")).contains("isReal"));
-		assertTrue(calls(method("SceneryBobby", "isReal")).containsAll(List.of("getLevel", "isInstance")));
+		assertEquals(List.of("isServerChunk"), calls(method("SceneryBobby", "isReal")));
 	}
 	@Test void bobbyWritesOnItsNativeQueueAndDoesNotInstallTheReturnedFakeChunk() throws Exception {
 		assertTrue(fields(method("SceneryBobby", "accept")).contains("nativeSave"));

@@ -15,6 +15,7 @@ from material_cleanup import register, complete
 from material_plan import inventory_counts
 from packed_supplies import open_box, matching_source, take_box
 from .acquisition import ROCK_SOURCES, LOGS
+from .snow_harvest import SNOW, SNOW_BLOCK, SNOWBALL
 from .protocol import server_key
 
 
@@ -213,15 +214,21 @@ def prepare(c,item,target,profile,out,checkpoint):
     kind='pickaxe' if item in ROCK_SOURCES else 'axe' if item in LOGS else 'shovel'
     minimum=700 if kind=='pickaxe' else min(512,max(96,target-inventory_counts(c.status()).get(item,0)+32))
     grass=item=='minecraft:grass_block'
+    snow_silk=item in (SNOW,SNOW_BLOCK)
+    snow_plain=item==SNOWBALL
     def eligible(rows):
         return [r for r in rows if 0<=r.get('slot',-1)<36 and r.get('count')
                 and r.get('item') in ('minecraft:diamond_'+kind,'minecraft:netherite_'+kind)
                 and r.get('durability',0)>=minimum and (kind!='pickaxe' or not is_silk(r))
-                and (not grass or has_silk_touch(r))]
+                and (not grass and not snow_silk or has_silk_touch(r))
+                and (not snow_plain or not has_silk_touch(r))]
     checkpoint()
     if not eligible(c.status()['inventory']):
         ender,pad=profile.get('ender_chest'),profile.get('shulker_pad')
-        if ender and pad:
+        # Packed-supply selection can require an enchantment but cannot yet
+        # express its absence.  Never withdraw an arbitrary Silk Touch shovel
+        # while preparing the plain-shovel snowball route.
+        if ender and pad and not snow_plain:
             state=open_box(c,ender,'ChestMenu')
             candidate=None
             for box in state['menu']['slots'][:-36]:
@@ -229,9 +236,11 @@ def prepare(c,item,target,profile,out,checkpoint):
                     continue
                 for tool in box.get('contains',[]):
                     if (tool.get('item') in ('minecraft:diamond_'+kind,'minecraft:netherite_'+kind)
-                            and tool.get('durability',0)>=minimum and not is_silk(tool)
-                            and (not grass or has_silk_touch(tool))):
-                        if any(r.get('item')==tool['item'] and r.get('durability',0)>=minimum and is_silk(r)
+                            and tool.get('durability',0)>=minimum
+                            and (kind!='pickaxe' or not is_silk(tool))
+                            and (not grass and not snow_silk or has_silk_touch(tool))
+                            and (not snow_plain or not has_silk_touch(tool))):
+                        if kind=='pickaxe' and any(r.get('item')==tool['item'] and r.get('durability',0)>=minimum and is_silk(r)
                                for r in box.get('contains',[])):
                             continue
                         candidate=(box['slot'],tool['item']);break
@@ -242,10 +251,12 @@ def prepare(c,item,target,profile,out,checkpoint):
                 slot,tool=candidate
                 take_box(c,ender,pad,slot,{tool:inventory_counts(c.status()).get(tool,0)+1},
                          minimum_durability={tool:minimum},
-                         required_enchantments={tool:{'minecraft:silk_touch':1}} if grass else None)
+                         required_enchantments={tool:{'minecraft:silk_touch':1}}
+                         if grass or snow_silk else None)
     if not eligible(c.status()['inventory']):
         return {'phase':'blocked','detail':f'需要剩余耐久至少 {minimum} 的钻石或下界合金{kind}'
-                + ('并带精准采集' if grass else '') + '；仓库未找到符合条件的现有工具'}
+                + ('并带精准采集' if grass or snow_silk else '且不带精准采集' if snow_plain else '')
+                + '；仓库未找到符合条件的现有工具'}
     if kind=='pickaxe':
         # Native AREA and Meteor AutoTool may both reselect a quicker worn
         # pickaxe. Keep only qualified candidates in the actor's inventory;

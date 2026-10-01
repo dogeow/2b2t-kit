@@ -36,7 +36,7 @@ class RockQuarryBridgeWiringTest {
         assertTrue(text("dispatch").containsAll(Set.of("quarry_batch","rock_quarry_batch")));
     }
     @Test void receiptSeparatesRetainedLightsAndInventoryGainAndSupportsBothEntryPoints()throws Exception{
-        assertTrue(text("snapshot").containsAll(Set.of("rock_quarry_protocol","rock_quarry")));
+        assertTrue(text("snapshot").containsAll(Set.of("rock_quarry_protocol","raw_iron_block_quarry_protocol","rock_quarry")));
         assertTrue(text("updateRockQuarry").containsAll(Set.of("gained","current","remaining_blocks","retained_lights","pending_blocks","area_cleared")));
         assertTrue(text("nativeMaterialSubmit").contains("rock_quarry_batch"));
         assertTrue(calls("materialJobCancel").indexOf("ownsCancel")<calls("materialJobCancel").indexOf("stopWork"));

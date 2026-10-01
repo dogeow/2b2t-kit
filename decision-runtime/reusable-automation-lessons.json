@@ -1,0 +1,172 @@
+[
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "quantity_scope",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "材料 target 是背包或批准仓库的绝对成品总数；从 describe 查询具体 scope，不能把总数改成增量。",
+    "source_level": "contract_and_regressions",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  },
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "unknown_server_receipt",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "服务器未确认则保留 pending，停止重放；物理块对账不能补造遗失 ACK。",
+    "source_level": "native_failure_observed",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  },
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "printer_window_is_not_completion",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "打印窗口 DONE 只是计时结束；必须确认 travel_pending=0、模块已停、无 failure，再独立核对库存与方块。",
+    "source_level": "native_failure_and_regression",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  },
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "cache_is_not_stock",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "Bobby/种子/旧容器日志只作线索；实际库存和可用来源必须实时检查，箱子去重需 type/facing。",
+    "source_level": "live_container_audit",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  },
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "stock_refill_boundary",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "最后一块触发自动切换可能产生整叠暂时变化；先选足量手持库存并保留余量，不放宽守恒核验。",
+    "source_level": "native_inventory_failure_observed",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  },
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "regrown_sources",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "已完成的采集轮次允许新鲜扫描重新采集再生树，原在途动作不能以新批次重放。",
+    "source_level": "offline_regression",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  },
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "sparse_scan_metadata",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "来源扫描必须 details=True，并核对实际 AIR/block_id、流体、实体与保护范围。",
+    "source_level": "protocol_and_regression",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  },
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "park_native_lease",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "先更新原生停靠目标并核验租约再收尾；只改脚本变量不代表游戏已接收。",
+    "source_level": "native_failure_observed",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  },
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "controller_and_source_boundaries",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "多 agent 可提前并行开发材料代码，同一角色仅一个动作控制者；自有工位和未知回执必须明确。",
+    "source_level": "operating_preference_and_regressions",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  },
+  {
+    "schema": 1,
+    "kind": "reusable_automation_lesson",
+    "topic": "evidence_levels",
+    "tags": [
+      "minecraft",
+      "projection",
+      "mining",
+      "投影建造",
+      "挖矿",
+      "材料"
+    ],
+    "rule": "代码存在、来源已备、已安装、离线通过与游戏验证分别记录；reported_done 和手工总结只记诊断，不晋升技能。",
+    "source_level": "acceptance_contract",
+    "acceptance": "maintainer_lesson_only_not_verified_skill",
+    "reference": "decision-runtime/AUTOMATION-EXPERIENCE.md"
+  }
+]

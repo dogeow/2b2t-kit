@@ -31,6 +31,7 @@ def _inventory_state(state, menu_id=None, *, empty=False):
     if (state.get('screen') or menu.get('type') != 'InventoryMenu' or menu.get('id') != 0
             or menu_id is not None and menu.get('id') != menu_id
             or len(menu.get('slots', [])) < 45
+            or state.get('inventory_cursor_precondition_protocol', 0) < 1
             or state.get('inventory_isolation', {}).get('supported') is not True
             or state.get('inventory_isolation', {}).get('active') is not True):
         raise RuntimeError('Owned isolated inventory menu changed; player UI is preserved')
@@ -38,6 +39,69 @@ def _inventory_state(state, menu_id=None, *, empty=False):
                   or any(menu['slots'][i].get('count') != 0 for i in range(1, 5))):
         raise RuntimeError('Inventory crafting grid or cursor is already occupied; preserve player items')
     return state
+
+
+def _inventory_output_room(slots, spec):
+    # Empty ItemStacks report max_stack=1.  Only the explicit stack-recipe
+    # allowlist is known to have ordinary 64-item outputs.  Other recipes
+    # conservatively reserve no more than one recipe result per empty slot.
+    empty_limit = 64 if stack_recipe.supported(spec) else spec['produces']
+    return sum(
+        empty_limit if not row['count'] else
+        max(0, row.get('max_stack', empty_limit) - row['count'])
+        if row['item'] == spec['output'] else 0
+        for row in slots)
+
+
+def _inventory_batch(state, spec, target_total, max_rounds=64):
+    """Plan one server-shift-click batch using only ordinary inventory slots.
+
+    The 2x2 grid consumes one item from every named cell per recipe round.  A
+    shift-click on the result is useful only when we can first prove that every
+    cell can receive the same number of rounds and that the resulting items fit
+    after those inputs leave the backpack.  Unknown recipes retain the historic
+    one-round behavior; ``stack_recipe`` is the explicit no-container-remainder
+    allowlist used by the already verified workbench batch path.
+    """
+    menu = state['menu']
+    current = inventory_counts(state)[spec['output']]
+    remaining = target_total - current
+    if remaining <= 0:
+        return {'rounds': 0, 'produced': 0}
+    produces = spec['produces']
+    if (isinstance(produces, bool) or not isinstance(produces, int)
+            or not 1 <= produces <= 64 or remaining % produces):
+        raise RuntimeError('Inventory target is not an exact number of recipe rounds')
+    cells = [cell for positions in spec['ingredients'].values() for cell in positions]
+    desired = min(max_rounds, remaining // produces)
+    if not stack_recipe.supported(spec):
+        desired = min(desired, 1)
+    for rounds in range(desired, 0, -1):
+        slots = [dict(row) for row in menu['slots'][9:45]]
+        actions = []
+        possible = True
+        for item, positions in spec['ingredients'].items():
+            for cell in positions:
+                sources = [row for row in slots if row['item'] == item and row['count'] >= rounds]
+                if not sources:
+                    possible = False
+                    break
+                source = min(sources, key=lambda row: (stack_recipe.split_cost(row['count'], rounds),
+                                                       row['slot']))
+                actions.append({'source': source['slot'], 'source_count': source['count'],
+                                'item': item, 'cell': cell, 'count': rounds})
+                source['count'] -= rounds
+                if not source['count']:
+                    source['item'] = 'minecraft:air'
+            if not possible:
+                break
+        if not possible:
+            continue
+        room = _inventory_output_room(slots, spec)
+        if room >= rounds * produces:
+            return {'rounds': rounds, 'produced': rounds * produces,
+                    'actions': actions}
+    raise craft_recipe.InventoryCapacity('Inventory recipe batch has no verified input layout and output space')
 
 
 def _inventory_execute(client, spec, target_total):
@@ -65,44 +129,60 @@ def _inventory_execute(client, spec, target_total):
         before = _inventory_state(owned.status(), empty=True)
         initial = inventory_counts(before)
         if initial[spec['output']] >= target_total:
+            client.owned_inventory_crafting = None
             return before
-        simulated = [dict(row) for row in before['menu']['slots'][9:45]]
-        for item, slots in spec['ingredients'].items():
-            for _ in slots:
-                source = next((row for row in simulated if row['item'] == item and row['count']), None)
-                if source is None:
-                    raise RuntimeError('Inventory recipe ingredients no longer cover a full round')
-                source['count'] -= 1
-        limit = next((row.get('max_stack', spec['produces']) for row in simulated
-                      if row['item'] == spec['output'] and row['count']), spec['produces'])
-        room = sum(limit if not row['count'] else max(0, limit-row['count'])
-                   if row['item'] == spec['output'] else 0 for row in simulated)
-        if room < spec['produces']:
-            raise craft_recipe.InventoryCapacity('Inventory recipe has no verified output space')
+        batch = _inventory_batch(before, spec, target_total)
+        rounds, produced = batch['rounds'], batch['produced']
+        # The empty preflight above proves any subsequent menu-0 cursor/grid
+        # contents belong to this task.  Keep the marker on exceptions so the
+        # guarded finish path can return them without claiming arbitrary state.
+        client.owned_inventory_crafting = {
+            'menu_id': 0,
+            'world_session': before.get('world_session', getattr(client, 'world', None)),
+            'task_session': getattr(client, 'task', None),
+        }
         state = before
-        for item, slots in spec['ingredients'].items():
-            for cell in slots:
-                source = next((row for row in state['menu']['slots'][9:45]
-                               if row['item'] == item and row['count'] > 0), None)
-                if source is None:
-                    raise RuntimeError('Inventory recipe ingredient changed; no duplicate craft')
-                state = session.place_cell(state, source, cell, 1)
-                state = session.wait_grid(state, 0, item, [cell], 1)
+        for action in batch['actions']:
+            source = state['menu']['slots'][action['source']]
+            # Same-item pickups may legitimately increase this exact source
+            # after planning.  A decrease or identity change invalidates the
+            # capacity proof; never silently substitute a different stack.
+            if (source['item'] != action['item']
+                    or source['count'] < action['source_count']):
+                raise RuntimeError('Planned inventory recipe source changed; no duplicate craft')
+            state = session.place_cell(state, source, action['cell'], action['count'])
+            state = session.wait_grid(state, 0, action['item'],
+                                      [action['cell']], action['count'])
         state = session.wait_recipe(state, spec['output'])
         if state['menu']['slots'][0]['count'] != spec['produces']:
             raise RuntimeError('Inventory recipe output quantity differs from the catalog')
+        # Refresh the round balance after all input pickups are settled. Nearby
+        # drops may legitimately add the same ingredient while a full stack is
+        # on the cursor; those items are preserved and must not make the already
+        # acknowledged click look like duplicate consumption.
+        pre_output = inventory_counts(state)
+        ingredient_totals = {
+            item: pre_output[item] + sum(state['menu']['slots'][cell]['count'] for cell in slots)
+            for item, slots in spec['ingredients'].items()
+        }
+        if _inventory_output_room(state['menu']['slots'][9:45], spec) < produced:
+            # The owned grid remains recoverable by the guarded material-task
+            # finish path.  No output click has been sent and no alternative
+            # source or smaller batch is guessed from this changed inventory.
+            raise RuntimeError('Inventory output capacity changed after batch placement; owned grid requires recovery')
         state = session.click(state, 0, 'quick_move')
-        deadline = time.monotonic() + 8
-        while True:
-            stock = inventory_counts(state)
-            grid = [state['menu']['slots'][cell] for cell in cells]
-            if (stock[spec['output']] == initial[spec['output']] + spec['produces']
-                    and state['menu']['cursor']['count'] == 0
-                    and all(not row['count'] or row['item'] not in spec['ingredients'] for row in grid)):
-                break
-            if time.monotonic() >= deadline:
-                raise RuntimeError('Inventory output not confirmed; output click is not replayed')
-            time.sleep(.2);state = owned.status()
+        state = session._wait(
+            state, 0,
+            lambda menu: sum(row['count'] for row in menu['slots'][9:45]
+                             if row['item'] == spec['output'])
+                         == pre_output[spec['output']] + produced
+                         and menu['cursor']['count'] == 0
+                         and (all(not menu['slots'][cell]['count'] for cell in cells)
+                              if rounds > 1 else
+                              all(not menu['slots'][cell]['count']
+                                  or menu['slots'][cell]['item'] not in spec['ingredients']
+                                  for cell in cells)),
+            'inventory_output', confirmations=2, interval=.1, fresh=True)
         # These cells were empty before our recipe. Return only confirmed
         # recipe remainders from them, never a preexisting/user-owned grid.
         for cell in cells:
@@ -111,11 +191,13 @@ def _inventory_execute(client, spec, target_total):
                 continue
             state = session.click(state, cell, 'quick_move')
             state = session._wait(state, 0, lambda menu: menu['slots'][cell]['count'] == 0,
-                                  'owned_inventory_grid_return')
+                                  'owned_inventory_grid_return', confirmations=2,
+                                  interval=.1, fresh=True)
         final = _inventory_state(owned.status(), empty=True)
         stock = inventory_counts(final)
-        if (stock[spec['output']] - initial[spec['output']] != spec['produces']
-                or any(initial[item] - stock[item] != len(slots) for item, slots in spec['ingredients'].items())):
+        if (stock[spec['output']] - pre_output[spec['output']] != produced
+                or any(ingredient_totals[item] - stock[item] != rounds * len(slots)
+                       for item, slots in spec['ingredients'].items())):
             raise RuntimeError('Inventory recipe balances differ; do not repeat the operation')
 
 
@@ -169,6 +251,28 @@ def manufacture(client, catalog, targets, keep=None, allow_partial=False):
         except craft_recipe.InventoryCapacity:
             results.append({'item':step['item'],'state':'waiting_for_inventory_space'})
             continue
+        except Exception as error:
+            if inventory_mode:
+                failure = {'schema': 1, 'recipe': spec, 'target_total': stock[step['item']] + produced,
+                           'error_type': type(error).__name__, 'detail': str(error),
+                           'owned_inventory_crafting': getattr(client, 'owned_inventory_crafting', None)}
+                try:
+                    observed = client.status(); menu = observed.get('menu', {})
+                    failure['observed'] = {
+                        'time': observed.get('time'), 'world_session': observed.get('world_session'),
+                        'control_revision': observed.get('control_revision'),
+                        'menu_id': menu.get('id'), 'menu_type': menu.get('type'),
+                        'cursor': menu.get('cursor'), 'grid': menu.get('slots', [])[:5],
+                        'inventory': observed.get('inventory', []),
+                    }
+                except Exception as observation_error:
+                    failure['observation_error'] = str(observation_error)
+                try:
+                    (client.out/('inventory-craft-failure-'+stamp+'.json')).write_text(
+                        json.dumps(failure, ensure_ascii=False, indent=2))
+                except OSError:
+                    pass
+            raise
         gained = inventory_counts(after)[step['item']] - stock[step['item']]
         if gained != produced:
             raise RuntimeError('Craft output differs from the fresh material plan')

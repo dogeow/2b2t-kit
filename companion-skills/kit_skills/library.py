@@ -13,10 +13,10 @@ def terms(text):
         out.update(run[i:i+2] for i in range(max(1,len(run)-1)))
     return out
 class SkillManager:
-    def __init__(self,root,retrieval_top_k=5):
+    def __init__(self,root,retrieval_top_k=5,*,lock_timeout=10):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True)
         self.retrieval_top_k=min(5,max(1,retrieval_top_k))
-        self.db=sqlite3.connect(self.root/'skills.sqlite3',timeout=10)
+        self.db=sqlite3.connect(self.root/'skills.sqlite3',timeout=lock_timeout)
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript('''
         CREATE TABLE IF NOT EXISTS skills(name TEXT,version INTEGER,hash TEXT UNIQUE,body TEXT,status TEXT,created REAL,PRIMARY KEY(name,version));

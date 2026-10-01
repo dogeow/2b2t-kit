@@ -17,7 +17,8 @@ class PackedCapacityTest(unittest.TestCase):
         rows=[]
         if loose:rows.append({'slot':0,'item':'minecraft:iron_ingot','count':loose,'max_stack':64})
         if packed:rows.append({'slot':18,'item':'minecraft:shulker_box','count':1,'max_stack':1,
-                               'contains':[{'item':'minecraft:iron_ingot','count':packed}]})
+                               'contains':[{'item':'minecraft:iron_ingot','count':min(64,packed-offset),'max_stack':64}
+                                           for offset in range(0,packed,64)]})
         self.state={'inventory':inventory,'menu':{'slots':rows+[{}]*36}}
         client=SimpleNamespace(status=lambda:copy.deepcopy(self.state),checked=Mock(),transfer=Mock())
         job=Backend.__new__(Backend)

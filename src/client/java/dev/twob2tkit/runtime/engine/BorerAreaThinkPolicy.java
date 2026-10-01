@@ -193,7 +193,7 @@ public final class BorerAreaThinkPolicy {
 		int repeatStuckCycles
 	) {
 		if (busy) return "busy";
-		if (!canAsk) return "no-grok-or-key";
+		if (!canAsk) return "no-api-key";
 		if (asking) return "asking";
 		boolean urgent = allMovesFailed || repeatStuckCycles >= REPEAT_STUCK_ASK;
 		int cooldown = urgent ? ASK_FAIL_COOLDOWN_TICKS : ASK_COOLDOWN_TICKS;
@@ -211,9 +211,9 @@ public final class BorerAreaThinkPolicy {
 		return askingTicks >= (patching ? PATCH_TIMEOUT_TICKS : ASK_TIMEOUT_TICKS);
 	}
 
-	/** 本地招数用尽才改 Java；顺利挖过几口井只更新记忆，不动代码。 */
+	/** 自动卡住恢复从不授权修改、构建或部署源码。 */
 	public static boolean shouldPatchCode(boolean grokAvailable, boolean hasRepo, boolean allMovesFailed) {
-		return grokAvailable && hasRepo && allMovesFailed;
+		return false;
 	}
 
 	/** 路径是否像本仓库。 */

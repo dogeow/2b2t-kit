@@ -26,21 +26,42 @@ class InventorySession:
             raise RuntimeError("Container changed during inventory session; no further clicks")
 
     def _wait(self, state: dict, menu_id: int, predicate: Callable[[dict], bool], stage: str,
-              confirmations: int = 1, interval: float = .15) -> dict:
+              confirmations: int = 1, interval: float = .15,
+              *, fresh: bool = False) -> dict:
+        """Wait for a menu state without treating an optimistic click reply as an ack.
+
+        ``checked(slot_click)`` can return Minecraft's locally predicted menu before
+        a late server correction arrives.  For a dependent inventory mutation,
+        callers set ``fresh`` and require two later, time-advanced observations.
+        This spans the brief prediction/correction/final-confirmation sequence while
+        still never replaying the already dispatched click.
+        """
         self._bind(menu_id)
         deadline = time.monotonic() + 6
         seen = 0
+        first = True
+        last_observed_time = state.get('time')
+        poll_interval = interval if isinstance(last_observed_time, (int, float)) else 0
         while True:
             menu = state['menu']
             if menu['id'] != menu_id:
                 raise RuntimeError(f'Container changed during {stage}; no action replay')
-            seen = seen + 1 if predicate(menu) else 0
-            if seen >= confirmations:
-                return state
+            observed_time = state.get('time')
+            time_advanced = (not fresh or not first and
+                             (not isinstance(last_observed_time, (int, float))
+                              or not isinstance(observed_time, (int, float))
+                              or observed_time > last_observed_time))
+            if time_advanced:
+                seen = seen + 1 if predicate(menu) else 0
+                if isinstance(observed_time, (int, float)):
+                    last_observed_time = observed_time
+                if seen >= confirmations:
+                    return state
             if time.monotonic() >= deadline:
                 raise RuntimeError(f'Inventory acknowledgement missing at {stage}; no action replay')
-            time.sleep(interval)
+            time.sleep(poll_interval)
             state = self.client.status()
+            first = False
 
     def click(self, state: dict, slot: int, kind: str = 'pickup', button: int = 0) -> dict:
         menu = state['menu']
@@ -49,8 +70,11 @@ class InventorySession:
         menu_id = menu['id']
         self._bind(menu_id)
         row = menu['slots'][slot]
+        cursor = menu['cursor']
         return self.client.checked('slot_click', menu_id=menu_id, slot=slot,
                                    expected_item=row['item'], expected_count=row['count'],
+                                   expected_cursor=cursor['item'] if cursor['count'] else 'minecraft:air',
+                                   expected_cursor_count=cursor['count'],
                                    kind=kind, button=button)
 
     @staticmethod
@@ -104,6 +128,36 @@ class InventorySession:
         return self._wait(state, menu_id,
                           lambda menu: menu['cursor']['count'] == count and (not count or menu['cursor']['item'] == item), stage)
 
+    def _wait_pickup(self, state: dict, menu_id: int, source_slot: int, item: str,
+                     cursor_count: int, source_count: int, *, full_stack: bool,
+                     settle_prediction: bool = False) -> dict:
+        """Observe one already-dispatched pickup, including same-item collection.
+
+        A native full-stack pickup can be acknowledged before a nearby dropped
+        item is collected.  The first synchronized menu snapshot may therefore
+        contain more of the same item on the cursor than the clicked source
+        held, or the emptied source may already have been replenished.  The
+        dispatched stack on the formerly empty cursor proves the pickup; no
+        other mismatch is safe to interpret or replay.
+        """
+        def acknowledged(menu: dict) -> bool:
+            cursor = menu['cursor']
+            source = menu['slots'][source_slot]
+            exact = (cursor['item'] == item and cursor['count'] == cursor_count
+                     and source['count'] == source_count
+                     and (not source_count or source['item'] == item))
+            if exact:
+                return True
+            limit = cursor.get('max_stack', 64)
+            source_valid = (0 <= source['count'] <= source.get('max_stack', 64)
+                            and (not source['count'] or source['item'] == item))
+            return (full_stack and source_count == 0 and source_valid
+                    and cursor['item'] == item
+                    and cursor_count <= cursor['count'] <= limit)
+        return self._wait(state, menu_id, acknowledged, 'ingredient_pickup',
+                          confirmations=2 if settle_prediction else 1,
+                          interval=.1, fresh=settle_prediction)
+
     @staticmethod
     def _expect_slot(state: dict, slot: int, item: str, count: int) -> None:
         row = state['menu']['slots'][slot]
@@ -147,8 +201,8 @@ class InventorySession:
             return self.click(current, cell, button=button)
 
         half = (size + 1) // 2
-        picked = half if amount <= half and amount < size else size
-        direct = amount < picked - amount
+        requested_pickup = half if amount <= half and amount < size else size
+        direct = amount < requested_pickup - amount
         if direct and menu['type'] == 'FurnaceMenu' and cell in (0, 1):
             # Repeated right-click deposits race furnace slot corrections. Split
             # on a stable player slot, then send the exact stack in one click.
@@ -164,36 +218,62 @@ class InventorySession:
             # A full inventory has no scratch slot. Keep the exact remainder
             # on the source side, even though this slower path needs more clicks.
             direct = False
-        state = self.click(state, source_slot, button=0 if direct else int(picked != size))
-        cursor_start = size if direct else picked
-        state = self._wait(state, menu_id,
-                           lambda m: m['cursor']['item'] == item and m['cursor']['count'] == cursor_start
-                           and m['slots'][source_slot]['count'] == size - cursor_start,
-                           'ingredient_pickup')
+        state = self.click(state, source_slot, button=0 if direct else int(requested_pickup != size))
+        expected_cursor = size if direct else requested_pickup
+        expected_source = size - expected_cursor
+        state = self._wait_pickup(state, menu_id, source_slot, item,
+                                  expected_cursor, expected_source,
+                                  full_stack=expected_cursor == size,
+                                  settle_prediction=crafting)
+        cursor_start = state['menu']['cursor']['count']
+        source_start = state['menu']['slots'][source_slot]['count']
+        observed_total = cursor_start + source_start
+        returning = cursor_start - amount
+        if (returning and source_start + returning
+                > destination_capacity(state['menu']['cursor'], state['menu']['slots'][source_slot])):
+            raise RuntimeError('Collected ingredients no longer fit the source slot; no further clicks')
         if direct:
             for placed in range(amount):
                 expect_cell(state, placed)
                 state = place(state, 1)
-                state = self._cursor(state, menu_id, item, size - placed - 1, 'ingredient_cell')
-            self._expect_slot(state, source_slot, item, 0)
+                expected_cursor = cursor_start - placed - 1
+                state = self._wait(
+                    state, menu_id,
+                    lambda m, expected_cursor=expected_cursor, placed=placed:
+                        m['cursor']['count'] == expected_cursor
+                        and (not expected_cursor or m['cursor']['item'] == item)
+                        and m['slots'][cell]['item'] == item
+                        and m['slots'][cell]['count'] == initial + placed + 1,
+                    'ingredient_cell', confirmations=2 if crafting else 1,
+                    interval=.1, fresh=crafting)
+            self._expect_slot(state, source_slot, item, source_start)
             state = self.click(state, source_slot)
         else:
-            for returned in range(picked - amount):
-                self._expect_slot(state, source_slot, item, size - picked + returned)
+            for returned in range(cursor_start - amount):
+                self._expect_slot(state, source_slot, item, source_start + returned)
                 state = self.click(state, source_slot, button=1)
-                remaining = picked - returned - 1
-                source_count = size - picked + returned + 1
-                state = self._wait(state, menu_id, lambda m: m['cursor']['count'] == remaining and m['cursor']['item'] == item
-                                   and m['slots'][source_slot]['count'] == source_count and m['slots'][source_slot]['item'] == item, 'ingredient_remainder')
+                remaining = cursor_start - returned - 1
+                source_count = source_start + returned + 1
+                state = self._wait(
+                    state, menu_id,
+                    lambda m, remaining=remaining, source_count=source_count:
+                        m['cursor']['count'] == remaining
+                        and (not remaining or m['cursor']['item'] == item)
+                        and m['slots'][source_slot]['count'] == source_count
+                        and m['slots'][source_slot]['item'] == item,
+                    'ingredient_remainder', confirmations=2 if crafting else 1,
+                    interval=.1, fresh=crafting)
             expect_cell(state, 0)
             state = place(state, 0)
         # Furnace fuel may start burning immediately. The furnace executor checks
         # its recipe balance separately; crafting cells must retain the exact count.
+        final_source = observed_total - amount
         return self._wait(state, menu_id,
-                          lambda m: not m['cursor']['count'] and m['slots'][source_slot]['count'] == size - amount
-                          and (size == amount or m['slots'][source_slot]['item'] == item)
+                          lambda m: not m['cursor']['count'] and m['slots'][source_slot]['count'] == final_source
+                          and (not final_source or m['slots'][source_slot]['item'] == item)
                           and (not crafting or m['slots'][cell]['item'] == item and m['slots'][cell]['count'] == amount),
-                          'ingredient_placed')
+                          'ingredient_placed', confirmations=2 if crafting else 1,
+                          interval=.1, fresh=crafting)
 
     def wait_grid(self, state: dict, menu_id: int, item: str, cells: list[int], amount: int) -> dict:
         return self._wait(state, menu_id,

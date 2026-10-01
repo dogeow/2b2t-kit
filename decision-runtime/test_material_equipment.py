@@ -38,6 +38,38 @@ class ToolChest:
 
 
 class EquipmentTests(unittest.TestCase):
+    def test_packed_silk_snow_shovel_is_withdrawn_with_exact_enchantment_requirement(self):
+        tool={'slot':0,'item':'minecraft:diamond_shovel','count':1,'durability':600,
+              'enchantments':[{'id':'minecraft:silk_touch','level':1}],'max_stack':1}
+        class PackedClient:
+            def __init__(self):
+                self.inventory=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':64}
+                                for i in range(36)]
+            def status(self):return {'inventory':copy.deepcopy(self.inventory)}
+            def checked(self,op,**params):
+                assert op=='close_menu';return self.status()
+        c=PackedClient()
+        menu={'inventory':c.status()['inventory'],'menu':{'slots':[
+            {'slot':0,'item':'minecraft:white_shulker_box','count':1,'contains':[tool]}
+        ]+[
+            {'slot':i,'item':'minecraft:air','count':0} for i in range(1,27)
+        ]+[
+            {'slot':27+i,'item':'minecraft:air','count':0} for i in range(36)
+        ]}}
+        def take(client,ender,pad,slot,targets,**options):
+            self.assertEqual((0,{'minecraft:diamond_shovel':1}), (slot,targets))
+            self.assertEqual({'minecraft:diamond_shovel':{'minecraft:silk_touch':1}},
+                             options['required_enchantments'])
+            client.inventory[0]=dict(tool,slot=0)
+        with tempfile.TemporaryDirectory() as d, \
+                patch.object(e,'open_box',return_value=menu), \
+                patch.object(e,'take_box',side_effect=take) as withdraw:
+            result=e.prepare(c,e.SNOW,58,
+                             {'ender_chest':[1,2,3],'shulker_pad':[2,2,3]},
+                             Path(d),lambda:None)
+        self.assertEqual('done',result['phase'])
+        withdraw.assert_called_once()
+
     def test_task_boundary_keeps_only_confirmed_durable_non_silk_pickaxe_and_restores_variants(self):
         c=ToolChest(carried=0);variants=[
             {'item':'minecraft:diamond_pickaxe','count':1,'durability':142,'max_stack':1,

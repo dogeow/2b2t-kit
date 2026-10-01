@@ -5,17 +5,19 @@ import java.util.Set;
 /** Bounded dry excavation policy, separate from the existing surface sand quarry. */
 final class RockQuarryPolicy {
     static final int BUFFER = 3;
+    // Current vanilla OreVeinifier.IRON limits, not a general building-block whitelist.
+    static final int RAW_IRON_BLOCK_MIN_Y = -60, RAW_IRON_BLOCK_MAX_Y = -8;
     private static final Set<String> NATURAL = Set.of(
         "minecraft:stone", "minecraft:deepslate", "minecraft:granite", "minecraft:diorite",
         "minecraft:andesite", "minecraft:tuff", "minecraft:calcite", "minecraft:dripstone_block",
         "minecraft:dirt", "minecraft:grass_block", "minecraft:coarse_dirt", "minecraft:rooted_dirt",
-        "minecraft:podzol", "minecraft:mycelium", "minecraft:clay",
+        "minecraft:podzol", "minecraft:mycelium", "minecraft:clay", "minecraft:raw_iron_block",
         "minecraft:coal_ore", "minecraft:deepslate_coal_ore", "minecraft:iron_ore", "minecraft:deepslate_iron_ore",
         "minecraft:copper_ore", "minecraft:deepslate_copper_ore", "minecraft:gold_ore", "minecraft:deepslate_gold_ore",
         "minecraft:redstone_ore", "minecraft:deepslate_redstone_ore", "minecraft:lapis_ore", "minecraft:deepslate_lapis_ore",
         "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore", "minecraft:emerald_ore", "minecraft:deepslate_emerald_ore");
     private static final Set<String> ITEMS = Set.of("minecraft:cobblestone", "minecraft:cobbled_deepslate",
-        "minecraft:raw_iron", "minecraft:raw_copper", "minecraft:coal", "minecraft:andesite",
+        "minecraft:raw_iron", "minecraft:raw_iron_block", "minecraft:raw_copper", "minecraft:coal", "minecraft:andesite",
         "minecraft:diorite", "minecraft:granite", "minecraft:tuff", "minecraft:calcite");
     private static final Set<String> LIGHTS = Set.of("minecraft:torch","minecraft:wall_torch");
     private static final Set<String> HAZARDS = Set.of("minecraft:fire","minecraft:soul_fire","minecraft:cobweb",
@@ -44,6 +46,7 @@ final class RockQuarryPolicy {
             case "minecraft:cobblestone" -> block.equals("minecraft:stone");
             case "minecraft:cobbled_deepslate" -> block.equals("minecraft:deepslate");
             case "minecraft:raw_iron" -> block.equals("minecraft:iron_ore")||block.equals("minecraft:deepslate_iron_ore");
+            case "minecraft:raw_iron_block" -> block.equals("minecraft:raw_iron_block");
             case "minecraft:raw_copper" -> block.equals("minecraft:copper_ore")||block.equals("minecraft:deepslate_copper_ore");
             case "minecraft:coal" -> block.equals("minecraft:coal_ore")||block.equals("minecraft:deepslate_coal_ore");
             case "minecraft:andesite", "minecraft:diorite", "minecraft:granite", "minecraft:tuff", "minecraft:calcite" -> block.equals(item);
@@ -59,7 +62,9 @@ final class RockQuarryPolicy {
                     Cell cell=world.cell(x,y,z);boolean inside=bounds.contains(x,y,z);
                     if(!cell.loaded||cell.fluid||cell.blockEntity||cell.falling
                             ||HAZARDS.contains(cell.block)
-                            ||inside&&!cell.air&&!LIGHTS.contains(cell.block)&&!NATURAL.contains(cell.block))
+                            ||inside&&!cell.air&&!LIGHTS.contains(cell.block)&&!NATURAL.contains(cell.block)
+                            ||inside&&cell.block.equals("minecraft:raw_iron_block")
+                                &&(y<RAW_IRON_BLOCK_MIN_Y||y>RAW_IRON_BLOCK_MAX_Y))
                         throw new IllegalStateException("Rock quarry has a protected, wet, falling or unloaded cell at "+x+","+y+","+z);
                     if(bounds.column(x,z)&&y==bounds.minY-1&&!cell.solid)
                         throw new IllegalStateException("Rock quarry lacks solid bottom support at "+x+","+y+","+z);

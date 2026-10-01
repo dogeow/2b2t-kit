@@ -9,7 +9,9 @@ from kit_runtime.journal import write_json
 from material_plan import quantities, inventory_counts
 from .planning import plan
 from .projection_advice import material_choices
-from .protocol import JobBlocked, JobCancelled, JobPaused, fingerprint, server_key, validate_request
+from .projection_supply import direct_air_supply
+from .protocol import (JobBlocked, JobCancelled, JobPaused, fingerprint,
+                       search_coverage, server_key, validate_request)
 from projection_wood import POST_ITEM, POST_RAW, post_work
 
 STATES = {'queued', 'planning', 'fetching', 'gathering', 'crafting', 'smelting',
@@ -243,7 +245,7 @@ class MaterialJob:
     def _plan(self, targets):
         return plan(self.backend.catalog, targets, self.held, self.snapshot.get('warehouse_stock_hint'))
 
-    def _peak_slots(self, planned):
+    def _peak_capacity(self, planned):
         sizes = {}
         def slots(counts):
             total = 0
@@ -258,14 +260,28 @@ class MaterialJob:
                        if 0 <= row.get('slot', -1) < 36)
         fragmentation = max(0, occupied - slots(counts))
         peak = slots(counts) + fragmentation
+        peak_counts = Counter(counts)
+        peak_step = 'current_inventory'
         for step in planned['steps']:
             if step['kind'] == 'acquire':
                 counts[step['item']] += step['count']
             elif step['kind'] != 'reserve':
                 counts.subtract(step['ingredients'])
                 counts[step['item']] += step['produced']
-            peak = max(peak, slots(counts) + fragmentation)
-        return peak
+            used = slots(counts) + fragmentation
+            if used > peak:
+                peak,peak_counts,peak_step=used,Counter(counts),step['kind']+':'+step['item']
+        planned_items={step['item'] for step in planned['steps']}
+        planned_items.update(item for step in planned['steps'] for item in step.get('ingredients',{}))
+        # Report the material whose increase actually creates the peak. This is
+        # actionable for a dependency bottleneck (for example 120 snowballs),
+        # unlike the final output that may fit in one slot after crafting.
+        requirements={item:count for item,count in peak_counts.items()
+                      if item in planned_items and count>self.held.get(item,0)}
+        return {'slots':peak,'requirements':requirements,'stage':peak_step}
+
+    def _peak_slots(self, planned):
+        return self._peak_capacity(planned)['slots']
 
     def _fit_batch(self, item, final_count):
         amount = min(self._batch_limit(item), final_count - self.held.get(item, 0))
@@ -401,6 +417,17 @@ class MaterialJob:
             return
         actual = inventory_counts(self.snapshot)
         needed = self._targets()
+        # Schema-2 receipts are independently constrained again at the
+        # scheduler boundary. A buggy or older backend cannot turn occupied
+        # terrain stock into an instruction to run an empty build pass.
+        audit=self.snapshot.get('projection_audit',{})
+        if audit.get('audit_schema') == 2:
+            placeable=direct_air_supply(audit,needed)
+            if any(item not in placeable or count>placeable[item]
+                   for item,count in amounts.items()):
+                self._event('finished_materials_rejected',reason='not_direct_air_placeable',
+                            provided=amounts)
+                return
         verified = {item: before['inventory'].get(item, 0) + count for item, count in amounts.items()
                     if item in needed and actual.get(item, 0) - before['inventory'].get(item, 0) >= count
                     and self.held.get(item, 0) >= before['inventory'].get(item, 0) + count}
@@ -517,7 +544,7 @@ class MaterialJob:
                              if 0<=row.get('slot',-1)<36)>before['free_slots'])
         search=receipt.get('search_progress') or {}
         if (operation=='acquire' and receipt['phase']=='waiting' and search.get('has_more') is True
-                and type(search.get('new_tiles')) is int and 0<search['new_tiles']<=32):
+                and 0<search_coverage(search)<=32):
             # Search coverage is useful progress, never an item receipt.
             progressed=True
             self._write(search_progress=search)
@@ -622,7 +649,8 @@ class MaterialJob:
                        and not planned['missing_supplies']
                        and any(step['kind'] == 'craft' for step in planned['steps'])
                        and all(step['kind'] in ('craft', 'reserve') for step in planned['steps']))
-        peak_slots = self._peak_slots(planned) if local_craft else None
+        peak_capacity = self._peak_capacity(planned) if local_craft else None
+        peak_slots = peak_capacity['slots'] if peak_capacity else None
         local_craft = local_craft and peak_slots <= 35
         if not local_craft:
             if self._fetch(wanted):
@@ -630,10 +658,13 @@ class MaterialJob:
             if self._fetch_intermediates(targets, planned):
                 return
         workspace = any(step['kind'] in ('craft', 'smelt', 'harden') for step in planned['steps'])
-        if peak_slots is None:
-            peak_slots = self._peak_slots(planned)
+        if peak_capacity is None:
+            peak_capacity = self._peak_capacity(planned)
+            peak_slots = peak_capacity['slots']
         if peak_slots > (35 if workspace else 36):
-            self._make_room(targets, planned, '最小加工批次仍缺少背包周转空间，请先腾出位置')
+            capacity_targets=peak_capacity['requirements'] or targets
+            self._make_room(capacity_targets, planned,
+                            '最小加工批次仍缺少背包周转空间，请先腾出位置')
             return
         for step in planned['steps']:
             kind, item = step['kind'], step['item']

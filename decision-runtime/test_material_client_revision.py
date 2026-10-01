@@ -1,7 +1,55 @@
 import json,tempfile,unittest
 from pathlib import Path
+from unittest.mock import patch
 from material_client import Client,Handoff
 class RevisionTest(unittest.TestCase):
+ def test_reply_created_after_observation_never_returns_stale_current_status(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d)
+   class RaceState(dict):
+    def get(self,key,default=None):
+     if key=='supervision_lease':
+      request=json.loads((root/'request.json').read_text())
+      reply=root/('reply-'+request['id']+'.json')
+      if not reply.exists():
+       reply.write_text(json.dumps({'id':request['id'],'phase':None,'blocks':[]}))
+     return super().get(key,default)
+   class Fake(Client):
+    def __init__(self):self.root=self.out=root;self.world='world';self.rev=40;self.anchor=[1,2,3];self.owned=False;self.last=None;self.polls=0
+    def raw(self):
+     state={'world_session':'world','control_revision':40,'connected':True,'screen':'','manual_movement':False,'health':20,'server':'simpcraft.com','dimension':'minecraft:overworld','pos':[1,2,3],'time':1,'inventory':[]}
+     if (root/'request.json').exists():
+      self.polls+=1
+      state.update(id='previous-navigate',last_request='previous-navigate',phase='done',detail='previous navigate')
+      return RaceState(state)
+     return state
+   with patch('material_client.time.sleep'):
+    client=Fake();result=client.request('scan')
+   request=json.loads((root/'request.json').read_text())
+   self.assertEqual(result,{'id':request['id'],'phase':None,'blocks':[]})
+   self.assertGreaterEqual(client.polls,2)
+ def test_partial_reply_waits_for_valid_json_without_replaying_request(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d)
+   class Fake(Client):
+    def __init__(self):self.root=self.out=root;self.world='world';self.rev=40;self.anchor=[1,2,3];self.owned=False;self.last=None;self.polls=0
+    def raw(self):
+     state={'world_session':'world','control_revision':40,'connected':True,'screen':'','manual_movement':False,'health':20,'server':'simpcraft.com','dimension':'minecraft:overworld','pos':[1,2,3],'time':1,'inventory':[]}
+     request_path=root/'request.json'
+     if request_path.exists():
+      self.polls+=1
+      request=json.loads(request_path.read_text())
+      reply=root/('reply-'+request['id']+'.json')
+      if self.polls==1:reply.write_text('{"id":')
+      else:reply.write_text(json.dumps({'id':request['id'],'phase':None,'blocks':[]}))
+      state.update(id='previous-navigate',last_request='previous-navigate',phase='done',detail='previous navigate')
+     return state
+   with patch('material_client.time.sleep'):
+    client=Fake();result=client.request('scan')
+   request=json.loads((root/'request.json').read_text())
+   self.assertEqual(result.get('id'),request['id'])
+   self.assertEqual(result.get('blocks'),[])
+   self.assertEqual(client.polls,2)
  def test_owned_movement_timeout_returns_waiting_for_surface_cleanup(self):
   with tempfile.TemporaryDirectory() as d:
    class Fake(Client):

@@ -91,6 +91,67 @@ class Tests(unittest.TestCase):
   c.request=lambda op,**kw:{'phase':'error','world_session':c.world,'blocks':[]}
   with self.assertRaisesRegex(RuntimeError,'not freshly scanned'):
    c.ascent_obstacles({'pos':[100.5,64.2,200.5]})
+ def test_grounded_full_health_guard_takes_off_once_through_fresh_clear_column(self):
+  c=MaterialClient.__new__(MaterialClient);c.world='world-2';c.park_target=[100.5,145,200.5]
+  grounded={'pos':[100.5,64.875,200.5],'guard_armed':True,'guard_busy':False,
+            'flight':False,'on_ground':True,'under_water':False,'health':20}
+  reached={**grounded,'pos':[100.5,145,200.5],'flight':True,'on_ground':False}
+  states=iter([grounded,reached]);c.status=lambda:next(states)
+  calls=[]
+  def request(op,**params):
+   calls.append((op,params))
+   if op=='scan':return {'phase':'done','world_session':c.world,'blocks':[]}
+   if op=='navigate':return {'phase':'done'}
+   raise AssertionError(op)
+  c.request=request
+  result=c._finish_vertical(grounded)
+  self.assertIs(result,reached)
+  self.assertEqual([op for op,_ in calls],['scan','navigate'])
+  moves=[params for op,params in calls if op=='navigate']
+  self.assertEqual(len(moves),1)
+  self.assertTrue(moves[0]['air_only'])
+  self.assertEqual(moves[0]['target'],[100.5,145,200.5])
+ def test_grounded_takeoff_rechecks_pose_health_and_guard_after_clear_scan(self):
+  original={'pos':[100.5,64.875,200.5],'guard_armed':True,'guard_busy':False,
+            'flight':False,'on_ground':True,'under_water':False,'health':20}
+  changed_states=[{**original,'pos':[100.9,64.875,200.5]},
+                  {**original,'guard_armed':False},
+                  {**original,'health':19},
+                  {**original,'on_ground':False}]
+  for changed in changed_states:
+   with self.subTest(changed=changed):
+    c=MaterialClient.__new__(MaterialClient);c.world='world-2';c.park_target=[100.5,145,200.5]
+    calls=[];c.status=lambda:changed
+    def request(op,**params):
+     calls.append((op,params))
+     if op=='scan':return {'phase':'done','world_session':c.world,'blocks':[]}
+     raise AssertionError('No movement may follow a stale takeoff scan')
+    c.request=request
+    with self.assertRaisesRegex(RuntimeError,'position or protection changed'):
+     c._finish_vertical(original)
+    self.assertEqual([op for op,_ in calls],['scan'])
+ def test_grounded_blocked_column_uses_logout_fallback_without_movement(self):
+  with tempfile.TemporaryDirectory() as temp:
+   c=MaterialClient.__new__(MaterialClient)
+   c.root=c.out=Path(temp);c.world='world-2';c.park_target=[100.5,145,200.5]
+   c.remote_finish='guard';c.heartbeat=Mock();c.owned_material_menu=None
+   state={'pos':[100.5,64.875,200.5],'guard_armed':True,'guard_busy':False,
+          'flight':False,'on_ground':True,'under_water':False,'air_supply':300,'health':20,
+          'menu':{'type':'InventoryMenu','slots':[{'count':0}]*5,'cursor':{'count':0}}}
+   c.status=lambda:state
+   calls=[]
+   def request(op,**params):
+    calls.append((op,params))
+    if op=='scan':return {'phase':'done','world_session':c.world,'blocks':[
+     {'pos':[100,66,200],'state':'Block{minecraft:stone}'}]}
+    if op=='safe_logout':return {'phase':'done'}
+    raise AssertionError('Blocked takeoff must not move')
+   c.request=request
+   with patch('material_cleanup.run'),patch('craft_recovery.clear_owned_workbench'):
+    c._finish()
+   self.assertEqual([op for op,_ in calls],['scan','safe_logout'])
+   self.assertEqual(json.loads((c.out/'park-fallback.json').read_text())['action'],'safe_logout')
+   c.heartbeat.close.assert_called_once()
  def test_only_pre_dispatch_guard_busy_is_retried(self):
   c=MaterialClient.__new__(MaterialClient);c.task='t';c.status=lambda:{}
   with patch.object(Client,'request',side_effect=[{'phase':'error','detail':BUSY},{'phase':'done'}]) as call,patch('material_client.time.sleep'):

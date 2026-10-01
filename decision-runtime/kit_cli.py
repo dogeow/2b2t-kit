@@ -119,6 +119,14 @@ def main(argv=None):
         action.add_argument('--depth', type=int)
         action.add_argument('--limit', type=int)
     actions.add_parser('stop')
+    farm=sub.add_parser('farm',help='已装水的有界土豆田')
+    farm_actions=farm.add_subparsers(dest='action',required=True)
+    plant=farm_actions.add_parser('plant')
+    plant.add_argument('--center',type=int,nargs=3,required=True)
+    plant.add_argument('--radius',type=int,choices=(1,2),default=2)
+    plant.add_argument('--max-cells',type=int,choices=range(1,25),default=24)
+    plant.add_argument('--out',type=Path)
+    plant.add_argument('--no-move',action='store_true')
     materials=sub.add_parser('materials',help='材料任务独立 API：补料、制作与投影施工')
     material_actions=materials.add_subparsers(dest='action',required=True)
     start=material_actions.add_parser('start')
@@ -129,8 +137,24 @@ def main(argv=None):
     status=material_actions.add_parser('status');status.add_argument('--job-id')
     for name in ('pause','resume','cancel'):
         control=material_actions.add_parser(name);control.add_argument('--job-id',required=True)
+    care=sub.add_parser('caretaker',help='本地周期收获、繁殖、烹饪和入箱，无模型调用')
+    care.add_argument('action',choices=('run','pause','stop','status','resume'))
+    care.add_argument('--profile',type=Path,required=True)
+    care.add_argument('--out',type=Path)
     args = parser.parse_args(argv)
     root = args.game_dir / 'config/twob2tkit/automation'
+    if args.topic=='caretaker':
+        from farm_caretaker_cli import main as caretaker_main
+        command=['--game-dir',str(args.game_dir),'--profile',str(args.profile)]
+        if args.out is not None:command += ['--out',str(args.out)]
+        return caretaker_main(command+[args.action])
+    if args.topic=='farm':
+        from potato_farm_cli import main as farm_main
+        argv=['--game-dir',str(args.game_dir),'--center',*map(str,args.center),
+              '--radius',str(args.radius),'--max-cells',str(args.max_cells)]
+        if args.out is not None:argv += ['--out',str(args.out)]
+        if args.no_move:argv += ['--no-move']
+        return farm_main(argv)
     if args.topic=='materials':
         from material_task_client import MaterialTaskClient, MaterialTaskError, compact as material_compact
         try:

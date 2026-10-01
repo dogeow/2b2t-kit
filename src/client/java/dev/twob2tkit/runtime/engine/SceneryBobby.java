@@ -65,7 +65,7 @@ final class SceneryBobby implements SceneryCache {
 		} catch (ReflectiveOperationException error) { throw new IllegalStateException("无法复核 Bobby 缓存状态", error); }
 	}
 	@Override public boolean isReal(LevelChunk chunk) {
-		return chunk != null && chunk.getLevel() == level && !fakeChunk.isInstance(chunk);
+		return LoadedServerChunkEvidence.isServerChunk(level, chunk, fakeChunk);
 	}
 	@Override public boolean accept(LevelChunk chunk) {
 		if (!isReal(chunk) || !batch.canAccept()) return false;

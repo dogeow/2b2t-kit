@@ -423,7 +423,7 @@ public final class MachineBuilder {
 				return click(neighbor, direction.getOpposite());
 			}
 		}
-		if (dev.twob2tkit.MeteorModules.isActive("meteordevelopment.meteorclient.systems.modules.player.AirPlace") && cell.kind() != Kind.WATER && cell.kind() != Kind.LAVA) {
+		if (dev.twob2tkit.MeteorModules.isActive(dev.twob2tkit.MeteorModules.AIR_PLACE) && cell.kind() != Kind.WATER && cell.kind() != Kind.LAVA) {
 			Direction face = Direction.UP;
 			if (cell.expected().hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.HALF) && cell.expected().getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.HALF) == net.minecraft.world.level.block.state.properties.Half.TOP) face = Direction.DOWN;
 			return click(pos, face);

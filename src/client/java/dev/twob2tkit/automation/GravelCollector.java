@@ -51,7 +51,11 @@ public final class GravelCollector {
         if(running)return true;
         String problem=preflight(c);
         if(problem!=null){status=problem;return false;}
-        KitClient.stopWork("开始采集沙砾");
+        // NativeMaterialSession.open performs the exclusive-idle checks and can
+        // atomically replace a verified retained parking lease.  Calling
+        // stopWork here first would advance the control revision while leaving
+        // that parking lease at the old revision, making the safe handoff reject
+        // itself before the gravel session can acquire control.
         c.setScreen(null);
         origin=c.player.position();world=c.level;
         var config=KitClient.config();radius=Math.clamp(config.gravelRadius,4,64);

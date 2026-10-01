@@ -27,7 +27,11 @@ public final class EmergencyExit {
     private static SafetyHoldStore cachedStore;
     private static RotationAim.Look escapeLook;
     private static SafetyHoldStore store(Minecraft c){if(cachedStore==null)cachedStore=new SafetyHoldStore(c.gameDirectory.toPath().resolve("config/twob2tkit/automation/safety-hold.json"));return cachedStore;}
-    public static boolean held(Minecraft c){return memoryHold||store(c).active();}
+    private static boolean nativeHeld(Minecraft c){return memoryHold||store(c).active();}
+    public static boolean held(Minecraft c){
+        return nativeHeld(c)||MaterialHealthHoldPolicy.active(
+            c.gameDirectory.toPath().resolve("config/twob2tkit/automation/material-health-hold.json"),store(c).read());
+    }
     public static boolean active(){return escaping;}
     public static JsonObject snapshot(Minecraft c){var stored=store(c).read();var j=new JsonObject();
         for(String key:List.of("reason","time","health","escape_result","rise"))if(stored.has(key))j.add(key,stored.get(key));
@@ -36,7 +40,8 @@ public final class EmergencyExit {
     public static void acknowledge(Minecraft c){
         // Only the in-game button calls this. No bridge command can clear the lock.
         if(c.player==null||c.player.isDeadOrDying()||c.player.getHealth()<18||escaping)return;
-        try{store(c).clearByUser();memoryHold=false;c.player.sendSystemMessage(net.minecraft.network.chat.Component.literal("[保护] 已手动解除离线锁；请自行启动需要的功能。"));}
+        try{store(c).clearByUser();memoryHold=false;c.player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+            held(c)?"[保护] 退出记录仍需确认，安全离线锁保持开启。":"[保护] 已手动解除离线锁；请自行启动需要的功能。"));}
         catch(Exception e){memoryHold=true;}
     }
     public static void begin(Minecraft c,String why){
@@ -69,15 +74,17 @@ public final class EmergencyExit {
         }catch(Exception e){finish(c,"飞行不可用");}
     }
     public static void observeHealth(Minecraft c){
-        if(!held(c)&&!escaping&&c.player!=null&&c.level!=null&&c.player.getHealth()<14
+        if(!nativeHeld(c)&&!escaping&&c.player!=null&&c.level!=null&&c.player.getHealth()<14
             &&(AutomationBridge.guardArmed()||KitClient.anyAfkAuto()))begin(c,"低血量紧急撤离");
     }
     public static boolean tick(Minecraft c){
         if(held(c))MeteorModules.disable(AUTO_RECONNECT);
         if(!escaping){
-            if(held(c)){if(AutomationBridge.guardArmed()||KitClient.anyAfkAuto())KitClient.emergencyStop("安全锁未解除，等待手动确认");return true;}
+            // A script hold stops work/reconnect, but never suppresses the native low-health escape.
             observeHealth(c);
-            return escaping;
+            if(escaping)return true;
+            if(held(c)){if(AutomationBridge.guardArmed()||KitClient.anyAfkAuto())KitClient.emergencyStop("安全锁未解除，等待手动确认");return true;}
+            return false;
         }
         if(c.level!=level||c.getConnection()!=connection||c.player==null){cancel(c);return false;}
         if(KitKeys.manualMovementDown(c)||c.screen!=null){cancel(c);KitKeys.restorePhysicalMovement(c);return true;}

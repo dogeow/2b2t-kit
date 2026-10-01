@@ -59,3 +59,16 @@ def fingerprint(value):
 
 def server_key(server):
     return str(server).lower().removesuffix(':25565')
+
+
+def search_coverage(progress):
+    """Count detailed, loaded-biome and bounded seed-prediction progress."""
+    if not isinstance(progress,dict):return 0
+    detailed=progress.get('new_tiles')
+    coarse=progress.get('coarse_new_cells')
+    seeded=progress.get('seed_processed')
+    cached=progress.get('bobby_checked')
+    return ((detailed if type(detailed) is int and detailed>=0 else 0)
+            +(coarse if type(coarse) is int and coarse>=0 else 0)
+            +(seeded if type(seeded) is int and seeded>=0 else 0)
+            +(cached if type(cached) is int and cached>=0 else 0))

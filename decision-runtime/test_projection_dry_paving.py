@@ -57,24 +57,31 @@ class FakeClient:
         self.fluid = False
         self.model_hash = 'verified-model-hash'
         self.uncertain_mine = False
+        self.invalid_mine_confirmation = False
         self.refuse_mine = False
         self.uncertain_place = False
+        self.invalid_place_confirmation = False
         self.block_after_mine = False
         self.animal_after_mine = False
         self.operations = []
         self.interact_params = None
         self.mine_params = None
-        self.items = {'minecraft:stone_bricks': 2, 'minecraft:dirt': 0}
+        self.items = {'minecraft:stone_bricks': 2, 'minecraft:dirt': 0,
+                      'minecraft:grass_block': 0}
         self.hand = 'minecraft:diamond_shovel'
-        self.host_protocol = 1
+        self.host_protocol = 2
         self.dimension = 'minecraft:overworld'
         self.status_time = 10000
+        self.audit_time = 10000
 
     def _inventory(self):
-        return [{'slot': 0, 'item': 'minecraft:stone_bricks', 'count': self.items['minecraft:stone_bricks'], 'max_stack': 64},
+        return ([{'slot': 0, 'item': 'minecraft:stone_bricks', 'count': self.items['minecraft:stone_bricks'], 'max_stack': 64},
                 {'slot': 1, 'item': 'minecraft:diamond_shovel', 'count': 1, 'durability': 100},
                 {'slot': 2, 'item': 'minecraft:dirt', 'count': self.items['minecraft:dirt'], 'max_stack': 64},
                 {'slot': 3, 'item': 'minecraft:air', 'count': 0, 'max_stack': 1}]
+                + ([{'slot': 4, 'item': 'minecraft:grass_block',
+                     'count': self.items['minecraft:grass_block'], 'max_stack': 64}]
+                   if self.items['minecraft:grass_block'] else []))
 
     def status(self):
         self.status_time += 1
@@ -96,13 +103,14 @@ class FakeClient:
         return snapshot
 
     def _audit(self):
+        self.audit_time += 1
         matched = int(self.actual == self.expected)
         mismatch = [] if matched else [{'pos': self.pos, 'expected': self.expected,
                                         'actual': self.actual,
                                         'kind': 'missing' if self.actual == 'Block{minecraft:air}' else 'occupied',
                                         'block_entity': False, 'fluid': False,
                                         'adjacent_fluid': False, 'neighbors_loaded': True}]
-        return {'audit_schema': 2, 'observed_at': 10000, 'server': 'simpcraft.com',
+        return {'audit_schema': 2, 'observed_at': self.audit_time, 'server': 'simpcraft.com',
                 'dimension': self.dimension, 'loaded_chunks_verified': True,
                 'enclosed_air_conflicts': [], 'name': self.site['name'],
                 'placement_key': self.key, 'matched': matched, 'total': 1,
@@ -189,7 +197,13 @@ class FakeClient:
             if self.animal_after_mine:
                 self.entities.append({'type': 'minecraft:cow', 'uuid': 'arrived-after-mining',
                                       'pos': [self.pos[0]+1.5, 63.5, self.pos[2]+.5]})
-            return {'phase': 'waiting' if self.uncertain_mine else 'done'}
+            return {'phase': 'waiting' if self.uncertain_mine else 'done',
+                    'id': 'mine-request-1', 'world_session': self.world,
+                    'server_confirmed': not self.uncertain_mine and not self.invalid_mine_confirmation,
+                    'confirmation_scope': 'matched_server_block_update_after_native_send',
+                    'server_update_seen': not self.uncertain_mine and not self.invalid_mine_confirmation,
+                    'server_observed_state': 'Block{minecraft:air}',
+                    'dry_paving_stage': 'mine', 'dry_paving_pos': self.pos}
         if op == 'collect_item':
             self.entities = []
             self.items['minecraft:dirt'] += 1
@@ -206,7 +220,11 @@ class FakeClient:
                 return {'phase': 'waiting'}
             self.actual = self.expected
             self.items['minecraft:stone_bricks'] -= 1
-            return {'phase': 'done'}
+            return {'phase': 'done', 'server_confirmed': not self.invalid_place_confirmation,
+                    'confirmation_scope': 'matched_server_block_update_after_native_send',
+                    'server_update_seen': not self.invalid_place_confirmation,
+                    'server_observed_state': self.expected,
+                    'dry_paving_stage': 'place', 'dry_paving_pos': self.pos}
         raise AssertionError(op)
 
     def checked(self, op, **params):
@@ -231,8 +249,47 @@ class DryPavingTests(unittest.TestCase):
         self.assertEqual(len(files), 1)
         return json.loads(files[0].read_text())
 
+    def legacy_recovery_evidence(self, *, reconnect=True):
+        before = self.client.status()
+        before.update(time=1000, blocks=[{'pos': self.client.pos, 'state': OLD},
+                                         {'pos': [self.client.pos[0], 62,
+                                                  self.client.pos[2]], 'state': SUPPORT}])
+        self.client.uncertain_mine = True
+        with self.assertRaises(PavingPending):
+            self.run_one()
+        after = self.client.status()
+        after.update(time=3000, blocks=[{'pos': self.client.pos, 'state': OLD}])
+        pickup_before = copy.deepcopy(after)
+        pickup_before['time'] = 4000
+        self.client.request('collect_item', expected_uuid='owned-drop',
+                            expected_item='minecraft:dirt')
+        pickup_after = self.client.status()
+        pickup_after['time'] = 5000
+        if reconnect:
+            self.client.world = 'world-2'
+        return {
+            'events': [{'op': 'mine_block', 'request_id': 'mine-request-1',
+                        'world_session': 'world-1', 'phase': 'done',
+                        'detail': 'target removed', 'time': 2,
+                        'evidence_scope': 'native_operation_reply_not_goal_completion',
+                        'revision_before': 1, 'revision_after': 2,
+                        'params': {'pos': self.client.pos,
+                                   'task_session': self.client.task,
+                                   'expected_state': OLD,
+                                   'face': 'up', 'dry_paving_guard': True}}],
+            'before_reply': before, 'after_reply': after,
+            'pickup': {'before': pickup_before,
+                       'event': {'op': 'collect_item', 'phase': 'done',
+                                 'request_id': 'pickup-request-1',
+                                 'world_session': 'world-1',
+                                 'params': {'expected_uuid': 'owned-drop',
+                                            'expected_item': 'minecraft:dirt'},
+                                 'inventory_delta': {'minecraft:dirt': 1}},
+                       'after': pickup_after},
+        }
+
     def test_old_or_invalid_host_protocol_blocks_before_any_game_request(self):
-        for protocol in (None, 0, False, '1', 2):
+        for protocol in (None, 0, False, '2', 1):
             with self.subTest(protocol=protocol):
                 self.client.host_protocol = protocol
                 with self.assertRaisesRegex(PavingBlocked, 'active Kit mod'):
@@ -271,6 +328,121 @@ class DryPavingTests(unittest.TestCase):
             self.run_one()
         self.assertEqual(self.client.operations.count('mine_block'), 1)
         self.assertEqual(self.client.operations.count('interact'), 0)
+
+    def test_legacy_mine_intent_reconciles_after_rejoin_and_exact_pickup(self):
+        evidence = self.legacy_recovery_evidence()
+        with patch.object(paving, 'SITE', self.client.site):
+            result = paving.reconcile_mine_intent(
+                self.client, self.client.pos, evidence, settle=lambda _: None)
+        self.assertEqual(result['result'], 'recovered')
+        self.assertEqual(self.journal()['phase'], 'recovered')
+        self.client.uncertain_mine = False
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+        self.assertEqual(self.journal()['phase'], 'complete')
+
+    def test_legacy_mine_intent_requires_rejoin_and_original_drop_proof(self):
+        for defect in ('same-session', 'drop-uuid', 'inventory-delta', 'old-event'):
+            with self.subTest(defect=defect):
+                self.client = FakeClient(Path(self.temp.name) / defect)
+                evidence = self.legacy_recovery_evidence(reconnect=defect != 'same-session')
+                if defect == 'drop-uuid':
+                    evidence['pickup']['before']['entities'][0]['uuid'] = 'other-drop'
+                elif defect == 'inventory-delta':
+                    evidence['pickup']['event']['inventory_delta'] = {}
+                elif defect == 'old-event':
+                    evidence['events'][0]['revision_after'] = 5
+                original = self.journal()
+                with patch.object(paving, 'SITE', self.client.site), self.assertRaises(PavingBlocked):
+                    paving.reconcile_mine_intent(self.client, self.client.pos,
+                                                 evidence, settle=lambda _: None)
+                self.assertEqual(self.journal(), original)
+                self.assertEqual(self.client.operations.count('mine_block'), 1)
+                self.assertNotIn('interact', self.client.operations)
+
+    def test_new_native_reply_can_reconcile_in_same_session(self):
+        evidence = self.legacy_recovery_evidence(reconnect=False)
+        evidence['native_reply'] = {'id': 'mine-request-1', 'world_session': 'world-1',
+                                    'control_revision': 2, 'phase': 'done',
+                                    'server_confirmed': True,
+                                    'confirmation_scope': 'matched_server_block_update_after_native_send',
+                                    'server_update_seen': True,
+                                    'server_observed_state': 'Block{minecraft:air}',
+                                    'dry_paving_stage': 'mine',
+                                    'dry_paving_pos': self.client.pos}
+        journal_path = next(self.client.root.glob('dry-paving-v1/*/*.json'))
+        record = json.loads(journal_path.read_text())
+        record['receipts'][-1]['native_reply'] = evidence['native_reply']
+        journal_path.write_text(json.dumps(record))
+        with patch.object(paving, 'SITE', self.client.site):
+            result = paving.reconcile_mine_intent(
+                self.client, self.client.pos, evidence, settle=lambda _: None)
+        self.assertEqual(result['result'], 'recovered')
+        self.assertEqual(self.journal()['phase'], 'recovered')
+
+    def test_rejoined_air_and_missing_original_drop_records_one_item_loss(self):
+        evidence = self.legacy_recovery_evidence()
+        del evidence['pickup']
+        evidence['after_reply']['entities'][0]['stack']['item'] = 'minecraft:grass_block'
+        evidence['accept_one_original_drop_loss'] = True
+        self.client.items['minecraft:dirt'] = 0
+        with patch.object(paving, 'SITE', self.client.site):
+            result = paving.reconcile_mine_intent(
+                self.client, self.client.pos, evidence, settle=lambda _: None)
+        self.assertEqual(result['result'], 'drop_lost')
+        self.assertEqual(result['loss_count'], 1)
+        record = self.journal()
+        self.assertEqual(record['phase'], 'drop_lost')
+        self.assertEqual([r['phase'] for r in record['receipts'][-2:]],
+                         ['mined', 'drop_lost'])
+        self.assertEqual(self.client.items['minecraft:dirt'], 0)
+        self.client.uncertain_mine = False
+        self.assertEqual(self.run_one()[0]['result'], 'placed')
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+        self.assertEqual(self.journal()['phase'], 'complete')
+
+    def test_drop_loss_requires_explicit_acceptance_new_session_and_empty_local_ring(self):
+        for defect in ('no-acceptance', 'same-session', 'inventory-gained', 'nearby-item'):
+            with self.subTest(defect=defect):
+                self.client = FakeClient(Path(self.temp.name) / defect)
+                evidence = self.legacy_recovery_evidence(reconnect=defect != 'same-session')
+                del evidence['pickup']
+                evidence['after_reply']['entities'][0]['stack']['item'] = 'minecraft:grass_block'
+                evidence['accept_one_original_drop_loss'] = defect != 'no-acceptance'
+                self.client.items['minecraft:grass_block'] = int(defect == 'inventory-gained')
+                self.client.items['minecraft:dirt'] = 0
+                if defect == 'nearby-item':
+                    self.client.entities = [{'type': 'minecraft:item', 'uuid': 'other-drop',
+                                             'pos': [self.client.pos[0]+.5, 63.5,
+                                                     self.client.pos[2]+.5],
+                                             'stack': {'item': 'minecraft:grass_block', 'count': 1}}]
+                original = self.journal()
+                with patch.object(paving, 'SITE', self.client.site), self.assertRaises(PavingBlocked):
+                    paving.reconcile_mine_intent(self.client, self.client.pos,
+                                                 evidence, settle=lambda _: None)
+                self.assertEqual(self.journal(), original)
+                self.assertNotIn('interact', self.client.operations)
+
+    def test_native_done_without_matching_server_receipt_stays_pending(self):
+        self.client.invalid_mine_confirmation = True
+        with self.assertRaisesRegex(PavingPending, 'server block confirmation'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'mine_intent')
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertNotIn('interact', self.client.operations)
+
+    def test_native_place_without_matching_server_receipt_is_never_repeated(self):
+        self.client.invalid_place_confirmation = True
+        with self.assertRaisesRegex(PavingPending, 'server block confirmation'):
+            self.run_one()
+        self.assertEqual(self.journal()['phase'], 'place_intent')
+        with self.assertRaises(PavingPending):
+            self.run_one()
+        self.assertEqual(self.client.operations.count('mine_block'), 1)
+        self.assertEqual(self.client.operations.count('interact'), 1)
+        self.assertEqual(self.client.interact_params['expected_placed_state'], WANTED)
 
     def test_uncertain_place_is_not_clicked_again(self):
         self.client.uncertain_place = True

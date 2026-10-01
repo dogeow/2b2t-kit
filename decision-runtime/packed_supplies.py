@@ -118,10 +118,88 @@ def owned_drop(entities,item,pad,before_ids,known_uuid=None):
 def carried_box(state,item,expected):
     return next((v for v in state['inventory'] if v.get('count')==1 and v['item']==item and contents(v.get('contains',[]))==expected),None)
 
+def _observed_inventory(rows):
+    if not isinstance(rows,list) or any(not isinstance(v,dict) or type(v.get('slot')) is not int
+            or not isinstance(v.get('item'),str) or type(v.get('count')) is not int or v['count']<0 for v in rows):return False
+    slots=[v['slot'] for v in rows]
+    return len(slots)==len(set(slots)) and set(range(36)).issubset(slots)
+
+def _clean_cursor(state):
+    menu=state.get('menu');cursor=menu.get('cursor') if isinstance(menu,dict) else None
+    if not isinstance(cursor,dict):return False
+    return type(cursor.get('count')) is int and cursor['count']==0 and cursor.get('item')=='minecraft:air'
+
+def _owned_recover_failure(record):
+    receipt=record.get('recover_terminal',{})
+    if not isinstance(receipt,dict):return False
+    world=record.get('world_session')
+    params=receipt.get('params',{})
+    return (isinstance(params,dict) and isinstance(world,str) and bool(world) and isinstance(receipt.get('request_id'),str)
+            and bool(receipt['request_id']) and receipt.get('request_id')==record.get('recover_request_id')
+            and receipt.get('world_session')==world and receipt.get('op')=='recover_shulker'
+            and receipt.get('phase') in ('error','stopped','waiting')
+            and params.get('pos')==record.get('temporary_position')
+            and isinstance(record.get('placed_state'),str) and record['item'] in record['placed_state']
+            and params.get('expected_state')==record['placed_state'])
+
+def reconcile_recovered_box(client,record,ender,journal):
+    """One read-only check after an owned terminal failure; never retry mining/pickup.
+
+    Legacy records without an actual preflight and exact native receipt stay
+    blocked. A run manifest's world ID alone does not prove box ownership.
+    """
+    if record.get('stage')!='breaking' or not _owned_recover_failure(record):
+        raise RuntimeError('Portable-box recovery lacks an owned terminal failure; preserve the journal')
+    world=record['world_session'];item=record['item'];pad=record['temporary_position']
+    preflight=record.get('ownership_preflight',{});source=record.get('source',{})
+    if not isinstance(preflight,dict) or not isinstance(source,dict):
+        raise RuntimeError('Portable-box preflight/source ownership is unproven; preserve the journal')
+    before=preflight.get('inventory')
+    if (preflight.get('world_session')!=world or not _observed_inventory(before)
+            or preflight.get('cursor_clean') is not True
+            or any(v['count'] and v['item'].endswith('shulker_box') for v in before)
+            or not isinstance(pad,list) or len(pad)!=3 or any(type(v) is not int for v in pad)
+            or source.get('position')!=ender or source.get('slot')!=record['slot']
+            or type(source.get('slot')) is not int or not 0<=source['slot']<27
+            or source.get('item')!=item or type(source.get('count')) is not int or source['count']!=1
+            or not item.endswith('shulker_box') or source.get('counts')!=record['initial_counts']
+            or 'remaining_counts' not in record):
+        raise RuntimeError('Portable-box preflight/source ownership is unproven; preserve the journal')
+    remaining=record['remaining_counts'];initial=record['initial_counts'];taken=record.get('taken',{})
+    if (not isinstance(remaining,dict) or not isinstance(initial,dict) or not isinstance(taken,dict)
+            or any(type(n) is not int or n<0 for counts in (remaining,initial,taken) for n in counts.values())
+            or any(i not in initial for counts in (remaining,taken) for i in counts)
+            or any(initial[i]-remaining.get(i,0)!=taken.get(i,0) for i in initial)):
+        raise RuntimeError('Portable-box remaining contents lack confirmed conservation')
+    def carried(state):
+        if state.get('world_session')!=world or not state.get('connected'):
+            raise RuntimeError('Portable-box recovery belongs to another world or disconnected state')
+        rows=state.get('inventory')
+        if not _clean_cursor(state) or not _observed_inventory(rows):
+            raise RuntimeError('Portable-box recovery needs a clean cursor and complete inventory')
+        boxes=[v for v in rows if v['count'] and v['item'].endswith('shulker_box')]
+        if (len(boxes)!=1 or boxes[0]['item']!=item or boxes[0]['count']!=1
+                or not isinstance(boxes[0].get('contains'),list)
+                or any(not isinstance(v,dict) or not isinstance(v.get('item'),str)
+                    or type(v.get('count')) is not int or v['count']<0 for v in boxes[0]['contains'])
+                or contents(boxes[0]['contains'])!=remaining):
+            raise RuntimeError('Portable-box carried identity or remaining contents are missing/ambiguous')
+        return boxes[0]
+    carried(client.status())
+    scan=client.request('scan',min=pad,max=pad)
+    if (scan.get('world_session')!=world or scan.get('phase') not in (None,'done')
+            or scan.get('blocks')!=[]):
+        raise RuntimeError('Portable-box pad is occupied or its fresh scan is unconfirmed')
+    box=carried(client.status())
+    record['recovery_reconciliation']={'scope':'owned_terminal_failure_empty_pad_unique_carried_contents',
+        'world_session':world,'recover_request_id':record['recover_request_id'],'inventory_slot':box['slot']}
+    record['stage']='recovered';journal.write_text(json.dumps(record,ensure_ascii=False,indent=2))
+
 def recover_and_return(client,record,ender,journal):
     if record['stage']=='returned':return
     item=record['item'];remaining=record.get('remaining_counts',record['initial_counts']);slot=record['slot'];pad=record['temporary_position']
     def save(stage):record['stage']=stage;journal.write_text(json.dumps(record,ensure_ascii=False,indent=2))
+    if record['stage']=='breaking':reconcile_recovered_box(client,record,ender,journal)
     if record['stage']=='broken':
         until=time.monotonic()+12
         while time.monotonic()<until:
@@ -171,6 +249,10 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
     wanted={i:n for i,n in targets.items() if n>inventory_counts(s)[i] and initial.get(i,0)>0}
     if not wanted:client.checked('close_menu');return None
     record={'slot':slot,'item':item,'initial_counts':initial,'requested':wanted,'temporary_position':pad,'stage':'prepared',
+            'world_session':state.get('world_session'),
+            'ownership_preflight':{'world_session':state.get('world_session'),'cursor_clean':_clean_cursor(state),
+                'inventory':[{key:v.get(key) for key in ('slot','item','count')} for v in state['inventory']]},
+            'source':{'position':ender,'slot':slot,'item':item,'count':source['count'],'counts':initial},
             'required_stored_enchantments':required_stored_enchantments or {},
             'required_enchantments':required_enchantments or {},'minimum_durability':minimum_durability or {}}
     def save(stage):record['stage']=stage;journal.write_text(json.dumps(record,ensure_ascii=False,indent=2))
@@ -184,7 +266,7 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
     use_with_margin(client,ground,ground_state,item,('up',),pad_empty)
     placed=block(client,pad)
     if 'shulker_box' not in (placed or ''):raise RuntimeError('Box placement is not confirmed')
-    save('placed');s=open_box(client,pad,'ShulkerBoxMenu')
+    record['placed_state']=placed;save('placed');s=open_box(client,pad,'ShulkerBoxMenu')
     if contents(s['menu']['slots'][:27])!=initial:raise RuntimeError('Opened contents differ from the observed carried box')
     before=inventory_counts(s)
     for material,target in wanted.items():
@@ -227,10 +309,31 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
     taken={i:after[i]-before[i] for i in initial}
     if any(initial[i]-remaining.get(i,0)!=taken[i] for i in initial) or any(i not in initial for i in remaining):
         raise RuntimeError('Box-to-inventory conservation did not match')
-    record.update(remaining_counts=remaining,taken={i:n for i,n in taken.items() if n});save('withdrawn');client.checked('close_menu')
+    # Observe drops while the exact open-box contents are still confirmed and
+    # before selecting a pick can activate an external mining module.
+    record.update(remaining_counts=remaining,taken={i:n for i,n in taken.items() if n},
+        before_drop_uuids=[e['uuid'] for e in s.get('entities',[]) if e.get('type')=='minecraft:item'],
+        drop_baseline_scope='confirmed_open_box_before_close_and_tool_selection')
+    save('withdrawn');client.checked('close_menu')
     client.checked('select_item',item='minecraft:diamond_pickaxe')
-    record['before_drop_uuids']=[e['uuid'] for e in client.status().get('entities',[]) if e.get('type')=='minecraft:item']
+    observed=block(client,pad)
+    record['recovery_preflight']={'expected_state':placed,'observed_state':observed}
+    save('withdrawn')
+    if observed!=placed:
+        raise RuntimeError('Portable-box pad changed before recovery; preserve the journal without mining or pickup')
     save('breaking')
-    client.checked('recover_shulker',pos=pad,expected_state=placed,face='up',seconds=15);save('broken')
+    previous=getattr(client,'last_terminal_evidence',{}).get('request_id')
+    try:client.checked('recover_shulker',pos=pad,expected_state=placed,face='up',seconds=15)
+    except RuntimeError:
+        receipt=getattr(client,'last_terminal_evidence',{})
+        request_id=receipt.get('request_id')
+        if not request_id or request_id==previous or request_id!=getattr(client,'last',None):raise
+        evidence={'recover_request_id':request_id,
+            'recover_terminal':{key:receipt.get(key) for key in ('request_id','world_session','op','phase','params','detail')}}
+        if not _owned_recover_failure({**record,**evidence}):raise
+        record.update(evidence)
+        save('breaking')
+        reconcile_recovered_box(client,record,ender,journal)
+    else:save('broken')
     recover_and_return(client,record,ender,journal)
     return record

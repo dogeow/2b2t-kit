@@ -143,6 +143,18 @@ final class BorerMobs {
 			|| engine.engagement.shouldReact(player, creeper) && (distance < 4.0 || creeper.isPowered() && distance < 6.0);
 	}
 
+    /** Imminent blasts outrank a remembered melee target, even behind a wall. */
+    Creeper findImminentCreeper(Minecraft client, LocalPlayer player) {
+        Creeper closest = null;
+        double best = Double.MAX_VALUE;
+        for (Creeper creeper : client.level.getEntitiesOfClass(Creeper.class, player.getBoundingBox().inflate(14))) {
+            if (!creeperImminent(player, creeper)) continue;
+            double distance = player.distanceTo(creeper);
+            if (distance < best) { closest = creeper; best = distance; }
+        }
+        return closest;
+    }
+
 	/** 已加载实体里、装甲过滤后仍危险的敌对。通道拐弯用这个。 */
 	List<Entity> nearby(Minecraft client, LocalPlayer player, double radius) {
 		return nearby(client, player, radius, false);
@@ -300,6 +312,68 @@ final class BorerMobs {
 		String alt = altitudeNote(player, targetFeetY);
 		return "悬停攻击 " + threat.getName().getString() + alt;
 	}
+
+    /** A miner yields every input before combat; Meteor or this normal melee path owns attacks. */
+    String engageMiningThreat(Minecraft client, LocalPlayer player, Entity threat, boolean meteorOwnsAttack) {
+        engine.releaseMine(client);
+        client.options.keyShift.setDown(false);
+        client.options.keySprint.setDown(false);
+        player.setSprinting(false);
+        if (!threat.isAlive() || !player.hasLineOfSight(threat)) return "目标被挡，保持停挖确认威胁";
+        if (threat instanceof Creeper creeper && creeperImminent(player, creeper)) {
+            handleCreeper(client, player, creeper);
+            return engine.status;
+        }
+        boolean sword = BorerItems.selectWeapon(client, player, GuardWeaponPolicy.SWORD_RESERVE)
+            && BorerItems.isSwordWithReserve(player.getMainHandItem(), GuardWeaponPolicy.SWORD_RESERVE);
+        engine.enableMeteorFlight(player);
+        double targetFeetY = resolveCombatFeetY(client, player, threat);
+        // The old preferred hover can be above vanilla sword reach. Keep its
+        // collision/headroom decision while capping eye-to-entity melee distance.
+        double meleeFeetY = threat.getBoundingBox().maxY + player.entityInteractionRange() - player.getEyeHeight() - .4;
+        targetFeetY = Math.min(targetFeetY, meleeFeetY);
+        double rise = targetFeetY - player.getY();
+        if (rise > 0 && !client.level.noCollision(player, player.getBoundingBox().expandTowards(0, rise + .15, 0)))
+            targetFeetY = player.getY();
+        maintainCombatAltitude(client, player, targetFeetY);
+        faceThreat(player, threat);
+        boolean inRange = player.isWithinAttackRange(player.getMainHandItem(), threat.getBoundingBox(), .15);
+        if (!sword) {
+            raiseShield(client, player);
+            return "没有耐久充足的剑，停挖防御 " + threat.getName().getString();
+        }
+        if (!inRange) {
+            raiseShield(client, player);
+            if (safeCombatApproach(client, player, threat)) {
+                client.options.keyUp.setDown(true);
+                engine.combatApproaching = true;
+                return "停挖，安全贴近反击 " + threat.getName().getString();
+            }
+            return "反击通道被挡，保持停挖防御 " + threat.getName().getString();
+        }
+        lowerShield(client);
+        if (player.isUsingItem() && player.getUseItem().is(Items.SHIELD)) player.stopUsingItem();
+        if (!meteorOwnsAttack && player.getAttackStrengthScale(0) >= .95F) {
+            client.gameMode.attack(player, threat);
+            player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+            engine.fileLog(client, "mining-defense-melee id=" + threat.getId() + " name=" + threat.getName().getString()
+                + " miningAttack=" + client.options.keyAttack.isDown() + " distance=" + player.distanceTo(threat));
+        }
+        return (meteorOwnsAttack ? "停挖，杀戮反击 " : "停挖，近战反击 ") + threat.getName().getString();
+    }
+
+    /** A combat approach never mines through a wall or steps onto lava/a dangerous drop. */
+    private boolean safeCombatApproach(Minecraft client, LocalPlayer player, Entity threat) {
+        Vec3 horizontal = new Vec3(threat.getX() - player.getX(), 0, threat.getZ() - player.getZ());
+        if (horizontal.lengthSqr() < .01) return false;
+        Vec3 step = horizontal.normalize().scale(Math.max(.45, player.getDeltaMovement().horizontalDistance() + .45));
+        if (!client.level.noCollision(player, player.getBoundingBox().expandTowards(step.scale(2)))) return false;
+        BlockPos dest = BlockPos.containing(player.position().add(step.scale(2)));
+        if (!client.level.hasChunkAt(dest) || BorerHazards.isLavaFluid(client, dest)
+                || BorerHazards.isLavaFluid(client, dest.above()) || BorerHazards.isLavaFluid(client, dest.below())
+                || client.level.getBlockState(dest).is(net.minecraft.world.level.block.Blocks.FIRE)) return false;
+        return BorerFlight.isFlying(player) || BorerHazards.canWalkOrFallInto(client, dest);
+    }
 
 	/** 交战目标悬停脚底 Y。 */
 	private double resolveCombatFeetY(Minecraft client, LocalPlayer player, Entity threat) {

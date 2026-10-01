@@ -49,6 +49,7 @@ public abstract class MultiPlayerGameModeMixin {
 		LocalPlayer player, InteractionHand hand, BlockHitResult hit, CallbackInfoReturnable<InteractionResult> info
 	) {
 		if (player == null || hit == null) return;
+        if(dev.twob2tkit.automation.AutomationBridge.prepareProjectionScaffoldInteraction(player,hand,hit)){info.setReturnValue(InteractionResult.FAIL);return;}
         if(dev.twob2tkit.automation.ProfessionalPrinter.prepareInteraction(player,hand,hit)){info.setReturnValue(InteractionResult.FAIL);return;}
 		dev.twob2tkit.automation.ProfessionalPrinter.noteInteraction(player,hand,hit);
 		KitClient.noteStorageClick(hit.getBlockPos());

@@ -10,7 +10,7 @@ import zipfile
 
 from material_jobs import MaterialJob, JobPaused
 from material_jobs.protocol import JobBlocked
-from material_jobs.planning import plan
+from material_jobs.planning import plan, DIRECT_ROCK_DROPS
 from material_jobs_cli import serve
 from projection_material_plan import ProcessingCatalog
 from projection_wood import POST_ITEM, POST_RAW, post_work
@@ -245,6 +245,179 @@ class MaterialJobsTest(unittest.TestCase):
                 'result':{'id':'minecraft:oak_trapdoor','count':2}}))
         self.catalog=ProcessingCatalog(self.catalog.jar)
 
+    def add_raw_supply_recipes(self):
+        # Same packing, unpacking, and quartz recipes as the vanilla client JAR.
+        with zipfile.ZipFile(self.catalog.jar,'a') as archive:
+            for metal in ('iron','copper','gold'):
+                raw='minecraft:raw_'+metal
+                archive.writestr('data/minecraft/recipe/raw_'+metal+'_block.json',json.dumps({
+                    'type':'minecraft:crafting_shaped','pattern':['###','###','###'],
+                    'key':{'#':raw},'result':{'id':raw+'_block'}}))
+                archive.writestr('data/minecraft/recipe/raw_'+metal+'.json',json.dumps({
+                    'type':'minecraft:crafting_shapeless','ingredients':[raw+'_block'],
+                    'result':{'id':raw,'count':9}}))
+            archive.writestr('data/minecraft/recipe/quartz_block.json',json.dumps({
+                'type':'minecraft:crafting_shaped','pattern':['##','##'],
+                'key':{'#':'minecraft:quartz'},'result':{'id':'minecraft:quartz_block'}}))
+            archive.writestr('data/minecraft/recipe/quartz.json',json.dumps({
+                'type':'minecraft:smelting','ingredient':'minecraft:nether_quartz_ore',
+                'result':{'id':'minecraft:quartz'},'cookingtime':200}))
+        self.catalog=ProcessingCatalog(self.catalog.jar)
+
+    def test_raw_iron_map_art_bulk_prefers_direct_blocks_to_new_packing_inputs(self):
+        self.add_raw_supply_recipes()
+        result=plan(self.catalog,{'minecraft:raw_iron_block':3173},{})
+        self.assertEqual({'minecraft:raw_iron_block':3173},result['missing_supplies'])
+        self.assertFalse(any(step['kind'] in ('craft','smelt') for step in result['steps']))
+
+    def test_raw_iron_complete_stock_still_packs_at_exact_nine_to_one(self):
+        self.add_raw_supply_recipes()
+        result=plan(self.catalog,{'minecraft:raw_iron_block':3173},{'minecraft:raw_iron':28557})
+        self.assertEqual({},result['missing_supplies'])
+        craft=next(step for step in result['steps'] if step['kind']=='craft')
+        self.assertEqual(('raw_iron_block',3173,3173,{'minecraft:raw_iron':28557}),
+                         (craft['recipe_id'],craft['rounds'],craft['produced'],craft['ingredients']))
+
+    def test_raw_metal_blocks_use_only_the_unpacked_deficit(self):
+        self.add_raw_supply_recipes()
+        for metal in ('iron','copper','gold'):
+            with self.subTest(metal=metal):
+                raw='minecraft:raw_'+metal
+                result=plan(self.catalog,{raw+'_block':10},{raw+'_block':2,raw:10})
+                self.assertEqual(2,result['reserved_finished_items'][raw+'_block'])
+                crafts=[step for step in result['steps'] if step['kind']=='craft']
+                if metal=='iron':
+                    self.assertEqual({raw+'_block':8},result['missing_supplies'])
+                    self.assertEqual([],crafts)
+                    self.assertEqual(10,result['surplus'][raw])
+                else:
+                    self.assertEqual({raw:62},result['missing_supplies'])
+                    self.assertEqual([{raw:72}],[step['ingredients'] for step in crafts])
+                    self.assertEqual(8,crafts[0]['produced'])
+
+    def test_raw_metal_stock_can_still_be_unpacked_without_mining(self):
+        self.add_raw_supply_recipes()
+        result=plan(self.catalog,{'minecraft:raw_iron':8},{'minecraft:raw_iron_block':1})
+        self.assertEqual({},result['missing_supplies'])
+        self.assertEqual({'minecraft:raw_iron':1},result['surplus'])
+        crafts=[step for step in result['steps'] if step['kind']=='craft']
+        self.assertEqual([{'minecraft:raw_iron_block':1}],
+                         [step['ingredients'] for step in crafts])
+
+    def test_quartz_map_art_bulk_requests_drops_instead_of_silk_touch_ore(self):
+        self.add_raw_supply_recipes()
+        result=plan(self.catalog,{'minecraft:quartz_block':1272},{'minecraft:quartz':237})
+        self.assertEqual({'minecraft:quartz':4851},result['missing_supplies'])
+        crafts=[step for step in result['steps'] if step['kind']=='craft']
+        self.assertEqual([{'minecraft:quartz':5088}],[step['ingredients'] for step in crafts])
+        self.assertEqual(1272,crafts[0]['produced'])
+        self.assertFalse(any(step['kind']=='smelt' for step in result['steps']))
+
+    def test_verified_quartz_ore_stock_remains_a_valid_smelting_input(self):
+        self.add_raw_supply_recipes()
+        result=plan(self.catalog,{'minecraft:quartz_block':2},{'minecraft:nether_quartz_ore':8})
+        self.assertEqual({},result['missing_supplies'])
+        processing=[step for step in result['steps'] if step['kind']!='reserve']
+        self.assertEqual(['smelt','craft'],[step['kind'] for step in processing])
+        self.assertEqual('minecraft:nether_quartz_ore',processing[0]['source'])
+        self.assertEqual(8,processing[0]['produced'])
+
+    def test_projection_packs_actual_raw_iron_before_building(self):
+        self.add_raw_supply_recipes()
+        backend=FakeBackend(self.catalog,held={'minecraft:raw_iron':27},
+                            projection={'minecraft:raw_iron_block':3})
+        backend.stack_sizes['minecraft:raw_iron_block']=64
+        backend.unsupported={'minecraft:raw_iron_block'}
+        result=self.job(backend,self.request(projection=True)).run()
+        self.assertEqual('completed',result['state'])
+        self.assertEqual(3,backend.matched)
+        self.assertEqual([],[call for call in backend.calls if call[0]=='acquire'])
+        self.assertEqual(0,backend.held['minecraft:raw_iron'])
+
+    def test_missing_quartz_adapter_blocks_without_inventing_ore_collection(self):
+        self.add_raw_supply_recipes()
+        backend=FakeBackend(self.catalog,held={'minecraft:quartz':3},
+                            projection={'minecraft:quartz_block':2})
+        backend.stack_sizes.update({'minecraft:quartz':64,'minecraft:quartz_block':64})
+        backend.unsupported={'minecraft:quartz','minecraft:nether_quartz_ore'}
+        result=self.job(backend,self.request(projection=True)).run()
+        self.assertEqual('blocked',result['state'])
+        self.assertEqual([('acquire','minecraft:quartz',8)],
+                         [call for call in backend.calls if call[0]=='acquire'])
+        self.assertEqual(3,backend.held['minecraft:quartz'])
+        self.assertEqual(0,backend.matched)
+        self.assertFalse(any(call[0] in ('craft','smelt','build') for call in backend.calls))
+
+    def add_natural_rock_recipes(self):
+        with zipfile.ZipFile(self.catalog.jar,'a') as archive:
+            archive.writestr('data/minecraft/recipe/diorite.json',json.dumps({
+                'type':'minecraft:crafting_shaped','pattern':['CQ','QC'],
+                'key':{'C':'minecraft:cobblestone','Q':'minecraft:quartz'},
+                'result':{'id':'minecraft:diorite','count':2}}))
+            archive.writestr('data/minecraft/recipe/andesite.json',json.dumps({
+                'type':'minecraft:crafting_shapeless',
+                'ingredients':['minecraft:diorite','minecraft:cobblestone'],
+                'result':{'id':'minecraft:andesite','count':2}}))
+        self.catalog=ProcessingCatalog(self.catalog.jar)
+
+    def test_direct_rock_preferences_have_real_collectors_and_exclude_dripstone(self):
+        from material_jobs.acquisition import ROCK_SOURCES
+        self.assertLessEqual(DIRECT_ROCK_DROPS,set(ROCK_SOURCES))
+        self.assertNotIn('minecraft:dripstone_block',DIRECT_ROCK_DROPS)
+        self.assertNotIn('minecraft:stone',DIRECT_ROCK_DROPS)
+
+    def test_missing_diorite_uses_direct_quarry_and_retains_partial_synthesis_stock(self):
+        self.add_natural_rock_recipes()
+        result=plan(self.catalog,{'minecraft:diorite':1272},
+                    {'minecraft:diorite':193,'minecraft:quartz':237,'minecraft:cobblestone':2362})
+        self.assertEqual({'minecraft:diorite':1079},result['missing_supplies'])
+        self.assertEqual(237,result['surplus']['minecraft:quartz'])
+        self.assertEqual(2362,result['surplus']['minecraft:cobblestone'])
+        self.assertFalse(any(step['kind']=='craft' for step in result['steps']))
+
+    def test_existing_diorite_recipe_inputs_can_still_be_converted_without_mining(self):
+        self.add_natural_rock_recipes()
+        result=plan(self.catalog,{'minecraft:diorite':4},
+                    {'minecraft:quartz':5,'minecraft:cobblestone':5})
+        self.assertEqual({},result['missing_supplies'])
+        self.assertEqual({'minecraft:quartz':1,'minecraft:cobblestone':1},result['surplus'])
+        crafts=[step for step in result['steps'] if step['kind']=='craft']
+        self.assertEqual([{'minecraft:cobblestone':4,'minecraft:quartz':4}],
+                         [step['ingredients'] for step in crafts])
+
+    def test_andesite_prefers_its_real_drop_over_collecting_diorite_for_synthesis(self):
+        self.add_natural_rock_recipes()
+        result=plan(self.catalog,{'minecraft:andesite':64},{'minecraft:cobblestone':100})
+        self.assertEqual({'minecraft:andesite':64},result['missing_supplies'])
+        self.assertEqual(100,result['surplus']['minecraft:cobblestone'])
+        self.assertFalse(any(step['kind']=='craft' for step in result['steps']))
+
+    def test_natural_rock_preferences_preserve_stone_smelting(self):
+        self.add_natural_rock_recipes()
+        result=plan(self.catalog,{'minecraft:stone':64},{'minecraft:cobblestone':64})
+        self.assertEqual({},result['missing_supplies'])
+        processing=[step for step in result['steps'] if step['kind']!='reserve']
+        self.assertEqual(['smelt'],[step['kind'] for step in processing])
+        self.assertEqual({'minecraft:cobblestone':64},processing[0]['ingredients'])
+
+    @unittest.skipUnless(Path('/Applications/.minecraft/versions/26.1.2/26.1.2.jar').is_file()
+        and Path('/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/map-art/yui/survival-variant-manifest.json').is_file(),
+        'Actual installed client JAR and map-art integration manifest are local evidence')
+    def test_actual_client_whole_map_uses_native_diorite_and_preserves_quartz(self):
+        manifest=json.loads(Path('/Users/sam/Documents/Codex/2026-09-07/blender-mcp-codex-https-github-com/outputs/map-art/yui/survival-variant-manifest.json').read_text())
+        catalog=ProcessingCatalog('/Applications/.minecraft/versions/26.1.2/26.1.2.jar')
+        targets={row['block']:row['total_count'] for row in manifest['counts']}
+        result=plan(catalog,targets,{'minecraft:diorite':193,'minecraft:quartz':237,
+                                    'minecraft:cobblestone':2362})
+        self.assertEqual({'minecraft:diorite':1079}.items(),
+                         {item:amount for item,amount in result['missing_supplies'].items()
+                          if item in ('minecraft:diorite','minecraft:quartz')}.items())
+        self.assertEqual(237,result['surplus']['minecraft:quartz'])
+        self.assertFalse(any(step['kind']=='craft' and step['item']=='minecraft:diorite'
+                             for step in result['steps']))
+        self.assertTrue(any(step['kind']=='smelt' and step['item']=='minecraft:stone'
+                            for step in result['steps']))
+
     def request(self, item='white_concrete', count=64, *, projection=False):
         return {'schema':1, 'id':'test-job', 'mode':'projection' if projection else 'item',
                 'targets':{'minecraft:'+item:count}, 'projection_key':'ship' if projection else None,
@@ -281,6 +454,21 @@ class MaterialJobsTest(unittest.TestCase):
             if len(calls)<3:
                 self.assertEqual(0,b.held[item])
                 return {'phase':'waiting','search_progress':{'new_tiles':8,'scanned_total':len(calls)*8,'has_more':True}}
+            return original(item,count)
+        b.acquire=acquire
+        result=self.job(b,self.request(item='gravel',count=64)).run()
+        self.assertEqual('completed',result['state']);self.assertEqual(3,len(calls))
+        self.assertEqual(64,b.held['minecraft:gravel'])
+
+    def test_coarse_biome_coverage_continues_without_inventing_detailed_tiles(self):
+        b=FakeBackend(self.catalog);original=b.acquire;calls=[]
+        def acquire(item,count):
+            calls.append(count)
+            if len(calls)<3:
+                self.assertEqual(0,b.held[item])
+                return {'phase':'waiting','search_progress':{
+                    'new_tiles':0,'coarse_new_cells':4,
+                    'coarse_visited':len(calls)*4,'has_more':True}}
             return original(item,count)
         b.acquire=acquire
         result=self.job(b,self.request(item='gravel',count=64)).run()
@@ -498,6 +686,26 @@ class MaterialJobsTest(unittest.TestCase):
                 self.assertEqual('acquire', b.calls[-1][0])
                 self.assertFalse(any(c[0] == 'build' for c in b.calls))
 
+    def test_schema_two_receipt_cannot_stage_occupied_finished_material(self):
+        dirt='minecraft:dirt'
+        b=FakeBackend(self.catalog,projection={dirt:2})
+        job=self.job(b,self.request('dirt',2,projection=True),name='occupied-receipt')
+        before={'inventory':{},'stock':{},'replacement_items':{dirt:2},'matched':0,'free_slots':36}
+        b.held[dirt]=2
+        job.snapshot=b.observe()
+        job.snapshot['projection_audit'].update(
+            audit_schema=2,matched=0,total=2,kinds={'occupied':2},
+            mismatches=[{'pos':[n,64,0],'expected':'Block{minecraft:dirt}',
+                         'actual':'Block{minecraft:grass_block}','kind':'occupied',
+                         'fluid':False,'block_entity':False,'neighbors_loaded':True,
+                         'adjacent_fluid':False} for n in range(2)])
+        job.held=b.stock()
+        job._record_ready_build({'ready_for_build':True,'provided_finished':{dirt:2},
+                                 'projection_key':'ship'},before)
+        self.assertIsNone(job.pending_ready_build)
+        events=[json.loads(line) for line in (job.out/'events.jsonl').read_text().splitlines()]
+        self.assertTrue(any(row.get('kind')=='finished_materials_rejected' for row in events))
+
     def test_repeated_finished_receipt_with_unchanged_inventory_cannot_rebuild(self):
         deep, smooth = 'minecraft:cobbled_deepslate', 'minecraft:smooth_stone'
         b = FakeBackend(self.catalog, projection={deep:128, smooth:200})
@@ -651,6 +859,30 @@ class MaterialJobsTest(unittest.TestCase):
         result=self.job(b,self.request(count=128)).run()
         self.assertEqual('completed',result['state'],result)
         self.assertTrue({'minecraft:sand','minecraft:gravel','minecraft:white_dye','minecraft:white_concrete'}<=set(kept[0]))
+
+    def test_capacity_cleanup_reports_snowball_dependency_peak_not_final_snow(self):
+        snow,snow_block,snowball=('minecraft:'+name for name in ('snow','snow_block','snowball'))
+        fillers={'minecraft:filler_'+str(index):1 for index in range(35)}
+        b=FakeBackend(self.catalog,held=fillers)
+        b.stack_sizes.update({snow:64,snow_block:64,snowball:64})
+        request=self.request('snow',58);request['target_stack_sizes']={
+            snow:64,snow_block:64,snowball:64}
+        job=self.job(b,request,name='snow-peak')
+        planned={'steps':[
+            {'kind':'acquire','item':snowball,'count':120},
+            {'kind':'craft','item':snow_block,'produced':30,'ingredients':{snowball:120}},
+            {'kind':'craft','item':snow,'produced':60,'ingredients':{snow_block:30}},
+            {'kind':'reserve','item':snow,'count':58}],
+            'missing_supplies':{snowball:120}}
+        job._plan=Mock(return_value=planned)
+        job._observe();job.fetch_tried={snow:58,snow_block:30}
+        room=[]
+        b.make_room=lambda targets,keep:room.append((dict(targets),set(keep))) or {'phase':'done'}
+        job._step({snow:58})
+        self.assertEqual({snowball:120},room[0][0])
+        self.assertTrue({snow,snow_block,snowball}<=room[0][1])
+        self.assertEqual({'slots':37,'requirements':{snowball:120},
+                          'stage':'acquire:'+snowball},job._peak_capacity(planned))
 
     def test_make_room_zero_progress_is_bounded_to_two_attempts(self):
         b=FakeBackend(self.catalog,held={'minecraft:stone':35*64});attempts=[]

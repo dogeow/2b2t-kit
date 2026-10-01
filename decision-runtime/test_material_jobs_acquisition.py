@@ -1,11 +1,14 @@
 import copy
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from material_jobs.acquisition import acquire, rock_choice, _travel, blocks_route
+from material_jobs.acquisition import (acquire, rock_choice, _travel,
+    _wait_guard_clear, _resource_route_scope, blocks_route, Unavailable,
+    _access_shaft, route_failure, record_route_failure)
 from material_jobs.protocol import JobPaused
 
 
@@ -58,6 +61,313 @@ class FakeClient:
 
 
 class AcquisitionTest(unittest.TestCase):
+    def test_guard_displaced_terminal_route_is_not_retried_or_called_a_solid_block(self):
+        class Displaced(FakeClient):
+            def request(self,op,**params):
+                if op=='navigate':
+                    self.actions.append((op,copy.deepcopy(params)))
+                    self.state['pos']=[12.5,33,8.5]
+                    self.state['guard_busy']=True
+                    return {'phase':'waiting','detail':'air-only path changed; no blocks were excavated'}
+                return super().request(op,**params)
+        c=Displaced();c.state['pos']=[.5,145,.5];c.rows=[];trace=[]
+        with patch('material_jobs.navigation.settled_state',side_effect=AssertionError('No settlement wait after terminal waiting')):
+            with self.assertRaises(Unavailable) as stopped:
+                _travel(c,[.5,-3.9,.5],lambda:None,trace)
+        self.assertEqual('guard_displaced',stopped.exception.code)
+        self.assertEqual('waiting',stopped.exception.phase)
+        self.assertEqual('guard_displaced',trace[-1]['route_code'])
+        self.assertFalse(stopped.exception.evidence['terminal_verified'])
+        self.assertEqual(1,sum(op=='navigate' for op,_ in c.actions))
+
+    def test_native_path_change_without_fresh_blocker_is_unknown_not_geometry(self):
+        class Changed(FakeClient):
+            task='materials-test'
+            def __init__(self,obstacle):
+                super().__init__();self.obstacle=obstacle;self.changed=False;self.scans=0
+                self.state.update(flight=True,guard_busy=False,navigating=False,
+                                  control_revision=7,entities=[],time=100,
+                                  supervision_lease={'kind':'materials','job_session':self.task,
+                                                     'world_session':self.world,'revision':7})
+            def request(self,op,**params):
+                if op=='scan':
+                    self.scans+=1;self.last='scan-'+str(self.scans)
+                    reply=super().request(op,**params)
+                    return {**reply,'id':self.last,'world_session':self.world}
+                if op=='navigate':
+                    self.changed=True;self.last='nav-owned'
+                    self.actions.append((op,copy.deepcopy(params)))
+                    if self.obstacle:
+                        self.rows=[block((0,100,0),'stone')]
+                    self.state.update(id=self.last,last_request=self.last,
+                                      phase='waiting',guard_busy=False)
+                    return {'id':self.last,'world_session':self.world,
+                            'control_revision':7,'phase':'waiting',
+                            'detail':'air-only path changed; no blocks were excavated'}
+                return super().request(op,**params)
+        for obstacle,expected in ((False,'route_uncertain'),
+                                  (True,'route_geometry_blocked')):
+            with self.subTest(obstacle=obstacle):
+                c=Changed(obstacle);c.state['pos']=[.5,145,.5];c.rows=[];trace=[]
+                with self.assertRaises(Unavailable) as stopped:
+                    _travel(c,[.5,-3.9,.5],lambda:None,trace)
+                self.assertEqual(expected,stopped.exception.code)
+                self.assertEqual('nav-owned',stopped.exception.evidence['request_id'])
+                self.assertEqual(1,sum(op=='navigate' for op,_ in c.actions))
+
+    def test_proved_guard_stop_replans_from_current_position_to_same_target(self):
+        class DisplacedThenSettled(FakeClient):
+            task='materials-test'
+            def __init__(self):
+                super().__init__();self.failed=False
+                self.state.update(flight=True,guard_busy=False,navigating=False,
+                                  control_revision=7,entities=[],time=100,
+                                  supervision_lease={'kind':'materials','job_session':self.task,
+                                                     'world_session':self.world,'revision':7})
+            def request(self,op,**params):
+                if op=='navigate' and not self.failed:
+                    self.failed=True;self.last='nav-first'
+                    self.actions.append((op,copy.deepcopy(params)))
+                    self.state.update(pos=[12.5,145,8.5],guard_busy=True,id=self.last,
+                                      last_request=self.last,phase='waiting')
+                    return {'id':self.last,'world_session':self.world,
+                            'control_revision':7,'phase':'waiting',
+                            'detail':'air-only path changed; no blocks were excavated'}
+                return super().request(op,**params)
+        c=DisplacedThenSettled();c.state['pos']=[.5,145,.5];c.rows=[];trace=[]
+        def clear_guard(client,checkpoint,evidence):
+            self.assertTrue(evidence['terminal_verified'])
+            client.state['guard_busy']=False
+            return client.status()
+        with (patch('material_jobs.acquisition._wait_guard_clear',side_effect=clear_guard) as wait,
+              patch('material_jobs.navigation.settled_state',
+                    side_effect=lambda client,*args,**kwargs:client.status())):
+            _travel(c,[.5,-3.9,.5],lambda:None,trace)
+        wait.assert_called_once()
+        self.assertEqual(1,sum(entry.get('event')=='same_target_replan_after_guard'
+                               for entry in trace))
+        self.assertEqual([.5,-3.9,.5],
+                         [p['target'] for op,p in c.actions if op=='navigate'][-1])
+        self.assertFalse(any(op=='rock_quarry_batch' for op,_ in c.actions))
+
+    def test_guard_wait_allows_one_half_heart_regeneration_without_moving(self):
+        c=FakeClient();c.task='materials-test'
+        c.state.update(flight=True,guard_busy=True,navigating=False,entities=[],
+                       control_revision=7,supervision_lease={
+                           'kind':'materials','job_session':c.task,
+                           'world_session':c.world,'revision':7})
+        health=[18.5,18.5,19,19,19]
+        def observed():
+            index=min(observed.calls,len(health)-1);observed.calls+=1
+            return {**c.state,'health':health[index],'guard_busy':index==0,
+                    'time':100+index}
+        observed.calls=0;c.status=observed
+        with patch('material_jobs.acquisition.time.sleep'):
+            result=_wait_guard_clear(c,lambda:None,{'terminal_verified':True},seconds=1)
+        self.assertEqual(19,result['health'])
+        self.assertFalse(any(op=='navigate' for op,_ in c.actions))
+
+    def test_guard_wait_under_eighteen_health_fails_without_navigation(self):
+        c=FakeClient();c.task='materials-test'
+        c.state.update(health=17.5,flight=True,guard_busy=True,navigating=False,
+                       entities=[],supervision_lease={'kind':'materials',
+                       'job_session':c.task,'world_session':c.world,'revision':7},
+                       control_revision=7)
+        with self.assertRaises(Unavailable) as stopped:
+            _wait_guard_clear(c,lambda:None,{'terminal_verified':True},seconds=1)
+        self.assertEqual('waiting',stopped.exception.phase)
+        self.assertFalse(any(op=='navigate' for op,_ in c.actions))
+
+    def test_repeated_proved_guard_stops_retry_same_target_only_twice(self):
+        class RepeatedDisplacement(FakeClient):
+            task='materials-test'
+            def __init__(self):
+                super().__init__();self.attempt=0
+                self.state.update(flight=True,guard_busy=False,navigating=False,
+                                  control_revision=7,entities=[],time=100,
+                                  supervision_lease={'kind':'materials','job_session':self.task,
+                                                     'world_session':self.world,'revision':7})
+            def request(self,op,**params):
+                if op=='navigate':
+                    self.attempt+=1;self.last='nav-'+str(self.attempt)
+                    self.actions.append((op,copy.deepcopy(params)))
+                    self.state.update(pos=[self.attempt+.5,145,.5],guard_busy=True,
+                                      id=self.last,last_request=self.last,phase='waiting')
+                    return {'id':self.last,'world_session':self.world,
+                            'control_revision':7,'phase':'waiting',
+                            'detail':'air-only path changed; no blocks were excavated'}
+                return super().request(op,**params)
+        c=RepeatedDisplacement();c.state['pos']=[.5,145,.5];c.rows=[];trace=[]
+        def clear_guard(client,checkpoint,evidence):
+            client.state['guard_busy']=False
+            return client.status()
+        with patch('material_jobs.acquisition._wait_guard_clear',side_effect=clear_guard) as wait:
+            with self.assertRaises(Unavailable) as stopped:
+                _travel(c,[.5,-3.9,.5],lambda:None,trace)
+        self.assertEqual('guard_displaced',stopped.exception.code)
+        self.assertEqual(2,stopped.exception.evidence['replans'])
+        self.assertEqual(2,wait.call_count)
+        self.assertEqual(3,c.attempt)
+        self.assertTrue(all(op!='rock_quarry_batch' for op,_ in c.actions))
+
+    def test_failed_shaft_entry_is_written_before_any_quarry_mutation_and_held_across_jobs(self):
+        item='minecraft:cobbled_deepslate'
+        region={'item':item,'min':[0,-18,0],'max':[1,-1,1],
+                'source':'natural_survey','surface_y':10,
+                'access_shaft':{'min':[0,0,0],'max':[1,10,1]}}
+        profile={'server':'test','dimension':'minecraft:overworld','resource_regions':[region]}
+        with tempfile.TemporaryDirectory() as folder:
+            c=FakeClient();c.root=Path(folder)/'automation';c.root.mkdir()
+            ledger={'schema':1,'world_session':c.world,'item':item,'visited':{}}
+            local=Path(folder)/'acquisition.json'
+            with patch('material_jobs.acquisition._scan',return_value=[]),\
+                 patch('material_jobs.acquisition._rock_observation',return_value={'remaining':4}),\
+                 patch('material_jobs.acquisition._tool',return_value={'item':'minecraft:diamond_pickaxe'}),\
+                 patch('material_jobs.acquisition._travel',side_effect=Unavailable('guard moved actor','waiting','guard_displaced')):
+                with self.assertRaises(Unavailable):
+                    _access_shaft(c,region,{'max':[1,-1,1]},item,44,ledger,local,lambda:None,profile)
+            saved=json.loads(local.read_text())
+            self.assertEqual('route_hold',next(iter(saved['visited'].values()))['state'])
+            self.assertFalse(any(op=='rock_quarry_batch' for op,_ in c.actions))
+            held=route_failure(c,profile,item,region)
+            self.assertEqual('guard_displaced',held['code'])
+            c.world='new-world'
+            self.assertIsNone(route_failure(c,profile,item,region))
+
+    def test_final_resource_route_failure_is_also_journaled_before_mining(self):
+        item='minecraft:cobbled_deepslate'
+        region={'item':item,'min':[0,63,0],'max':[1,67,1]}
+        profile={'server':'test','dimension':'minecraft:overworld','resource_regions':[region]}
+        with tempfile.TemporaryDirectory() as folder:
+            c=FakeClient();c.root=Path(folder)/'automation';c.root.mkdir()
+            out=Path(folder)/'acquisition'
+            with patch('material_jobs.acquisition._travel',
+                       side_effect=Unavailable('guard moved actor','waiting','guard_displaced')):
+                receipt=acquire(c,item,12,profile,out,lambda:None)
+            self.assertEqual(('waiting','guard_displaced'),(receipt['phase'],receipt['code']))
+            ledger=json.loads((out/'acquisition-cobbled_deepslate.json').read_text())
+            self.assertEqual('route_hold',next(iter(ledger['visited'].values()))['state'])
+            self.assertEqual('guard_displaced',route_failure(c,profile,item,region)['code'])
+            self.assertFalse(any(op=='rock_quarry_batch' for op,_ in c.actions))
+            second=acquire(c,item,12,profile,out,lambda:None)
+            self.assertEqual(('waiting','guard_displaced'),
+                             (second['phase'],second['code']))
+            self.assertFalse(any(op=='rock_quarry_batch' for op,_ in c.actions))
+
+    def test_later_region_guard_hold_preempts_all_other_regions_before_mining(self):
+        item='minecraft:cobbled_deepslate'
+        first={'item':item,'min':[0,63,0],'max':[1,67,1]}
+        original={'item':item,'min':[10,63,0],'max':[11,67,1]}
+        profile={'server':'test','dimension':'minecraft:overworld',
+                 'resource_regions':[first,original]}
+        with tempfile.TemporaryDirectory() as folder:
+            c=FakeClient();c.root=Path(folder)/'automation';c.root.mkdir()
+            record_route_failure(c,profile,item,original,'guard_displaced',
+                                 'old combat stop',[10.5,70.1,.5])
+            receipt=acquire(c,item,12,profile,Path(folder)/'job',lambda:None)
+            self.assertEqual(('waiting','guard_displaced'),
+                             (receipt['phase'],receipt['code']))
+            self.assertFalse(any(op in ('rock_quarry_batch','navigate') for op,_ in c.actions))
+
+    def test_real_checkpoint_pause_during_guard_wait_persists_original_region_hold(self):
+        item='minecraft:cobbled_deepslate'
+        region={'item':item,'min':[0,63,0],'max':[1,67,1]}
+        profile={'server':'test','dimension':'minecraft:overworld',
+                 'resource_regions':[region]}
+        with tempfile.TemporaryDirectory() as folder:
+            c=FakeClient();c.root=Path(folder)/'automation';c.root.mkdir()
+            out=Path(folder)/'acquisition';paused={'now':False}
+            def checkpoint():
+                if paused['now']:
+                    raise JobPaused('health fell below 18 during combat')
+            def stopped_route(client,target,check,trace):
+                paused['now']=True
+                trace.append({'target':list(target),'actual':[.5,70.1,.5],
+                              'phase':'waiting','route_code':'guard_displaced',
+                              'terminal_verified':True,'request_id':'nav-owned',
+                              'combat_confirmed':True,'observed_at':100})
+                raise Unavailable('guard displaced','waiting','guard_displaced',
+                                  {'request_id':'nav-owned','terminal_verified':True,
+                                   'combat_confirmed':True})
+            with (patch('material_jobs.acquisition._scan',return_value=[]),
+                  patch('material_jobs.acquisition.rock_choice',
+                        side_effect=lambda rows,lo,hi,*args:{
+                            'min':lo,'max':hi,'available':4,'remaining':4}),
+                  patch('material_jobs.acquisition._travel_once',
+                        side_effect=stopped_route)):
+                with self.assertRaises(JobPaused):
+                    acquire(c,item,12,profile,out,checkpoint)
+            ledger=json.loads((out/'acquisition-cobbled_deepslate.json').read_text())
+            held=next(iter(ledger['visited'].values()))
+            self.assertEqual(('route_hold','guard_displaced'),
+                             (held['state'],held['route_code']))
+            self.assertTrue(held['route_evidence']['checkpoint_paused'])
+            self.assertEqual('guard_displaced',route_failure(c,profile,item,region)['code'])
+            after=acquire(c,item,12,profile,out,lambda:None)
+            self.assertEqual(('waiting','guard_displaced'),
+                             (after['phase'],after['code']))
+            self.assertFalse(any(op in ('navigate','rock_quarry_batch') for op,_ in c.actions))
+
+    def test_wood_guard_route_holds_same_tree_across_next_acquisition(self):
+        item='minecraft:oak_log'
+        region={'item':item,'min':[0,63,0],'max':[20,90,20]}
+        profile={'server':'test','dimension':'minecraft:overworld',
+                 'resource_regions':[region]}
+        with tempfile.TemporaryDirectory() as folder:
+            c=FakeClient(item=item);c.root=Path(folder)/'automation';c.root.mkdir()
+            c.trees=[{'pos':[0,65,0],'top':70,'natural_leaves':5},
+                     {'pos':[10,65,0],'top':70,'natural_leaves':5}]
+            c.rows=[block((0,65,0),'oak_log'),block((1,65,0),'oak_leaves')]
+            out=Path(folder)/'acquisition'
+            def stopped(client,target,checkpoint,trace,budget,route_scope=None):
+                trace.append({'target':list(target),'actual':[.5,70.1,.5],
+                              'route_code':'guard_displaced','terminal_verified':True,
+                              'request_id':'nav-owned','combat_confirmed':True,
+                              'observed_at':100})
+                raise Unavailable('guard displaced','waiting','guard_displaced',
+                                  {'terminal_verified':True,'combat_confirmed':True,
+                                   'replans':2})
+            with patch('material_jobs.acquisition.landing',return_value=[.5,72.1,.5]),\
+                 patch('material_jobs.acquisition._travel',side_effect=stopped) as travel:
+                first=acquire(c,item,10,profile,out,lambda:None)
+                self.assertEqual(('waiting','guard_displaced'),
+                                 (first['phase'],first['code']))
+                second=acquire(c,item,10,profile,out,lambda:None)
+                self.assertEqual(('waiting','guard_displaced'),
+                                 (second['phase'],second['code']))
+                self.assertEqual(1,travel.call_count)
+            saved=json.loads((out/'acquisition-oak_log.json').read_text())
+            self.assertEqual('route_hold',next(iter(saved['visited'].values()))['state'])
+            self.assertFalse(any(op=='chop' for op,_ in c.actions))
+
+    def test_wood_low_health_checkpoint_pause_records_original_tree(self):
+        item='minecraft:oak_log'
+        region={'item':item,'min':[0,63,0],'max':[20,90,20]}
+        profile={'server':'test','dimension':'minecraft:overworld',
+                 'resource_regions':[region]}
+        with tempfile.TemporaryDirectory() as folder:
+            c=FakeClient(item=item);c.root=Path(folder)/'automation';c.root.mkdir()
+            c.trees=[{'pos':[0,65,0],'top':70,'natural_leaves':5}]
+            c.rows=[block((0,65,0),'oak_log')]
+            out=Path(folder)/'acquisition'
+            def paused(client,target,checkpoint,trace,budget,route_scope=None):
+                trace.append({'target':list(target),'actual':[.5,70.1,.5],
+                              'route_code':'guard_displaced','terminal_verified':True,
+                              'request_id':'nav-owned','combat_confirmed':True,
+                              'observed_at':100})
+                raise JobPaused('health below 18')
+            with patch('material_jobs.acquisition.landing',return_value=[.5,72.1,.5]),\
+                 patch('material_jobs.acquisition._travel',side_effect=paused):
+                with self.assertRaises(JobPaused):
+                    acquire(c,item,10,profile,out,lambda:None)
+            saved=json.loads((out/'acquisition-oak_log.json').read_text())
+            held=next(iter(saved['visited'].values()))
+            self.assertEqual(('route_hold','guard_displaced'),
+                             (held['state'],held['route_code']))
+            self.assertTrue(held['route_evidence']['checkpoint_paused'])
+            self.assertEqual(('waiting','guard_displaced'),
+                             tuple(acquire(c,item,10,profile,out,lambda:None)[k]
+                                   for k in ('phase','code')))
     def test_partial_chest_support_does_not_block_vertical_takeoff(self):
         state={'pos':[.5,64.875,.5],'on_ground':True}
         chest=block((0,64,0),'chest',block_entity=True);chest['solid']=False
@@ -138,6 +448,77 @@ class AcquisitionTest(unittest.TestCase):
         self.assertGreaterEqual(moves[0][1],83.1)
         self.assertTrue(all(p[1]>=83.1 for p in moves[:-1]))
         self.assertEqual([10.5,70.1,10.5],moves[-1])
+
+    def test_approved_opposite_side_region_uses_two_fresh_same_target_segments(self):
+        region={'item':'minecraft:snow','min':[248,64,0],'max':[253,80,5],
+                'source':'natural_survey','surface_y':64}
+        profile={'search_origin':[0,145,0],'search_radius':256,
+                 'resource_regions':[region]}
+        target=[250.5,67.1,.5]
+        with tempfile.TemporaryDirectory() as folder:
+            c=FakeClient();c.state['pos']=[-250.5,145,.5];c.rows=[]
+            c.out=Path(folder);trace=[]
+            _travel(c,target,lambda:None,trace,
+                    route_scope=_resource_route_scope(profile,region))
+            starts=[row for row in trace
+                    if row.get('event')=='resource_route_segment_start']
+            self.assertEqual(2,len(starts))
+            self.assertTrue(all(row['final_target']==target for row in starts))
+            points=[[-250.5,145,.5]]+[row['segment_target'] for row in starts]
+            self.assertTrue(all(math.hypot(b[0]-a[0],b[2]-a[2])<=256
+                                for a,b in zip(points,points[1:])))
+            self.assertEqual(target,c.status()['pos'])
+            saved=json.loads((Path(folder)/'resource-route-segments-latest.json').read_text())
+            self.assertEqual(('done',target,2),
+                             (saved['phase'],saved['final_target'],
+                              sum(row.get('event')=='resource_route_segment_done'
+                                  for row in saved['trace'])))
+
+    def test_segment_scan_block_and_guard_failures_keep_original_final_target(self):
+        region={'item':'minecraft:snow','min':[248,64,0],'max':[253,80,5],
+                'source':'natural_survey','surface_y':64}
+        profile={'search_origin':[0,145,0],'search_radius':256,
+                 'resource_regions':[region]}
+        scope=_resource_route_scope(profile,region);target=[250.5,67.1,.5]
+
+        class ScanFailure(FakeClient):
+            def request(self,op,**params):
+                if op=='scan':
+                    self.actions.append((op,copy.deepcopy(params)))
+                    return {'detail':'chunk not loaded'}
+                return super().request(op,**params)
+
+        class GuardFailure(FakeClient):
+            def request(self,op,**params):
+                if op=='navigate':
+                    self.actions.append((op,copy.deepcopy(params)))
+                    self.state['pos']=[-249.5,145,.5]
+                    self.state['guard_busy']=True
+                    return {'phase':'waiting',
+                            'detail':'air-only path changed; no blocks were excavated'}
+                return super().request(op,**params)
+
+        cases=[]
+        scan=ScanFailure();cases.append(('route_uncertain',scan))
+        blocked=FakeClient();blocked.rows=[block((-100,318,0),'stone')]
+        cases.append(('route_geometry_blocked',blocked))
+        guard=GuardFailure();guard.rows=[];cases.append(('guard_displaced',guard))
+        for expected,c in cases:
+            with self.subTest(expected=expected),tempfile.TemporaryDirectory() as folder:
+                c.state['pos']=[-250.5,145,.5];c.out=Path(folder);trace=[]
+                with self.assertRaises(Unavailable) as stopped:
+                    _travel(c,target,lambda:None,trace,route_scope=scope)
+                self.assertEqual(expected,stopped.exception.code)
+                self.assertEqual(target,stopped.exception.evidence['final_target'])
+                final=next(row for row in reversed(trace)
+                           if row.get('event')=='resource_route_segment_stopped')
+                self.assertEqual((target,1,expected),
+                                 (final['final_target'],final['segment'],final['route_code']))
+                self.assertFalse(any(op in ('rock_quarry_batch','quarry_batch','chop')
+                                     for op,_ in c.actions))
+                saved=json.loads((Path(folder)/'resource-route-segments-latest.json').read_text())
+                self.assertEqual(('stopped',target,expected),
+                                 (saved['phase'],saved['final_target'],saved['route_code']))
 
     def profile(self,item,low=None,high=None):
         return {'resource_regions':[{'item':item,'min':low or [0,64,0],'max':high or [1,67,1]}]}
@@ -227,6 +608,45 @@ class AcquisitionTest(unittest.TestCase):
             result=self.run_acquire(c,out,target=5)
             self.assertEqual('done',result['phase']);self.assertEqual(5,result['after'])
             self.assertEqual('minecraft:raw_iron',next(params for op,params in c.actions if op=='rock_quarry_batch')['item'])
+
+    def raw_iron_block_client(self, **kwargs):
+        c=FakeClient(item='minecraft:raw_iron_block',resource='raw_iron_block',**kwargs)
+        for row in c.rows:row['pos'][1]-=96
+        c.state['pos']=[.5,-26.9,.5]
+        return c
+
+    def test_deep_raw_iron_blocks_are_direct_targets_with_actual_block_delta(self):
+        with tempfile.TemporaryDirectory() as out:
+            c=self.raw_iron_block_client(before=2)
+            result=self.run_acquire(c,out,target=5,profile=self.profile(c.item,[0,-32,0],[1,-29,1]))
+            self.assertEqual(('done',5,3),(result['phase'],result['after'],result['gained']))
+            batch=next(params for op,params in c.actions if op=='rock_quarry_batch')
+            self.assertEqual(('minecraft:raw_iron_block',3,'collect'),
+                             (batch['item'],batch['target_count'],batch['completion']))
+
+    def test_surface_raw_iron_building_blocks_are_not_quarry_material_for_any_target(self):
+        for item in ('minecraft:raw_iron_block','minecraft:raw_iron','minecraft:tuff'):
+            with self.subTest(item=item),tempfile.TemporaryDirectory() as out:
+                c=FakeClient(item=item,resource='raw_iron_block')
+                c.rows[-1]['state']='Block{minecraft:tuff}' if item=='minecraft:tuff' else 'Block{minecraft:iron_ore}'
+                result=self.run_acquire(c,out)
+                self.assertEqual('blocked',result['phase'])
+                self.assertFalse(any(op in ('navigate','rock_quarry_batch') for op,_ in c.actions))
+
+    def test_raw_iron_block_rejects_wet_buffer_and_does_not_replay_missing_block_gain(self):
+        with tempfile.TemporaryDirectory() as out:
+            c=self.raw_iron_block_client(gain=0)
+            profile=self.profile(c.item,[0,-32,0],[1,-29,1])
+            result=self.run_acquire(c,out,profile=profile)
+            self.assertEqual(('blocked','no_inventory_progress'),(result['phase'],result['code']))
+            self.run_acquire(c,out,profile=profile)
+            self.assertEqual(1,sum(op=='rock_quarry_batch' for op,_ in c.actions))
+        with tempfile.TemporaryDirectory() as out:
+            c=self.raw_iron_block_client()
+            c.rows.append(block((-3,-32,0),'water',fluid=True))
+            result=self.run_acquire(c,out,profile=self.profile(c.item,[0,-32,0],[1,-31,1]))
+            self.assertEqual('blocked',result['phase'])
+            self.assertFalse(any(op=='rock_quarry_batch' for op,_ in c.actions))
 
     def test_no_authorized_region_or_already_sufficient_inventory_makes_no_request(self):
         with tempfile.TemporaryDirectory() as out:

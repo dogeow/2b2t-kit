@@ -24,8 +24,24 @@ class ProjectionBuildWiringTest {
     }
     @Test void serverUpdatesReachProjectionVerificationAsWellAsConcrete()throws Exception{
         var single=method("mixin/ConcreteBlockUpdatesMixin","kit$concreteBlockUpdate");
-        assertEquals(3,calls(single).stream().filter("serverBlock"::equals).count());
-        assertTrue(calls(method("mixin/ConcreteBlockUpdatesMixin","kit$concreteSectionUpdate")).contains("buildJob"));
+        var recipients=new HashSet<String>();
+        for(var instruction:single.instructions)
+            if(instruction instanceof MethodInsnNode call&&call.name.equals("serverBlock"))recipients.add(call.owner);
+        assertEquals(5,recipients.size());
+        assertTrue(recipients.containsAll(Set.of("dev/twob2tkit/automation/SingleBlockMiningConfirmation",
+            "dev/twob2tkit/automation/ProfessionalPrinter","dev/twob2tkit/automation/AutomationBridge",
+            "dev/twob2tkit/builder/ProjectionBuildJob")));
+
+        var section=method("mixin/ConcreteBlockUpdatesMixin","kit$concreteSectionUpdate");
+        assertTrue(calls(section).contains("buildJob"));
+        boolean terrainSectionHook=false;
+        for(var instruction:section.instructions)
+            if(instruction instanceof InvokeDynamicInsnNode dynamic)
+                for(var argument:dynamic.bsmArgs)
+                    if(argument instanceof Handle handle
+                            && handle.getOwner().equals("dev/twob2tkit/automation/AutomationBridge")
+                            && handle.getName().equals("serverBlock"))terrainSectionHook=true;
+        assertTrue(terrainSectionHook);
     }
     @Test void persistentPauseGateExistsBeforePrinterProposal()throws Exception{
         var tick=method("automation/ProfessionalPrinter","tick");var names=new ArrayList<String>();
