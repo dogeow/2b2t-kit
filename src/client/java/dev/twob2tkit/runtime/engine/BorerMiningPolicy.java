@@ -75,6 +75,24 @@ final class BorerMiningPolicy {
 	}
 
 	/**
+	 * 贴岩浆/水的目标仍是实心方块：只能拒挖并绕开，绝不能当成服务器已挖掉。
+	 * {@code shouldMine} 会因会开岩浆而返回 false，若走「已清除」分支就会继续前进踩进液体。
+	 */
+	static boolean refuseOpenedHazard(boolean opensLava, boolean opensWater) {
+		return opensLava || opensWater;
+	}
+
+	/** 只有方块本身已变成空气/可替换空流体，才允许走服务器清除后的收尾。 */
+	static boolean treatAsServerCleared(boolean blockGone) {
+		return blockGone;
+	}
+
+	/** 前方路径格本身是岩浆流体时，停步并绕开，不要继续朝那格挖或走。 */
+	static boolean refusePathIntoLava(boolean cellIsLava) {
+		return cellIsLava;
+	}
+
+	/**
 	 * 沿用身旁矿规则。立足点就是矿时，落地安全（无岩浆/虚空/超深）也可以挖。
 	 */
 	static boolean adjacentOreCanBeSelected(int horizontalManhattan, int dy, boolean standingSupport, boolean landingSafe) {

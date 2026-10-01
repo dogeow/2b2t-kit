@@ -30,4 +30,10 @@ class SafetyHoldStoreTest {
   assertEquals(EmergencyExitPolicy.Decision.DISCONNECT,EmergencyExitPolicy.decide(18,12,500,true));
   assertEquals(EmergencyExitPolicy.Decision.DISCONNECT,EmergencyExitPolicy.decide(18,2,8000,true));
  }
+ @Test void emergencyFlightOnlyStartsAfterASafeAscentExists(){
+  assertTrue(EmergencyExitPolicy.acquireFlightForEscape(true));
+  assertFalse(EmergencyExitPolicy.acquireFlightForEscape(false));
+  assertTrue(EmergencyExitPolicy.abortWithoutFlight(true));
+  assertFalse(EmergencyExitPolicy.abortWithoutFlight(false));
+ }
 }

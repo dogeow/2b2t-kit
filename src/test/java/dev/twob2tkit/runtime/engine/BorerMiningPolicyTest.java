@@ -99,4 +99,14 @@ final class BorerMiningPolicyTest {
 		assertFalse(BorerMiningPolicy.adjacentOreCanBeSelected(1, -2, false, true));
 		assertFalse(BorerMiningPolicy.adjacentOreCanBeSelected(2, 0, false, true));
 	}
+	@Test
+	void lavaAdjacentSolidIsRefusedNotTreatedAsCleared() {
+		assertTrue(BorerMiningPolicy.refuseOpenedHazard(true, false));
+		assertTrue(BorerMiningPolicy.refuseOpenedHazard(false, true));
+		assertFalse(BorerMiningPolicy.refuseOpenedHazard(false, false));
+		assertFalse(BorerMiningPolicy.treatAsServerCleared(false));
+		assertTrue(BorerMiningPolicy.treatAsServerCleared(true));
+		assertTrue(BorerMiningPolicy.refusePathIntoLava(true));
+		assertFalse(BorerMiningPolicy.refusePathIntoLava(false));
+	}
 }
