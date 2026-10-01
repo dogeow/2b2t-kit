@@ -3,7 +3,7 @@
 The native mod owns the emergency response; a Python process or model response is never required to notice low health.
 
 - Below 14 health during Kit work or armed defense, stop work and persist `automation/safety-hold.json` before attempting escape.
-- Try a collision-checked flight route up about 12 blocks. Do not break blocks, descend through the route, or move closer to a nearby hostile.
+- Plan a collision-checked, fluid-free flight route up about 12 blocks **before** enabling flight. If no safe ascent exists, lock and disconnect without launching flight thrash near lava. Do not break blocks, descend through the route, or move closer to a nearby hostile.
 - Stop waiting at 6 health, a blocked route, one second without movement, or the eight-second escape deadline. Disconnect even if the height could not be reached.
 - Meteor KillAura stays restricted to hostile mobs; AutoEat remains available. Temporarily suspend AutoLog during the bounded ascent, then restore it. AutoReconnect remains disabled while the hold exists.
 - The lock survives restarts. Do not launch/reconnect the client or resume automation when `require_unlocked(automation_root)` fails. A missing or stale status file is not permission to ignore the durable lock.
