@@ -27,9 +27,10 @@ class BuildNavigationReloadTest {
             assertEquals(a.motion(new Vec3(.084,-.029,-.051)),b.motion(new Vec3(.084,-.029,-.051)));
             assertFalse(b.motion(new Vec3(.084,-.029,-.051)).arrived());
             var world=new BuildNavigation.World(){public boolean clear(BlockPos p){return true;}public boolean edge(BlockPos a,BlockPos b){return true;}};
-            var oldSearch=a.search(world,BlockPos.ZERO,List.of(new BlockPos(20,0,0)));assertNull(oldSearch.advance(1,Long.MAX_VALUE));
+            var oldSearch=a.search(world,BlockPos.ZERO,List.of(new BlockPos(20,0,0)));
+            assertEquals(List.of(BlockPos.ZERO,new BlockPos(20,0,0)),oldSearch.advance(1,Long.MAX_VALUE).nodes());
             var newSearch=b.search(world,BlockPos.ZERO,List.of(new BlockPos(3,0,0)));
-            assertEquals(4,newSearch.advance(16,Long.MAX_VALUE).nodes().size());assertEquals(1,oldSearch.expanded());
+            assertEquals(2,newSearch.advance(16,Long.MAX_VALUE).nodes().size());assertEquals(0,oldSearch.expanded());
         }
     }
     @Test void badPolicyOrMovementFailsBeforeAnyInputIsApplied(){

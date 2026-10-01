@@ -64,9 +64,13 @@ class MaterialAirArrivalPolicyTest {
         assertTrue(MaterialAirArrivalPolicy.takeOver(new Vec3(30,0,0),Vec3.ZERO,false));
         assertFalse(MaterialAirArrivalPolicy.takeOver(new Vec3(30,0,0),Vec3.ZERO,true));
         assertTrue(MaterialAirArrivalPolicy.motion(new Vec3(0,-20,0)).vertical());
+        assertFalse(MaterialAirArrivalPolicy.motion(new Vec3(0,-20,0)).horizontal());
         assertEquals(.08,MaterialAirArrivalPolicy.motion(new Vec3(0,-20,0)).speed());
         assertEquals(.01,MaterialAirArrivalPolicy.motion(new Vec3(.2,0,0)).speed(),1e-12);
+        assertTrue(MaterialAirArrivalPolicy.motion(new Vec3(.2,0,0)).horizontal());
         assertFalse(MaterialAirArrivalPolicy.motion(new Vec3(.02,.02,.02)).moving());
+        var steep=MaterialAirArrivalPolicy.motion(new Vec3(4,-8,3));
+        assertTrue(steep.vertical());assertTrue(steep.horizontal());assertTrue(steep.moving());
     }
     private ClassNode code(String name)throws Exception{
         var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/"+name+".class")){

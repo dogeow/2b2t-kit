@@ -40,9 +40,8 @@ final class MaterialAirNavigation {
         var motion=MaterialAirArrivalPolicy.motion(error);
         if(!motion.moving()){flight.hover();return true;}
         flight.speed(motion.speed());
-        if(motion.vertical()){
-            c.options.keyJump.setDown(error.y>0);c.options.keyShift.setDown(error.y<0);
-        }else{
+        if(motion.vertical()){c.options.keyJump.setDown(error.y>0);c.options.keyShift.setDown(error.y<0);}
+        if(motion.horizontal()){
             look=new RotationAim.Look(RotationAim.yawToward(error.x,error.z),0);
             RotationAim.apply(c.player,look);c.options.keyUp.setDown(true);
         }

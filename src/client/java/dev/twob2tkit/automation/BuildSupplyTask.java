@@ -220,10 +220,14 @@ public final class BuildSupplyTask {
         if(motion.arrived()){pathIndex++;stall=0;bestDistance=Double.POSITIVE_INFINITY;flight.hover();return false;}
         if(!clear(c,q))throw new IllegalStateException("Depot route changed; movement stopped");
         if(distance<bestDistance-.015){bestDistance=distance;stall=0;}else if(++stall>60)throw new IllegalStateException("Depot route has no verified movement");
-        boolean vertical=motion.vertical();var probe=motion.probe();
+        var probe=motion.probe();
         if(!c.level.noCollision(c.player,c.player.getBoundingBox().expandTowards(probe)))throw new IllegalStateException("Actual collision on depot route");
-        if(vertical){flight.speed(motion.speed());c.options.keyJump.setDown(delta.y>0);c.options.keyShift.setDown(delta.y<0);}
-        else{travelLook=new RotationAim.Look(RotationAim.yawToward(delta.x,delta.z),0);RotationAim.apply(c.player,travelLook);flight.speed(motion.speed());c.options.keyUp.setDown(true);}
+        flight.speed(motion.speed());
+        if(Math.abs(probe.y)>1e-9){c.options.keyJump.setDown(probe.y>0);c.options.keyShift.setDown(probe.y<0);}
+        if(Math.hypot(probe.x,probe.z)>1e-9){
+            travelLook=new RotationAim.Look(RotationAim.yawToward(delta.x,delta.z),0);
+            RotationAim.apply(c.player,travelLook);c.options.keyUp.setDown(true);
+        }
         return false;
     }
     private static void release(Minecraft c){if(c.options==null)return;c.options.keyUp.setDown(false);c.options.keyDown.setDown(false);c.options.keyLeft.setDown(false);c.options.keyRight.setDown(false);c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);}
