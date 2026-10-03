@@ -1,4 +1,4 @@
-"""Local Kit entry point for a bounded, already-watered potato field."""
+"""Local Kit entry point for a bounded, already-watered potato or wheat field."""
 import argparse
 import hashlib
 import json
@@ -10,16 +10,28 @@ from job_progress import JobProgress
 from kit_runtime.journal import write_json
 from live_snapshot import read_fresh
 from material_client import MaterialClient, Handoff
-from potato_farm import plan, run
+from potato_farm import CROPS, crop_descriptor, plan, run
 from safety_interlock import require_unlocked
 
 DEFAULT_GAME = Path('/Applications/.minecraft/versions/26.1.2')
 
 
 def journal_directory(root, state, request, out=None):
+    crop=crop_descriptor(request)
     scope = {'server': state['server'].strip().lower().removesuffix(':25565'),
              'dimension': state['dimension'], 'layout': plan(request)}
     key = hashlib.sha256(json.dumps(scope, sort_keys=True).encode()).hexdigest()[:16]
+    for name in CROPS:
+        if name==crop.name:continue
+        other_scope={**scope,'layout':plan({**request,'crop':name})}
+        other_key=hashlib.sha256(json.dumps(other_scope,sort_keys=True).encode()).hexdigest()[:16]
+        other_registry=root/'farms'/other_key/'registry.json'
+        if not other_registry.exists():continue
+        saved=json.loads(other_registry.read_text())
+        if saved.get('scope')!=other_scope:raise RuntimeError('Other crop registry is malformed; original field is protected')
+        other_path=Path(saved['directory'])/(CROPS[name].journal_prefix+other_key+'.json')
+        if other_path.exists() and json.loads(other_path.read_text()).get('pending'):
+            raise RuntimeError('Other crop action at this field is unresolved; changing crop cannot bypass its journal')
     registry = root/'farms'/key/'registry.json'
     default = registry.parent/'journal'
     if registry.exists():
@@ -34,14 +46,16 @@ def journal_directory(root, state, request, out=None):
         registry.parent.mkdir(parents=True, exist_ok=True)
         write_json(registry, {'scope': scope, 'world_session': state['world_session'],
                              'directory': str(directory)})
-    return directory, directory/('potato-farm-'+key+'.json')
+    return directory, directory/(crop.journal_prefix+key+'.json')
 
 
-def normal_finish_allowed(c, state, result, book, hurt):
+def normal_finish_allowed(c, state, result, book, hurt, allow_settled_wait=False):
     lease = state.get('supervision_lease') or {}
     return bool(isinstance(result, dict)
-                and (result.get('phase') == 'done' or result.get('code') == 'FARM_BATCH')
-                and isinstance(book, dict) and not book.get('pending')
+                and (result.get('phase') == 'done' or result.get('code') == 'FARM_BATCH'
+                     or allow_settled_wait and result.get('phase') == 'waiting'
+                     and result.get('code') != 'WAIT_RECONCILE')
+                and isinstance(book, dict) and not book.get('pending') and not book.get('cleanup_pending')
                 and state.get('connected') is True and state.get('world_session') == c.world
                 and state.get('control_revision') == c.rev and state.get('manual_movement') is False
                 and state.get('screen') == '' and state.get('health') == 20
@@ -51,12 +65,12 @@ def normal_finish_allowed(c, state, result, book, hurt):
                 and lease.get('kind') == 'materials')
 
 
-def finish_or_yield(c, result, journal, hurt, park_y, no_move):
+def finish_or_yield(c, result, journal, hurt, park_y, no_move, *, allow_settled_wait=False):
     normal = False
     try:
         observed = c.status()
         book = json.loads(journal.read_text()) if journal.exists() else None
-        normal = normal_finish_allowed(c, observed, result, book, hurt)
+        normal = normal_finish_allowed(c, observed, result, book, hurt, allow_settled_wait)
         if normal:
             if not no_move:
                 park = [observed['pos'][0], park_y, observed['pos'][2]]
@@ -84,14 +98,30 @@ def finish_or_yield(c, result, journal, hurt, park_y, no_move):
         if c.job_progress: c.job_progress.close()
 
 
-def execute(game_dir, center, radius, max_cells, out=None, no_move=False):
+def execute(game_dir, center, radius, max_cells, out=None, no_move=False, *, crop='potato'):
+    from farm_preparation import preparation_lock, assert_preparation_resolved
+    crop_descriptor(crop)
+    request = {'authorized': True, 'center': center, 'radius': radius}
+    plan(request)
+    root = Path(game_dir)/'config/twob2tkit/automation'
+    state = read_fresh(root); require_unlocked(root, state)
+    # Preparation and both crop types share the same field lock through cleanup.
+    with preparation_lock(root, state, request):
+        assert_preparation_resolved(root, state, request)
+        return _execute_locked(game_dir, center, radius, max_cells, out, no_move, crop=crop)
+
+
+def _execute_locked(game_dir, center, radius, max_cells, out=None, no_move=False, *, crop='potato'):
+    descriptor=crop_descriptor(crop)
+    request = {'authorized': True, 'center': center, 'radius': radius}
+    if descriptor.name!='potato':request['crop']=descriptor.name
+    layout=plan(request)
     root = Path(game_dir)/'config/twob2tkit/automation'
     state = read_fresh(root); require_unlocked(root, state)
     if (not state.get('connected') or state.get('screen') or state.get('manual_movement')
             or state.get('dimension') != 'minecraft:overworld'
             or state.get('health') != 20 or state.get('food', 0) < 18):
         raise RuntimeError('A connected, idle, full-health Overworld player is required')
-    request = {'authorized': True, 'center': center, 'radius': radius}
     directory, journal = journal_directory(root, state, request, out)
     if journal.exists():
         book = json.loads(journal.read_text())
@@ -102,7 +132,7 @@ def execute(game_dir, center, radius, max_cells, out=None, no_move=False):
     park = [state['pos'][0], park_y, state['pos'][2]]
     c = MaterialClient(root, directory/('control-'+str(time.time_ns())), server=state['server'],
                        remote_finish='guard', park_target=park)
-    c.job_progress = JobProgress(root, c.world, c.task, c.rev, '土豆田', len(plan(request)['cells']))
+    c.job_progress = JobProgress(root, c.world, c.task, c.rev, descriptor.title, len(layout['cells']))
     hurt = state['recent_hurt_at']
     result = None
     def checkpoint():
@@ -144,13 +174,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--game-dir', type=Path, default=DEFAULT_GAME)
     parser.add_argument('--center', type=int, nargs=3, required=True, metavar=('X', 'Y', 'Z'))
+    parser.add_argument('--crop',choices=tuple(CROPS),default='potato',help='potato uses carried potatoes; wheat uses carried wheat seeds')
     parser.add_argument('--radius', type=int, choices=(1, 2), default=2)
     parser.add_argument('--max-cells', type=int, choices=range(1, 25), default=24)
     parser.add_argument('--out', type=Path)
     parser.add_argument('--no-move', action='store_true', help='Use current position; no approach movement')
     args = parser.parse_args(argv)
     try:
-        result = execute(args.game_dir, args.center, args.radius, args.max_cells, args.out, args.no_move)
+        options={} if args.crop=='potato' else {'crop':args.crop}
+        result = execute(args.game_dir, args.center, args.radius, args.max_cells, args.out, args.no_move,**options)
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get('phase') == 'done' or result.get('code') == 'FARM_BATCH' else 2
     except (RuntimeError, ValueError, OSError, KeyError) as error:

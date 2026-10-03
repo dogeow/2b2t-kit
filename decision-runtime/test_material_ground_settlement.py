@@ -44,7 +44,7 @@ class GroundSettlementTest(unittest.TestCase):
     def test_tiny_gravity_and_inertia_landing_rebases_before_fresh_column_scan_and_takeoff(self):
         c=self.client
         settled={**self.landed,'time':3000}
-        reached={**settled,'time':4000,'pos':[self.LANDED[0],140,self.LANDED[2]],'flight':True}
+        reached={**settled,'time':4000,'pos':[self.LANDED[0],self.LANDED[1]+48,self.LANDED[2]],'flight':True}
         states=iter([self.landed,settled,settled,reached])
         def status(wait_seconds=None):
             self.reads.append(wait_seconds);return next(states)
@@ -54,7 +54,7 @@ class GroundSettlementTest(unittest.TestCase):
                 self.assertEqual(761019,params['min'][0], 'Scan must use the landed body column, not the falling pose')
                 return {'phase':'done','world_session':c.world,'blocks':[]}
             self.assertEqual('navigate',op);self.assertTrue(params['air_only'])
-            self.assertEqual([self.LANDED[0],140,self.LANDED[2]],params['target'])
+            self.assertEqual([self.LANDED[0],self.LANDED[1]+48,self.LANDED[2]],params['target'])
             return {'phase':'done'}
         c.status=status;c.request=request
         with self.clock(),patch('material_client.time.sleep'):

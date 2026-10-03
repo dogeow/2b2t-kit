@@ -73,6 +73,7 @@ public final class KitController {
 	private String pendingDisconnectReason;
     private long logoutGeneration;
     public void cancelPendingLogout(){pendingDisconnectReason=null;logoutGeneration++;}
+    public boolean hasPendingLogout(){return pendingDisconnectReason!=null;}
 	private boolean disconnectOnThisArrival;
 	private final CruiseCeilingMiner ceilingMiner;
 	private double sampleY = Double.NaN;

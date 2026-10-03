@@ -20,6 +20,7 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
     private Function<T, net.minecraft.world.item.ItemStack> icon;
     private BiPredicate<T, String> matcher;
     private BiFunction<T, String, String> rowSummary;
+    private Function<T,String> actualColumn, cachedColumn;
     private Function<T, String> key;
     private String selectedKey = "";
     private String addLabel; private Runnable add;
@@ -49,6 +50,8 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
     public KitCollectionScreen<T> icon(Function<T, net.minecraft.world.item.ItemStack> icon) { this.icon = icon; return this; }
     public KitCollectionScreen<T> matcher(BiPredicate<T, String> matcher) { this.matcher = matcher; return this; }
     public KitCollectionScreen<T> summary(BiFunction<T, String, String> summary) { this.rowSummary = summary; return this; }
+    /** Optional side-by-side actual/cache values; metadata remains visible on the following line. */
+    public KitCollectionScreen<T> comparisonColumns(Function<T,String> actual,Function<T,String> cached) { actualColumn=actual;cachedColumn=cached;return this; }
     private String summaryText(T item) { return rowSummary == null ? "" : rowSummary.apply(item, query); }
     public KitCollectionScreen<T> key(Function<T, String> key) { this.key = key; return this; }
     public KitCollectionScreen<T> add(String label, Runnable action) { addLabel = label; add = action; return this; }
@@ -117,7 +120,7 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
         if (list.children().isEmpty()) KitUi.centered(g, font, "暂无匹配记录，可调整筛选或新增", width / 2, list.getY() + 8, 0xAABBCC);
     }
     private final class Items extends ContainerObjectSelectionList<Items.Entry> {
-        Items(Minecraft client, int w, int h, int y) { super(client, w, h, y, rowSummary == null ? 24 : 40); centerListVertically = false; }
+        Items(Minecraft client, int w, int h, int y) { super(client, w, h, y, actualColumn!=null?54:rowSummary == null ? 24 : 40); centerListVertically = false; }
         @Override public int getRowWidth() { return width - 16; }
         void populate() {
             double oldScroll = scrollAmount(); clearEntries();
@@ -146,14 +149,19 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
             }
             @Override public void extractContent(GuiGraphicsExtractor g, int mx, int my, boolean hover, float delta) {
                 int contentWidth = getContentRight() - getContentX(), mainWidth = Math.max(40, contentWidth - actions.size() * 48);
-                int y = getContentYMiddle() - (rowSummary == null ? 10 : 18);
+                int y = getContentYMiddle() - (actualColumn!=null?24:rowSummary == null ? 10 : 18);
                 int offset = icon == null ? 0 : 22;
                 Button main = buttons.getFirst(); main.setPosition(getContentX() + offset, y); main.setWidth(mainWidth - offset - 4);
                 main.setMessage(Component.literal(KitUi.fit(font, titleText.apply(item), mainWidth - offset - 12)));
                 if (icon != null) { var stack = icon.apply(item); if (stack != null && !stack.isEmpty()) g.item(stack, getContentX() + 2, y + 2); }
                 for (int i = 1; i < buttons.size(); i++) { buttons.get(i).setPosition(getContentX() + mainWidth + (i - 1) * 48, y); buttons.get(i).active = actions.get(i - 1).enabled().test(item); }
                 for (Button button : buttons) button.extractRenderState(g, mx, my, delta);
-                if (rowSummary != null) KitUi.text(g, font, KitUi.fit(font, summaryText(item), contentWidth - 6), getContentX() + 3, y + 24, 0xAABBCC);
+                if(actualColumn!=null){
+                    int half=(contentWidth-12)/2;
+                    KitUi.text(g,font,KitUi.fit(font,actualColumn.apply(item),half),getContentX()+3,y+24,0xAAFFAA);
+                    KitUi.text(g,font,KitUi.fit(font,cachedColumn.apply(item),half),getContentX()+half+9,y+24,0xAABBCC);
+                }
+                if (rowSummary != null) KitUi.text(g, font, KitUi.fit(font, summaryText(item), contentWidth - 6), getContentX() + 3, y + (actualColumn!=null?36:24), 0xAABBCC);
             }
             @Override public List<? extends GuiEventListener> children() { return buttons; }
             @Override public List<? extends NarratableEntry> narratables() { return buttons; }

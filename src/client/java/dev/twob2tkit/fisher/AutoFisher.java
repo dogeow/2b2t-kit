@@ -55,6 +55,8 @@ public final class AutoFisher {
 	private int dumpStreak;
 	private int caughtCount;
 	private long sessionStartMs;
+    private long activityGeneration;
+    private boolean idleNoDeposit;
 
 	private enum Phase {
 		FISH, APPROACH_CHEST, OPEN_CHEST, DUMP, RETURN
@@ -69,6 +71,9 @@ public final class AutoFisher {
 	public boolean isActive() {
 		return active;
 	}
+    public long activityGeneration(){return activityGeneration;}
+    public boolean depositAllowed(){return IdleFishingPolicy.mayDeposit(active,idleNoDeposit);}
+    public int chestSearchRange(){return IdleFishingPolicy.chestRange(config.fisherChestRange);}
 
 	/** 是否在走向/打开/倒箱阶段（非抛竿）。 */
 	public boolean isDepositing() {
@@ -82,9 +87,15 @@ public final class AutoFisher {
 
 	/** 锁定脚底与视角，找附近箱子并开始。 */
 	public void start(Minecraft client) {
+        start(client,false);
+    }
+    public void startIdleNoDeposit(Minecraft client){start(client,true);}
+    private void start(Minecraft client,boolean noDeposit){
 		if (client.player == null || client.level == null) return;
 		LocalPlayer player = client.player;
 		active = true;
+        idleNoDeposit=noDeposit;
+        activityGeneration++;
 		phase = Phase.FISH;
 		cooldown = 0;
 		openWait = 0;
@@ -98,7 +109,7 @@ public final class AutoFisher {
 		spotZ = player.getZ();
 		spotYaw = player.getYRot();
 		spotPitch = player.getXRot();
-		chestPos = findNearbyChest(client, player);
+        chestPos=idleNoDeposit?null:findNearbyChest(client,player);
 		status = "开始钓鱼";
 		String chest = chestPos == null ? "附近没看到箱子，满了会停" : "箱子 " + chestPos.getX() + " " + chestPos.getY() + " " + chestPos.getZ();
 		message(client, "已锁定脚底和视角。" + chest + "。再按 "
@@ -110,11 +121,25 @@ public final class AutoFisher {
 
 	/** 停止钓鱼、松键、关箱并说明原因。 */
 	public void stop(Minecraft client, String reason) {
+		stop(client,reason,false);
+	}
+
+    /** Scoped idle handoff releases this fisher without closing a player's inventory/menu. */
+    public void stopKeepingMenu(Minecraft client,String reason){
+        stop(client,reason,true);
+    }
+
+    private void stop(Minecraft client,String reason,boolean keepMenu){
+        idleNoDeposit=false;
 		if (!active) return;
 		active = false;
 		phase = Phase.FISH;
 		releaseKeys(client);
-		if (client.screen instanceof AbstractContainerScreen<?>) {
+        if(client.options!=null&&client.player!=null&&client.player.getMainHandItem().getItem() instanceof FishingRodItem
+            &&!KitKeys.isPhysicallyDown(client,client.options.keyUse))
+            client.options.keyUse.setDown(false);
+        chestPos=null;cooldown=openWait=caughtWait=0;sawBite=false;
+		if (!keepMenu && client.screen instanceof AbstractContainerScreen<?>) {
 			client.player.closeContainer();
 		}
 		status = "已停止：" + reason;
@@ -130,6 +155,11 @@ public final class AutoFisher {
 		}
 		LocalPlayer player = client.player;
 		if (cooldown > 0) cooldown--;
+
+        var idle=IdleFishingPolicy.decide(idleNoDeposit,phase==Phase.FISH,inventoryFull(player),
+            Math.hypot(player.getX()-spotX,player.getZ()-spotZ),Math.abs(player.getY()-spotY));
+        if(idle==IdleFishingPolicy.Decision.STOP_CHANGED){stopKeepingMenu(client,"闲置钓鱼的已确认站位已改变");return;}
+        if(idle==IdleFishingPolicy.Decision.STOP_FULL){stopKeepingMenu(client,"闲置钓鱼背包已满，不自动存箱");return;}
 
 		if (phase == Phase.DUMP || phase == Phase.OPEN_CHEST) {
 			handleStash(client, player);
@@ -151,7 +181,7 @@ public final class AutoFisher {
 		}
 
 		releaseKeys(client);
-		holdSpot(player);
+        if(idleNoDeposit)applySpotLook(player);else holdSpot(player);
 		if (inventoryFull(player)) {
 			if (player.fishing != null) {
 				useRod(client, player);
@@ -411,7 +441,7 @@ public final class AutoFisher {
 
 	/** 半径内按优先级找最近存储方块。 */
 	private BlockPos findNearbyChest(Minecraft client, LocalPlayer player) {
-		int range = Math.max(2, Math.min(8, config.fisherChestRange));
+        int range=chestSearchRange();
 		BlockPos feet = player.blockPosition();
 		BlockPos best = null;
 		int bestRank = Integer.MAX_VALUE;

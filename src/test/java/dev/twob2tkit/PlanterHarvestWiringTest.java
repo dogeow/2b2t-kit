@@ -50,6 +50,20 @@ class PlanterHarvestWiringTest {
         assertEquals(List.of(0),trace.attackKeyValues);
         assertFalse(trace.calls.stream().anyMatch(c->c.endsWith(".setBlock")));
     }
+    @Test void dailyScanAndInteractionUseExistingFarmlandBoundaryAndNeverSelectTillWork()throws Exception {
+        assertTrue(trace("planter/AutoPlanter","start").calls.contains("dev/twob2tkit/planter/AutoPlanter.captureField"));
+        assertTrue(trace("planter/AutoPlanter","captureField").calls.contains("dev/twob2tkit/planter/PlanterFieldBoundary.capture"));
+        assertTrue(trace("planter/AutoPlanter","plantSpot").calls.contains("dev/twob2tkit/planter/PlanterFieldBoundary.canPlant"));
+        assertTrue(trace("planter/AutoPlanter","act").calls.contains("dev/twob2tkit/planter/PlanterFieldBoundary.plantIfCurrent"));
+        assertTrue(trace("planter/AutoPlanter","stillHarvestTarget").calls.contains("dev/twob2tkit/planter/PlanterFieldBoundary.canHarvest"));
+        assertFalse(trace("planter/AutoPlanter","collect").calls.contains("dev/twob2tkit/planter/AutoPlanter.tillSpot"));
+        assertFalse(trace("planter/AutoPlanter","tick").calls.contains("dev/twob2tkit/planter/AutoPlanter.selectHoe"));
+        assertFalse(trace("planter/AutoPlanter","act").calls.contains("dev/twob2tkit/planter/AutoPlanter.selectHoe"));
+        Trace harvest=trace("planter/AutoPlanter","harvest");
+        String verify="dev/twob2tkit/planter/AutoPlanter.stillHarvestTarget";
+        assertTrue(Collections.frequency(harvest.orderedCalls,verify)>=2);
+        assertTrue(harvest.orderedCalls.lastIndexOf(verify)<harvest.orderedCalls.indexOf("net/minecraft/client/multiplayer/MultiPlayerGameMode.startDestroyBlock"));
+    }
     @Test void defaultAttackSuppressionIsWiredOnlyThroughStrictOwnedPlanterPredicate()throws Exception {
         assertTrue(trace("mixin/MinecraftTickMixin","kit$ownedMining").calls.contains("dev/twob2tkit/planter/AutoPlanter.ownsMining"));
         Trace owned=trace("planter/AutoPlanter","ownsMining");
@@ -64,6 +78,7 @@ class PlanterHarvestWiringTest {
     private static class Trace {
         final Set<String> calls=new HashSet<>(),fields=new HashSet<>(),writes=new HashSet<>();
         final List<Integer> attackKeyValues=new ArrayList<>();
+        final List<String> orderedCalls=new ArrayList<>();
     }
     private static Trace trace(String type,String method)throws Exception {
         Trace result=new Trace();
@@ -83,7 +98,7 @@ class PlanterHarvestWiringTest {
                             if(opcode==Opcodes.ICONST_1)constant=1;
                         }
                         @Override public void visitMethodInsn(int opcode,String owner,String name,String descriptor,boolean itf) {
-                            result.calls.add(owner+"."+name);
+                            result.calls.add(owner+"."+name);result.orderedCalls.add(owner+"."+name);
                             if(owner.equals("net/minecraft/client/KeyMapping")&&name.equals("setDown")&&lastField.equals("keyAttack"))result.attackKeyValues.add(constant);
                             lastField="";constant=null;
                         }

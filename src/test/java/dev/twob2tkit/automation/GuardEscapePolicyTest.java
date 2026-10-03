@@ -21,6 +21,15 @@ class GuardEscapePolicyTest {
         assertFalse(GuardEscapePolicy.allowed(true,true,10,63,20,10,130,20));
     }
 
+    @Test void admittedClearRiseRemainsEligibleThroughArrivalButNotHorizontalOrDescent(){
+        assertTrue(GuardEscapePolicy.executingRise(true,10,74,20,10,106,20));
+        assertTrue(GuardEscapePolicy.executingRise(true,10,106.1,20,10,106,20));
+        assertFalse(GuardEscapePolicy.executingRise(false,10,74,20,10,106,20));
+        assertFalse(GuardEscapePolicy.executingRise(true,10,74,20,14,106,20));
+        assertFalse(GuardEscapePolicy.executingRise(true,10,110,20,10,106,20));
+        assertFalse(GuardEscapePolicy.executingRise(true,10,74,20,10,140,20));
+    }
+
     @Test void underwaterAirReturnPreemptsCombatOnlyInAProvenColumn() {
         assertTrue(GuardEscapePolicy.underwaterAirReturn(
             true,true,true,true,10.5,52,20.5,10.5,65,20.5,63));

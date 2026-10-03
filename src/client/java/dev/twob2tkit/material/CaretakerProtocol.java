@@ -12,9 +12,27 @@ public final class CaretakerProtocol {
     private CaretakerProtocol() {}
     public record Installation(Path game,Path python,Path script,Path profilePath,JsonObject profile,Path directory,String key){
         public List<String> command(String action){
-            if(!Set.of("run","pause","stop","status","resume").contains(action))throw new IllegalArgumentException("农场操作无效");
+            if(!Set.of("run","pause","stop","status","resume","inspect-pending").contains(action))throw new IllegalArgumentException("农场操作无效");
             return List.of(python.toString(),"-u",script.toString(),"--game-dir",game.toString(),"--profile",profilePath.toString(),action);
         }
+        public List<String> archiveCommand(String expectedPendingSha256){
+            if(expectedPendingSha256==null||!expectedPendingSha256.matches("[a-f0-9]{64}"))throw new IllegalArgumentException("原周期确认指纹无效");
+            return List.of(python.toString(),"-u",script.toString(),"--game-dir",game.toString(),"--profile",profilePath.toString(),
+                "archive-pending","--acknowledge-unknown-outcome","--expected-pending-sha256",expectedPendingSha256);
+        }
+    }
+    public record ArchivePreview(long cycle,String pendingSha256) {}
+    public static ArchivePreview archivePreview(Installation installation)throws IOException{
+        Path file=installation.directory().resolve("caretaker.json");
+        if(!Files.isRegularFile(file)||Files.size(file)>262144)throw new IllegalStateException("原周期记录不可读取");
+        byte[] original=Files.readAllBytes(file);JsonObject book;
+        try{book=JsonParser.parseString(new String(original,StandardCharsets.UTF_8)).getAsJsonObject();}
+        catch(RuntimeException failure){throw new IllegalStateException("原周期记录无效",failure);}
+        if(!book.equals(journal(installation)))throw new IllegalStateException("查看期间原记录改变，请重新确认");
+        if(!book.has("pending")||book.get("pending").isJsonNull()||!book.has("current_cycle")||book.get("current_cycle").isJsonNull())throw new IllegalStateException("尚无需要归档的未确认周期");
+        long cycle=integer(book.getAsJsonObject("current_cycle"),"id");
+        if(cycle<1||cycle!=integer(book,"cycle"))throw new IllegalStateException("原周期编号不一致，不能归档");
+        return new ArchivePreview(cycle,hash(original));
     }
     public static Installation installed(Path game)throws IOException{
         game=game.toAbsolutePath().normalize();Path config=game.resolve("config/twob2tkit"),root=config.resolve("material-worker");
@@ -90,7 +108,7 @@ public final class CaretakerProtocol {
         bool(value,"enabled");bool(value,"paused");return value;
     }
     public static void requireReady(Installation installation,JsonObject state,JsonObject journal,long now,boolean allowKitScreen){
-        if(journal!=null&&journal.has("pending")&&!journal.get("pending").isJsonNull())throw new IllegalStateException("原周期有未确认动作，须先人工核对，不能重放");
+        if(journal!=null&&journal.has("pending")&&!journal.get("pending").isJsonNull())throw new IllegalStateException("原动作仍未确认；请打开“查看待核对动作”核对取料、库存和原回执。恢复不会清除这条记录。");
         if(!bool(state,"connected")||!server(text(state,"server")).equals(text(installation.profile(),"server"))
                 ||!text(state,"dimension").equals(text(installation.profile(),"dimension"))||text(state,"world_session").isBlank()
                 ||integer(state,"control_revision")<0||now-integer(state,"time")>2500||integer(state,"time")>now+2000
@@ -146,7 +164,55 @@ public final class CaretakerProtocol {
         boolean pending=journal.has("pending")&&!journal.get("pending").isJsonNull();
         return process+" · "+(pending?"原动作待核对，不能重放":bool(journal,"paused")?"已暂停":bool(journal,"enabled")?"记录已启用":"记录已停用")
             +" · 第 "+integer(journal,"cycle")+" 轮 · "+switch(text(journal,"stage")){case "harvest_store"->"收田存箱";case "breed"->"繁殖";case "surplus"->"检查富余成体";case "cook_store"->"烹饪存箱";default->"未知阶段";}
-            +(text(journal,"reason").isBlank()?"":" · "+text(journal,"reason"));
+            +(text(journal,"reason").isBlank()?"":" · "+reason(text(journal,"reason")));
+    }
+    private static String reason(String code){return switch(code){
+        case "CONTROL_CHANGED"->"原动作期间控制版本改变，已停用（CONTROL_CHANGED）";
+        case "WAIT_RECONCILE"->"原动作结果尚未核对";
+        case "WORLD_SESSION_CHANGED","WORLD_SCOPE_CHANGED"->"世界会话已改变，原周期保留";
+        case "SAFETY_HOLD"->"安全锁仍开启";
+        case "USER_PAUSE"->"玩家已暂停";
+        case "USER_STOP"->"玩家已停止";
+        case "ARCHIVED_PENDING_MANUAL"->"旧周期已归档为结果未知，等待手动开始下一轮";
+        default->code;
+    };}
+    /** Read the exact original stage only; neither this review nor its UI grants replay permission. */
+    public static List<String> pendingReview(Installation installation,JsonObject journal,JsonObject current)throws IOException{
+        var lines=new ArrayList<String>();
+        lines.add("这里只读取原记录；不会取料、开箱、解锁、清除未确认动作或重新开始周期。");
+        if(journal==null||!journal.has("pending")||journal.get("pending").isJsonNull()){
+            lines.add("当前记录没有未确认动作。开始或恢复仍须重新核对世界和安全状态。");return lines;
+        }
+        lines.add("原动作尚未确认，当前不能安全恢复。"+reason(text(journal,"reason")));
+        var pending=journal.getAsJsonObject("pending");var cycle=journal.getAsJsonObject("current_cycle");
+        if(cycle==null)throw new IllegalStateException("未确认阶段缺少原周期目录，请核对 caretaker.json");
+        long id=integer(cycle,"id");String stage=text(pending,"stage");
+        if(id<1||!Set.of("harvest_store","breed","surplus","cook_store").contains(stage))throw new IllegalStateException("原未确认阶段结构无效，请核对 caretaker.json");
+        Path root=installation.directory().toAbsolutePath().normalize(),expected=root.resolve(String.format(Locale.ROOT,"cycle-%06d",id));
+        Path original=Path.of(text(pending,"directory")).toAbsolutePath().normalize();
+        if(!Path.of(text(cycle,"directory")).toAbsolutePath().normalize().equals(expected)||!original.equals(expected.resolve(stage))
+                ||!original.toRealPath().startsWith(root.toRealPath()))throw new IllegalStateException("未确认动作目录与原周期不一致，拒绝读取其它路径");
+        Path file=original.resolve("stage.json");if(!file.toRealPath().startsWith(root.toRealPath()))throw new IllegalStateException("原阶段记录指向其它目录");
+        var record=read(file);
+        if(integer(record,"cycle_id")!=id||!text(record,"stage").equals(stage)||!text(record,"world_session").equals(text(cycle,"world_session")))
+            throw new IllegalStateException("原阶段与周期的世界或编号不一致");
+        lines.add("原阶段记录："+file);
+        lines.add("原世界会话："+text(cycle,"world_session"));
+        if(current==null)lines.add("当前状态不可读取，不能核对世界和库存。");
+        else if(!text(current,"world_session").equals(text(cycle,"world_session")))lines.add("当前世界会话已改变："+text(current,"world_session")+"。不能在新会话采用或重放原动作。");
+        var intent=record.has("pending")&&!record.get("pending").isJsonNull()?record.getAsJsonObject("pending"):null;
+        if(intent==null){lines.add("协调器保留未确认阶段，但该阶段没有可用的原动作记录；不能清除或重放。");return lines;}
+        String operation=text(intent,"operation");
+        lines.add("原未确认动作："+switch(operation){case "fetch"->"从登记箱补充所需物资";case "travel"->"前往目标位置";case "harvest"->"收田、拾取与补种";case "depot_exchange"->"存入登记箱";case "breed"->"喂食繁殖";case "smelt"->"烹饪";default->operation;}+"（"+operation+"）");
+        if(operation.equals("fetch")){
+            var params=intent.getAsJsonObject("params");var targets=params==null?null:params.getAsJsonObject("targets");
+            if(targets!=null)for(var target:targets.entrySet())lines.add("所需背包总量："+(target.getKey().equals("minecraft:potato")?"土豆种薯":target.getKey())+" "+target.getValue().getAsString()+"；这不是已取出的数量。");
+            lines.add("待核对：取料前背包、当前背包和光标，以及原登记箱里的种薯；是否曾开箱、取料或点击物品。");
+        }else lines.add("待核对：背包、光标及目标方块或动物的实际变化，并检查原动作的内部记录。");
+        if(!intent.has("before_counts"))lines.add("该旧动作缺少开始前库存；周期最初库存不能替代取料前库存。");
+        lines.add("待核对：对应后台的发送链和精确回执。导航停止或防护停车不能证明取料完成或未发送，日志没有开箱事件也不足以清除原动作。");
+        if(intent.has("inner_journal"))lines.add("原内部记录："+text(intent,"inner_journal"));
+        return List.copyOf(lines);
     }
     public static JsonObject read(Path path)throws IOException{
         if(!Files.isRegularFile(path)||Files.size(path)>262144)throw new IllegalStateException("农场配置或记录不可读取");

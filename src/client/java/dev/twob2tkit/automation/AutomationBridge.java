@@ -55,6 +55,141 @@ public final class AutomationBridge {
     private static JsonObject lastSlaughterAttack;
     private static MaterialAirNavigation materialAirNavigation;
     private static JsonObject lastMaterialAirNavigation;
+    private static JsonObject idleDispatchRequest,idleYieldAck;
+    private static String idleFisherBinding="",idleNavigationBinding="",idleManualWorld="";
+    private static int idleHandoffTick=-1;
+    private static long idleFisherGeneration=-1;
+    private static boolean idlePreempting,idleSupplyMenuPending;
+    public static boolean idleSupplyMenuPending(){return idleSupplyMenuPending;}
+
+    private static final IdleOwnerReadCache idleOwnerReads=new IdleOwnerReadCache();
+    private static IdleActivityPolicy.Owner idleOwner(Minecraft c){
+        if(c.player==null||c.level==null){idleOwnerReads.invalidate();return null;}
+        return idleOwnerReads.read(root(c),supervisionLease,session(c),controlRevision,ticks,System.currentTimeMillis());
+    }
+    private static IdleActivityPolicy.Owner idleOwnerForAction(Minecraft c){
+        if(c.player==null||c.level==null){idleOwnerReads.invalidate();return null;}
+        return idleOwnerReads.readForAction(root(c),supervisionLease,session(c),controlRevision,ticks,System.currentTimeMillis());
+    }
+    private static String idleBinding(String service,String world,String task,String lease){return service+"|"+world+"|"+task+"|"+lease;}
+    private static boolean idleFisherOwned(IdleActivityPolicy.Owner owner){
+        return owner!=null&&KitClient.fisher()!=null&&idleFisherGeneration==KitClient.fisher().activityGeneration()
+            &&idleFisherBinding.equals(idleBinding(owner.service(),owner.world(),owner.task(),owner.lease()));
+    }
+    private static Set<String> idleOwnedActivities(IdleActivityPolicy.Owner owner){
+        var own=new HashSet<String>();if(owner==null)return own;
+        own.add("material_lease");own.add("mining_isolation");
+        if(projectionBatch.active()&&projectionBatch.owner().lease().equals(owner.lease())
+            &&projectionBatch.owner().task().equals(owner.task())&&projectionBatch.owner().world().equals(owner.world()))own.add("projection_batch");
+        if(idleFisherOwned(owner))own.add("fisher");
+        if(idleNavigationBinding.equals(idleBinding(owner.service(),owner.world(),owner.task(),owner.lease())))own.add("navigation_logout");
+        if(IdleActivityPolicy.requestOwned(owner,active)){
+            own.addAll(Set.of("native_request","bucket","map","air_seed","craft","supply","scaffold_row","air_navigation"));
+            switch(op){
+                case "navigate" -> own.add("navigation");
+                case "chop" -> own.add("chopper");
+                case "print" -> own.add("machine_printer");
+                case "concrete_batch" -> own.add("concrete");
+                case "rock_quarry_batch","quarry_batch" -> own.add("borer");
+                case "professional_print","projection_scaffold_fill" -> own.addAll(Set.of("professional_printer","meteor_scaffold"));
+                default -> {}
+            }
+        }
+        if(pendingScan!=null&&IdleActivityPolicy.requestOwned(owner,pendingScan.request))own.add("scan");
+        if(nativeMaterialOwner!=null&&nativeMaterialOwner.job.equals(owner.task())&&nativeMaterialOwner.world.equals(owner.world())
+            &&nativeMaterialOwner.lease.equals(owner.lease())&&nativeMaterialOwner.revision==owner.revision())own.add("native_material_owner");
+        return own;
+    }
+    private static Map<String,Boolean> idleActivities(Minecraft c){
+        var flags=new LinkedHashMap<>(KitClient.idleActivities(c));
+        flags.put("native_request",active!=null);flags.put("scan",pendingScan!=null);
+        flags.put("native_material_owner",nativeMaterialOwner!=null&&!nativeMaterialOwner.closed);
+        flags.put("material_lease",supervisionLease!=null&&!"parking".equals(str(supervisionLease,"kind")));
+        flags.put("bucket",bucketWaterTask!=null);flags.put("map",mapCreationTask!=null);
+        flags.put("air_seed",airSeedTask!=null);flags.put("craft",craftTask!=null);flags.put("supply",supplyTask!=null);
+        flags.put("scaffold_row",scaffoldFillTask!=null);flags.put("air_navigation",materialAirNavigation!=null);
+        flags.put("mining_isolation",materialMiningCleanupPending);
+        flags.put("projection_batch",projectionBatch.active());
+        var printer=ProfessionalPrinter.status();
+        flags.put("professional_printer",printer.has("enabled")&&printer.get("enabled").getAsBoolean()||ProfessionalPrinter.owned());
+        flags.put("meteor_scaffold",MeteorModules.isActive("meteordevelopment.meteorclient.systems.modules.world.Scaffold"));
+        flags.put("meteor_auto_fish",dev.twob2tkit.runtime.engine.BorerFlight.meteorAutoFishActive());
+        flags.put("guard",guardBusy||healthRecoveryHold||nativeAirReturnActive);
+        return flags;
+    }
+    private static JsonObject idleActivitySnapshot(Minecraft c){
+        var owner=idleOwner(c);var conflicts=IdleActivityPolicy.conflicts(idleActivities(c),owner,idleOwnedActivities(owner));
+        var result=new JsonObject();result.addProperty("busy",!conflicts.isEmpty());
+        result.add("conflicts",JSON.toJsonTree(conflicts));result.addProperty("idle_task_session",owner==null?"":owner.task());
+        if(idleYieldAck!=null&&str(idleYieldAck,"world_session").equals(session(c)))result.add("yield_ack",idleYieldAck.deepCopy());
+        return result;
+    }
+    /** A formal entry point may only interrupt this fresh exact idle owner, never a read/probe. */
+    public static boolean preemptIdleForPlayer(Minecraft c,String reason){
+        return preemptIdle(c,reason,false);
+    }
+    private static boolean preemptIdle(Minecraft c,String reason,boolean cleanupOwn){
+        if(idlePreempting)return false;
+        var owner=idleOwnerForAction(c);
+        if(!cleanupOwn&&!"MANUAL_MOVEMENT".equals(reason)&&IdleActivityPolicy.requestOwned(owner,idleDispatchRequest))return false;
+        if(!cleanupOwn&&!"MANUAL_MOVEMENT".equals(reason)){
+            idleManualWorld="";
+            if(dev.twob2tkit.combat.EmergencyExit.held(c))throw new IllegalStateException("Safety lock remains active; idle handoff does not unlock it");
+        }
+        if(owner==null)return false;
+        var own=idleOwnedActivities(owner);var conflicts=IdleActivityPolicy.conflicts(idleActivities(c),owner,own);
+        boolean foreignActive=active!=null&&!own.contains("native_request"),foreignNative=nativeMaterialOwner!=null&&!own.contains("native_material_owner");
+        boolean foreignScan=pendingScan!=null&&!own.contains("scan");
+        if(!IdleActivityPolicy.mayCancel(owner,foreignActive,foreignNative,foreignScan)
+            ||conflicts.contains("professional_printer")&&ProfessionalPrinter.owned()||conflicts.contains("scaffold_row"))
+            throw new IllegalStateException("Idle handoff conflicts with another native owner; no foreign work stopped");
+        long before=controlRevision;idlePreempting=true;
+        boolean previousDispatching=dispatching,previousNative=nativeMaterialDispatch;
+        dispatching=true;nativeMaterialDispatch=true;
+        try{
+            own.add("native_request"); // Existing cancelWork retains pending mutation evidence, never repeats a use.
+            KitClient.stopWork(reason,own);
+            if(nativeMaterialOwner!=null){nativeMaterialOwner.closed=true;nativeMaterialOwner=null;}
+            if(own.contains("projection_batch"))projectionBatch.reset();
+            if(!IdleActivityPolicy.inputsReleased(idleActivities(c),own))throw new IllegalStateException("Idle inputs remain active; handoff unconfirmed");
+            supervisionLease=null;pendingSafety=null;lastSupervisionHeartbeat=0;idleOwnerReads.invalidate();releaseMaterialMiningLease();
+            idleFisherBinding="";
+            idleFisherGeneration=-1;
+            idleNavigationBinding="";
+            idleYieldAck=new JsonObject();idleYieldAck.addProperty("idle_service_id",owner.service());
+            idleYieldAck.addProperty("task_session",owner.task());idleYieldAck.addProperty("lease_id",owner.lease());
+            idleYieldAck.addProperty("world_session",owner.world());idleYieldAck.addProperty("revision_before",before);
+            idleYieldAck.addProperty("revision_after",controlRevision);idleYieldAck.addProperty("input_released",true);
+            idleYieldAck.addProperty("reason",reason);idleYieldAck.addProperty("updated_at",System.currentTimeMillis());
+            idleHandoffTick=ticks;
+            if("MANUAL_MOVEMENT".equals(reason))idleManualWorld=owner.world();
+            KitKeys.restorePhysicalMovement(c);
+            statusId=lastId;
+            return true;
+        }finally{
+            dispatching=previousDispatching;nativeMaterialDispatch=previousNative;idlePreempting=false;
+            if(idleYieldAck!=null&&idleYieldAck.has("revision_after")&&idleYieldAck.get("revision_after").getAsLong()==controlRevision)
+                writeStatus(c);
+        }
+    }
+    public static boolean preemptIdleForManual(Minecraft c){
+        if(c.player==null||!KitKeys.manualMovementDown(c))return false;
+        try{return preemptIdleForPlayer(c,"MANUAL_MOVEMENT");}
+        catch(IllegalStateException foreign){return false;}
+    }
+    public static boolean idleManualHolding(Minecraft c){
+        return c.player!=null&&KitKeys.manualMovementDown(c)&&idleManualWorld.equals(session(c))
+            &&supervisionLease==null&&active==null&&nativeMaterialOwner==null;
+    }
+    public static boolean idleHandoffThisTick(Minecraft c){
+        return idleHandoffTick==ticks&&idleYieldAck!=null&&!"MANUAL_MOVEMENT".equals(str(idleYieldAck,"reason"))
+            &&str(idleYieldAck,"world_session").equals(session(c))
+            &&idleYieldAck.get("revision_after").getAsLong()==controlRevision;
+    }
+    /** Read the current client frame after a synchronous handoff; do not depend on async file publication. */
+    public static JsonObject currentActivitySnapshot(Minecraft c){
+        var result=snapshot(c);result.addProperty("phase",phase);result.addProperty("op",op);return result;
+    }
     private static dev.twob2tkit.runtime.engine.BorerMiningConfirmation rockQuarryConfirmation;
     private static NativeMaterialSession nativeMaterialOwner;
     private static MaterialMiningLease materialMiningLease;
@@ -181,6 +316,9 @@ public final class AutomationBridge {
                     c.player!=null&&c.level!=null&&c.gameMode!=null&&!c.player.isDeadOrDying(),KitKeys.manualMovementDown(c));
                 if(command.op().equals("material_task_start")){
                     // Shared lifecycle checks health, lock, input, UI, existing lease and process ownership.
+                    if(command.mode().equals("projection")&&!command.placementKey().equals(dev.twob2tkit.builder.LitematicaAccess.lockedBuildSelection().key()))
+                        throw new IllegalStateException("Selected locked projection changed");
+                    preemptIdleForPlayer(c,"FORMAL_MATERIAL_API_START");
                     materialJobContext(c);
                     if(command.mode().equals("projection")){
                         if(!command.placementKey().equals(dev.twob2tkit.builder.LitematicaAccess.lockedBuildSelection().key()))throw new IllegalStateException("Selected locked projection changed");
@@ -367,6 +505,7 @@ public final class AutomationBridge {
         materialAirRoute.clearRoute();
     }
     public static void userTaskStarting(Minecraft c){
+        if(preemptIdleForPlayer(c,"FORMAL_KIT_INPUT"))return;
         if(!internalDispatch()&&supervisionLease!=null&&Set.of("materials","parking").contains(str(supervisionLease,"kind"))){supervisionLease=null;cancelWork(c,"用户切换自动任务");releaseMaterialMiningLease();}
     }
 	private static void syncMaterialRevision(JsonObject request){
@@ -627,6 +766,45 @@ public final class AutomationBridge {
         return GuardParkingPolicy.ready(c.player.getX(),c.player.getY(),c.player.getZ(),x,y,z,ground,
             c.player.getHealth(),MeteorModules.isActive(MeteorModules.FLIGHT),guardArmed()&&pveOnly());
     }
+    private static void recoverParkingFlight(Minecraft c,JsonObject lease){
+        if(c.player==null||c.level==null||!lease.has("park_target"))return;
+        var target=lease.getAsJsonArray("park_target");if(target==null||target.size()!=3)return;
+        double x=target.get(0).getAsDouble(),y=target.get(1).getAsDouble(),z=target.get(2).getAsDouble();
+        if(!Double.isFinite(x)||!Double.isFinite(y)||!Double.isFinite(z))return;
+        BlockPos anchor=BlockPos.containing(x,y,z),here=c.player.blockPosition();
+        if(!c.level.hasChunkAt(anchor)||!c.level.hasChunkAt(here))return;
+        int ground=Math.max(c.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,anchor.getX(),anchor.getZ()),
+            c.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,here.getX(),here.getZ()));
+        boolean sameWorld=str(lease,"world_session").equals(session(c));
+        boolean sameRevision=lease.has("revision")&&lease.get("revision").getAsLong()==controlRevision;
+        boolean otherwiseReady=GuardParkingPolicy.ready(c.player.getX(),c.player.getY(),c.player.getZ(),x,y,z,ground,
+            c.player.getHealth(),true,guardArmed()&&pveOnly());
+        boolean bodySafe=!c.player.isInWater()&&!c.player.isUnderWater()&&!c.player.isInLava()
+            &&!c.player.isOnFire()&&c.level.noCollision(c.player,c.player.getBoundingBox());
+        if(!ParkingLeasePolicy.recoverFlight(str(lease,"kind"),sameWorld,sameRevision,KitKeys.manualMovementDown(c),
+            MeteorModules.isActive(MeteorModules.FLIGHT),otherwiseReady,bodySafe))return;
+        MeteorModules.enable(MeteorModules.FLIGHT);
+        // Enabling is an attempt. The caller still requires highGuardPark using
+        // the real module state before KEEP; failed restoration follows existing safety.
+        if(highGuardPark(c,lease)){
+            lease.addProperty("flight_restored_at",System.currentTimeMillis());
+            KitClient.LOGGER.info("Restored Flight for verified owned high parking");
+        }
+    }
+    /** A safe current hover must not leave merely because an older anchor drifted. */
+    private static boolean reanchorHealthyHover(Minecraft c,JsonObject lease){
+        if(c.player==null||c.level==null||!guardArmed()||!pveOnly()
+                ||!str(lease,"world_session").equals(session(c))||!lease.has("revision")
+                ||lease.get("revision").getAsLong()!=controlRevision||KitKeys.manualMovementDown(c))return false;
+        BlockPos here=c.player.blockPosition();if(!c.level.hasChunkAt(here))return false;
+        int ground=c.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,here.getX(),here.getZ());
+        var anchor=ParkingLeasePolicy.reanchor(c.player.getX(),c.player.getY(),c.player.getZ(),ground,
+            c.player.getHealth(),MeteorModules.isActive(MeteorModules.FLIGHT),guardArmed()&&pveOnly());
+        if(anchor==null)return false;
+        lease.add("park_target",JSON.toJsonTree(new double[]{anchor.x(),anchor.y(),anchor.z()}));
+        lease.addProperty("anchor_reverified_at",System.currentTimeMillis());
+        return highGuardPark(c,lease);
+    }
     private static void retainParkingLease(Minecraft c,JsonObject lease,String reason,long now){
 		if(!highGuardPark(c,lease))throw new IllegalStateException("Previous high parking scope is no longer valid");
         KitClient.stopWork(reason);
@@ -667,6 +845,8 @@ public final class AutomationBridge {
                 }else{supervisionLease=null;KitClient.stopWork("界面操作接管，已取消自动离线");phase="stopped";detail="用户界面接管";return;}
             }
             if(str(lease,"kind").equals("parking")){
+                recoverParkingFlight(c,lease);
+                if(!highGuardPark(c,lease))reanchorHealthyHover(c,lease);
                 var parkingAction=ParkingLeasePolicy.decide(str(lease,"kind"),
                     str(lease,"world_session").equals(session(c)),
                     lease.has("revision")&&lease.get("revision").getAsLong()==controlRevision,
@@ -698,7 +878,8 @@ public final class AutomationBridge {
             boolean local=c.getSingleplayerServer()!=null && !c.getSingleplayerServer().isPublished();
             boolean nearThreat=c.level.getEntities(c.player,c.player.getBoundingBox().inflate(16)).stream().anyMatch(e->e instanceof net.minecraft.world.entity.monster.Enemy&&e.isAlive()&&c.player.hasLineOfSight(e));
             boolean quiet=logoutQuiet.ready(now,guardBusy||c.player.isUsingItem()||nearThreat,KitClient.config().lastAttackTimeEpochMillis);
-            boolean keepGuard=str(lease,"remote_finish").equals("guard")&&!lowHealth&&(!material||highGuardPark(c,lease));
+            boolean keepGuard=str(lease,"remote_finish").equals("guard")&&!lowHealth
+                &&(!material||highGuardPark(c,lease)||reanchorHealthyHover(c,lease));
             var action=dev.twob2tkit.builder.BuildSupervisorSafety.decide(same,KitKeys.manualMovementDown(c),local,lowHealth || controllerFinished || now-lastSupervisionHeartbeat>15000,complete,!keepGuard);
             boolean alreadyWaiting=lease.has("finish_waiting")&&lease.get("finish_waiting").isJsonPrimitive()
                 &&lease.getAsJsonPrimitive("finish_waiting").isBoolean()
@@ -771,7 +952,8 @@ public final class AutomationBridge {
     private static int ticks, deadline, desiredCount;
     private static int ownedMaterialMenu=-1;
     private static JsonObject guardScope;
-    private static boolean guardBusy,healthRecoveryHold;
+    private static boolean guardBusy,healthRecoveryHold,materialDefensiveRise;
+    private static long lastFoodRecoveryWarning;
     private static final dev.twob2tkit.combat.HealthRecoveryWindow healthRecovery=new dev.twob2tkit.combat.HealthRecoveryWindow();
     public static boolean ownsMaterialInventory(){
         return survivalArmed || supervisionLease!=null&&Set.of("materials","parking").contains(str(supervisionLease,"kind")) || active!=null&&op.equals("craft_recipe");
@@ -815,11 +997,14 @@ public final class AutomationBridge {
     }
     /** Stop is an explicit operation, never inferred from translated reason text. */
     public static void disarmGuard(Minecraft c){
-        guardScope=null;guardBusy=false;healthRecoveryHold=false;healthRecovery.hold(false,20,false);dev.twob2tkit.combat.GuardFoodLease.release();
+        guardScope=null;guardBusy=false;healthRecoveryHold=false;healthRecovery.hold(false,20,false);releaseGuardFood();
         if(KitClient.borer()!=null)KitClient.borer().tickStandaloneGuard(c,false);
     }
     public static boolean yieldGuardToManualInput(Minecraft c){
         if(!guardArmed() || !KitKeys.manualMovementDown(c))return false;
+        if(preemptIdleForManual(c)||idleManualHolding(c)){
+            KitKeys.restorePhysicalMovement(c);return true;
+        }
         KitClient.emergencyStop("手动移动接管");
         return true;
     }
@@ -957,6 +1142,25 @@ public final class AutomationBridge {
         }finally{dispatching=wasDispatching;}
         return true;
     }
+    private static boolean ownedDefensiveRise(Minecraft c){
+        if(!materialDefensiveRise||materialAirNavigation==null||active==null||!op.equals("navigate")
+                ||c.player==null||c.level==null||c.player.getHealth()<14||KitKeys.manualMovementDown(c)
+                ||!guardArmed()||!pveOnly()||supervisionLease==null
+                ||!str(supervisionLease,"kind").equals("materials")
+                ||!active.has("air_only")||!active.get("air_only").getAsBoolean()
+                ||!active.has("expected_revision")||!supervisionLease.has("revision")
+                ||!GuardEscapePolicy.currentLease(session(c),controlRevision,str(supervisionLease,"world_session"),
+                    supervisionLease.get("revision").getAsLong(),str(active,"world_session"),
+                    active.get("expected_revision").getAsLong(),str(supervisionLease,"job_session"),str(active,"task_session")))return false;
+        JsonArray point=active.getAsJsonArray("target");
+        return point!=null&&point.size()==3&&GuardEscapePolicy.executingRise(true,
+            c.player.getX(),c.player.getY(),c.player.getZ(),point.get(0).getAsDouble(),
+            point.get(1).getAsDouble(),point.get(2).getAsDouble())&&airNavigationClear(c,point);
+    }
+    private static void releaseGuardFood(){
+        try{dev.twob2tkit.combat.GuardFoodLease.release();}
+        catch(RuntimeException failure){KitClient.LOGGER.warn("Guard food settings restoration deferred: {}",failure.getClass().getSimpleName());}
+    }
     private static boolean ownedUnderwaterAirReturn(Minecraft c){
         if(c.player==null||c.level==null||!c.player.isUnderWater()
                 ||active==null
@@ -1003,7 +1207,11 @@ public final class AutomationBridge {
         if(enabled&&c.player!=null){lastGuardHealth=c.player.getHealth();lastGuardX=c.player.getX();lastGuardZ=c.player.getZ();}
         if(enabled)try{
 			rebaseParkingGuard(c);guard(c,guardScope);rebaseSnowExpeditionGuard(c);
-		}catch(Exception changed){guardScope=null;enabled=false;dev.twob2tkit.combat.GuardFoodLease.release();}
+		}catch(Exception changed){guardScope=null;enabled=false;releaseGuardFood();}
+        try{dev.twob2tkit.combat.GuardFoodLease.tickRecovery(c,enabled&&pveOnly()
+                &&c.player!=null&&!dev.twob2tkit.combat.EmergencyExit.held(c));}
+        catch(RuntimeException failure){long now=System.currentTimeMillis();if(now-lastFoodRecoveryWarning>30000){
+            lastFoodRecoveryWarning=now;KitClient.LOGGER.warn("Guard food recovery coordination deferred: {}",failure.getClass().getSimpleName());}}
         if(active!=null&&op.equals("navigate")&&materialAirScope(c))
             materialAirRoute.observeAscent(c,str(active,"id"));
         if(enabled&&materialAirScope(c)&&c.player.isUnderWater()){
@@ -1025,7 +1233,7 @@ public final class AutomationBridge {
                 return true;
             }
         }
-        if(enabled&&ownedUnderwaterAirReturn(c)){
+        if(enabled&&(ownedUnderwaterAirReturn(c)||ownedDefensiveRise(c))){
             // Reaching air from underwater outranks ranged combat. Keep guard
             // armed; PvE defense resumes immediately after leaving the water.
             if(KitClient.borer().suspendStandaloneCombatForAirReturn(c)){
@@ -1128,7 +1336,14 @@ public final class AutomationBridge {
             if(nativeAirReturnPhase.equals("ascending"))nativeAirReturnPhase="cancelled";
         }
         deferredInterfaceRequest=null;
-        survivalArmed=false;craftTask=null;if(supplyTask!=null){supplyTask.close(c);supplyTask=null;}controlRevision++;ProfessionalPrinter.stop(c,false);restoreArrival();releaseWalk(c);
+        survivalArmed=false;craftTask=null;if(supplyTask!=null){
+            if(idlePreempting&&!supplyTask.closeForIdleHandoff(c)){
+                idleSupplyMenuPending=true;
+                throw new IllegalStateException("Idle supply menu ownership or cursor unresolved; handoff unconfirmed");
+            }
+            if(!idlePreempting)supplyTask.close(c);
+            idleSupplyMenuPending=false;supplyTask=null;
+        }controlRevision++;ProfessionalPrinter.stop(c,false);restoreArrival();releaseWalk(c);
         active=null;phase="stopped";detail=reason;if(supervisionLease==null||!dispatching&&!nativeMaterialDispatch)projectionBatch.reset();
         // Only successful control cleanup can restore a borrowed mining module.
         // A thrown cleanup retains both its pause and queued-packet suppression.
@@ -1244,6 +1459,7 @@ public final class AutomationBridge {
             try{
                 guard(c,active);
                 if(!currentMaterialRequest(c,active)||!guardArmed()||!pveOnly())throw new IllegalStateException("Air waypoint ownership or protection changed");
+                if(stopInjuredAirNavigation(c))return true;
                 return materialAirNavigation.input(c);
             }
             catch(Exception error){KitClient.controller().stop(c,"材料精确停靠停止");finish(c,"waiting",error.getMessage());return true;}
@@ -1586,7 +1802,8 @@ public final class AutomationBridge {
                     if(KitClient.chopper().waitingForTree()){KitClient.chopper().stop(c,"当前附近没有该树种，交回跑图搜索");finish(c,"waiting","no matching tree in local reach");}
                     else if(!KitClient.chopper().isActive())finish(c,KitClient.chopper().materialTargetFinished()?"done":"stopped",KitClient.chopper().materialTargetFinished()?"tree batch and pickup completed; verify material count":"chopper stopped");
                 }else if(op.equals("navigate")&&materialAirNavigation!=null){
-                    if(guardBusy)materialAirNavigation.defensePause();
+                    if(stopInjuredAirNavigation(c))return;
+                    if(guardBusy&&!ownedDefensiveRise(c))materialAirNavigation.defensePause();
                     else{
                         materialAirNavigation.observe(c);
                         if(materialAirNavigation.done())finish(c,"done","air-only waypoint reached and stable after restoring Flight settings");
@@ -1682,6 +1899,15 @@ public final class AutomationBridge {
         save(root(c).resolve("reply-"+safeId(lastId)+".json"),receipt);
     }
     private static void dispatch(Minecraft c,JsonObject r)throws Exception{
+        var previousIdleRequest=idleDispatchRequest;idleDispatchRequest=r;
+        try{
+            if(r.has("idle_service_id")&&!Set.of("material_session","snapshot","scan","scan_snow_biomes","snow_seed_candidates",
+                "scan_trees","projection_audit","projection_model","map_audit").contains(str(r,"op"))
+                &&!IdleActivityPolicy.requestOwned(idleOwnerForAction(c),r))
+                throw new IllegalStateException("Idle action lacks a fresh exact owner; no foreign inputs stopped");
+            if(!Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit",
+                "projection_model","map_audit","stop","material_job_pause","safe_logout").contains(str(r,"op")))
+                preemptIdleForPlayer(c,"FORMAL_NATIVE_INPUT");
         String command=str(r,"op");
         if(command.equals("stop")){if(r.has("expected_revision") && (r.get("expected_revision").getAsLong()!=controlRevision || !str(r,"world_session").equals(session(c))))throw new IllegalStateException("Stop belongs to an old controller");statusId=lastId;ProfessionalPrinter.stop(c,true);KitClient.emergencyStop("本地脚本停止");active=null;phase="stopped";detail="stopped";writeStatus(c);return;}
         if(command.equals("gravel_stop")){
@@ -1698,6 +1924,13 @@ public final class AutomationBridge {
             if(r.has("release")&&(!r.get("release").isJsonPrimitive()||!r.getAsJsonPrimitive("release").isBoolean()))
                 throw new IllegalArgumentException("Material release must be boolean");
             boolean release=r.has("release")&&r.get("release").getAsBoolean();
+            if(r.has("idle_service_id")){
+                if(!release)throw new IllegalStateException("Scoped idle pause requires release=true; no broad cleanup sent");
+                if(!IdleActivityPolicy.requestOwned(idleOwnerForAction(c),r)||!preemptIdle(c,"IDLE_RELEASE",true))
+                    throw new IllegalStateException("Idle owner changed before input release");
+                statusId=lastId;op=command;phase="done";detail="exact idle input stopped and lease released; PvE guard retained";
+                writeStatus(c);return;
+            }
             materialJobCancel(c,str(r,"task_session"),"材料作业已暂停，防护继续");
             if(release){supervisionLease=null;releaseMaterialMiningLease();lastSupervisionHeartbeat=0;projectionBatch.reset();}
             statusId=lastId;op=command;phase="done";detail=release?"owned material task stopped and lease released; PvE guard retained":"owned material task stopped; PvE guard and lease retained";
@@ -1737,7 +1970,7 @@ public final class AutomationBridge {
         }
         if(dev.twob2tkit.combat.EmergencyExit.held(c))throw new IllegalStateException("Safety lock: manual in-game acknowledgement required; do not reconnect automatically");
         boolean defensiveRise=false;
-        if(guardBusy && command.equals("navigate") && r.has("task_session") && r.has("target")
+        if(command.equals("navigate") && r.has("task_session") && r.has("target")
                 && supervisionLease!=null && str(supervisionLease,"kind").equals("materials")){
             JsonArray point=r.getAsJsonArray("target");
             if(point!=null && point.size()==3)defensiveRise=GuardEscapePolicy.allowed(true,guardScope!=null,
@@ -2016,13 +2249,16 @@ public final class AutomationBridge {
                     KitClient.config().arrivalRadius=temporaryArrival;}
                 MeteorModules.enable(MeteorModules.FLIGHT);
                 KitClient.controller().startExact(c,p.get(0).getAsDouble(),p.get(2).getAsDouble(),p.get(1).getAsDouble());
+                idleNavigationBinding=supervisionLease!=null&&!str(r,"idle_service_id").isBlank()
+                    ?idleBinding(str(r,"idle_service_id"),session(c),str(r,"task_session"),str(supervisionLease,"id")):"";
                 if(r.has("air_only")&&r.get("air_only").getAsBoolean()){
                     // startExact persists the user's original preference first.
                     // Borrow the in-memory setting only for this bounded command.
                     savedClearCeiling=KitClient.config().clearCeiling;KitClient.config().clearCeiling=false;
                     KitClient.controller().keepConnectedOnArrival();
+                    materialDefensiveRise=defensiveRise;
                     materialAirNavigation=new MaterialAirNavigation(new Vec3(p.get(0).getAsDouble(),p.get(1).getAsDouble(),p.get(2).getAsDouble()),
-                        r.has("arrival")?temporaryArrival:.25);
+                        r.has("arrival")?temporaryArrival:.25,c.player.getHealth(),KitClient.config().lastAttackTimeEpochMillis);
                 }
                 if(supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")
                         &&str(supervisionLease,"job_session").equals(str(r,"task_session"))
@@ -2046,11 +2282,22 @@ public final class AutomationBridge {
                 ||!guardArmed()||!MeteorModules.isActive(MeteorModules.FLIGHT)
                 ||!c.player.getMainHandItem().is(net.minecraft.world.item.Items.FISHING_ROD)
                 ||KitClient.anyAfkAuto())throw new IllegalStateException("Safe guarded fishing start requires a held rod and no other task");
-            KitClient.startFisher(c);
+            var idle=idleOwnerForAction(c);boolean scoped=IdleActivityPolicy.requestOwned(idle,r);
+            if(r.has("idle_service_id")&&!scoped)throw new IllegalStateException("Idle fishing lacks fresh exact ownership");
+            if(scoped){
+                if(!IdleActivityPolicy.conflicts(idleActivities(c),idle,idleOwnedActivities(idle)).isEmpty())
+                    throw new IllegalStateException("Another actual controller blocks idle fishing");
+                KitClient.startIdleFisher(c);
+            }else KitClient.startFisher(c);
             if(KitClient.fisher()==null||!KitClient.fisher().isActive())throw new IllegalStateException("Auto fisher did not start");
+            idleFisherBinding=supervisionLease!=null&&!str(r,"idle_service_id").isBlank()
+                ?idleBinding(str(r,"idle_service_id"),session(c),str(r,"task_session"),str(supervisionLease,"id")):"";
+            idleFisherGeneration=idleFisherBinding.isBlank()?-1:KitClient.fisher().activityGeneration();
             phase="done";detail="auto fisher started; PvE guard remains armed";
         }else if(command.equals("fisher_stop")){
             if(KitClient.fisher()!=null&&KitClient.fisher().isActive())KitClient.fisher().stop(c,"脚本停止钓鱼");
+            idleFisherBinding="";
+            idleFisherGeneration=-1;
             phase="done";detail="auto fisher stopped; PvE guard remains armed";
         }else if(command.equals("guide")){
             if(r.has("stop") && r.get("stop").getAsBoolean())KitClient.structureGuide().stop();
@@ -2297,6 +2544,7 @@ public final class AutomationBridge {
         if(survival(r)){survivalArmed=true;survivalBackground=background(r);}
         if(command.equals("gravel_start")||command.equals("gravel_config"))gravelReceipt(c);
         writeStatus(c);
+        }finally{idleDispatchRequest=previousIdleRequest;}
     }
     private static void settle(JsonObject r,int wait){active=r.deepCopy();op="settle";phase="running";detail="awaiting server acknowledgement";deadline=ticks+wait;}
     private static boolean ordinaryMiningRequested(JsonObject request){
@@ -2505,7 +2753,14 @@ public final class AutomationBridge {
         }
         if(save)KitClient.config().save();
     }
+    private static boolean stopInjuredAirNavigation(Minecraft c){
+        if(materialAirNavigation==null||active==null||!op.equals("navigate")||!materialAirNavigation.injured(c,ownedDefensiveRise(c)))return false;
+        KitClient.controller().stop(c,"材料航线途中受伤，停止移动并保留防护");
+        finish(c,"waiting","air-only waypoint interrupted by new injury; arrival not confirmed");
+        return true;
+    }
     private static void closeMaterialAirNavigation(Minecraft c,String outcome){
+        materialDefensiveRise=false;
         if(materialAirNavigation==null)return;
         lastMaterialAirNavigation=materialAirNavigation.snapshot(c);
         lastMaterialAirNavigation.addProperty("world_session",session(c));
@@ -3390,6 +3645,10 @@ public final class AutomationBridge {
             row.addProperty("type",BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString());
             row.add("pos",JSON.toJsonTree(new double[]{e.getX(),e.getY(),e.getZ()}));
             row.addProperty("visible",c.player.hasLineOfSight(e));row.addProperty("alive",e.isAlive());
+            row.addProperty("hostile",e instanceof net.minecraft.world.entity.monster.Enemy);
+            var actual=e.getBoundingBox();var entityBounds=new JsonObject();
+            entityBounds.add("min",JSON.toJsonTree(new double[]{actual.minX,actual.minY,actual.minZ}));
+            entityBounds.add("max",JSON.toJsonTree(new double[]{actual.maxX,actual.maxY,actual.maxZ}));row.add("bounds",entityBounds);
             if(e instanceof net.minecraft.world.entity.LivingEntity living){row.addProperty("is_baby",living.isBaby());row.addProperty("has_custom_name",living.hasCustomName());row.addProperty("health",living.getHealth());}
             rows.add(row);
         }
@@ -3462,6 +3721,10 @@ public final class AutomationBridge {
     }
     private static JsonObject snapshot(Minecraft c){
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
+        j.addProperty("idle_activity_protocol",1);j.add("idle_activity",idleActivitySnapshot(c));
+        j.addProperty("idle_fishing_protocol",1);
+        j.addProperty("fisher_chest_range",KitClient.fisher()==null?0:KitClient.fisher().chestSearchRange());
+        j.addProperty("fisher_deposit_allowed",KitClient.fisher()!=null&&KitClient.fisher().depositAllowed());
         if(supervisionLease!=null)j.add("supervision_lease",supervisionLease.deepCopy());if(lastSafetyEvent!=null)j.add("supervision_safety",lastSafetyEvent.deepCopy());
         j.add("safety_hold",dev.twob2tkit.combat.EmergencyExit.snapshot(c));
         j.addProperty("interface_pause_protocol",1);j.addProperty("interface_paused",interfacePaused(c));
@@ -3568,6 +3831,7 @@ public final class AutomationBridge {
     private static JsonObject snapshotStack(String key,ItemStack item){return stackSnapshots.cached(key,item,AutomationBridge::stack);}
     private static long nextSnapshotSlowWarningAt,nextSnapshotFailureWarningAt,observedStatusWriterFailures;
     private static void writeStatus(Minecraft c){
+        preemptIdleForManual(c);
         if(nativeMaterialDispatch)return; // Internal child IDs never replace the consumed external request cursor.
         long began=System.nanoTime();
         try{

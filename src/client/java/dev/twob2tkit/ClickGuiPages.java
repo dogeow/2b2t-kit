@@ -553,23 +553,17 @@ final class ClickGuiPages {
 	/** 自动种田选项。 */
 	static void planter(Screen parent, KitConfig config) {
 		AutoPlanter planter = KitClient.planter();
-		KitFormScreen panel = new KitFormScreen(parent, "自动种田", "拿着要种的种子。一片田只种一种。");
+		KitFormScreen panel = new KitFormScreen(parent, "自动种田", "仅维护已有耕地，不向田外扩种。拿着要种的种子，一片田只种一种。");
 		panel.status(() -> planter == null ? "模块未就绪" : planter.status());
 		panel.active(
 			() -> planter != null && planter.isActive(),
 			() -> KitClient.togglePlanter(mc()));
-		panel.bool("走近再种", "范围内的空位走过去种。", () -> config.planterWalk, v -> {
+		panel.bool("走近再种", "只走到本次维护名单中的既有耕地，不向周围普通地块扩种。", () -> config.planterWalk, v -> {
 			config.planterWalk = v;
 			config.save();
 		});
-		panel.bool("没有耕地时先锄", "只锄水源 4 格内能浇到的地。", () -> config.planterTill, v -> {
-			config.planterTill = v;
-			config.save();
-		});
-		panel.bool("甘蔗仙人掌往上叠", "默认只补地面空位。", () -> config.planterStack, v -> {
-			config.planterStack = v;
-			config.save();
-		});
+		panel.note("日常种田不翻耕草地或泥土；新开田必须通过独立入口明确确认范围。");
+		panel.note("甘蔗、竹子等普通地面种植不属于日常耕地维护，需独立确认种植范围。");
 		panel.bool("自动收成", "收成熟作物再种。没拿种子时也会先收田里已熟的。开了 Meteor Nuker 就关掉。", () -> config.planterHarvest, v -> {
 			config.planterHarvest = v;
 			config.save();

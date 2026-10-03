@@ -16,7 +16,21 @@ final class MaterialAirNavigation {
     private Vec3 previous,displacement=Vec3.ZERO;
     private RotationAim.Look look;
     private boolean precise,closed;
-    MaterialAirNavigation(Vec3 target,double arrival){this.target=target;this.arrival=arrival;settlement=new MaterialAirArrivalPolicy.Settlement(arrival);}
+    private final float startingHealth;
+    private final long startingHurtAt;
+    private boolean injuryInterrupted;
+    MaterialAirNavigation(Vec3 target,double arrival,float health,long hurtAt){
+        this.target=target;this.arrival=arrival;startingHealth=health;startingHurtAt=hurtAt;
+        settlement=new MaterialAirArrivalPolicy.Settlement(arrival);
+    }
+    boolean injured(Minecraft c,boolean defensiveRise){
+        if(c.player==null)return false;
+        injuryInterrupted |= MaterialAirHealthPolicy.interrupted(startingHealth,startingHurtAt,
+            c.player.getHealth(),KitClient.config().lastAttackTimeEpochMillis);
+        if(!MaterialAirHealthPolicy.interruptible(c.player.isUnderWater(),c.player.getY(),target.y,defensiveRise))return false;
+        if(injuryInterrupted){release(c);look=null;if(precise&&!settlement.restored())flight.hover();}
+        return injuryInterrupted;
+    }
 
     private void precision(Minecraft c){
         KitClient.controller().stop(c,"材料航点精确停靠");
@@ -76,7 +90,8 @@ final class MaterialAirNavigation {
     boolean done(){return settlement.done();}
     JsonObject snapshot(Minecraft c){
         var result=new JsonObject();result.addProperty("phase",settlement.done()?"confirmed":settlement.restored()?"checking_restored_flight":precise?"precise_braking":"cruising");
-        result.addProperty("arrival",arrival);result.addProperty("stable_ticks",settlement.stableTicks());
+        result.addProperty("starting_health",startingHealth);result.addProperty("starting_hurt_at",startingHurtAt);
+        result.addProperty("injury_interrupted",injuryInterrupted);result.addProperty("arrival",arrival);result.addProperty("stable_ticks",settlement.stableTicks());
         result.addProperty("restored_ticks",settlement.restoredTicks());result.addProperty("restorations",settlement.restorations());
         result.addProperty("observed_step",displacement.length());
         if(c.player!=null){var error=target.subtract(c.player.position());

@@ -15,6 +15,14 @@ final class ParkingLeasePolicy {
         return verifiedHighGuardPark?Action.KEEP:Action.LOGOUT;
     }
 
+    /** Restore only an owned, dry high park whose sole missing condition is Flight. */
+    static boolean recoverFlight(String kind, boolean sameWorld, boolean sameRevision,
+                                 boolean manualMovement, boolean flightActive,
+                                 boolean otherwiseVerifiedPark, boolean drySafeBody) {
+        return "parking".equals(kind) && sameWorld && sameRevision && !manualMovement
+            && !flightActive && otherwiseVerifiedPark && drySafeBody;
+    }
+
     /** A combat/quiet-window wait is still a closing material lease, never verified parking. */
     static QuietWait quietWait(boolean logoutRequested,boolean lowHealth,boolean quiet,
                                boolean alreadyWaiting) {

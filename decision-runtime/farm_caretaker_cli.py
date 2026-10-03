@@ -13,10 +13,27 @@ def main(argv=None):
     parser.add_argument('--profile', type=Path, required=True,
                         help='Authorized local profile; defaults: 300s, 20 adults per type, 4 seed potatoes, 8 cooked food')
     parser.add_argument('--out', type=Path)
-    parser.add_argument('action', choices=('run','pause','stop','status','resume'))
+    parser.add_argument('--acknowledge-unknown-outcome', action='store_true',
+                        help='Explicitly confirm checked item safety and accept that the original result remains unknown')
+    parser.add_argument('--expected-pending-sha256', help='Reject if the original journal changed after the confirmation preview')
+    parser.add_argument('action', choices=('run','pause','stop','status','resume','inspect-pending','archive-pending'))
     args = parser.parse_args(argv)
     try:
         profile = json.loads(args.profile.read_text())
+        if args.action == 'archive-pending':
+            from farm_caretaker_archive import archive_pending
+            result = archive_pending(args.game_dir/'config/twob2tkit/automation',profile,args.out,
+                acknowledge_unknown_outcome=args.acknowledge_unknown_outcome,
+                expected_pending_sha256=args.expected_pending_sha256)
+            print(json.dumps(result,ensure_ascii=False))
+            return 0
+        if args.acknowledge_unknown_outcome or args.expected_pending_sha256:
+            raise ValueError('归档确认参数只能用于 archive-pending；开始或恢复不会自动归档')
+        if args.action == 'inspect-pending':
+            from farm_caretaker_review import inspect_pending
+            result = inspect_pending(args.game_dir/'config/twob2tkit/automation', profile, args.out)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
         caretaker = Caretaker(args.game_dir/'config/twob2tkit/automation', profile, args.out)
         if args.action == 'status':
             result = caretaker.status()

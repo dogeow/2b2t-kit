@@ -91,12 +91,13 @@ class Tests(unittest.TestCase):
   c.request=lambda op,**kw:{'phase':'error','world_session':c.world,'blocks':[]}
   with self.assertRaisesRegex(RuntimeError,'not freshly scanned'):
    c.ascent_obstacles({'pos':[100.5,64.2,200.5]})
- def test_grounded_full_health_guard_takes_off_once_through_fresh_clear_column(self):
+ def test_grounded_full_health_guard_takes_off_in_bounded_verified_segments(self):
   c=MaterialClient.__new__(MaterialClient);c.world='world-2';c.park_target=[100.5,145,200.5]
   grounded={'pos':[100.5,64.875,200.5],'guard_armed':True,'guard_busy':False,
             'flight':False,'on_ground':True,'under_water':False,'health':20}
-  reached={**grounded,'pos':[100.5,145,200.5],'flight':True,'on_ground':False}
-  states=iter([grounded,reached]);c.status=lambda:next(states)
+  middle={**grounded,'pos':[100.5,112.875,200.5],'flight':True,'on_ground':False}
+  reached={**middle,'pos':[100.5,145,200.5]}
+  states=iter([grounded,middle,middle,reached]);c.status=lambda:next(states)
   calls=[]
   def request(op,**params):
    calls.append((op,params))
@@ -104,13 +105,17 @@ class Tests(unittest.TestCase):
    if op=='navigate':return {'phase':'done'}
    raise AssertionError(op)
   c.request=request
-  result=c._finish_vertical(grounded)
+  first=c._finish_vertical(grounded)
+  self.assertIs(first,middle)
+  result=c._finish_vertical(first)
   self.assertIs(result,reached)
-  self.assertEqual([op for op,_ in calls],['scan','navigate'])
+  self.assertEqual([op for op,_ in calls],['scan','navigate','scan','navigate'])
   moves=[params for op,params in calls if op=='navigate']
-  self.assertEqual(len(moves),1)
-  self.assertTrue(moves[0]['air_only'])
-  self.assertEqual(moves[0]['target'],[100.5,145,200.5])
+  self.assertEqual(len(moves),2)
+  self.assertTrue(all(m['air_only'] for m in moves))
+  self.assertEqual(moves[0]['target'],[100.5,112.875,200.5])
+  self.assertEqual(moves[1]['target'],[100.5,145,200.5])
+
  def test_grounded_takeoff_rechecks_pose_health_and_guard_after_clear_scan(self):
   original={'pos':[100.5,64.875,200.5],'guard_armed':True,'guard_busy':False,
             'flight':False,'on_ground':True,'under_water':False,'health':20}
@@ -154,7 +159,7 @@ class Tests(unittest.TestCase):
    c.heartbeat.close.assert_called_once()
  def test_only_pre_dispatch_guard_busy_is_retried(self):
   c=MaterialClient.__new__(MaterialClient);c.task='t';c.status=lambda:{}
-  with patch.object(Client,'request',side_effect=[{'phase':'error','detail':BUSY},{'phase':'done'}]) as call,patch('material_client.time.sleep'):
+  with patch.object(c,'_wait_guard_admission',return_value=True),patch.object(Client,'request',side_effect=[{'phase':'error','detail':BUSY},{'phase':'done'}]) as call,patch('material_client.time.sleep'):
    self.assertEqual(c.request('slot_click')['phase'],'done');self.assertEqual(call.call_count,2)
  def test_ambiguous_inventory_errors_are_never_replayed(self):
   c=MaterialClient.__new__(MaterialClient);c.task='t';c.status=lambda:{}

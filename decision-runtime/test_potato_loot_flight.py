@@ -68,6 +68,22 @@ class PotatoLootFlightTest(unittest.TestCase):
         client.blocked = False
         with self.assertRaises(FarmWait): pickup(client, drop, client.status())
         self.assertEqual(1, len(self.moves(client)))
+    def test_wheat_grain_and_seed_each_use_same_bounded_pickup_without_claiming_inventory_gain(self):
+        for item in ('minecraft:wheat','minecraft:wheat_seeds'):
+            with self.subTest(item=item):
+                client,observation,drop=self.prepare();client.entities[0]['stack']['item']=item;drop['stack']['item']=item
+                result=make_pickup([0,63,0],crop='wheat')(client,drop,observation)
+                self.assertEqual(2,len(self.moves(client)));self.assertTrue(result['movement_only'])
+                self.assertNotIn('pickup_verified',result)
+    def test_wheat_actual_item_cannot_switch_between_grain_and_seed_and_potato_default_rejects_both(self):
+        client,observation,drop=self.prepare();drop['stack']['item']='minecraft:wheat'
+        client.entities[0]['stack']['item']='minecraft:wheat_seeds'
+        with self.assertRaises(FarmWait):make_pickup([0,63,0],crop='wheat')(client,drop,observation)
+        self.assertEqual([],self.moves(client))
+        for item in ('minecraft:wheat','minecraft:wheat_seeds','minecraft:poisonous_potato'):
+            client,observation,drop=self.prepare();client.entities[0]['stack']['item']=item;drop['stack']['item']=item
+            with self.assertRaises(FarmWait):make_pickup([0,63,0])(client,drop,observation)
+            self.assertEqual([],self.moves(client))
 
 
 if __name__ == '__main__': unittest.main()

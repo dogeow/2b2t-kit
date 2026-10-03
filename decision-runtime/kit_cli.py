@@ -110,6 +110,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='直接调用运行中 Kit 的自动化接口，无需按键或截图')
     parser.add_argument('--game-dir', type=Path, default=DEFAULT_GAME)
     sub = parser.add_subparsers(dest='topic', required=True)
+    recovery=sub.add_parser('recovery',help='只进食、原地升高和等待回血，不解锁或重连')
+    recovery.add_argument('action',choices=('run',))
+    recovery.add_argument('--out',type=Path,required=True)
     gravel = sub.add_parser('gravel')
     actions = gravel.add_subparsers(dest='action', required=True)
     actions.add_parser('status')
@@ -119,10 +122,25 @@ def main(argv=None):
         action.add_argument('--depth', type=int)
         action.add_argument('--limit', type=int)
     actions.add_parser('stop')
-    farm=sub.add_parser('farm',help='已装水的有界土豆田')
+    farm=sub.add_parser('farm',help='共用小田地准备与有界土豆/小麦种植')
     farm_actions=farm.add_subparsers(dest='action',required=True)
+    prepare=farm_actions.add_parser('prepare')
+    prepare.add_argument('--center',type=int,nargs=3,required=True)
+    prepare.add_argument('--radius',type=int,choices=(1,2),default=2)
+    prepare.add_argument('--water-source',type=int,nargs=3)
+    prepare.add_argument('--max-torches',type=int,choices=(1,2,3,4),default=4)
+    prepare.add_argument('--out',type=Path)
+    prepare.add_argument('--no-move',action='store_true')
+    prepare.add_argument('--recover-read-only-session',action='store_true')
+    prepare.add_argument('--reconcile-finish',action='store_true')
+    reseed=farm_actions.add_parser('reseed',help='只补原登记田里明确的空耕地，不扩田')
+    reseed.add_argument('--registry',type=Path,required=True)
+    reseed.add_argument('--cell',type=int,nargs=3,action='append',required=True)
+    reseed.add_argument('--out',type=Path)
+    reseed.add_argument('--no-move',action='store_true')
     plant=farm_actions.add_parser('plant')
     plant.add_argument('--center',type=int,nargs=3,required=True)
+    plant.add_argument('--crop',choices=('potato','wheat'),default='potato')
     plant.add_argument('--radius',type=int,choices=(1,2),default=2)
     plant.add_argument('--max-cells',type=int,choices=range(1,25),default=24)
     plant.add_argument('--out',type=Path)
@@ -137,21 +155,85 @@ def main(argv=None):
     status=material_actions.add_parser('status');status.add_argument('--job-id')
     for name in ('pause','resume','cancel'):
         control=material_actions.add_parser(name);control.add_argument('--job-id',required=True)
+    idle=sub.add_parser('idle',help='忙时让出、空闲时钓鱼/收田/喂养，本地无模型服务')
+    idle.add_argument('action',choices=('template','init','run','status','pause','stop','resume','revalidate-fields'))
+    idle.add_argument('--profile',type=Path)
+    idle.add_argument('--caretaker-profile',type=Path)
+    idle.add_argument('--plant-registry',type=Path,action='append',default=[])
+    idle.add_argument('--acknowledge-existing-fields',action='store_true')
     care=sub.add_parser('caretaker',help='本地周期收获、繁殖、烹饪和入箱，无模型调用')
     care.add_argument('action',choices=('run','pause','stop','status','resume'))
     care.add_argument('--profile',type=Path,required=True)
     care.add_argument('--out',type=Path)
+    lighting=sub.add_parser('lighting',help='固定配置分区补光，真实扫描与保护停靠；无 AI/UI')
+    lighting.add_argument('action',choices=('run','resume','audit','status','pause','stop','reconcile-travel','reconcile-entity','reconcile-guard'))
+    lighting.add_argument('--profile',type=Path,required=True)
+    lighting.add_argument('--out',type=Path)
+    lighting.add_argument('--verbose',action='store_true')
+    lighting.add_argument('--auto-supply',action='store_true')
+    lighting.add_argument('--torch-target',type=int,default=128)
+    lighting.add_argument('--max-supplies',type=int,default=32)
+    replies=sub.add_parser('replies',help='旧只读扫描回包的无损归档与恢复；不发送游戏动作')
+    replies.add_argument('--days',type=int,default=7)
+    replies.add_argument('--max-files',type=int,default=2000)
+    replies.add_argument('--apply',action='store_true')
+    replies.add_argument('--restore')
     args = parser.parse_args(argv)
     root = args.game_dir / 'config/twob2tkit/automation'
+    if args.topic=='replies':
+        from reply_archive import main as archive_main
+        command=['--root',str(root),'--days',str(args.days),'--max-files',str(args.max_files)]
+        if args.apply:command += ['--apply']
+        if args.restore:command += ['--restore',args.restore]
+        return archive_main(command)
+    if args.topic=='recovery':
+        from survival_recovery import recover
+        try:
+            print(json.dumps(recover(args.game_dir,args.out),ensure_ascii=False));return 0
+        except (RuntimeError,ValueError,OSError) as error:
+            print(json.dumps({'phase':'waiting','detail':str(error)},ensure_ascii=False));return 2
+    if args.topic=='lighting':
+        from lighting_regions_cli import main as lighting_main
+        command=['--game-dir',str(args.game_dir),'--profile',str(args.profile)]
+        if args.out is not None:command += ['--out',str(args.out)]
+        if args.verbose:command += ['--verbose']
+        if args.auto_supply:command += ['--auto-supply','--torch-target',str(args.torch_target),'--max-supplies',str(args.max_supplies)]
+        return lighting_main(command+[args.action])
+    if args.topic=='idle':
+        from idle_service_cli import main as idle_main
+        command=['--game-dir',str(args.game_dir)]
+        if args.profile is not None:command += ['--profile',str(args.profile)]
+        if args.caretaker_profile is not None:command += ['--caretaker-profile',str(args.caretaker_profile)]
+        for path in args.plant_registry:command += ['--plant-registry',str(path)]
+        if args.acknowledge_existing_fields:command += ['--acknowledge-existing-fields']
+        return idle_main(command+[args.action])
     if args.topic=='caretaker':
         from farm_caretaker_cli import main as caretaker_main
         command=['--game-dir',str(args.game_dir),'--profile',str(args.profile)]
         if args.out is not None:command += ['--out',str(args.out)]
         return caretaker_main(command+[args.action])
     if args.topic=='farm':
+        if args.action=='reseed':
+            from farm_reseed_cli import main as reseed_main
+            command=['--game-dir',str(args.game_dir),'--registry',str(args.registry)]
+            for point in args.cell:command += ['--cell',*map(str,point)]
+            if args.out is not None:command += ['--out',str(args.out)]
+            if args.no_move:command += ['--no-move']
+            return reseed_main(command)
+        if args.action=='prepare':
+            from farm_preparation_cli import main as prepare_main
+            command=['--game-dir',str(args.game_dir),'--center',*map(str,args.center),
+                     '--radius',str(args.radius),'--max-torches',str(args.max_torches)]
+            if args.water_source is not None:command += ['--water-source',*map(str,args.water_source)]
+            if args.out is not None:command += ['--out',str(args.out)]
+            if args.no_move:command += ['--no-move']
+            if args.recover_read_only_session:command += ['--recover-read-only-session']
+            if args.reconcile_finish:command += ['--reconcile-finish']
+            return prepare_main(command)
         from potato_farm_cli import main as farm_main
         argv=['--game-dir',str(args.game_dir),'--center',*map(str,args.center),
               '--radius',str(args.radius),'--max-cells',str(args.max_cells)]
+        if args.crop!='potato':argv += ['--crop',args.crop]
         if args.out is not None:argv += ['--out',str(args.out)]
         if args.no_move:argv += ['--no-move']
         return farm_main(argv)

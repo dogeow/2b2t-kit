@@ -57,6 +57,7 @@ public final class ContainerAssistant {
 	/** 开箱时快照并可自动补货。 */
 	public void tick(Minecraft client) {
         StorageLifecycle.tick(client,config);
+        if(dev.twob2tkit.automation.AutomationBridge.idleSupplyMenuPending())return;
 		if (client.player == null || client.level == null) {
 			resetOpenContainer();
 			return;
@@ -137,6 +138,7 @@ public final class ContainerAssistant {
 			labels.y = openedPosition.getY();
 			labels.z = openedPosition.getZ();
 			labels.title = screen.getTitle().getString();
+			labels.lastSeenEpochMillis = System.currentTimeMillis();
 			StorageLabels.apply(client.level, openedPosition, labels);
             if(!StorageLifecycle.capture(client,openedPosition,labels))return;
 			config.patchStorageLabels(labels);
@@ -215,6 +217,7 @@ public final class ContainerAssistant {
 
 	/** 清当前开箱跟踪。 */
 	private void resetOpenContainer() {
+        if(currentContainerId>=0&&openedPosition!=null)config.save();
 		currentContainerId = -1;
 		openedPosition = null;
 		openedDimension = "";

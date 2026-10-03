@@ -122,6 +122,24 @@ public final class StorageLabels {
 		return "开箱缓存：" + (total == 0 ? "空箱" : counts.size() + " 类 · 共 " + total + " 件");
 	}
 
+    /** Search is answered entirely from recorded contents; timestamps cannot imply live stock. */
+    public static String cacheSummary(KitConfig.StorageSnapshot snapshot, String query) {
+        return quantitySummary(snapshot, query) + " · 内容 " + contentTime(snapshot)
+            + (snapshot != null && snapshot.contentsDirty ? " · 待确认" : "");
+    }
+    public static String contentTime(KitConfig.StorageSnapshot snapshot) {
+        return snapshot == null || snapshot.lastSeenEpochMillis <= 0 ? "时间未知"
+            : java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
+                .withZone(java.time.ZoneId.systemDefault())
+                .format(java.time.Instant.ofEpochMilli(snapshot.lastSeenEpochMillis));
+    }
+    public static String evidenceSummary(KitConfig.StorageSnapshot snapshot) {
+        String result = "内容观察：" + contentTime(snapshot) + " · " + StorageLifecycle.statusLabel(snapshot);
+        if (snapshot != null && snapshot.contentsDirty && snapshot.contentsDirtyReason != null
+            && !snapshot.contentsDirtyReason.isBlank()) result += "；" + snapshot.contentsDirtyReason;
+        return result + "；实际取料以服务器槽位为准";
+    }
+
 	/** 颜色中文名。 */
 	public static String colorLabel(String colorId) {
 		if (blank(colorId)) return "";

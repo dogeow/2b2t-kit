@@ -101,6 +101,12 @@ def pending_request_state(request,last_request,owned_last,world):
 _REVISION_ADVANCING_OPS=frozenset(('navigate','chop','walk','walk_path','print','mine_block','recover_shulker','professional_print','projection_start','borer_start'))
 def expected_native_revision(op,base):
  return base+(2 if op in ('stop','safe_logout') else 1 if op in _REVISION_ADVANCING_OPS else 0)
+def recovery_action_allowed(state,op,params):
+ if op in ('material_session','guard','snapshot','scan','select_item','use_item','material_job_park','material_job_pause','stop','safe_logout'):return True
+ if op!='navigate':return False
+ source=state.get('pos');target=params.get('target')
+ if any(not isinstance(p,(list,tuple)) or len(p)!=3 or any(type(v)not in (int,float) or not math.isfinite(v) for v in p) for p in (source,target)):return False
+ return bool(params.get('air_only')is True and target[1]>source[1]+1 and math.hypot(target[0]-source[0],target[2]-source[2])<=.5)
 class Client:
  def __init__(self,root,out,server,min_health=18):
   self.root=Path(root);self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True);self.server=server
@@ -136,7 +142,7 @@ class Client:
    if s.get('screen') not in ('','ContainerScreen','InventoryScreen','CraftingScreen','ShulkerBoxScreen','FurnaceScreen','BlastFurnaceScreen','SmokerScreen','AnvilScreen','BrewingStandScreen'):raise Handoff('User opened a different interface')
    return s
  def request(self,op,**params):
-  until=time.monotonic()+60
+  until=min(time.monotonic()+60,getattr(self,'guard_admission_deadline',math.inf))
   while True:
    s=self.status(wait_interface=False) if op in ('stop','safe_logout','material_job_pause') else self.status()
    if op!='safe_logout' and s.get('health',0)<14 and not vertical_surface_escape(s,op,params):raise RuntimeError('Low health')
@@ -516,6 +522,9 @@ class MaterialClient(Client):
       and getattr(self,'last_owned_ground_walk',None) is not None):
    state=self._settle_owned_ground_walk(state)
   start=list(state['pos']);target_y=self.park_target[1]
+  # GuardEscapePolicy accepts at most 64 vertical blocks. Each settled
+  # segment stays below that cap; an uncertain segment is never repeated.
+  if target_y>start[1]+48:target_y=start[1]+48
   if abs(start[1]-target_y)<=2:return state
   # Opening a ground-level chest deliberately disables Flight.  A normal
   # air-only navigate can restore it, but only treat that exact stable pose as
@@ -561,11 +570,26 @@ class MaterialClient(Client):
       or abs(pos[1]-target_y)>2 or math.hypot(pos[0]-target[0],pos[2]-target[2])>.75):
    raise RuntimeError('High park vertical arrival or protection was not verified')
   return reached
- def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None,remote_finish='disconnect',park_target=None):
+ def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None,remote_finish='disconnect',park_target=None,recovery_only=False):
+  if type(recovery_only)is not bool:raise ValueError('Recovery mode must be explicit boolean')
+  if remote_finish not in ('disconnect','guard') or remote_finish=='guard' and (not isinstance(park_target,(list,tuple)) or len(park_target)!=3):raise ValueError('Guard finish requires a high park target')
+  self.foreground_token=None;self.recovery_only=recovery_only
+  try:
+   if not getattr(self,'idle_service_id',None):
+    from live_snapshot import read_fresh
+    from safety_interlock import require_unlocked
+    from idle_priority import request_foreground
+    state=read_fresh(Path(root));require_unlocked(root,state)
+    self.foreground_token=request_foreground(root,'material-controller',state['world_session'])
+   self._init_material(root,out,server,allow_empty_inventory,record_experience,experience_state,remote_finish,park_target)
+  except BaseException:
+   if self.foreground_token:self.foreground_token.close()
+   raise
+ def _init_material(self,root,out,server,allow_empty_inventory,record_experience,experience_state,remote_finish,park_target):
   if remote_finish not in ('disconnect','guard') or remote_finish=='guard' and (not isinstance(park_target,(list,tuple)) or len(park_target)!=3):raise ValueError('Guard finish requires a high park target')
   self.remote_finish=remote_finish;self.park_target=list(park_target) if park_target is not None else None
   self.heartbeat=None;self.owned_material_menu=None;self.owned_inventory_crafting=None;self.job_progress=None
-  super().__init__(root,out,server,min_health=18)
+  super().__init__(root,out,server,min_health=14 if self.recovery_only else 18)
   self.record_experience=record_experience;self.experience_state=experience_state
   s=self.raw()
   if remote_finish=='guard' and math.hypot(s['pos'][0]-self.park_target[0],s['pos'][2]-self.park_target[2])<=32:
@@ -615,16 +639,65 @@ class MaterialClient(Client):
    self.job_progress.revision=self.rev
    self.job_progress.publish(s)
   return s
+ def _wait_guard_admission(self,deadline):
+  """Observe three fresh settled poses before retrying a native admission rejection."""
+  samples=[]
+  while True:
+   state=self.status(wait_interface=False)
+   if state.get('health',0)<18:raise RuntimeError('Health reserve changed while waiting for guard admission')
+   if time.monotonic()>=deadline:return False
+   pos=state.get('pos');stamp=state.get('time');entities=state.get('entities')
+   valid=(isinstance(pos,list) and len(pos)==3
+    and all(type(value) in (int,float) and math.isfinite(value) for value in pos)
+    and type(stamp) is int and isinstance(entities,list))
+   hostiles=(not isinstance(entities,list) or any(not isinstance(entity,dict) or
+    entity.get('hostile') is True and entity.get('alive') is not False
+    and not (type(entity.get('health')) in (int,float) and entity['health']<=0)
+    for entity in entities))
+   if (not valid or state.get('guard_busy') or hostiles
+       or state.get('interface_paused') or state.get('navigating') or state.get('native_material_busy')):
+    samples=[]
+   elif samples and stamp<samples[-1]['time']:
+    samples=[]
+   elif not samples or stamp>samples[-1]['time']:
+    if samples and any(math.dist(pos,sample['pos'])>.25 for sample in samples):
+     samples=[]
+    samples.append({'time':stamp,'pos':list(pos)})
+    samples=samples[-3:]
+    if len(samples)==3:return True
+   time.sleep(.25)
  def request(self,op,**params):
-  previous=getattr(self,'last',None);returned=False
+  if getattr(self,'recovery_only',False) and not recovery_action_allowed(self.status(),op,params):
+   raise RuntimeError('Recovery-only session permits food, observation and a vertical safety ascent; ordinary work is blocked')
+  previous=getattr(self,'last',None);returned=False;deadline=None;rejected=None;rejections=0
+  previous_deadline=getattr(self,'guard_admission_deadline',None)
+  def waiting():
+   return {**rejected,'phase':'waiting','native_phase':'error',
+    'detail':'Native defense admission did not settle within thirty seconds; no rejected action was dispatched',
+    'guard_admission_wait':{'action_dispatched':False,'requested_op':op,'requested_params':sanitize(params),
+     'rejected_request_id':rejected.get('id',getattr(self,'last',None)),
+     'exact_pre_dispatch_rejections':rejections,'wait_budget_seconds':30}}
   try:
-   for attempt in range(4):
-    r=super().request(op,task_session=self.task,background_ok=True,**params);returned=True
-    if r.get('phase')!='error' or r.get('detail')!='Construction guard is defending or eating; wait before changing items or starting work':return r
-    # This exact native rejection happens before dispatch mutates game state; ambiguous failures are never replayed.
-    self.status();time.sleep(.25)
-   return r
+   while True:
+    before=getattr(self,'last',None)
+    try:r=super().request(op,task_session=self.task,background_ok=True,**params);returned=True
+    except RuntimeError as error:
+     # This one local pre-admission timeout publishes no new request. Never
+     # absorb an error after dispatch or an unrelated failure.
+     if (rejected is not None and str(error)=='Defense remains busy'
+         and getattr(self,'last',None)==before and time.monotonic()>=deadline):
+      return waiting()
+     raise
+    if (op=='safe_logout' or r.get('phase')!='error'
+        or r.get('detail')!='Construction guard is defending or eating; wait before changing items or starting work'):return r
+    # Only this exact native rejection proves that no action reached dispatch.
+    rejected=r;rejections+=1
+    if deadline is None:
+     deadline=time.monotonic()+30;self.guard_admission_deadline=deadline
+    if not self._wait_guard_admission(deadline):return waiting()
   finally:
+   if previous_deadline is None:self.__dict__.pop('guard_admission_deadline',None)
+   else:self.guard_admission_deadline=previous_deadline
    if op=='safe_logout':
     self._record_health_stop('Safety logout after current owned health loss',
                              logout_attempted=returned or getattr(self,'last',None)!=previous)
@@ -736,7 +809,11 @@ class MaterialClient(Client):
     return
    return self._finish()
   finally:
-   if getattr(self,'job_progress',None):self.job_progress.close()
+   try:
+    if getattr(self,'job_progress',None):self.job_progress.close()
+   finally:
+    token=getattr(self,'foreground_token',None)
+    if token:token.close()
  def _finish(self):
   # Recover owned temporary resources while heartbeat and defense are still alive.
   from material_cleanup import run as cleanup_resources

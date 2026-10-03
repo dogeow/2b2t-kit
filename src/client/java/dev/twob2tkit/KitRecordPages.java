@@ -127,9 +127,9 @@ public final class KitRecordPages {
         var list = new KitCollectionScreen<KitConfig.StorageSnapshot>(parent, c, "storage", "仓库记录", "本地快照，不代表箱子当前仍有相同物品",
             () -> c.storageSnapshots, s -> StorageLifecycle.statusLabel(s) + " · " + StorageLabels.headline(s) + "  " + s.x + " " + s.y + " " + s.z,
             s -> "X " + s.x + " Y " + s.y + " Z " + s.z + " · " + KitConfig.dimensionLabel(s.dimension) + "\n"
-                + StorageLabels.quantitySummary(s, "") + "\n" + StorageLifecycle.statusLabel(s) + "；点击查看全部内容",
+                + StorageLabels.quantitySummary(s, "") + "\n" + StorageLabels.evidenceSummary(s) + "；点击查看全部内容",
             KitRecordPages::storageSearch).key(KitConfig.StorageSnapshot::scopedKey)
-            .summary(StorageLabels::quantitySummary).searchHint("搜索物品、名称或坐标；下方显示匹配数量…");
+            .summary(StorageLabels::cacheSummary).searchHint("搜索物品、名称或坐标；显示缓存数量与内容时间…");
         dimensionFilters(list, s -> s.dimension);
         list.onOpen(s -> mc().setScreen(new StorageDetailScreen(list, s)));
         list.action("备注", "只修改本地记录。", s -> {
@@ -148,6 +148,7 @@ public final class KitRecordPages {
         }, s -> StorageLifecycle.usable(mc(), s));
         list.action("删除", "只删除本地记录，不清空箱子。", s -> confirm(list, "删除仓库记录", StorageLabels.headline(s) + "\n仅删除本地记录，不影响世界中的箱子和物品。", () -> { c.storageSnapshots.removeIf(v -> v.scopedKey().equals(s.scopedKey())); c.save(); list.refresh(); }), s -> true);
         list.footer("停止指引", () -> { if (KitClient.structureGuide() != null) KitClient.structureGuide().stop(); list.message("已停止指引"); });
+        list.footer("附近物资", () -> dev.twob2tkit.storage.NearbyInventoryScreen.open(list,c));
         mc().setScreen(list);
     }
     private static String storageSearch(KitConfig.StorageSnapshot s) {

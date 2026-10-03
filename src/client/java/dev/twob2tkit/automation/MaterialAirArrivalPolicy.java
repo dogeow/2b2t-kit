@@ -42,12 +42,10 @@ final class MaterialAirArrivalPolicy {
     }
     static Motion motion(Vec3 error){
         double horizontal=Math.hypot(error.x,error.z);double absY=Math.abs(error.y);
-        if(absY>.06&&horizontal>.06&&absY>=.5){
-            double length=Math.sqrt(horizontal*horizontal+error.y*error.y);
-            return new Motion(true,true,true,Math.min(.08,length/10));
-        }
-        if(absY>.06)return new Motion(true,false,true,Math.min(.08,absY/10));
+        // Meteor shares one speed between both axes. Align first so a large
+        // altitude error cannot turn a tiny horizontal correction into an overshoot.
         if(horizontal>.06)return new Motion(false,true,true,Math.min(.06,horizontal/20));
+        if(absY>.06)return new Motion(true,false,true,Math.min(.08,absY/10));
         return new Motion(false,false,false,0);
     }
     static boolean inside(Vec3 error,double arrival){

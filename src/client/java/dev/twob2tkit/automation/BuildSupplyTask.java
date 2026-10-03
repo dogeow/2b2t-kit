@@ -25,6 +25,7 @@ public final class BuildSupplyTask {
     private static final Map<String,Integer> visits=new HashMap<>();
     private final ClientLevel level;
     private final String job,sourceKey,blockId;
+    private final KitConfig.StorageSnapshot sourceRecord;
     private final boolean approachOnly;
     private final String expectedState;
     private final Direction interactionFace;
@@ -49,7 +50,9 @@ public final class BuildSupplyTask {
     private String phase="travel",failure="";
     private int tick,menuId=-1,openTick,settleTick,clicks,pendingSlot=-1,beforeCount,sourceBefore,expectedCount;
     private String pendingItem="";
-    private boolean closed,arrived;
+    private boolean closed,arrived,openingPending;
+    private final AbstractContainerMenu originalMenu;
+    private AbstractContainerMenu openedMenu;
     private RotationAim.Look travelLook;
     public record Source(String key,KitConfig.StorageSnapshot record,double distance){}
 
@@ -108,6 +111,8 @@ public final class BuildSupplyTask {
         var out=new JsonArray();var wanted=c.player==null?Map.<String,Integer>of():BuildSupplyPlan.targets(needed(),inventory(c));
         for(var s:sources(c).stream().limit(3).toList()){
             var j=new JsonObject();j.addProperty("key",s.key);j.addProperty("distance",Math.round(s.distance));j.addProperty("recorded_at",s.record.lastSeenEpochMillis);
+            j.addProperty("contents_dirty",s.record.contentsDirty);j.addProperty("contents_dirty_reason",s.record.contentsDirtyReason);
+            j.addProperty("structure_observed_at",s.record.lastStructureObservedAt);j.addProperty("inventory_evidence","cached_menu_contents");
             j.add("pos",JSON.toJsonTree(new int[]{s.record.x,s.record.y,s.record.z}));var items=new JsonObject();
             s.record.items.stream().filter(i->wanted.containsKey(i.id)).forEach(i->items.addProperty(i.id,i.count));j.add("recorded_items",items);out.add(j);
         }return out;
@@ -154,17 +159,20 @@ public final class BuildSupplyTask {
     private BuildSupplyTask(Minecraft c,String expectedJob,String key,Map<String,Integer> materialTargets,BlockPos approach,String expected,Direction face,double standDistance,net.minecraft.world.entity.item.ItemEntity drop)throws Exception{
         var b=KitClient.buildJob().snapshot();
         if(expectedJob!=null&&!b.get("session").getAsString().equals(expectedJob) || c.screen!=null || c.player.getHealth()<14 || !c.player.containerMenu.getCarried().isEmpty())throw new IllegalStateException("Supply start context changed");
+        originalMenu=c.player.containerMenu;
         this.drop=drop;dropItem=drop==null?"":id(drop.getItem());dropBefore=drop==null?0:inventory(c).getOrDefault(dropItem,0);dropCount=drop==null?0:drop.getItem().getCount();
         approachOnly=approach!=null;expectedState=expected;interactionFace=face;
         if(!Double.isFinite(standDistance)||standDistance!=-1&&(standDistance<.25||standDistance>3))throw new IllegalArgumentException("Invalid standing distance");this.standDistance=standDistance;
         navigation=KitClient.borer().buildNavigation();level=c.level;job=expectedJob;sourceKey=key;
-        if(drop!=null){source=drop.blockPosition().immutable();blockId="";}else if(approachOnly){
+        if(drop!=null){sourceRecord=null;source=drop.blockPosition().immutable();blockId="";}else if(approachOnly){
+            sourceRecord=null;
             if(!c.level.hasChunkAt(approach)||c.player.position().distanceTo(Vec3.atCenterOf(approach))>128)throw new IllegalStateException("Work block is unloaded or too far away");
             var state=c.level.getBlockState(approach);
             if(!state.toString().equals(expected)||state.isAir()||!state.getFluidState().isEmpty())throw new IllegalStateException("Work block state changed");
             source=approach.immutable();blockId=BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
         }else{
             var chosen=materialTargets==null?sources(c).stream().filter(s->s.key.equals(key)).findFirst().orElseThrow(()->new IllegalStateException("Depot is no longer an authorized candidate")):approvedSource(c,key);
+            sourceRecord=chosen.record;
             source=new BlockPos(chosen.record.x,chosen.record.y,chosen.record.z);blockId=chosen.record.blockId;
         }
         targets=materialTargets==null?BuildSupplyPlan.targets(needed(),inventory(c)):Map.copyOf(materialTargets);start=c.player.blockPosition();
@@ -237,7 +245,18 @@ public final class BuildSupplyTask {
         try{arrived=move(c);}catch(Exception e){fail(c,e.getMessage());}
     }
     public void reapply(Minecraft c){if(!closed && phase.equals("travel") && travelLook!=null && c.player!=null && c.screen==null)RotationAim.apply(c.player,travelLook);}
-    public boolean ownsMenu(Minecraft c){return phase.equals("opening") && c.player!=null && (c.player.containerMenu instanceof ChestMenu || c.player.containerMenu instanceof ShulkerBoxMenu) || menuId>=0 && c.player!=null && c.player.containerMenu.containerId==menuId;}
+    private void acknowledgeOpenedMenu(Minecraft c){
+        if(closed || !openingPending || c.player==null || c.level!=level)return;
+        var menu=c.player.containerMenu;
+        if(menu==originalMenu)return;
+        boolean expected=menu instanceof ChestMenu && Set.of("minecraft:chest","minecraft:trapped_chest","minecraft:barrel").contains(blockId)
+            || menu instanceof ShulkerBoxMenu && blockId.endsWith("shulker_box");
+        if(expected){openedMenu=menu;menuId=menu.containerId;openingPending=false;}
+    }
+    public boolean ownsMenu(Minecraft c){
+        acknowledgeOpenedMenu(c);
+        return c.player!=null && c.level==level && openedMenu!=null && c.player.containerMenu==openedMenu;
+    }
     public boolean done(){return phase.equals("done");}
     public String failure(){return failure;}
     public JsonObject snapshot(){var j=new JsonObject();j.addProperty("phase",phase);j.addProperty("navigation_version",navigation.version());j.addProperty("search_expanded",searchExpanded);j.addProperty("source",sourceKey);j.addProperty("approach_only",approachOnly);j.addProperty("collecting_drop",drop!=null);j.addProperty("failure",failure);j.add("taken",JSON.toJsonTree(taken));j.addProperty("clicks",clicks);j.addProperty("path_step",pathIndex);j.addProperty("path_length",path.size());if(pathIndex<path.size())j.addProperty("next_waypoint",path.get(pathIndex).toShortString());return j;}
@@ -267,22 +286,23 @@ public final class BuildSupplyTask {
         if(!BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(source).getBlock()).toString().equals(blockId))throw new IllegalStateException("Depot block changed");
         if(AutomationBridge.guardBusy() || c.player.getHealth()<14)return;
         if(phase.equals("travel")){
-            if(c.screen!=null)throw new IllegalStateException("Manual menu interrupted depot travel");
+            if(c.screen!=null || c.player.containerMenu!=originalMenu)throw new IllegalStateException("Manual menu interrupted depot travel");
             if(!arrived)return;
             if(c.player.position().distanceTo(destination)>1.6)throw new IllegalStateException("Cruise ended outside depot reach");
             var ray=BlockFaceTarget.visible(c,c.player.getEyePosition(),source,approachOnly?interactionFace:null,c.player.blockInteractionRange()-.1);
             if(ray==null)throw new IllegalStateException("Depot approach occluded or out of reach");
             if(approachOnly){if(standDistance>0&&c.player.position().distanceTo(ray.getLocation())>standDistance+.15)throw new IllegalStateException("Standing target not reached");phase="done";close(c);return;}
             RotationAim.apply(c.player,RotationAim.lookAt(c.player,ray.getLocation()));KitClient.noteStorageClick(source);
-            c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,ray);phase="opening";openTick=tick;return;
+            phase="opening";openingPending=true;openTick=tick;
+            c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,ray);return;
         }
         var menu=c.player.containerMenu;
         if(phase.equals("opening")){
             if(menu.containerId==0){if(tick-openTick>60)throw new IllegalStateException("Depot opening not acknowledged");return;}
-            if(!(menu instanceof ChestMenu || menu instanceof ShulkerBoxMenu))throw new IllegalStateException("Unexpected depot menu");
-            menuId=menu.containerId;phase="withdraw";settleTick=tick+10;return;
+            if(!ownsMenu(c))throw new IllegalStateException("Unexpected depot menu");
+            phase="withdraw";settleTick=tick+10;return;
         }
-        if(menu.containerId!=menuId || !menu.getCarried().isEmpty())throw new IllegalStateException("Depot menu or carried stack changed");
+        if(menu!=openedMenu || !menu.getCarried().isEmpty())throw new IllegalStateException("Depot menu or carried stack changed");
         if(tick<settleTick)return;
         var stock=inventory(c);
         if(pendingSlot>=0){
@@ -302,11 +322,46 @@ public final class BuildSupplyTask {
         }
         c.player.closeContainer();phase="done";close(c);
     }
-    public void fail(Minecraft c,String why){if(!failure.isEmpty())return;failure=why;phase="failed";close(c);}
+    public void fail(Minecraft c,String why){
+        if(!failure.isEmpty())return;
+        if(sourceRecord!=null && (phase.equals("opening")||phase.equals("withdraw")||"Depot block changed".equals(why))){
+            var config=KitClient.config();
+            // Open-menu captures may have replaced this task's original snapshot object.
+            var current=config.storageSnapshots.stream().filter(r->r.scopedKey().equals(sourceRecord.scopedKey())).findFirst().orElse(sourceRecord);
+            if(dev.twob2tkit.storage.StorageLifecycle.markContentsDirty(current,why,System.currentTimeMillis()))config.save();
+        }
+        failure=why;phase="failed";close(c);
+    }
     public void close(Minecraft c){
+        close(c,false);
+    }
+    public void closeKeepingMenu(Minecraft c){close(c,true);}
+    enum IdleMenuHandoff { RELEASED, CLOSE_OWNED, WAITING }
+    static IdleMenuHandoff idleMenuHandoff(Object original,Object opened,Object current,boolean openingPending,boolean cursorEmpty){
+        if(current==null || !cursorEmpty)return IdleMenuHandoff.WAITING;
+        if(opened!=null && opened!=original && current==opened)return IdleMenuHandoff.CLOSE_OWNED;
+        if(openingPending)return IdleMenuHandoff.WAITING;
+        return IdleMenuHandoff.RELEASED;
+    }
+    /** Stops inputs first, then closes only an acknowledged owned menu without moving cursor items. */
+    public boolean closeForIdleHandoff(Minecraft c){
+        close(c,true);
+        if(c.player==null || c.level!=level)return false;
+        var menu=c.player.containerMenu;
+        var result=idleMenuHandoff(originalMenu,openedMenu,menu,openingPending,menu.getCarried().isEmpty());
+        if(result==IdleMenuHandoff.CLOSE_OWNED){
+            c.player.closeContainer();
+            menu=c.player.containerMenu;
+            result=idleMenuHandoff(originalMenu,openedMenu,menu,openingPending,menu.getCarried().isEmpty());
+        }
+        // A pending open may still receive a server menu after our inputs stopped.
+        // Do not adopt a replacement screen or claim that this unresolved handoff released it.
+        return result==IdleMenuHandoff.RELEASED;
+    }
+    private void close(Minecraft c,boolean keepMenu){
         if(closed)return;closed=true;
         release(c);travelLook=null;flight.hover();
-        if(c.player!=null && menuId>=0 && c.player.containerMenu.containerId==menuId && c.player.containerMenu.getCarried().isEmpty())c.player.closeContainer();
+        if(!keepMenu && c.player!=null && c.level==level && openedMenu!=null && c.player.containerMenu==openedMenu && openedMenu.getCarried().isEmpty())c.player.closeContainer();
         if(c.player!=null && !c.player.onGround())flight.closeKeepingFlight();else flight.close();
     }
 }

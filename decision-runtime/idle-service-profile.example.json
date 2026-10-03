@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "authorized": false,
+  "server": "example.test",
+  "dimension": "minecraft:overworld",
+  "caretaker_profile": null,
+  "plant_registries": [],
+  "jobs": ["harvest_store", "breed", "cook_store", "plant", "fish"],
+  "poll_seconds": 0.2,
+  "quiet_seconds": 5,
+  "cooldowns": {"harvest_store": 120, "breed": 300, "cook_store": 300, "plant": 600, "fish": 240},
+  "fishing": {"enabled": false, "shore": null, "duration_seconds": 90, "minimum_free_slots": 8}
+}

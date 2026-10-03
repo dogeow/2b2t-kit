@@ -50,14 +50,16 @@ public final class PlanterScreen extends KitHudScreen {
 		int left = panelLeft(320);
 		optionsTop = contentTop();
 		walkTo = checkbox(left, optionsTop, "走近再种", config.planterWalk);
-		walkTo.setTooltip(Tooltip.create(Component.literal("范围内的空耕地或甘蔗位会走过去种")));
-		till = checkbox(left + 165, optionsTop, "没有耕地时先锄地", config.planterTill);
-		till.setTooltip(Tooltip.create(Component.literal("手里是小麦种子、胡萝卜等需要耕地的作物时，会把泥土/草方块锄成耕地再种。只锄水源 4 格内能浇到的地")));
-		stack = checkbox(left, optionsTop + 24, "甘蔗仙人掌往上叠", config.planterStack);
-		stack.setTooltip(Tooltip.create(Component.literal("默认只补地面空位。勾选后会在已有甘蔗、仙人掌、竹子上继续往上种")));
+		walkTo.setTooltip(Tooltip.create(Component.literal("只走到本次维护名单中的既有耕地，不向周围普通地块扩种")));
+		till = checkbox(left + 165, optionsTop, "仅维护已有耕地", true);
+		till.active = false;
+		till.setTooltip(Tooltip.create(Component.literal("日常种田不翻耕草地或泥土；新开田必须通过独立入口明确确认范围")));
+		stack = checkbox(left, optionsTop + 24, "不向田外扩种", true);
+		stack.active = false;
+		stack.setTooltip(Tooltip.create(Component.literal("甘蔗、竹子等普通地面种植不属于日常耕地维护，需独立确认种植范围")));
 		harvest = checkbox(left + 165, optionsTop + 24, "自动收成（收完再种）", config.planterHarvest);
 		harvest.setTooltip(Tooltip.create(Component.literal(
-			"收成熟的小麦、胡萝卜、地狱疣等，然后种回锁定的作物。没拿种子时也会先收田里已熟的，打掉就有种子。小麦田里不会去收胡萝卜。走过耕地会潜行。Meteor 没有自动收成；若开了 Nuker 收田，把这项关掉以免抢左键")));
+			"只收已有耕地上的成熟小麦、胡萝卜等，然后在原耕地补种。没拿种子时也会先收田里已熟的，打掉就有种子。小麦田里不会去收胡萝卜。走过耕地会潜行。Meteor 没有自动收成；若开了 Nuker 收田，把这项关掉以免抢左键")));
 		pickup = checkbox(left, optionsTop + 48, "收完捡掉落物", config.planterPickup);
 		pickup.setTooltip(Tooltip.create(Component.literal("收成或种完附近没有空位时，把地上同种作物的种子和收成捡进背包。需要「走近再种」才能走过去捡")));
 
@@ -132,8 +134,6 @@ public final class PlanterScreen extends KitHudScreen {
 	private boolean saveFields() {
 		try {
 			config.planterWalk = walkTo.selected();
-			config.planterTill = till.selected();
-			config.planterStack = stack.selected();
 			config.planterHarvest = harvest.selected();
 			config.planterPickup = pickup.selected();
 			config.planterRange = KitUi.parse(range, "搜寻范围", 3.0, 24.0);

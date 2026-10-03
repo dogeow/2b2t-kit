@@ -8,12 +8,14 @@ import dev.twob2tkit.combat.EmergencyExit;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import net.minecraft.client.Minecraft;
 
 /** One explicitly started local caretaker process, using the existing deterministic Python coordinator. */
 public final class CaretakerJobs {
     private static final MaterialWorkerProcess worker=new MaterialWorkerProcess();
     private static final MaterialWorkerProcess probe=new MaterialWorkerProcess();
+    private static final MaterialWorkerProcess archiver=new MaterialWorkerProcess();
     private static boolean probeStarted,externalAlive;
     private static long externalObservedAt;
     private static CaretakerProtocol.Installation installed;
@@ -24,10 +26,39 @@ public final class CaretakerJobs {
     private static Pending pending;
     private CaretakerJobs() {}
     public static boolean running(){return worker.current()!=null&&worker.current().isAlive();}
-    public static boolean occupied(){return pending!=null||worker.occupied()||externalAlive&&System.currentTimeMillis()-externalObservedAt<2500;}
+    public static boolean occupied(){return pending!=null||worker.occupied()||archiver.occupied()||externalAlive&&System.currentTimeMillis()-externalObservedAt<2500;}
     public static String status(){return CaretakerProtocol.status(journal,running())+(note.isBlank()?"":" · "+note);}
     public static String scope(){return installed==null?"请先安装已授权的本地农场配置；不会自动登记新区域。":CaretakerProtocol.summary(installed.profile());}
     public static Path directory(){return installed==null?null:installed.directory();}
+    public static List<String> pendingReview(Minecraft client){
+        try{
+            installed=CaretakerProtocol.installed(client.gameDirectory.toPath());refresh();
+            JsonObject state;try{state=live(installed);}catch(IOException|RuntimeException unavailable){state=null;}
+            return CaretakerProtocol.pendingReview(installed,journal,state);
+        }catch(IOException|RuntimeException failure){return List.of("原记录无法完整核对："+message(failure),"保留原动作，当前不能安全恢复；请查看 caretaker.json 和原周期目录。");}
+    }
+    private static void requireArchiveIdle(){
+        if(pending!=null||worker.occupied()||probe.occupied()||archiver.occupied()||MaterialJobs.running())
+            throw new IllegalStateException("后台或启动请求仍在运行，请先停止并等待退出后再归档");
+    }
+    public static CaretakerProtocol.ArchivePreview previewArchive(Minecraft client){
+        requireArchiveIdle();
+        try{
+            var checked=CaretakerProtocol.installed(client.gameDirectory.toPath());
+            var preview=CaretakerProtocol.archivePreview(checked);installed=checked;refresh();return preview;
+        }catch(IOException failure){throw new IllegalStateException("原周期记录无法读取",failure);}
+    }
+    /** Only invoked by the explicit item-safety confirmation; Python still checks the real flock and idle native state. */
+    public static void archivePending(Minecraft client,CaretakerProtocol.ArchivePreview preview){
+        requireArchiveIdle();
+        try{
+            var checked=CaretakerProtocol.installed(client.gameDirectory.toPath());var current=CaretakerProtocol.archivePreview(checked);
+            if(!current.equals(preview))throw new IllegalStateException("确认后原周期记录改变，请重新查看并确认");
+            installed=checked;
+            archiver.start(checked.archiveCommand(preview.pendingSha256()),checked.script().getParent(),checked.directory().resolve("ui-archive-result.json"));
+            note="正在核对工作锁、旧作业停止和物品光标；尚未确认归档，不会启动新周期";
+        }catch(IOException failure){throw new IllegalStateException("归档命令未能启动，原周期保留",failure);}
+    }
     public static void inspect(Minecraft client){
         try{installed=CaretakerProtocol.installed(client.gameDirectory.toPath());refresh();note="";}
         catch(IOException|RuntimeException failure){if(!running()){installed=null;journal=null;}note=message(failure);}
@@ -40,11 +71,16 @@ public final class CaretakerJobs {
     public static void start(Minecraft client){prepare(client,"run");}
     public static void resume(Minecraft client){prepare(client,"resume");}
     private static void prepare(Minecraft client,String action){
-        if(pending!=null||probe.occupied()||worker.occupied()&&!(action.equals("resume")&&running()))throw new IllegalStateException("农场后台或启动请求仍在处理，请先停止或等待");
+        if(pending!=null||probe.occupied()||archiver.occupied()||worker.occupied()&&!(action.equals("resume")&&running()))throw new IllegalStateException("农场后台或启动请求仍在处理，请先停止或等待");
         if(MaterialJobs.running())throw new IllegalStateException("材料作业仍在运行，农场不会抢控制");
         try{
             var installation=CaretakerProtocol.installed(client.gameDirectory.toPath());var book=CaretakerProtocol.journal(installation);
-            JsonObject state=live(installation),context=AutomationBridge.materialJobContext(client);
+            if(action.equals("resume")&&book==null)throw new IllegalStateException("尚无可恢复的农场周期");
+            JsonObject state=live(installation);
+            CaretakerProtocol.requireUnlocked(automation(installation),state);
+            boolean idleReleased=AutomationBridge.preemptIdleForPlayer(client,"FORMAL_CARETAKER_START");
+            state=idleReleased?AutomationBridge.currentActivitySnapshot(client):live(installation);
+            JsonObject context=AutomationBridge.materialJobContext(client);
             CaretakerProtocol.requireUnlocked(automation(installation),state);
             CaretakerProtocol.requireReady(installation,state,book,System.currentTimeMillis(),true);
             if(EmergencyExit.held(client)||client.player.getHealth()!=20||client.player.getFoodData().getFoodLevel()<18||client.player.isUsingItem()||KitKeys.manualMovementDown(client))throw new IllegalStateException("角色或安全状态尚未就绪");
@@ -73,6 +109,14 @@ public final class CaretakerJobs {
         worker.stop();note=reason+"；后台已请求退出，原未确认记录保留";
     }
     public static void tick(Minecraft client){
+        if(archiver.current()!=null&&!archiver.current().isAlive()){
+            int exit=archiver.releaseExited();
+            try{
+                var reply=CaretakerProtocol.read(installed.directory().resolve("ui-archive-result.json"));
+                note=exit==0&&CaretakerProtocol.text(reply,"phase").equals("archived")?CaretakerProtocol.text(reply,"detail"):"未归档："+CaretakerProtocol.text(reply,"detail");
+            }catch(IOException|RuntimeException failure){note="归档结果暂不可读取，请刷新原周期记录："+message(failure);}
+            refresh();lastPoll=0;
+        }
         if(pending!=null){
             Pending request=pending;
             try{

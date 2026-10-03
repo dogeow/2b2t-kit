@@ -19,6 +19,7 @@ from potato_farm import valid_entity_scope
 SCOPE = 'bounded_exterior_safe_ground_loaded_block_light_only'
 EVIDENCE = 'normal_generic_interact_later_loaded_block_and_exact_inventory_no_dedicated_ack'
 MAX_SCAN_CELLS = 50_000
+PASSIVE_OVERPASS_TYPES=frozenset('minecraft:'+n for n in ('cow','sheep','pig','chicken','horse','donkey','mule','rabbit'))
 TORCH = 'minecraft:torch'
 GRASS = 'minecraft:grass_block'
 # Explicit support allowlist, not a blanket `solid` permission. Wood, farming
@@ -49,6 +50,20 @@ def bounds(low, high):
         raise ValueError('Bounds must be ordered and within Overworld Y -64..319')
     if math.prod(b - a + 1 for a, b in zip(low, high)) > MAX_SCAN_CELLS:
         raise ValueError('Full-column bounds exceed the native 50,000-cell cap; use smaller explicit boxes')
+    return low, high
+
+
+def validate_movement_bounds(value, placement_low, placement_high):
+    """A travel authorization box is not one scan; each actual sweep is capped."""
+    if value is None:
+        return placement_low, placement_high
+    if not isinstance(value, dict) or set(value) != {'min', 'max'}:
+        raise ValueError('Movement bounds require exactly min and max positions')
+    low, high = point(value['min']), point(value['max'])
+    if (any(a > b for a, b in zip(low, high)) or low[1] < -64 or high[1] > 319
+            or any(abs(v) > 30_000_000 for pos in (low, high) for v in (pos[0], pos[2]))
+            or any(low[i] > placement_low[i] or high[i] < placement_high[i] for i in range(3))):
+        raise ValueError('Movement bounds must contain the placement region in bounded Overworld coordinates')
     return low, high
 
 
@@ -118,14 +133,18 @@ def risk_counts(cells, protected=None):
             'unprotected_dark_floor': len(dark) - masked, 'non_air_rows': len(cells)}
 
 
-def safe_dark_support(row):
+def safe_support(row, *, require_dark=True):
     return (block_id(row) in SAFE_SUPPORTS and row.get('solid') is True
             and row.get('fluid') is False and row.get('block_entity') is False
-            and type(row.get('spawn_block_light')) is int
+            and type(row.get('spawn_block_light')) is int and 0<=row['spawn_block_light']<=15
             and type(row.get('monster_spawn_block_light_limit')) is int
-            and row['spawn_block_light'] <= row['monster_spawn_block_light_limit']
             and row.get('zombie_spawn_floor') is True
-            and row.get('zombie_block_light_risk') is True)
+            and (not require_dark or row['spawn_block_light']<=row['monster_spawn_block_light_limit']
+                 and row.get('zombie_block_light_risk') is True))
+
+
+def safe_dark_support(row):
+    return safe_support(row)
 
 
 def candidates(cells, low, high, start=None, protected=None):
@@ -244,17 +263,19 @@ def plan(reply, low, high, max_torches, start=None, protected=None):
 
 
 class LightingRun:
-    def __init__(self, client, low, high, max_torches, out, initial, protected=None):
+    def __init__(self, client, low, high, max_torches, out, initial, protected=None, movement_bounds=None):
         validate_budget(max_torches)
         low, high = bounds(low, high)
         self.protected = protection_boxes(protected)
+        self.move_low, self.move_high = validate_movement_bounds(movement_bounds, low, high)
         self.c, self.low, self.high = client, low, high
         self.limit, self.out = max_torches, Path(out)
         self.hurt = initial['recent_hurt_at']
         self.report = {'scope': SCOPE, 'evidence_scope': EVIDENCE, 'cave_routes_completed': False,
                        'bounds': {'min': list(low), 'max': list(high)}, 'max_torches': max_torches,
                        'world_session': client.world, 'task_session': client.task,
-                       'protected_boxes': self.protected, 'placed': [], 'state': 'running',
+                       'protected_boxes': self.protected,
+                       'movement_bounds': {'min': list(self.move_low), 'max': list(self.move_high)}, 'placed': [], 'state': 'running',
                        'progress': {'placed_verified': 0, 'placement_limit': max_torches,
                                     'dark_floor_last_observed': None,
                                     'dark_floor_observation_stage': None}}
@@ -271,7 +292,7 @@ class LightingRun:
             raise LightingBlocked('Control or world changed')
         if (not state.get('guard_armed') or not state.get('guard_pve_only') or not state.get('flight')
                 or state.get('under_water') or state.get('safety_hold', {}).get('active')
-                or state.get('health', 0) < (20 if work else 18)
+                or state.get('health', 0) < (20 if work else 14)
                 or work and (state.get('food', 0) < 18 or state.get('recent_hurt_at', 0) > self.hurt)):
             raise LightingBlocked('Protection, health, injury, or food reserve changed')
         return state
@@ -283,7 +304,7 @@ class LightingRun:
                 and entity.get('alive') is not False
                 and not (type(entity.get('health')) in (int, float) and entity['health'] <= 0)]
 
-    def wait_for_guard(self, *, work=True, stage='placement', seconds=20):
+    def wait_for_guard(self, *, work=True, stage='placement', seconds=60):
         """Wait for the existing protection owner; never send combat or movement."""
         deadline = time.monotonic() + seconds
         started, samples = None, 0
@@ -332,27 +353,93 @@ class LightingRun:
             if all(self.low[i] <= target[i] <= self.high[i] for i in range(3)):
                 raise LightingBlocked('Unresolved prior lighting interaction; inspect intent before any replay: ' + str(path))
 
-    def move(self, target):
+    def move(self, target, *, allow_entity_overpass=True):
         # Fresh native AIR and entity intersection checks cover the full swept
         # player body, not just endpoint cells. Native air_only checks again.
         state = self.fresh()
         start = state['pos']
         low = [math.floor(min(start[i], target[i]) - (.35 if i != 1 else 0)) for i in range(3)]
         high = [math.floor(max(start[i], target[i]) + (.35 if i != 1 else 1.8)) for i in range(3)]
-        if any(low[i] < self.low[i] or high[i] > self.high[i] for i in range(3)):
-            raise LightingBlocked('Movement body sweep exceeds explicit scan bounds')
+        if any(low[i] < self.move_low[i] or high[i] > self.move_high[i] for i in range(3)):
+            raise LightingBlocked('Movement body sweep exceeds authorized movement bounds')
         sweep = self.scan(low, high)
         if sweep['blocks']:
             raise LightingBlocked('Fresh movement body sweep is occupied')
         entities = sweep.get('scan_entities')
         if not isinstance(entities, list):
             raise LightingBlocked('Current swept entity observation unavailable')
-        if any(not isinstance(e, dict) or e.get('type') not in ('minecraft:item', 'minecraft:experience_orb') for e in entities):
-            raise LightingBlocked('Current entity intersects movement body corridor')
-        self.c.checked('navigate', target=target, arrival=.25, seconds=45, air_only=True)
+        blockers = [e for e in entities if not isinstance(e, dict)
+                    or e.get('type') not in ('minecraft:item', 'minecraft:experience_orb')]
+        if blockers:
+            # Passive animals in a flat route need a small observed overpass,
+            # not an attack or an unchecked collision. Every leg rescans and
+            # still uses native air_only; do not recurse into another overpass.
+            if not allow_entity_overpass or abs(start[1] - target[1]) > .6:
+                raise LightingBlocked('Current entity intersects movement body corridor')
+            heights = []
+            for entity in blockers:
+                box = entity.get('bounds') if isinstance(entity, dict) else None
+                if (not isinstance(entity, dict) or entity.get('alive') is not True
+                        or entity.get('hostile') is not False or entity.get('type') not in PASSIVE_OVERPASS_TYPES or not isinstance(box, dict)):
+                    raise LightingBlocked('Current entity intersects movement body corridor')
+                minimum, maximum = box.get('min'), box.get('max')
+                if (not isinstance(minimum, list) or not isinstance(maximum, list)
+                        or len(minimum) != 3 or len(maximum) != 3
+                        or any(type(v) not in (int, float) or not math.isfinite(v) for v in minimum + maximum)
+                        or any(minimum[i] >= maximum[i] for i in range(3))):
+                    raise LightingBlocked('Current entity intersects movement body corridor')
+                heights.append(maximum[1])
+            transit_y = max(start[1], target[1], max(heights) + 2)
+            if transit_y - min(start[1], target[1]) > 6 or transit_y + 1.8 > self.move_high[1]:
+                raise LightingBlocked('Current entity intersects movement body corridor')
+            route = [[start[0], transit_y, start[2]],
+                     [target[0], transit_y, target[2]], list(target)]
+            self.report.setdefault('routes', []).append({'kind': 'passive_entity_overpass',
+                'height': transit_y, 'types': sorted(set(e['type'] for e in blockers))})
+            acknowledgement=None
+            for waypoint in route:
+                acknowledgement=self.move(waypoint, allow_entity_overpass=False)
+            return acknowledgement
+        acknowledgement = self.c.checked('navigate', target=target, arrival=.25, seconds=45, air_only=True)
         after = self.fresh()
         if math.dist(after['pos'], target) > .6:
             raise LightingBlocked('Actual movement arrival not verified; no movement replay')
+        return acknowledgement
+
+    @staticmethod
+    def at_station(state, support):
+        pos = state.get('pos')
+        target = [support[0] + .5, support[1] + 2.5, support[2] + .5]
+        return (isinstance(pos, list) and len(pos) == 3
+                and all(type(value) in (int, float) and math.isfinite(value) for value in pos)
+                and math.dist(pos, target) <= .6)
+
+    def approach_station(self, support, state, index, attempt):
+        """Defense can move us; reapproach before any placement intent exists."""
+        if self.at_station(state, support):
+            return
+        target = [support[0] + .5, support[1] + 2.5, support[2] + .5]
+        start = state['pos']
+        low = [math.floor(min(start[i], target[i]) - (.35 if i != 1 else 0)) for i in range(3)]
+        high = [math.floor(max(start[i], target[i]) + (.35 if i != 1 else 1.8)) for i in range(3)]
+        if any(low[i] < self.move_low[i] or high[i] > self.move_high[i] for i in range(3)):
+            raise LightingBlocked('Defended position left authorized movement bounds; no old-target interaction')
+        sweep = self.scan(low, high, f'station-{index}-{attempt}-sweep.json')
+        entities = sweep['scan_entities']
+        clear = not sweep['blocks'] and all(isinstance(entity, dict) and entity.get('type') in
+                  ('minecraft:item', 'minecraft:experience_orb') for entity in entities)
+        if clear:
+            self.move(target)
+        else:
+            park_y = self.high[1] - 2
+            self.move([start[0], park_y, start[2]])
+            self.move([target[0], park_y, start[2]])
+            self.move([target[0], park_y, target[2]])
+            self.move(target)
+        self.report.setdefault('station_reapproaches', []).append({
+            'index': index, 'attempt': attempt, 'from': start, 'target': target,
+            'route': 'fresh_clear_sweep' if clear else 'guarded_high_transit'})
+        self.save()
 
     def place(self, candidate, index):
         x, y, z = point(candidate['support'])
@@ -363,30 +450,47 @@ class LightingRun:
                 or candidate_protected((x, y, z), target, self.protected)):
             raise LightingBlocked('Protected or inconsistent placement target; no interaction dispatched')
         target = list(target)
-        # A low survey box can miss a roof above it. The exact 1-block column
-        # to Overworld build height costs only a few hundred cells and prevents
-        # classifying indoor ground as exterior just because high was Y90.
-        column = self.scan([x, y, z], [x, 319, z], f'column-{index}.json')
-        if (len(column['blocks']) != 1 or column['blocks'][0]['pos'] != [x, y, z]
-                or column['blocks'][0]['state'] != candidate['support_state']
-                or not safe_dark_support(column['blocks'][0])):
-            raise LightingBlocked('Exact support/target/roof column changed')
-        prior = self.wait_for_guard(stage='before_torch_selection')
-        count_before = stock(prior)
-        if count_before < 1:
-            raise LightingBlocked('No exact torch stock remains')
-        self.c.checked('select_item', item=TORCH)
-        prior = self.fresh()
-        if stock(prior) != count_before:
-            raise LightingBlocked('Torch stock changed during selection')
-        # Last geometry observation precedes the sole interaction dispatch.
-        pre = self.scan([x, y, z], [x, y + 4, z], f'pre-place-{index}.json')
-        if (len(pre['blocks']) != 1 or pre['blocks'][0]['pos'] != [x, y, z]
-                or pre['blocks'][0]['state'] != candidate['support_state']
-                or not safe_dark_support(pre['blocks'][0])):
-            raise LightingBlocked('Support/AIR changed immediately before interaction')
-        if not isinstance(pre.get('scan_entities'), list) or pre['scan_entities']:
-            raise LightingBlocked('Current entity occupies support/target/body placement column')
+        prior, count_before = None, None
+        for attempt in range(3):
+            state = self.wait_for_guard(stage='before_station_recheck')
+            self.approach_station((x, y, z), state, index, attempt)
+            # Recheck after any protection movement. A low survey box may miss
+            # a roof; this exact column proves only the current observation.
+            column = self.scan([x, y, z], [x, 319, z], f'column-{index}.json')
+            if (len(column['blocks']) != 1 or column['blocks'][0]['pos'] != [x, y, z]
+                    or column['blocks'][0]['state'] != candidate['support_state']
+                    or not safe_support(column['blocks'][0],require_dark=not candidate.get('_planned_batch',False))):
+                raise LightingBlocked('Exact support/target/roof column changed')
+            state = self.wait_for_guard(stage='before_torch_selection')
+            if not self.at_station(state, (x, y, z)):
+                continue
+            count_before = stock(state)
+            if count_before < 1:
+                raise LightingBlocked('No exact torch stock remains')
+            self.c.checked('select_item', item=TORCH)
+            state = self.wait_for_guard(stage='after_torch_selection')
+            if not self.at_station(state, (x, y, z)):
+                continue
+            if stock(state) != count_before:
+                raise LightingBlocked('Torch stock changed during selection')
+            pre = self.scan([x, y, z], [x, y + 4, z], f'pre-place-{index}.json')
+            if (len(pre['blocks']) != 1 or pre['blocks'][0]['pos'] != [x, y, z]
+                    or pre['blocks'][0]['state'] != candidate['support_state']
+                    or not safe_support(pre['blocks'][0],require_dark=not candidate.get('_planned_batch',False))):
+                raise LightingBlocked('Support/AIR changed immediately before interaction')
+            if pre['scan_entities']:
+                raise LightingBlocked('Current entity occupies support/target/body placement column')
+            latest = self.fresh()
+            if (latest.get('guard_busy') or self.active_hostiles(latest)
+                    or not self.at_station(latest, (x, y, z))
+                    or (latest.get('hand') or {}).get('item') != TORCH):
+                continue
+            if stock(latest) != count_before:
+                raise LightingBlocked('Torch stock changed immediately before interaction')
+            prior = latest
+            break
+        if prior is None:
+            raise LightingBlocked('Defense repeatedly changed torch station; no interaction intent dispatched')
         intent = {'world_session': self.c.world, 'task_session': self.c.task,
                   'support': [x, y, z], 'target': target, 'state': 'interaction_intent',
                   'before_stock': count_before, 'before_time': prior['time'],
@@ -422,64 +526,56 @@ class LightingRun:
         self.report['progress']['placed_verified'] = len(self.report['placed'])
         self.c.set_progress(done=len(self.report['placed']), phase='已核实放置；暗点待复扫')
         self.save()
+        return actual
 
     def work(self):
         self.reject_unknown_intents()
         initial = self.scan(self.low, self.high, 'before-full-column.json')
         self.report['before'] = risk_counts(scan_cells(initial, self.low, self.high), self.protected)
         self.save()
-        for index in range(self.limit):
-            scene = initial if index == 0 else self.scan(self.low, self.high, f'round-{index}.json')
-            cells = scan_cells(scene, self.low, self.high)
-            state = self.fresh()
-            observed = risk_counts(cells, self.protected)
-            options = candidates(cells, self.low, self.high, state['pos'], self.protected)
-            self.report['progress'].update(dark_floor_last_observed=observed['zombie_block_light_risk'],
-                                          dark_floor_observation_stage=f'before_placement_{index}',
-                                          protected_dark_floor=observed['protected_dark_floor'],
-                                          unprotected_dark_floor=observed['unprotected_dark_floor'],
-                                          eligible_candidates=len(options))
-            self.c.set_progress(done=len(self.report['placed']),
-                                phase=f"已扫区域暗点 {observed['unprotected_dark_floor']}")
-            self.save()
-            selected, route = None, None
-            for candidate in options:
-                foot = candidate['support'][1] + 2.5
-                if index == 0:
-                    selected = candidate
-                    break
-                if abs(state['pos'][1] - foot) <= .6:
-                    proposed = cardinal_route(cells, state['pos'], candidate['support'], foot, self.low, self.high)
-                    if proposed:
-                        selected, route = candidate, proposed
-                        break
-            if selected is None and options:
-                # Uneven village ground should not stop a whole batch. If no
-                # same-height clear route exists, use verified vertical/high
-                # transit instead; every segment still checks the actual swept
-                # body and entities immediately before native navigation.
-                selected = options[0]
-            if selected is None:
-                self.report['stop_reason'] = 'No eligible uncovered dark safe-ground candidates'
-                break
-            x, y, z = selected['support']
-            if route is None:
-                park_y = self.high[1] - 2
-                # Rise in the current column first; never a diagonal ascent
-                # through an unchecked roof or building side.
-                if abs(state['pos'][1] - park_y) > .25:
-                    self.move([state['pos'][0], park_y, state['pos'][2]])
-                self.report.setdefault('routes', []).append({'kind': 'guarded_high_transit',
-                                                             'target': selected['target']})
-                self.move([x + .5, park_y, state['pos'][2]])
-                self.move([x + .5, park_y, z + .5])
-                self.move([x + .5, y + 2.5, z + .5])
+        from lighting_batch_plan import plan as plan_batch
+        from lighting_air_route import plan as plan_air
+        cells=scan_cells(initial,self.low,self.high)
+        state=self.fresh()
+        planned=plan_batch(cells,self.low,self.high,state['pos'],self.protected,limit=min(8,self.limit))
+        station=list(state['pos']);routes=[]
+        for candidate in planned:
+            target=[candidate['support'][0]+.5,candidate['support'][1]+2.5,candidate['support'][2]+.5]
+            routes.append(plan_air(cells,station,target,self.low,self.high))
+            station=target
+        write_json(self.out/'batch-plan.json',{'world_session':self.c.world,'source_observed_at':initial.get('scan_ended_at',initial.get('time')),
+            'prediction_only':True,'targets':planned,'routes':routes,'complete':False})
+        self.report['progress'].update(dark_floor_last_observed=self.report['before']['zombie_block_light_risk'],
+            dark_floor_observation_stage='single_initial_batch_scan',eligible_candidates=len(planned),
+            planned_positions=len(planned),planning_predictions_are_completion=False)
+        for index,candidate in enumerate(planned):
+            state=self.fresh();target=[candidate['support'][0]+.5,candidate['support'][1]+2.5,candidate['support'][2]+.5]
+            route=routes[index]
+            if route is not None and math.dist(state['pos'],route[0])>.8:
+                route=plan_air(cells,state['pos'],target,self.low,self.high)
+            if route is not None:
+                self.report.setdefault('routes',[]).append({'kind':'planned_low_air','waypoints':len(route)-1,
+                    'maximum_y':max(p[1] for p in route),'target':candidate['target']})
+                if math.dist(state['pos'],route[0])>.05:self.move(route[0])
+                for waypoint in route[1:]:self.move(waypoint)
             else:
-                segments = compress_route(route)
-                self.report.setdefault('routes', []).append({'cells': len(route), 'segments': len(segments) - 1})
-                for px, pz in segments:
-                    self.move([px + .5, y + 2.5, pz + .5])
-            self.place(selected, index)
+                # Unknown space never becomes AIR. The existing wider bounded
+                # survey picks obstacle height; each issued segment still gets
+                # LightingRun's fresh body/entity validation and real receipt.
+                from material_jobs.acquisition import _travel
+                owner=self
+                class CheckedRoute:
+                    def __getattr__(self,name):return getattr(owner.c,name)
+                    def request(self,op,**params):
+                        return owner.move(params['target']) if op=='navigate' else owner.c.request(op,**params)
+                trace=[]
+                _travel(CheckedRoute(),target,lambda:owner.fresh(),trace,clearance_padding=2.32,obstacle_margin=3.1)
+                self.report.setdefault('routes',[]).append({'kind':'observed_obstacle_route','trace':trace,'target':candidate['target']})
+            candidate={**candidate,'_planned_batch':True}
+            actual=self.place(candidate,index)
+            if not isinstance(actual,dict)or actual.get('world_session')!=self.c.world or not isinstance(actual.get('blocks'),list):
+                raise LightingBlocked('Verified placement frame missing; batch retained')
+            for row in actual['blocks']:cells[tuple(row['pos'])]=row
         final = self.scan(self.low, self.high, 'after-full-column.json')
         self.report['after'] = risk_counts(scan_cells(final, self.low, self.high), self.protected)
         self.report['state'] = 'bounded_run_finished'
@@ -499,13 +595,23 @@ class LightingRun:
 
     def park(self):
         """Release only after native same-column guarded high parking is proven."""
-        state = self.wait_for_guard(work=False, stage='before_high_park')
-        park = [state['pos'][0], self.high[1] - 2, state['pos'][2]]
+        # Safe upward cleanup outranks fighting a distant/occluded hostile.
+        # The owned native defensive-rise path keeps PvE armed while ascending.
+        state = self.fresh(work=False)
+        full=self.scan([math.floor(state['pos'][0]-.35),-64,math.floor(state['pos'][2]-.35)],
+                       [math.floor(state['pos'][0]+.35),319,math.floor(state['pos'][2]+.35)],'actual-park-ground-column.json')
+        ground=max((row['pos'][1]+1 for row in full['blocks'] if row.get('fluid')or not row.get('passable',False)),default=None)
+        if ground is None or ground+24>315:raise LightingBlocked('Actual ground lacks bounded safe parking height')
+        park = [state['pos'][0], max(state['pos'][1],ground+24), state['pos'][2]]
         low = [math.floor(state['pos'][0] - .35), math.floor(state['pos'][1]) + 1,
                math.floor(state['pos'][2] - .35)]
         high = [math.floor(state['pos'][0] + .35), self.high[1], math.floor(state['pos'][2] + .35)]
         if low[1] <= high[1] and self.scan(low, high, 'final-park-body-column.json')['blocks']:
             raise LightingBlocked('Safe high park column changed; preserve existing guard')
+        self.c.park_target = park
+        while abs(state['pos'][1] - park[1]) > 2:
+            self.c._finish_vertical(state)
+            state = self.fresh(work=False)
         self.c.checked('material_job_park', park_target=park)
         native = self.c.request('snapshot')
         lease = native.get('supervision_lease') or {}
@@ -602,17 +708,18 @@ def preflight(root, low, high):
     return state
 
 
-def run_live(game_dir, low, high, max_torches, out, protected=None):
+def run_live(game_dir, low, high, max_torches, out, protected=None, movement_bounds=None):
     low, high = bounds(low, high)
     validate_budget(max_torches)
     protected = protection_boxes(protected)
+    validate_movement_bounds(movement_bounds, low, high)
     from material_client import MaterialClient
     root = Path(game_dir) / 'config' / 'twob2tkit' / 'automation'
     initial = preflight(root, low, high)
     park = [initial['pos'][0], high[1] - 2, initial['pos'][2]]
     client = MaterialClient(root, out, server=initial['server'], remote_finish='guard',
                             park_target=park, record_experience=False)
-    runner = LightingRun(client, low, high, max_torches, out, initial, protected)
+    runner = LightingRun(client, low, high, max_torches, out, initial, protected, movement_bounds)
     try:
         runner.work()
     except BaseException as error:
@@ -652,6 +759,9 @@ def main(argv=None):
     parser.add_argument('--max-torches', type=int, default=8)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--plan-only', action='store_true')
+    parser.add_argument('--movement-bounds', nargs=6, type=int,
+                        metavar=('MIN_X', 'MIN_Y', 'MIN_Z', 'MAX_X', 'MAX_Y', 'MAX_Z'),
+                        help='Explicit larger travel box; torch placement remains inside --min/--max')
     parser.add_argument('--protect-box', nargs=6, type=int, action='append', default=[],
                         metavar=('MIN_X', 'MIN_Y', 'MIN_Z', 'MAX_X', 'MAX_Y', 'MAX_Z'),
                         help='Repeat inclusive support/target placement exclusions; overhead flight is allowed')
@@ -663,6 +773,9 @@ def main(argv=None):
     try:
         low, high = bounds(args.low, args.high)
         validate_budget(args.max_torches)
+        movement = ({'min': args.movement_bounds[:3], 'max': args.movement_bounds[3:]}
+                    if args.movement_bounds is not None else None)
+        validate_movement_bounds(movement, low, high)
         protected = []
         if args.protect_file is not None:
             protected = json.loads(args.protect_file.read_text())
@@ -681,7 +794,7 @@ def main(argv=None):
             if args.game_dir is None or args.scan is not None or args.start is not None:
                 parser.error('Live runs require --game-dir and do not accept saved --scan/--start')
             args.out.mkdir(parents=True, exist_ok=True)
-            result = run_live(args.game_dir, low, high, args.max_torches, args.out, protected)
+            result = run_live(args.game_dir, low, high, args.max_torches, args.out, protected, movement)
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get('state') != 'blocked' and not result.get('cleanup_error') else 2
     except Exception as error:

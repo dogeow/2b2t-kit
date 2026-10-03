@@ -1,17 +1,19 @@
-"""Caller-injected potato pickup flight; movement receipts never prove pickup."""
+"""Caller-injected registered crop pickup flight; movement receipts never prove pickup."""
 import math
 
-from potato_farm import FarmWait, POTATO, plan
+from potato_farm import FarmWait, POTATO, crop_descriptor, plan
 from potato_harvest import _lease
 
 
-def make_pickup(center, *, radius=2, checkpoint=lambda: None):
+def make_pickup(center, *, radius=2, checkpoint=lambda: None, crop='potato'):
     """Return run(pickup=...) for a caller already hovering above source water.
 
     Native air_only validates the actual complete player-body path. This callback
     offers no fallback, reconnect, mining or anonymous loot collection.
     """
-    layout = plan({'authorized': True, 'center': center, 'radius': radius})
+    descriptor=crop_descriptor(crop)
+    accepted={POTATO} if descriptor.name=='potato' else {descriptor.item,descriptor.harvest_item}
+    layout = plan({'authorized': True, 'center': center, 'radius': radius,'crop':descriptor.name})
     center = layout['center']
     home = [center[0]+.5, center[1]+1.6, center[2]+.5]
     claimed = set()
@@ -28,10 +30,10 @@ def make_pickup(center, *, radius=2, checkpoint=lambda: None):
         uuid = drop.get('uuid'); stack = drop.get('stack') or {}
         if (not isinstance(uuid, str) or not uuid or uuid in claimed
                 or type(drop.get('id')) is not int
-                or stack.get('item') != POTATO or type(stack.get('count')) is not int
+                or stack.get('item') not in accepted or type(stack.get('count')) is not int
                 or not 1 <= stack['count'] <= 64 or drop.get('remaining_count') != stack['count']
                 or not bounded(drop.get('pos'))):
-            raise FarmWait('WAIT_LOOT', 'Fresh exact unclaimed potato UUID/count within the field is required')
+            raise FarmWait('WAIT_LOOT', 'Fresh exact unclaimed '+descriptor.name+' UUID/count within the field is required')
         hurt = observation.get('recent_hurt_at')
         if type(hurt) is not int:
             raise FarmWait('WAIT_SAFETY', 'Original injury marker is unavailable')
@@ -52,7 +54,7 @@ def make_pickup(center, *, radius=2, checkpoint=lambda: None):
                     'scope': 'known UUID no longer loaded; helper must prove actual pickup'}
         actual = current.get('stack') or {}
         if (current.get('type') != 'minecraft:item' or current.get('id') != drop.get('id')
-                or actual.get('item') != POTATO or type(actual.get('count')) is not int
+                or actual.get('item') != stack['item'] or type(actual.get('count')) is not int
                 or actual['count'] != stack['count'] or not bounded(current.get('pos'))
                 or math.dist(current['pos'], drop['pos']) > 1
                 or not point(fresh.get('pos')) or math.dist(fresh['pos'], home) > .65):

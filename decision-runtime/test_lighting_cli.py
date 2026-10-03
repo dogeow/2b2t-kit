@@ -27,6 +27,7 @@ def snapshot(count=8, tick=100):
             'control_revision': 7, 'manual_movement': False, 'guard_armed': True,
             'guard_pve_only': True, 'flight': True, 'health': 20, 'food': 20,
             'recent_hurt_at': 0, 'inventory': inventory(count), 'entities': [],
+            'hand': {'item': lighting.TORCH, 'count': count},
             'pos': [2.5, 65.5, 2.5]}
 
 
@@ -156,6 +157,59 @@ class LightingPlanningTests(unittest.TestCase):
         for phase in (None, 'running', 'waiting'):
             with self.assertRaisesRegex(lighting.LightingBlocked, 'Complete'):
                 lighting.scan_cells({**base, 'phase': phase}, LOW, HIGH, 'world-a')
+
+    def test_large_movement_authorization_is_not_one_native_scan(self):
+        movement = {'min': [-1000, 60, -1000], 'max': [1000, 142, 1000]}
+        self.assertEqual(lighting.validate_movement_bounds(movement, LOW, HIGH),
+                         ((-1000, 60, -1000), (1000, 142, 1000)))
+        with self.assertRaisesRegex(ValueError, '50,000'):
+            lighting.bounds(movement['min'], movement['max'])
+        for bad in ({'min': [1, 60, 0], 'max': [4, 90, 4]},
+                    {'min': [0, 60, 0], 'max': [4, 320, 4]},
+                    {'min': [False, 60, 0], 'max': [4, 90, 4]}):
+            with self.assertRaises(ValueError):
+                lighting.validate_movement_bounds(bad, LOW, HIGH)
+
+    def test_explicit_movement_box_allows_actual_guard_drift_without_expanding_targets(self):
+        class PositionClient(FakeClient):
+            def __init__(self, root):
+                super().__init__(root)
+                self.pos, self.scans, self.moves = [-.1, 65.5, 2.5], [], []
+            def request(self, op, **params):
+                if op == 'snapshot':
+                    self.tick += 1
+                    return {**snapshot(tick=self.tick), 'pos': self.pos}
+                if op == 'scan':
+                    self.scans.append(params)
+                    return {'phase': 'done', 'world_session': self.world, 'blocks': [],
+                            'scan_entity_scope': ENTITY_SCOPE_AT_SCAN_END, 'scan_entities': []}
+                return super().request(op, **params)
+            def checked(self, op, **params):
+                if op == 'navigate':
+                    self.moves.append(params)
+                    self.pos = params['target']
+                    return {'phase': 'done'}
+                return super().checked(op, **params)
+        with tempfile.TemporaryDirectory() as folder:
+            client = PositionClient(folder)
+            default = lighting.LightingRun(client, LOW, HIGH, 1, folder, snapshot())
+            with self.assertRaisesRegex(lighting.LightingBlocked, 'movement bounds'):
+                default.move([2.5, 65.5, 2.5])
+            self.assertEqual(client.moves, [])
+            self.assertEqual(client.scans, [])
+            runner = lighting.LightingRun(client, LOW, HIGH, 1, folder, snapshot(),
+                                          movement_bounds={'min': [-2, 60, -2], 'max': [6, 90, 6]})
+            runner.move([2.5, 65.5, 2.5])
+            self.assertEqual(len(client.moves), 1)
+            self.assertTrue(client.moves[0]['air_only'])
+            self.assertEqual(client.scans[0]['min'], [-1, 65, 2])
+            candidate = {'support': [5, 63, 2], 'target': [5, 64, 2],
+                         'support_state': 'Block{minecraft:sand}'}
+            with self.assertRaisesRegex(lighting.LightingBlocked, 'inconsistent placement'):
+                runner.place(candidate, 0)
+            self.assertEqual(client.interactions, 0)
+            self.assertEqual(runner.report['bounds']['max'], list(HIGH))
+            self.assertEqual(runner.report['movement_bounds']['max'], [6, 90, 6])
 
     def test_protected_support_or_target_never_becomes_candidate(self):
         cells = {(2, 63, 2): grass()}
@@ -307,12 +361,83 @@ class LightingPlanningTests(unittest.TestCase):
             self.assertIn('no_dedicated_ack', runner.report['evidence_scope'])
             self.assertEqual(json.loads(runner.intent_path(candidate['target']).read_text())['state'], 'verified')
 
+    def test_guard_displacement_reapproaches_before_any_interaction(self):
+        class DisplacedClient(FakeClient):
+            def __init__(self, root):
+                super().__init__(root)
+                self.pos = [4.36, 67.14, 2.86]
+                self.order = []
+            def request(self, op, **params):
+                if op == 'snapshot':
+                    self.tick += 1
+                    return {**snapshot(7 if self.interacted else 8, self.tick), 'pos': self.pos}
+                if op == 'scan':
+                    rows = [grass()]
+                    if self.interacted:
+                        rows += [{'pos': [2, 64, 2], 'state': 'Block{minecraft:torch}'}]
+                    rows = [row for row in rows if all(params['min'][i] <= row['pos'][i] <= params['max'][i]
+                                                      for i in range(3))]
+                    return {'phase': 'done', 'world_session': self.world, 'blocks': rows,
+                            'scan_entity_scope': ENTITY_SCOPE_AT_SCAN_END, 'scan_entities': []}
+                return super().request(op, **params)
+            def checked(self, op, **params):
+                self.order.append(op)
+                if op == 'navigate':
+                    self.pos = params['target']
+                    return {'phase': 'done', 'id': 'position-reapproach'}
+                if op == 'interact':
+                    self.asserted_dispatch_pos = list(self.pos)
+                return super().checked(op, **params)
+        with tempfile.TemporaryDirectory() as folder:
+            client = DisplacedClient(folder)
+            runner = lighting.LightingRun(client, LOW, HIGH, 1, folder, snapshot())
+            candidate = lighting.candidates({(2, 63, 2): grass()}, LOW, HIGH)[0]
+            with patch('lighting_cli.time.sleep'):
+                runner.place(candidate, 0)
+            self.assertEqual(client.order, ['navigate', 'select_item', 'interact'])
+            self.assertEqual(client.asserted_dispatch_pos, [2.5, 65.5, 2.5])
+            self.assertEqual(client.interactions, 1)
+            self.assertEqual(runner.report['station_reapproaches'][0]['route'], 'fresh_clear_sweep')
+
+    def test_repeated_station_changes_never_create_intent_or_click_old_target(self):
+        with tempfile.TemporaryDirectory() as folder:
+            client = FakeClient(folder)
+            runner = lighting.LightingRun(client, LOW, HIGH, 1, folder, snapshot())
+            candidate = lighting.candidates({(2, 63, 2): grass()}, LOW, HIGH)[0]
+            displaced = {**snapshot(), 'pos': [4.2, 67.5, 2.5]}
+            with patch.object(runner, 'wait_for_guard', return_value=displaced), \
+                    patch.object(runner, 'approach_station') as approach:
+                with self.assertRaisesRegex(lighting.LightingBlocked, 'repeatedly changed'):
+                    runner.place(candidate, 0)
+            self.assertEqual(approach.call_count, 3)
+            self.assertEqual(client.interactions, 0)
+            self.assertFalse(runner.intent_path(candidate['target']).exists())
+
+    def test_movement_to_old_station_requires_fresh_clear_sweep(self):
+        class BlockedRun(lighting.LightingRun):
+            def move(self, target):
+                raise lighting.LightingBlocked('Fresh movement body sweep is occupied')
+        with tempfile.TemporaryDirectory() as folder:
+            client = FakeClient(folder)
+            runner = BlockedRun(client, LOW, HIGH, 1, folder, snapshot())
+            candidate = lighting.candidates({(2, 63, 2): grass()}, LOW, HIGH)[0]
+            displaced = {**snapshot(), 'pos': [4.2, 67.5, 2.5]}
+            with (
+                patch.object(runner, 'wait_for_guard', return_value=displaced),
+                patch.object(runner, 'scan', return_value={'blocks': [
+                    {'pos': [3, 66, 2], 'state': 'Block{minecraft:stone}'}], 'scan_entities': []}),
+            ):
+                with self.assertRaisesRegex(lighting.LightingBlocked, 'movement body sweep'):
+                    runner.place(candidate, 0)
+            self.assertEqual(client.interactions, 0)
+            self.assertFalse(runner.intent_path(candidate['target']).exists())
+
     def test_unknown_interaction_persists_and_blocks_replay(self):
         with tempfile.TemporaryDirectory() as folder:
             client = FakeClient(folder, unknown=True)
             runner = lighting.LightingRun(client, LOW, HIGH, 1, folder, snapshot())
             candidate = lighting.candidates({(2, 63, 2): grass()}, LOW, HIGH)[0]
-            with patch('lighting_cli.time.monotonic', side_effect=[0, 0, 7]), patch('lighting_cli.time.sleep'):
+            with patch('lighting_cli.time.monotonic', side_effect=[0, 0, 0, 0, 7]), patch('lighting_cli.time.sleep'):
                 with self.assertRaisesRegex(lighting.LightingBlocked, 'will never repeat'):
                     runner.place(candidate, 0)
             self.assertEqual(client.interactions, 1)
@@ -321,36 +446,26 @@ class LightingPlanningTests(unittest.TestCase):
                 lighting.LightingRun(client, LOW, HIGH, 1, folder, snapshot()).reject_unknown_intents()
             self.assertEqual(client.interactions, 1)
 
-    def test_uneven_ground_uses_separate_vertical_and_high_transit(self):
-        class UnevenRun(lighting.LightingRun):
-            def __init__(self, client, folder):
-                super().__init__(client, LOW, HIGH, 2, folder, snapshot())
-                self.actual_pos = [2.5, 88, 2.5]
-                self.moves, self.scene_count = [], 0
-            def fresh(self, work=True):
-                return {**snapshot(), 'pos': self.actual_pos}
-            def scan(self, low, high, name=None):
-                rows = ([grass()] if self.scene_count == 0 else
-                        [grass(x=3, y=64, z=3)] if self.scene_count == 1 else [])
-                self.scene_count += 1
-                return {'phase': 'done', 'world_session': self.c.world, 'blocks': rows,
-                        'scan_entity_scope': ENTITY_SCOPE_AT_SCAN_END, 'scan_entities': []}
-            def move(self, target):
-                self.moves.append(list(target))
-                self.actual_pos = list(target)
-            def place(self, candidate, index):
-                self.report['placed'].append({'target': candidate['target']})
+    def test_batch_uses_one_initial_scan_and_low_route_not_fixed_high_transit(self):
+        class PlannedRun(lighting.LightingRun):
+            def __init__(self,client,folder):
+                super().__init__(client,LOW,HIGH,2,folder,snapshot())
+                self.actual_pos=[2.5,70,2.5];self.moves=[];self.whole_scans=0
+            def fresh(self,work=True):return {**snapshot(),'pos':self.actual_pos}
+            def scan(self,low,high,name=None):
+                self.whole_scans+=1
+                return {'phase':'done','world_session':self.c.world,'blocks':[grass(),grass(x=3,y=64,z=3)],
+                    'scan_entity_scope':ENTITY_SCOPE_AT_SCAN_END,'scan_entities':[]}
+            def move(self,target):self.moves.append(list(target));self.actual_pos=list(target)
+            def place(self,candidate,index):
+                self.report['placed'].append({'target':candidate['target']})
+                return {'world_session':self.c.world,'blocks':[{'pos':candidate['target'],'state':'Block{minecraft:torch}'}]}
         with tempfile.TemporaryDirectory() as folder:
-            runner = UnevenRun(FakeClient(folder), folder)
-            runner.work()
-            self.assertEqual(len(runner.report['placed']), 2)
-            # After the first low torch, the next transit first rises vertically
-            # in the same column, then moves horizontally before descending.
-            self.assertEqual(runner.moves[3], [2.5, 88, 2.5])
-            self.assertEqual(runner.moves[4], [3.5, 88, 2.5])
-            self.assertEqual(runner.moves[5], [3.5, 88, 3.5])
-            self.assertEqual(runner.moves[6], [3.5, 66.5, 3.5])
-            self.assertEqual(runner.report['remaining_unprotected_risk'], 0)
+            runner=PlannedRun(FakeClient(folder),folder);runner.work()
+            self.assertEqual(2,runner.whole_scans)
+            self.assertEqual(1,len(runner.report['placed']))
+            self.assertTrue(runner.moves);self.assertLessEqual(max(p[1] for p in runner.moves),70)
+            self.assertTrue(json.loads((Path(folder)/'batch-plan.json').read_text())['prediction_only'])
 
     def test_guard_defense_waits_without_work_input_and_then_resumes(self):
         busy = {**snapshot(tick=100), 'guard_busy': True,
@@ -374,13 +489,27 @@ class LightingPlanningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             client = ObservedClient(folder, [busy])
             runner = lighting.LightingRun(client, LOW, HIGH, 1, folder, snapshot())
-            with patch('lighting_cli.time.monotonic', side_effect=[0, 21]), patch('lighting_cli.time.sleep'):
+            with patch('lighting_cli.time.monotonic', side_effect=[0, 61]), patch('lighting_cli.time.sleep'):
                 with self.assertRaisesRegex(lighting.LightingBlocked, 'stayed busy'):
                     runner.wait_for_guard()
             self.assertEqual(client.operations, ['snapshot'])
             self.assertEqual(client.interactions, 0)
             self.assertEqual(client.finished, 0)
             self.assertEqual(runner.report['guard_waits'][0]['outcome'], 'bounded_wait_unresolved')
+
+    def test_normal_thirty_second_combat_waits_until_dead_without_lighting_input(self):
+        hostile={'type':'minecraft:drowned','hostile':True,'health':20,'alive':True}
+        first={**snapshot(tick=100),'entities':[hostile]}
+        second={**snapshot(tick=101),'entities':[hostile]}
+        dead={**snapshot(tick=102),'entities':[{**hostile,'health':0}]}
+        with tempfile.TemporaryDirectory() as folder:
+            client=ObservedClient(folder,[first,second,dead])
+            runner=lighting.LightingRun(client,LOW,HIGH,1,folder,snapshot())
+            with patch('lighting_cli.time.monotonic',side_effect=[0,21,33]),patch('lighting_cli.time.sleep'):
+                observed=runner.wait_for_guard()
+            self.assertEqual(dead,observed)
+            self.assertEqual(['snapshot','snapshot','snapshot'],client.operations)
+            self.assertEqual(0,client.interactions);self.assertEqual(0,client.finished)
 
     def test_guard_wait_preserves_manual_health_and_world_stop_priority(self):
         for change in ({'manual_movement': True}, {'world_session': 'world-b'},
@@ -454,12 +583,23 @@ class LightingPlanningTests(unittest.TestCase):
             self.assertFalse(runner.report['park_native_confirmed'])
 
     def test_unverified_park_lease_never_releases_client(self):
+        class Ascending(FakeClient):
+            def __init__(self, root):
+                super().__init__(root);self.pos=[2.5,65.5,2.5];self.rises=0
+            def request(self,op,**params):
+                if op=='snapshot':
+                    self.tick+=1;return {**snapshot(tick=self.tick),'pos':list(self.pos),
+                        'entities':[{'type':'minecraft:spider','hostile':True,'health':16}] if self.pos[1]<85 else []}
+                return super().request(op,**params)
+            def _finish_vertical(self,state):
+                self.rises+=1;self.pos[1]=min(self.park_target[1],self.pos[1]+48)
         with tempfile.TemporaryDirectory() as folder:
-            client = FakeClient(folder)
-            runner = lighting.LightingRun(client, LOW, HIGH, 1, folder, snapshot())
-            with self.assertRaisesRegex(lighting.LightingBlocked, 'Native park lease unproven'):
-                runner.park()
-            self.assertEqual(client.finished, 0)
+            client=Ascending(folder)
+            runner=lighting.LightingRun(client,LOW,HIGH,1,folder,snapshot())
+            with patch.object(runner,'wait_for_guard',side_effect=AssertionError('Escape must not wait for enemies')):
+                with self.assertRaisesRegex(lighting.LightingBlocked,'Native park lease unproven'):
+                    runner.park()
+            self.assertGreater(client.rises,0);self.assertEqual(client.finished,0)
 
 
 if __name__ == '__main__':

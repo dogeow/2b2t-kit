@@ -4,6 +4,7 @@ No controller, model, UI, reconnection or safety unlock is created here. Unknown
 intents remain in the fixed cycle directory and can never be silently replayed.
 """
 from collections import Counter
+from copy import deepcopy
 import itertools
 import json
 import math
@@ -86,7 +87,9 @@ class _Stages:
             raise FarmWait('WAIT_SCAN','Actual adult/baby metadata is unavailable')
         return r,rows
     def start(self,kind,**params):
-        s=self.safe();self.book['pending']={'operation':kind,'before_time':s['time'],'params':params};self.save()
+        s=self.safe();self.book['pending']={'operation':kind,'before_time':s['time'],'params':params,
+            'before_counts':dict(_counts(s)), 'before_revision':s.get('control_revision'),
+            'before_inventory':deepcopy(s['inventory']), 'before_cursor':deepcopy(s.get('menu',{}).get('cursor'))};self.save()
     def finish_action(self,receipt):
         self.book['receipts'].append(receipt);self.book['pending']=None;self.save()
     def move(self,target):

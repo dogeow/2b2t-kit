@@ -70,7 +70,69 @@ class MaterialAirArrivalPolicyTest {
         assertTrue(MaterialAirArrivalPolicy.motion(new Vec3(.2,0,0)).horizontal());
         assertFalse(MaterialAirArrivalPolicy.motion(new Vec3(.02,.02,.02)).moving());
         var steep=MaterialAirArrivalPolicy.motion(new Vec3(4,-8,3));
-        assertTrue(steep.vertical());assertTrue(steep.horizontal());assertTrue(steep.moving());
+        assertFalse(steep.vertical());assertTrue(steep.horizontal());assertTrue(steep.moving());
+        assertTrue(MaterialAirArrivalPolicy.motion(new Vec3(.06,-20,0)).vertical());
+        assertFalse(MaterialAirArrivalPolicy.motion(new Vec3(.06,-20,0)).horizontal());
+    }
+    @Test void observedDescentStartAlignsSmallHorizontalErrorBeforeDescending(){
+        Vec3 error=observedDescentStart();
+        double horizontal=Math.hypot(error.x,error.z);
+        assertEquals(.06808229801409094,horizontal,1e-12);
+        assertEquals(-78.96897348378408,error.y,1e-12);
+        var motion=MaterialAirArrivalPolicy.motion(error);
+        assertTrue(motion.horizontal());assertFalse(motion.vertical());
+        assertTrue(motion.speed()*10<horizontal,"Meteor's horizontal step must not cross the target");
+    }
+    @Test void observedOscillationBrakesHorizontalMotionBeforeFurtherDescent(){
+        Vec3 error=observedDescentOscillation();
+        double horizontal=Math.hypot(error.x,error.z);
+        assertEquals(.7115364034543242,horizontal,1e-12);
+        assertEquals(-7.768973483783075,error.y,1e-12);
+        var motion=MaterialAirArrivalPolicy.motion(error);
+        assertTrue(motion.horizontal());assertFalse(motion.vertical());
+        assertTrue(motion.speed()*10<horizontal,"The observed overshoot must converge rather than reverse again");
+    }
+    @Test void precisionConvergesWithMeteorVelocityStepsAndStillRequiresSettlement(){
+        for(Vec3 initial:List.of(observedDescentStart(),observedDescentOscillation(),
+                new Vec3(4,-8,3),new Vec3(4,8,3),new Vec3(0,-20,0))){
+            Vec3 error=initial;
+            var settle=new MaterialAirArrivalPolicy.Settlement(.25);
+            int quietTicks=0;
+            for(int tick=0;tick<512&&!settle.done();tick++){
+                var motion=MaterialAirArrivalPolicy.motion(error);
+                assertFalse(motion.horizontal()&&motion.vertical(),"Precision must move on one axis at a time");
+                // Current Meteor Velocity mode applies speed * 10 horizontally
+                // and speed * 5 vertically when vertical-speed-match is false.
+                Vec3 step=Vec3.ZERO;
+                double horizontal=Math.hypot(error.x,error.z);
+                if(motion.horizontal()){
+                    assertTrue(motion.speed()*10<horizontal,"Horizontal correction must not overshoot");
+                    step=new Vec3(error.x/horizontal*motion.speed()*10,0,error.z/horizontal*motion.speed()*10);
+                }else if(motion.vertical()){
+                    assertTrue(horizontal<=.06,"Vertical movement must retain the aligned column");
+                    assertTrue(motion.speed()*5<Math.abs(error.y),"Vertical correction must not overshoot");
+                    step=new Vec3(0,Math.copySign(motion.speed()*5,error.y),0);
+                }else quietTicks++;
+                Vec3 next=error.subtract(step);
+                assertTrue(Math.hypot(next.x,next.z)<=horizontal+1e-12);
+                assertTrue(Math.abs(next.y)<=Math.abs(error.y)+1e-12);
+                error=next;
+                settle.observe(error,step,motion.moving()?step:HOVER_GRAVITY);
+                if(quietTicks<MaterialAirArrivalPolicy.STABLE_TICKS+MaterialAirArrivalPolicy.RESTORED_TICKS)
+                    assertFalse(settle.done(),"Arrival still needs quiet observations before and after restoring Flight");
+            }
+            assertTrue(settle.done(),"Precision did not converge from "+initial);
+            assertTrue(MaterialAirArrivalPolicy.inside(error,.25));
+            assertEquals(1,settle.restorations());
+        }
+    }
+    private static Vec3 observedDescentStart(){
+        return new Vec3(761029.5-761029.4574863483,65.6-144.56897348378408,
+            797869.5-797869.4468230433);
+    }
+    private static Vec3 observedDescentOscillation(){
+        return new Vec3(761029.5-761029.9176651334,65.6-73.36897348378307,
+            797869.5-797870.0760554572);
     }
     private ClassNode code(String name)throws Exception{
         var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/"+name+".class")){

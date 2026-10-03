@@ -25,6 +25,14 @@ final class GuardEscapePolicy {
             && Math.hypot(targetX-x,targetZ-z)<=2;
     }
 
+    /** Keep the admitted near-vertical route eligible through braking/settlement. */
+    static boolean executingRise(boolean admitted,double x,double y,double z,
+                                  double targetX,double targetY,double targetZ){
+        return admitted&&Double.isFinite(x)&&Double.isFinite(y)&&Double.isFinite(z)
+            &&Double.isFinite(targetX)&&Double.isFinite(targetY)&&Double.isFinite(targetZ)
+            &&targetY>=y-1&&targetY-y<=64&&Math.hypot(targetX-x,targetZ-z)<=2;
+    }
+
     static boolean underwaterAirReturn(boolean materialLease, boolean guardArmed,
                                        boolean underwater, boolean clearColumn,
                                        double x, double y, double z,

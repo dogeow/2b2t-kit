@@ -14,6 +14,13 @@ class StorageLifecycleWiringTest {
         var first=java.util.stream.StreamSupport.stream(instructions.spliterator(),false).filter(i->i instanceof MethodInsnNode).map(i->(MethodInsnNode)i).findFirst().orElseThrow();
         assertEquals("dev/twob2tkit/storage/StorageLifecycle",first.owner);assertEquals("tick",first.name);
         assertTrue(calls("storage/ContainerAssistant","recordSnapshot").contains("capture"));
+        var packetCalls=calls("storage/StorageLifecycle","blockUpdated");
+        assertTrue(packetCalls.contains("markBlockUpdated"));
+        for(String forbidden:List.of("observe","world","save","hasChunkAt","getBlockState","archive")){
+            assertFalse(packetCalls.contains(forbidden),forbidden);
+            assertFalse(calls("storage/StorageLifecycle","markBlockUpdated").contains(forbidden),forbidden);
+        }
+        assertTrue(calls("storage/StorageLifecycle","tick").contains("refresh"));
     }
     @Test void supplyPermissionCandidateAndExplicitCollectionAllCheckVerifiedScope()throws Exception{
         for(String name:List.of("sourceEnabled","toggleSource","sources","approvedSource"))assertTrue(calls("automation/BuildSupplyTask",name).contains("usable"),name);
@@ -23,5 +30,10 @@ class StorageLifecycleWiringTest {
         assertFalse(calls("KitConfig","pruneMissingStorage").contains("removeIf"));assertTrue(calls("KitConfig","pruneMissingStorage").contains("refresh"));
         assertTrue(calls("KitConfig","upsertStorageSnapshot").containsAll(List.of("scopedKey","inherit")));
         assertTrue(calls("KitConfig","patchStorageLabels").contains("scopedKey"));
+        assertTrue(calls("KitConfig","upsertStorageSnapshot").contains("trim"));
+    }
+    @Test void realWithdrawalFailureMarksCacheDirtyWhileActualTransferStillUsesServerSlots()throws Exception{
+        assertTrue(calls("automation/BuildSupplyTask","fail").contains("markContentsDirty"));
+        assertTrue(calls("automation/BuildSupplyTask","tick").containsAll(List.of("getSlot","confirmed","handleContainerInput")));
     }
 }

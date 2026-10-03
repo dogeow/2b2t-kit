@@ -37,3 +37,8 @@ python -B lighting_cli.py --game-dir /Applications/.minecraft/versions/26.1.2 \
 - `finish()` 只调用一次；之后最多 4 秒只读观察。仅相同 world/task/lease、原 revision 或原 revision+1、原生 `controller_finished / KEEP_PVE_GUARD`、有效 parking 租约与实际到达共同成立才记录完成。
 - 外部租约、继续增长的 revision、手动接管、锁开启或世界切换不会被当成发布延迟；超时保留失败，不重发 cleanup 或旧火把。
 - 健康防护忙时 `MaterialClient.finish()` 的错误离线回退由共享客户端修复处理，本 CLI 不绕过安全停靠证明。
+
+保护等待可能移动角色，不能继续沿用之前的点击站位。临放前最多 3 次重新校验：先等待保护，确认实际站位；近距离使用即时 AIR/实体扫掠重新靠近，无法直达才转高空；重新查支撑列、光照、库存与目标实体。在写 interaction intent 前最后再核对站位、防护状态、所持火把和数量。重复移位、路径阻挡或位置越出授权框时停止，不生成新放置 intent、不点击旧目标。历史未知 intent 保留，不按一般 error 自动清除。
+
+
+可以用 `--movement-bounds MIN_X MIN_Y MIN_Z MAX_X MAX_Y MAX_Z` 显式授权比投放 tile 更大的走位框；Python 对应 `LightingRun(..., movement_bounds={"min":[...],"max":[...]})`。默认与投放框相同。防护轻微搬出 tile 后，可以在授权框内重新到位；候选、目标和放置 intent 仍只能在原投放框内。整体走位授权框不当成一次扫描套 50,000 格上限，每个实际走位扫掠仍单独限额、验证加载方块和实体，并使用原生 air_only 导航。

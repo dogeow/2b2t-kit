@@ -1,10 +1,11 @@
-"""Bounded potato planting with an injected, already-owned MaterialClient.
+"""Bounded potato or wheat planting with an injected, already-owned MaterialClient.
 
 No controller, movement, water placement, harvesting, reconnect or safety unlock
 is created here. Generic native interact supports hoe and crop use, but exposes
 no per-cell server ACK. Completion is explicitly stable client observation.
 """
 from collections import Counter
+from dataclasses import dataclass
 import hashlib
 import json
 import math
@@ -14,6 +15,42 @@ import re
 from kit_runtime.journal import write_json
 
 POTATO = 'minecraft:potato'
+WHEAT_SEEDS = 'minecraft:wheat_seeds'
+
+
+@dataclass(frozen=True)
+class Crop:
+    name: str
+    item: str
+    block: str
+    title: str
+    quantity_key: str
+    before_key: str
+    reaudit_key: str
+    wait_code: str
+    label: str
+    age_max: int = 7
+    harvest_item: str = POTATO
+    harvest_byproducts: tuple[str, ...] = ('minecraft:poisonous_potato',)
+
+    @property
+    def journal_prefix(self):return self.name+'-farm-'
+
+
+CROPS = {
+    'potato': Crop('potato',POTATO,'potatoes','土豆田','potatoes','potatoes_before',
+                   'current_carried_potatoes','WAIT_POTATO','potatoes'),
+    'wheat': Crop('wheat',WHEAT_SEEDS,'wheat','小麦田','seeds','seeds_before',
+                  'current_carried_seeds','WAIT_SEEDS','wheat seeds',
+                  harvest_item='minecraft:wheat',harvest_byproducts=(WHEAT_SEEDS,)),
+}
+
+
+def crop_descriptor(value='potato'):
+    name=value.name if isinstance(value,Crop) else value.get('crop','potato') if isinstance(value,dict) else value
+    if not isinstance(name,str) or name not in CROPS:
+        raise ValueError('Planting only supports crop=potato or crop=wheat')
+    return CROPS[name]
 HOES = {'minecraft:' + name + '_hoe' for name in
         ('wooden', 'stone', 'iron', 'golden', 'diamond', 'netherite')}
 ENTITY_SCOPE = 'current_client_loaded_rendering_entities_intersecting_scan_AABB_not_whole_herd'
@@ -46,6 +83,7 @@ def hydration_covers(soil, water):
 def plan(request):
     if not isinstance(request, dict) or request.get('authorized') is not True:
         raise ValueError('An explicitly authorized farm request is required')
+    crop=crop_descriptor(request)
     center = request.get('center')
     if (not isinstance(center, list) or len(center) != 3
             or any(type(n) is not int or abs(n) > 30_000_000 for n in center)
@@ -53,15 +91,18 @@ def plan(request):
         raise ValueError('Farm center must be bounded integer [x, floor_y, z]')
     radius = request.get('radius', 2)
     if type(radius) is not int or not 1 <= radius <= 2:
-        raise ValueError('Potato pilot radius is limited to 1..2')
+        raise ValueError('Farm pilot radius is limited to 1..2')
     x, y, z = center
     cells = [[a, y, b] for a in range(x-radius, x+radius+1)
              for b in range(z-radius, z+radius+1) if (a, b) != (x, z)]
     assert all(hydration_covers(p, center) for p in cells)
-    return {'center': center[:], 'radius': radius, 'cells': cells,
+    layout={'center': center[:], 'radius': radius, 'cells': cells,
             'scan_min': [x-radius-1, y-1, z-radius-1],
             'scan_max': [x+radius+1, y+2, z+radius+1],
-            'potatoes': len(cells), 'maximum_interactions': 2*len(cells)}
+            crop.quantity_key: len(cells), 'maximum_interactions': 2*len(cells)}
+    # Keep the original potato layout hash and journals byte-for-byte compatible.
+    if crop.name!='potato':layout['crop']=crop.name
+    return layout
 
 
 def _key(pos):
@@ -121,6 +162,7 @@ def _gate(c, state, hurt_at):
 
 def survey_rows(reply, layout, records, pending=None):
     """Sparse native AIR is valid only inside this successfully scanned volume."""
+    descriptor=crop_descriptor(layout)
     if (not isinstance(reply.get('blocks'), list) or reply.get('unloaded_chunks', 0)
             or not valid_entity_scope(reply.get('scan_entity_scope'))
             or not isinstance(reply.get('scan_entities'), list)):
@@ -167,7 +209,7 @@ def survey_rows(reply, layout, records, pending=None):
             raise FarmWait('WAIT_LIGHT', 'Crop cell needs actual block light >=9 for reliable survival/growth')
         known = records.get(_key(pos), {}).get('planted') is True
         expected_crop = pending and pending.get('operation') == 'plant' and pending.get('pos') == pos
-        if crop and not ((known or expected_crop) and farmland and _properties(crop, 'potatoes', 'age', 7) is not None):
+        if crop and not ((known or expected_crop) and farmland and _properties(crop, descriptor.block, 'age', descriptor.age_max) is not None):
             raise FarmWait('WAIT_AIR', 'Unowned crop or obstacle occupies a planting cell')
         if known and crop is None:
             raise FarmWait('WAIT_RECONCILE', 'A previously planted crop is missing; no automatic reseed')
@@ -186,13 +228,15 @@ class _GuardedClient:
         return reply
 
 
-def _survey(proxy, layout, book):
+def _survey(proxy, layout, book, *, existing_farmland_only=False):
     before = proxy.status()
     reply = proxy.c.request('scan', min=layout['scan_min'], max=layout['scan_max'], details=True)
     _gate(proxy.c, reply, proxy.hurt)
     if reply['time'] <= before['time']:
         raise FarmWait('WAIT_SCAN', 'Scan is not a later native observation')
     by = survey_rows(reply, layout, book['cells'], book.get('pending'))
+    if existing_farmland_only and any(_properties(by.get(tuple(pos),{}),'farmland','moisture',7) is None for pos in layout['cells']):
+        raise FarmWait('WAIT_EXISTING_FARMLAND','Idle planting requires every registered cell to already be actual farmland; no hoe or expansion')
     return reply, by
 
 
@@ -204,17 +248,22 @@ def _hand(proxy, item, slot):
     return state
 
 
-def _potato(proxy, state=None):
+def _seed(proxy, crop, state=None):
+    crop=crop_descriptor(crop)
     state = proxy.status() if state is None else state; hand = state.get('hand') or {}
-    if hand.get('item') == POTATO and hand.get('count', 0) >= 1:
+    if hand.get('item') == crop.item and hand.get('count', 0) >= 1:
         return state
-    source = max((r for r in state['inventory'] if r['slot'] < 36 and r['item'] == POTATO and r['count'] > 0),
+    source = max((r for r in state['inventory'] if r['slot'] < 36 and r['item'] == crop.item and r['count'] > 0),
                  key=lambda r:r['count'], default=None)
     if source is None:
-        raise FarmWait('WAIT_POTATO', 'No actual carried planting potatoes')
+        raise FarmWait(crop.wait_code, 'No actual carried planting '+crop.label)
     # Ordinary carried stacks are supported by native BlockItem.useOn. Re-select
     # only when the previous carried stack was exhausted or the hand changed.
-    return _hand(proxy, POTATO, source['slot'])
+    return _hand(proxy, crop.item, source['slot'])
+
+
+def _potato(proxy, state=None):
+    return _seed(proxy,'potato',state)
 
 
 def _hoe(proxy, remaining):
@@ -227,18 +276,19 @@ def _hoe(proxy, remaining):
     return _hand(proxy, tool['item'], tool['slot'])
 
 
-def action_proved(operation, pos, before, after, rows):
+def action_proved(operation, pos, before, after, rows, *, crop='potato'):
+    crop=crop_descriptor(crop)
     soil = rows.get(tuple(pos), {}); above = rows.get((pos[0], pos[1]+1, pos[2]))
     a, b = _counts(before), _counts(after)
     if operation == 'plant':
-        expected = a.copy(); expected[POTATO] -= 1
-        if not expected[POTATO]: del expected[POTATO]
+        expected = a.copy(); expected[crop.item] -= 1
+        if not expected[crop.item]: del expected[crop.item]
         hand_a, hand_b = before.get('hand') or {}, after.get('hand') or {}
         left = hand_a.get('count', 0)-1
         return (b == expected and _properties(soil, 'farmland', 'moisture', 7) is not None
-                and above is not None and _properties(above, 'potatoes', 'age', 7) is not None
-                and hand_a.get('item') == POTATO and left >= 0 and hand_b.get('count') == left
-                and (left == 0 and hand_b.get('item') == 'minecraft:air' or left > 0 and hand_b.get('item') == POTATO)
+                and above is not None and _properties(above, crop.block, 'age', crop.age_max) is not None
+                and hand_a.get('item') == crop.item and left >= 0 and hand_b.get('count') == left
+                and (left == 0 and hand_b.get('item') == 'minecraft:air' or left > 0 and hand_b.get('item') == crop.item)
                 and before.get('selected_slot') == after.get('selected_slot'))
     hand_a, hand_b = before.get('hand') or {}, after.get('hand') or {}
     return (a == b and _properties(soil, 'farmland', 'moisture', 7) is not None and above is None
@@ -247,15 +297,16 @@ def action_proved(operation, pos, before, after, rows):
             and type(hand_a.get('durability')) is int and hand_b.get('durability') == hand_a['durability']-1)
 
 
-def run(c, request, out, checkpoint=lambda: None, *, max_cells=24):
+def run(c, request, out, checkpoint=lambda: None, *, max_cells=24, existing_farmland_only=False):
     """Plant up to max_cells (1..24) using this caller's live lease; never harvest."""
-    layout = plan(request)
+    layout = plan(request);crop=crop_descriptor(request)
+    if type(existing_farmland_only)is not bool:raise ValueError('Existing farmland policy must be boolean')
     if type(max_cells) is not int or not 1 <= max_cells <= 24:
         raise ValueError('Farm cell budget is limited to 1..24')
     directory = Path(out); directory.mkdir(parents=True, exist_ok=True)
     scope = {'server': c.server.strip().lower().removesuffix(':25565'), 'dimension': 'minecraft:overworld', 'layout': layout}
     identity = hashlib.sha256(json.dumps(scope, sort_keys=True).encode()).hexdigest()[:16]
-    path = directory / ('potato-farm-' + identity + '.json')
+    path = directory / (crop.journal_prefix + identity + '.json')
     book = json.loads(path.read_text()) if path.exists() else {'schema': 1, 'scope': scope, 'world_session': c.world, 'cells': {}, 'pending': None}
     def result(code=None, detail=''):
         planted = sum(r.get('planted') is True for r in book['cells'].values())
@@ -264,6 +315,16 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=24):
                 'verification_scope': PROOF_SCOPE, 'server_verified': False, 'automatic_retry_allowed': False}
     if book.get('scope') != scope or book.get('world_session') != c.world:
         return result('WAIT_CONTROL', 'Saved farm world/scope changed; explicit recovery is required')
+    # Switching crop cannot bypass an unknown use at the same field. CLI also
+    # checks the registered counterpart when crop journals use separate outputs.
+    for other in directory.glob('*-farm-*.json'):
+        if other==path:continue
+        if other.stat().st_size>262144:raise ValueError('Farm journal is too large to safely check')
+        previous=json.loads(other.read_text());old_scope=previous.get('scope') or {};old_layout=old_scope.get('layout') or {}
+        if (previous.get('pending') and old_scope.get('server')==scope['server'] and old_scope.get('dimension')==scope['dimension']
+                and old_layout.get('crop','potato')!=crop.name
+                and {tuple(p) for p in old_layout.get('cells',[])} & {tuple(p) for p in layout['cells']}):
+            return result('WAIT_RECONCILE','Another crop has an unresolved action at this field; changing crop cannot replay it')
     if book.get('pending'):
         return result('WAIT_RECONCILE', 'An inventory/till/plant action is unresolved; no repeated action sent')
     try:
@@ -272,25 +333,26 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=24):
         if type(hurt) is not int:
             raise FarmWait('WAIT_SAFETY', 'Recent injury marker is unavailable')
         proxy = _GuardedClient(c, checkpoint, hurt); _gate(c, initial, hurt)
+        def survey():return _survey(proxy,layout,book,existing_farmland_only=existing_farmland_only)
         initial_counts = _counts(initial)
         if book.get('complete') and all(book['cells'].get(_key(p), {}).get('planted') is True for p in layout['cells']):
             # A completed planting receipt does not freeze the player's potato
             # inventory forever: later harvest/cooking/trades are separate work.
-            first, _ = _survey(proxy, layout, book)
-            second, _ = _survey(proxy, layout, book)
+            first, _ = survey()
+            second, _ = survey()
             if second['time'] <= first['time']:
                 raise FarmWait('WAIT_SCAN', 'Completed field re-audit did not advance')
             book['completion_reaudit'] = {'observed_times': [first['time'], second['time']],
-                                         'current_carried_potatoes': initial_counts[POTATO]}
+                                         crop.reaudit_key: initial_counts[crop.item]}
             write_json(path, book)
             return result()
-        book.setdefault('potatoes_before', initial_counts[POTATO]); write_json(path, book)
-        if initial_counts[POTATO] != book['potatoes_before'] - sum(r.get('planted') is True for r in book['cells'].values()):
-            raise FarmWait('WAIT_RECONCILE', 'Potato stock differs from saved exact planting consumption')
-        snapshot, rows = _survey(proxy, layout, book)
+        book.setdefault(crop.before_key, initial_counts[crop.item]); write_json(path, book)
+        if initial_counts[crop.item] != book[crop.before_key] - sum(r.get('planted') is True for r in book['cells'].values()):
+            raise FarmWait('WAIT_RECONCILE', crop.title+' stock differs from saved exact planting consumption')
+        snapshot, rows = survey()
         remaining = [p for p in layout['cells'] if not book['cells'].get(_key(p), {}).get('planted')]
-        if initial_counts[POTATO] < len(remaining):
-            raise FarmWait('WAIT_POTATO', 'Need actual carried potatoes for all remaining cells')
+        if initial_counts[crop.item] < len(remaining):
+            raise FarmWait(crop.wait_code, 'Need actual carried '+crop.label+' for all remaining cells')
         batch = remaining[:max_cells]
         tills = [p for p in batch if _properties(rows[tuple(p)], 'farmland', 'moisture', 7) is None]
         if tills:
@@ -299,20 +361,20 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=24):
         # No cursor clicks or per-cell potato splitting are necessary.
         work = [('till', p) for p in tills] + [('plant', p) for p in batch]
         for index, (operation, pos) in enumerate(work):
-            snapshot, rows = _survey(proxy, layout, book)
+            snapshot, rows = survey()
             player = snapshot.get('pos')
             if (not isinstance(player, list) or len(player) != 3
                     or math.dist([player[0], player[1]+1.62, player[2]], [pos[0]+.5, pos[1]+1, pos[2]+.5]) > 4.2):
                 raise FarmWait('WAIT_REACH', 'Pilot does not move; place the player within conservative interaction reach')
             book['pending'] = {'operation': 'prepare_' + operation, 'pos': pos[:], 'stage': 'before_hand'}; write_json(path, book)
-            before = snapshot if operation == 'till' else _potato(proxy, snapshot)
+            before = snapshot if operation == 'till' else _seed(proxy, crop, snapshot)
             hand = before.get('hand') or {}
             if operation == 'till' and (hand.get('item') not in HOES or hand.get('count') != 1
                     or type(hand.get('durability')) is not int or hand['durability'] <= len(tills)-index):
                 raise FarmWait('WAIT_HOE', 'Selected hoe changed or lacks reserved durability')
-            before, fresh_rows = _survey(proxy, layout, book)
+            before, fresh_rows = survey()
             hand = before.get('hand') or {}
-            if (operation == 'plant' and (hand.get('item') != POTATO or hand.get('count', 0) < 1)
+            if (operation == 'plant' and (hand.get('item') != crop.item or hand.get('count', 0) < 1)
                     or operation == 'till' and (hand.get('item') not in HOES or hand.get('count') != 1)):
                 raise FarmWait('WAIT_HAND', 'Fresh native held item no longer matches this operation')
             fresh_soil = fresh_rows[tuple(pos)]
@@ -332,11 +394,11 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=24):
                 raise FarmWait('WAIT_RECONCILE', 'Single interact was not confirmed; no second use sent')
             times = []
             for _ in range(6):
-                observed, observed_rows = _survey(proxy, layout, book)
+                observed, observed_rows = survey()
                 # The scan reply contains a native snapshot from this same tick.
                 # status.json may still describe an older periodic observation.
                 after = observed; proxy.status()
-                if not action_proved(operation, pos, before, after, observed_rows):
+                if not action_proved(operation, pos, before, after, observed_rows,crop=crop):
                     times = []; continue
                 if times and observed['time'] <= times[-1]:
                     times = []; continue
@@ -356,7 +418,7 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=24):
             book['pending'] = None; write_json(path, book)
         if len(remaining) > len(batch):
             return result('FARM_BATCH', 'Known cell budget completed; caller retains control')
-        _survey(proxy, layout, book)
+        survey()
         book['complete'] = True; write_json(path, book)
         return result()
     except FarmWait as error:

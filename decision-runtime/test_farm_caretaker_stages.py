@@ -191,6 +191,9 @@ class StageTests(unittest.TestCase):
         self.b.depot[POTATO]=0;result,book=self.run_stage('harvest_store')
         self.assertEqual('WAIT_SUPPLY',result['code']);self.assertFalse(any(op=='mine_block' for op,p in self.c.calls))
         self.assertEqual(4,_counts(self.c.status())[POTATO]);self.assertEqual('fetch',book['pending']['operation'])
+        self.assertEqual(4,book['pending']['before_counts'][POTATO])
+        self.assertEqual(self.c.status()['control_revision'],book['pending']['before_revision'])
+        self.assertEqual(self.c.status()['inventory'],book['pending']['before_inventory'])
     def test_typed_stop_propagates_before_action_without_cleanup(self):
         def stopped():raise CaretakerPaused('EMERGENCY_HOLD')
         with self.assertRaisesRegex(CaretakerPaused,'EMERGENCY_HOLD'):self.run_stage('harvest_store',stopped)

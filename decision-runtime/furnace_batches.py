@@ -18,7 +18,9 @@ def _furnace_row(client,pos,*,same_world=False):
     if (reply.get('phase') not in (None,'done') or not isinstance(rows,list) or len(rows)!=1
             or not isinstance(rows[0],dict) or rows[0].get('pos')!=list(pos) or not isinstance(rows[0].get('state'),str)
             or not rows[0]['state'].startswith('Block{minecraft:furnace}')
-            or same_world and reply.get('world_session')!=getattr(client,'world',None)):
+            or same_world and (reply.get('world_session')!=getattr(client,'world',None)
+                or type(reply.get('control_revision')) is not int
+                or reply['control_revision']!=getattr(client,'rev',None))):
         raise RuntimeError('Owned ordinary furnace changed or its fresh scan is unconfirmed')
     return rows[0]
 
@@ -59,11 +61,14 @@ def _lit_only_transition(before,after):
 
 
 def snapshot(client,pos):
-    row=_furnace_row(client,pos)
-    face=approach_faces(client,list(pos),row['state'],('up','north','south','west','east'),seconds=45)
+    row=_furnace_row(client,pos,same_world=True);identity=row['state']
+    face=approach_faces(client,list(pos),identity,('up','north','south','west','east'),seconds=45,
+                        allow_state_change=_lit_only_transition)
     client.checked('select_item',item='minecraft:diamond_sword')
     # Refresh after selection's acknowledgement delay, immediately before use.
-    row=_furnace_row(client,pos)
+    row=_furnace_row(client,pos,same_world=True)
+    if row['state']!=identity and not _lit_only_transition(identity,row['state']):
+        raise RuntimeError('Owned ordinary furnace identity changed before opening')
     params={'pos':list(pos),'face':face,'expected_state':row['state'],'expected_hand':'minecraft:diamond_sword'}
     try:client.checked('interact',**params)
     except RuntimeError as error:

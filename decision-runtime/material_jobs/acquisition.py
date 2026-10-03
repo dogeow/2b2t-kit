@@ -532,7 +532,7 @@ def _persist_segment_trace(c, target, trace, phase, **extra):
         pass
 
 
-def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None):
+def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *, clearance_padding=.32, obstacle_margin=3.1):
     """Reach one target through fresh bounded legs; never substitute a deposit."""
     segments, plan = _segmented_targets(c, target, route_scope)
     segmented = plan is not None
@@ -550,7 +550,11 @@ def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None):
         try:
             while True:
                 try:
-                    _travel_once(c, segment, checkpoint, trace)
+                    if clearance_padding == .32 and obstacle_margin == 3.1:
+                        _travel_once(c, segment, checkpoint, trace)
+                    else:
+                        _travel_once(c, segment, checkpoint, trace,
+                                     clearance_padding=clearance_padding, obstacle_margin=obstacle_margin)
                     break
                 except Unavailable as error:
                     if error.code != 'guard_displaced':
@@ -599,8 +603,11 @@ def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None):
                                    segment=index)
 
 
-def _travel_once(c, target, checkpoint, trace):
+def _travel_once(c, target, checkpoint, trace, *, clearance_padding=.32, obstacle_margin=3.1):
     """Use inspected axis-aligned clear segments; never fly down through an unmined cap."""
+    if (type(clearance_padding) not in (int, float) or type(obstacle_margin) not in (int, float)
+            or not .32 <= clearance_padding <= 2.32 or not 3.1 <= obstacle_margin <= 6.1):
+        raise ValueError('Flight planning margins are outside the bounded supported range')
     here = list(c.status()['pos'])
     if c.status().get('air_only_navigation_protocol',0)<2:
         raise Unavailable('当前 Kit 缺少仅走空气的材料导航接口，请更新后再开始')
@@ -612,14 +619,14 @@ def _travel_once(c, target, checkpoint, trace):
     bend=[target[0],here[1],here[2]]
     for start,end in ((here,bend),(bend,target)):
         axis=0 if abs(start[0]-end[0])>=abs(start[2]-end[2]) else 2
-        low=math.floor(min(start[axis],end[axis])-.32)
-        high=math.floor(max(start[axis],end[axis])+.32)
+        low=math.floor(min(start[axis],end[axis])-clearance_padding)
+        high=math.floor(max(start[axis],end[axis])+clearance_padding)
         for base in range(low,high+1,32):
-            lo=[math.floor(min(start[0],end[0])-.32),math.floor(min(here[1],target[1])),math.floor(min(start[2],end[2])-.32)]
-            hi=[math.floor(max(start[0],end[0])+.32),319,math.floor(max(start[2],end[2])+.32)]
+            lo=[math.floor(min(start[0],end[0])-clearance_padding),math.floor(min(here[1],target[1])),math.floor(min(start[2],end[2])-clearance_padding)]
+            hi=[math.floor(max(start[0],end[0])+clearance_padding),319,math.floor(max(start[2],end[2])+clearance_padding)]
             lo[axis]=base;hi[axis]=min(high,base+31)
             observed=_scan(c,lo,hi,checkpoint)
-            cruise=max(cruise,max((r['pos'][1]+3.1 for r in observed if r.get('fluid') or not r.get('passable',False)),default=cruise))
+            cruise=max(cruise,max((r['pos'][1]+obstacle_margin for r in observed if r.get('fluid') or not r.get('passable',False)),default=cruise))
     if cruise>=317:
         raise Unavailable('已观察航线上方没有足够净空，不穿过障碍',
                           code='route_geometry_blocked')

@@ -69,4 +69,16 @@ final class StorageLabelsTest {
 		assertEquals("铜", StorageLabels.colorLabel("copper"));
 		assertEquals("", StorageLabels.colorLabel(""));
 	}
+    @Test void queryShowsCachedCountAndItsContentTimeInsteadOfStructuralVerificationTime() {
+        var data=snapshot(item("coal","煤炭",192));data.server="example.com";data.status="active";
+        data.lastSeenEpochMillis=1_700_000_000_000L;data.lastStructureObservedAt=1_900_000_000_000L;
+        var summary=StorageLabels.cacheSummary(data,"煤炭");
+        org.junit.jupiter.api.Assertions.assertTrue(summary.startsWith("开箱缓存：煤炭×192 · 内容 "));
+        org.junit.jupiter.api.Assertions.assertTrue(summary.endsWith(StorageLabels.contentTime(data)));
+        data.contentsDirty=true;data.contentsDirtyReason="Withdrawal not confirmed";
+        org.junit.jupiter.api.Assertions.assertTrue(StorageLabels.cacheSummary(data,"coal").endsWith(" · 待确认"));
+        org.junit.jupiter.api.Assertions.assertTrue(StorageLabels.evidenceSummary(data).contains("Withdrawal not confirmed"));
+        org.junit.jupiter.api.Assertions.assertTrue(StorageLabels.evidenceSummary(data).contains("实际取料以服务器槽位为准"));
+        assertEquals(192,data.items.getFirst().count);
+    }
 }

@@ -13,7 +13,7 @@ final class StorageRecordUiTest {
         var method = method("KitRecordPages", "storage");
         assertTrue(calls(method).contains("dev/twob2tkit/storage/StorageLifecycle.refresh"));
         assertTrue(calls(method).contains("dev/twob2tkit/KitCollectionScreen.summary"));
-        assertTrue(references(method).contains("dev/twob2tkit/storage/StorageLabels.quantitySummary"));
+        assertTrue(references(method).contains("dev/twob2tkit/storage/StorageLabels.cacheSummary"));
         assertTrue(references(method).contains("dev/twob2tkit/KitConfig$StorageSnapshot.scopedKey"));
     }
 

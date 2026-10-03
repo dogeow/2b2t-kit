@@ -250,6 +250,21 @@ public final class KitClient implements ClientModInitializer {
 		if (instance.structureGuide != null) instance.structureGuide.stop();
 	}
 
+    /** Only Bridge's exact idle lease may supply this scope; never stop other live modules. */
+    public static void stopWork(String reason,java.util.Set<String> idleScope){
+        if(idleScope==null){stopWork(reason);return;}
+        Minecraft client=Minecraft.getInstance();
+        if(idleScope.contains("native_request"))dev.twob2tkit.automation.AutomationBridge.cancelWork(client,reason);
+        if(instance==null)return;
+        if(idleScope.contains("fisher"))instance.autoFisher.stopKeepingMenu(client,reason);
+        if(idleScope.contains("navigation")){instance.controller.cancelPendingLogout();instance.controller.stop(client,reason);}
+        if(idleScope.contains("navigation_logout"))instance.controller.cancelPendingLogout();
+        if(idleScope.contains("chopper"))instance.autoChopper.stop(client,reason);
+        if(idleScope.contains("borer"))instance.tunnelBorer.stop(client,reason);
+        if(idleScope.contains("machine_printer"))instance.machineBuilder.cancel(client,reason);
+        if(idleScope.contains("concrete"))instance.concreteMaker.stop(client,reason);
+    }
+
 	/** 死亡时停动作并提示关掉 Auto Respawn。 */
 	private static void freezeForDeath(Minecraft client) {
 		if (instance == null || instance.frozeForDeath) return;
@@ -349,6 +364,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停下冲突模块后开始上基岩顶。 */
 	public static void startNetherRoof(Minecraft client, boolean thenCruise, double x, double z, double y) {
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_KIT_INPUT");
 		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
 		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || instance.netherRoofAssist == null) return;
@@ -374,9 +390,10 @@ public final class KitClient implements ClientModInitializer {
 	public static dev.twob2tkit.builder.ProjectionBuildJob buildJob(){return instance==null?null:instance.projectionBuildJob;}
 	public static void toggleProjectionBuild(Minecraft client){
         dev.twob2tkit.automation.AutomationBridge.userTaskStarting(client);
+        boolean yieldedIdle=dev.twob2tkit.automation.AutomationBridge.idleHandoffThisTick(client);
 		if(instance==null)return;
 		if(buildJob().isActive()){buildJob().stop(client,"手动停止");return;}
-		stopAll("开始投影建造",false);
+        if(yieldedIdle)stopWork("开始投影建造");else stopAll("开始投影建造",false);
 		if(buildJob().start(client)) {
 			if(config().autoProtectOnHit)dev.twob2tkit.automation.AutomationBridge.armPveGuard(client);
 			if(client.player!=null)client.player.sendSystemMessage(Component.literal("[投影建造] 已启动，正在检查图纸和材料"+(config().autoProtectOnHit?"；防护已开启":"")));
@@ -398,9 +415,10 @@ public final class KitClient implements ClientModInitializer {
 
 	public static dev.twob2tkit.concrete.ConcreteMaker concrete() { return instance == null ? null : instance.concreteMaker; }
 	public static void toggleConcrete(Minecraft client) {
+        boolean yieldedIdle=dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_CONCRETE_INPUT");
 		if(instance == null) return;
 		if(instance.concreteMaker.isActive()) { instance.concreteMaker.stop(client,"手动停止"); return; }
-		emergencyStop("开始混凝土制作");
+        if(yieldedIdle)stopWork("开始混凝土制作");else emergencyStop("开始混凝土制作");
 		if(instance.concreteMaker.start(client) && instance.config.autoProtectOnHit)
 			dev.twob2tkit.automation.AutomationBridge.armCurrentGuard(client);
 	}
@@ -417,7 +435,8 @@ public final class KitClient implements ClientModInitializer {
 
 	public static boolean startScenery(Minecraft client, int radius, boolean resume) {
 		if (instance == null || client.player == null) return false;
-		emergencyStop("开始风景预加载，停下其它自动动作");
+        if(dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_SCENERY_INPUT"))stopWork("开始风景预加载");
+        else emergencyStop("开始风景预加载，停下其它自动动作");
 		return instance.tunnelBorer.startScenery(client, radius, resume);
 	}
 
@@ -435,6 +454,38 @@ public final class KitClient implements ClientModInitializer {
 			|| instance.autoFeeder != null && instance.autoFeeder.isActive()
 			|| instance.netherRoofAssist != null && instance.netherRoofAssist.isActive();
 	}
+
+    /** Live input/view/inventory controllers, including helpers absent from older status fields. */
+    public static java.util.Map<String,Boolean> idleActivities(Minecraft c){
+        var result=new java.util.LinkedHashMap<String,Boolean>();
+        if(instance==null){result.put("kit_unavailable",true);return result;}
+        result.put("navigation",instance.controller!=null&&instance.controller.isActive());
+        result.put("navigation_logout",instance.controller!=null&&instance.controller.hasPendingLogout());
+        result.put("borer",instance.tunnelBorer!=null&&instance.tunnelBorer.isActive());
+        result.put("surround",instance.autoSurround!=null&&instance.autoSurround.isActive());
+        result.put("feeder",instance.autoFeeder!=null&&instance.autoFeeder.isActive());
+        result.put("planter",instance.autoPlanter!=null&&instance.autoPlanter.isActive());
+        result.put("chopper",instance.autoChopper!=null&&instance.autoChopper.isActive());
+        result.put("fisher",instance.autoFisher!=null&&instance.autoFisher.isActive());
+        result.put("nether_roof",instance.netherRoofAssist!=null&&instance.netherRoofAssist.isActive());
+        result.put("brawler",instance.piglinBrawler!=null&&instance.piglinBrawler.isActive());
+        result.put("brawler_view",instance.piglinBrawler!=null&&instance.piglinBrawler.hasLook());
+        result.put("guard_view",borerCombatLook(c)!=null);
+        result.put("machine_printer",instance.machineBuilder!=null&&instance.machineBuilder.isPlacing());
+        result.put("projection_build",instance.projectionBuildJob!=null&&instance.projectionBuildJob.isActive());
+        result.put("concrete",instance.concreteMaker!=null&&instance.concreteMaker.isActive());
+        result.put("structure_guide",instance.structureGuide!=null&&instance.structureGuide.isActive());
+        result.put("area_pick",instance.pickingAreaCorner!=0);
+        result.put("material_task",dev.twob2tkit.material.MaterialJobs.snapshot().get("occupied").getAsBoolean());
+        result.put("caretaker_task",dev.twob2tkit.material.CaretakerJobs.occupied());
+        result.put("container_restock",instance.config.autoRestockFromOpenedContainers&&c.player!=null
+            &&c.screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>
+            &&(c.player.containerMenu instanceof net.minecraft.world.inventory.ChestMenu
+                ||c.player.containerMenu instanceof net.minecraft.world.inventory.ShulkerBoxMenu
+                ||c.player.containerMenu instanceof net.minecraft.world.inventory.HopperMenu)
+            &&(instance.autoFisher==null||!instance.autoFisher.isDepositing()));
+        return result;
+    }
 
 	/** 紧急停止并排队离线。 */
 	public static void safeLogout(Minecraft client, String reason) {
@@ -549,6 +600,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 沿挖矿原路返回起点。 */
 	public static void goBorerHome(Minecraft client) {
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_KIT_INPUT");
 		if (instance == null || client.player == null || instance.tunnelBorer == null) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "盾构回家，已停巡航");
 		instance.tunnelBorer.goHome(client);
@@ -556,6 +608,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 沿走过的路飞回记下的地狱门。 */
 	public static void goNetherPortal(Minecraft client) {
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_KIT_INPUT");
 		if (instance == null || client.player == null || instance.tunnelBorer == null) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "回地狱门，已停巡航");
 		if (instance.netherRoofAssist != null && instance.netherRoofAssist.isActive()) {
@@ -597,6 +650,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 开始围箱；stopBorer 控制是否停盾构。 */
 	public static void startSurround(Minecraft client, AutoSurround.Mode mode, boolean stopBorer) {
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_KIT_INPUT");
 		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
 		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
@@ -628,6 +682,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停下冲突后开始喂养。 */
 	public static void startFeeder(Minecraft client) {
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_KIT_INPUT");
 		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
 		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
@@ -659,6 +714,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停下冲突后开始种田。 */
 	public static void startPlanter(Minecraft client) {
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_KIT_INPUT");
 		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
 		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
@@ -690,6 +746,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停下冲突后开始挖树。 */
 	public static void startChopper(Minecraft client) {
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_KIT_INPUT");
 		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
 		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
@@ -713,6 +770,7 @@ public final class KitClient implements ClientModInitializer {
 		if (instance.lastFisherToggleTick == tick) return;
 		instance.lastFisherToggleTick = tick;
 		if (instance.autoFisher.isActive()) {
+            if(dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_FISHER_TOGGLE"))return;
 			instance.autoFisher.stop(client, "按键停止");
 			return;
 		}
@@ -721,6 +779,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 停下冲突后开始钓鱼。 */
 	public static void startFisher(Minecraft client) {
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_KIT_INPUT");
 		if(buildJob()!=null) buildJob().stop(client,"切换自动功能");
 		if(concrete()!=null) concrete().stop(client,"切换自动功能");
 		if (instance == null || client.player == null) return;
@@ -736,6 +795,10 @@ public final class KitClient implements ClientModInitializer {
 		instance.autoFisher.start(client);
 		if (client.screen instanceof KitHudScreen) client.setScreen(null);
 	}
+    /** Bridge verifies the exact idle lease before this narrow no-deposit activation. */
+    public static void startIdleFisher(Minecraft client){
+        if(instance!=null&&client.player!=null)instance.autoFisher.startIdleNoDeposit(client);
+    }
 
 	/** 热键开关村民扫描。 */
 	public static void toggleVillagerScan(Minecraft client) {
@@ -751,6 +814,7 @@ public final class KitClient implements ClientModInitializer {
 	/** 开始/停止键：优先停当前自动，否则恢复巡航。 */
 	public static void toggleCruiseFromKey(Minecraft client) {
 		if (instance == null || client.player == null) return;
+        if(dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_START_STOP_KEY"))return;
 		if (instance.netherRoofAssist != null && instance.netherRoofAssist.isActive()) {
 			instance.netherRoofAssist.stop(client, "按键停止上顶");
 			return;
@@ -809,6 +873,7 @@ public final class KitClient implements ClientModInitializer {
 	/** 由 Minecraft.tick HEAD mixin 调用：在玩家采样按键之前写入导航输入。 */
 	public static void tickNavigation(Minecraft client) {
         if (instance == null || instance.controller == null) return;
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForManual(client);
         if(instance.handleHeldKeys(client))return;
         if(dev.twob2tkit.combat.EmergencyExit.tick(client))return;
         if(dev.twob2tkit.automation.AutomationBridge.yieldGuardToManualInput(client))return;
@@ -874,6 +939,7 @@ public final class KitClient implements ClientModInitializer {
         if(dev.twob2tkit.combat.EmergencyExit.reapply(client))return;
 		if (instance == null || instance.controller == null) return;
 		if (client.player != null && client.player.isDeadOrDying()) return;
+        if(dev.twob2tkit.automation.AutomationBridge.idleManualHolding(client))return;
 		if (borerCombatLook(client) != null) { instance.tunnelBorer.reapplyLook(client); return; }
         if(dev.twob2tkit.automation.AutomationBridge.reapplySupplyLook(client))return;
 		if(instance.projectionBuildJob.isActive()){instance.projectionBuildJob.reapply(client);return;}
@@ -934,6 +1000,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 进入下次左键标点 A/B。 */
 	public static void beginPickingArea(Minecraft client, int corner) {
+        dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_KIT_INPUT");
 		if (instance == null) return;
 		instance.pickingAreaCorner = corner == 2 ? 2 : 1;
 		BorerAreaMarks.tell(client, corner == 2

@@ -205,22 +205,7 @@ public final class StorageRecordsScreen extends KitHudScreen {
 
 	/** 快照一行摘要。 */
 	private static String detailLine(KitConfig.StorageSnapshot snapshot, String query) {
-		int total = snapshot.items.stream().mapToInt(item -> item.count).sum();
-		String time = TIME_FORMAT.format(Instant.ofEpochMilli(snapshot.lastSeenEpochMillis));
-		if (query.isEmpty()) {
-			return snapshot.items.size() + " 类 / " + total + " 件  |  " + time;
-		}
-		List<String> hits = new ArrayList<>();
-		int matched = 0;
-		for (KitConfig.StoredItem item : snapshot.items) {
-			if (!contains(item.name, query) && !contains(item.id, query)) continue;
-			matched += item.count;
-			if (hits.size() < 3) hits.add(item.name + " × " + item.count);
-		}
-		if (hits.isEmpty()) {
-			return snapshot.items.size() + " 类 / " + total + " 件  |  " + time;
-		}
-		return String.join("、", hits) + "  |  共 " + matched + " 件  |  " + time;
+        return StorageLabels.cacheSummary(snapshot, query);
 	}
 
 	/** 快照是否含某物品。 */

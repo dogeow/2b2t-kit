@@ -34,6 +34,7 @@ public final class MaterialJobs {
     public static Path directory() { return directory; }
 
     public static void startItem(Minecraft client, KitConfig config, String item, int amount) {
+        if(amount<1||amount>1_000_000)throw new IllegalArgumentException("物品数量无效（1–1000000）");
         validateItem(item);start(client, config, "item", Map.of(item, amount), "");
     }
     private static void validateItem(String item){
@@ -55,6 +56,7 @@ public final class MaterialJobs {
         Path nextDir = root.resolve("material-jobs").resolve(nextId), requestPath = nextDir.resolve("request.json");
         var command = MaterialJobProtocol.command(python, worker, root, requestPath, nextDir);
         // Read and validate before closing the page, so missing workers never look like a successful start.
+        AutomationBridge.preemptIdleForPlayer(client,"FORMAL_MATERIAL_START");
         JsonObject context = AutomationBridge.materialJobContext(client);
         long now = System.currentTimeMillis();
         JsonObject request = MaterialJobProtocol.request(nextId, mode, targets, projectionKey, context, now);
@@ -88,6 +90,7 @@ public final class MaterialJobs {
         if (!running() || cancelling || !paused()) throw new IllegalStateException("只有已暂停的任务才能继续");
         if (dev.twob2tkit.combat.EmergencyExit.held(client)) throw new IllegalStateException("低血量安全锁仍开启，请先自行处理");
         if (!world.equals(AutomationBridge.materialJobWorldSession(client))) throw new IllegalStateException("世界已改变，请创建新的材料任务");
+        AutomationBridge.preemptIdleForPlayer(client,"FORMAL_MATERIAL_RESUME");
         JsonObject context = AutomationBridge.materialJobContext(client);
         if(mode.equals("projection")&&!projectionKey.equals(LitematicaAccess.lockedBuildSelection().key()))throw new IllegalStateException("已暂停任务的投影已改变，请新建材料任务");
         client.setScreen(null);

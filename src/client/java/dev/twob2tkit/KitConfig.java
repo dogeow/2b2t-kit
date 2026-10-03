@@ -922,7 +922,7 @@ public final class KitConfig {
 		save();
 	}
 
-	/** 写入仓库快照，最多保留 50 条。 */
+	/** 写入真实开箱内容；保留有用仓库，空漏斗不能挤出物资缓存。 */
 	public void upsertStorageSnapshot(StorageSnapshot snapshot) {
         dev.twob2tkit.storage.StorageLifecycle.normalize(snapshot);
         StorageSnapshot previous=storageSnapshots.stream().filter(existing->existing.scopedKey().equals(snapshot.scopedKey())).findFirst().orElse(null);
@@ -931,7 +931,7 @@ public final class KitConfig {
             .filter(existing->safe(existing.server).isBlank()&&existing.key().equals(snapshot.key())).findFirst().orElse(null);
         if(previous!=null){dev.twob2tkit.storage.StorageLifecycle.inherit(previous,snapshot);storageSnapshots.remove(previous);}
 		storageSnapshots.add(0, snapshot);
-		while (storageSnapshots.size() > 50) storageSnapshots.remove(storageSnapshots.size() - 1);
+        dev.twob2tkit.storage.StorageCache.trim(storageSnapshots);
 		save();
 	}
 
@@ -942,7 +942,7 @@ public final class KitConfig {
         return 0; // Historical callers display a deletion count; no record was deleted.
     }
 
-	/** 更新已有快照的备注/颜色/标题。 */
+	/** 更新标签；真实菜单内容未变化时也推进内容观察时间并清除待确认标记。 */
 	public void patchStorageLabels(StorageSnapshot snapshot) {
 		if (snapshot == null) return;
 		for (StorageSnapshot existing : storageSnapshots) {
@@ -952,12 +952,24 @@ public final class KitConfig {
 				|| !safe(existing.colorId).equals(safe(snapshot.colorId))
 				|| !safe(existing.blockId).equals(safe(snapshot.blockId))
 				|| !safe(existing.title).equals(safe(snapshot.title));
-			if (!changed) return;
+            boolean confirmed = snapshot.lastSeenEpochMillis > 0
+                && dev.twob2tkit.storage.StorageLifecycle.ACTIVE.equals(snapshot.status);
+            changed |= confirmed && (existing.contentsDirty || !snapshot.status.equals(existing.status));
+			if (!changed && !(confirmed && snapshot.lastSeenEpochMillis > existing.lastSeenEpochMillis)) return;
 			existing.note = note;
 			existing.colorId = safe(snapshot.colorId);
 			existing.blockId = safe(snapshot.blockId);
 			if (!safe(snapshot.title).isEmpty()) existing.title = snapshot.title;
-			save();
+            if (confirmed) {
+                existing.lastSeenEpochMillis = snapshot.lastSeenEpochMillis;
+                existing.lastVerifiedAt = snapshot.lastSeenEpochMillis;
+                existing.lastStructureObservedAt = snapshot.lastStructureObservedAt;
+                existing.playerId = snapshot.playerId;
+                existing.status = snapshot.status; existing.invalidReason = "";
+                existing.contentsDirty = false; existing.contentsDirtyReason = ""; existing.contentsDirtyAt = 0;
+            }
+            // Time-only observations remain in memory until this real menu closes.
+            if(changed)save();
 			return;
 		}
 	}
@@ -1144,7 +1156,14 @@ public final class KitConfig {
 	/** 开过的容器快照。 */
 	public static final class StorageSnapshot {
         public String server="", worldId="", status="unknown_scope", invalidReason="";
+        /** Ender-chest contents belong to a player rather than a physical container. */
+        public String playerId="";
+        /** Legacy content-verification timestamp; structure observations never advance it. */
         public long lastVerifiedAt;
+        public long lastStructureObservedAt;
+        public boolean contentsDirty;
+        public String contentsDirtyReason="";
+        public long contentsDirtyAt;
         public List<int[]> containerPositions=new ArrayList<>();
         public List<StorageHistory> history=new ArrayList<>();
 		public String dimension = "";
@@ -1155,6 +1174,7 @@ public final class KitConfig {
 		public String blockId = "";
 		public String colorId = "";
 		public String note = "";
+		/** Time of the last real menu contents observation, never a block/chunk observation. */
 		public long lastSeenEpochMillis;
 		public List<StoredItem> items = new ArrayList<>();
 
@@ -1170,6 +1190,7 @@ public final class KitConfig {
     public static final class StorageHistory {
         public String server="",worldId="",status="",reason="",note="",blockId="";
         public long observedAt;
+        public boolean contentsDirty;
         public List<StoredItem> items=new ArrayList<>();
     }
 

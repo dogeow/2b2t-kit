@@ -70,4 +70,49 @@ final class ParkingLeasePolicyTest {
 		assertFalse(ParkingLeasePolicy.guardRebase("materials",true,true,false,true,true,true));
 		assertFalse(ParkingLeasePolicy.guardRebase("parking",true,true,false,true,true,false));
 	}
+    @Test void transientFlightLossInAnOtherwiseVerifiedParkCanBeRestored(){
+        assertTrue(ParkingLeasePolicy.recoverFlight("parking",true,true,false,false,true,true));
+        assertFalse(ParkingLeasePolicy.recoverFlight("parking",true,true,false,true,true,true));
+        assertFalse(ParkingLeasePolicy.recoverFlight("materials",true,true,false,false,true,true));
+        assertFalse(ParkingLeasePolicy.recoverFlight("parking",false,true,false,false,true,true));
+        assertFalse(ParkingLeasePolicy.recoverFlight("parking",true,false,false,false,true,true));
+        assertFalse(ParkingLeasePolicy.recoverFlight("parking",true,true,true,false,true,true));
+        assertFalse(ParkingLeasePolicy.recoverFlight("parking",true,true,false,false,false,true));
+        assertFalse(ParkingLeasePolicy.recoverFlight("parking",true,true,false,false,true,false));
+    }
+    @Test void restorationStillRequiresRealFlightBeforeParkingCanBeKept(){
+        assertEquals(LOGOUT,ParkingLeasePolicy.decide("parking",true,true,false,false));
+        assertEquals(KEEP,ParkingLeasePolicy.decide("parking",true,true,false,true));
+        assertFalse(GuardParkingPolicy.ready(10,90,20,10,90,20,65,17,false,true));
+        assertFalse(GuardParkingPolicy.ready(10,80,20,10,90,20,65,20,true,true));
+    }
+    @Test void nativeParkingAttemptsRestorationBeforeItsKeepOrLogoutDecision()throws Exception{
+        var node=new ClassNode();
+        try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/AutomationBridge.class")){
+            assertNotNull(in);new ClassReader(in).accept(node,0);
+        }
+        var tick=node.methods.stream().filter(m->m.name.equals("tickSupervision")).findFirst().orElseThrow();
+        int repair=-1,decision=-1,i=0;
+        for(var instruction:tick.instructions){
+            if(instruction instanceof MethodInsnNode call){
+                if(call.owner.equals("dev/twob2tkit/automation/AutomationBridge")&&call.name.equals("recoverParkingFlight"))repair=i;
+                if(call.owner.equals("dev/twob2tkit/automation/ParkingLeasePolicy")&&call.name.equals("decide"))decision=i;
+            }i++;
+        }
+        assertTrue(repair>=0&&decision>repair);
+        var method=node.methods.stream().filter(m->m.name.equals("recoverParkingFlight")).findFirst().orElseThrow();
+        var calls=new HashSet<String>();
+        for(var instruction:method.instructions)if(instruction instanceof MethodInsnNode call)calls.add(call.owner+"."+call.name);
+        assertTrue(calls.contains("dev/twob2tkit/MeteorModules.enable"));
+        assertTrue(calls.contains("dev/twob2tkit/automation/AutomationBridge.highGuardPark"));
+        assertFalse(calls.contains("dev/twob2tkit/KitClient.safeLogout"));
+    }
+    @org.junit.jupiter.api.Test void obsoleteAnchorDoesNotDefineWhetherCurrentHoverIsSafe(){
+        var actual=ParkingLeasePolicy.reanchor(10,106,20,70,20,true,true);
+        org.junit.jupiter.api.Assertions.assertNotNull(actual);
+        org.junit.jupiter.api.Assertions.assertEquals(106,actual.y());
+        org.junit.jupiter.api.Assertions.assertNull(ParkingLeasePolicy.reanchor(10,76,20,70,20,true,true));
+        org.junit.jupiter.api.Assertions.assertNull(ParkingLeasePolicy.reanchor(10,106,20,70,13,true,true));
+        org.junit.jupiter.api.Assertions.assertNull(ParkingLeasePolicy.reanchor(10,106,20,70,20,false,true));
+    }
 }
