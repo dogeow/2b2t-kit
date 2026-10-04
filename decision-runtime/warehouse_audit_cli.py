@@ -99,6 +99,106 @@ def _state_parts(value):
     return matched[1],properties
 
 
+def _ground_reach_profile(profile):
+    """A declared seven-barrel row uses the existing floor, never an attic."""
+    value=profile.get('ground_reach_storage')
+    if value is None:return None
+    allowed={'schema','expected_block','foot_y','sources','stances'}
+    if (not isinstance(value,dict)or set(value)!=allowed or type(value.get('schema'))is not int or value['schema']!=1
+            or value.get('expected_block')!='minecraft:barrel' or type(value.get('foot_y'))is not int
+            or not -64<=value['foot_y']<=315):
+        raise StockBlocked('Ground-reach profile requires the explicit supported barrel/floor schema')
+    sources=value.get('sources');stances=value.get('stances');foot=value['foot_y']
+    if not isinstance(sources,list)or len(sources)!=7 or len(_depots(sources))!=7:
+        raise StockBlocked('Ground reach needs seven unique legal source cells')
+    sources=sorted(sources,key=lambda p:p[2]);x,y,z=sources[0]
+    if sources!=[[x,foot+4,z+i]for i in range(7)]:
+        raise StockBlocked('Ground reach supports only a declared seven-cell barrel row four blocks above its floor')
+    for name in ('workbench_entry','workbench_exit'):
+        route=profile.get(name)
+        if not isinstance(route,list)or not route:
+            raise StockBlocked('Ground-reach storage needs both existing registered door routes')
+        walks=[]
+        for step in route:
+            if not isinstance(step,dict)or step.get('kind')not in ('walk','door'):
+                raise StockBlocked('Ground reach cannot introduce a ladder, platform or unknown route step')
+            if step['kind']=='walk':
+                target=step.get('target')
+                if (not isinstance(target,list)or len(target)!=3
+                        or any(type(v)not in(int,float)or not math.isfinite(v)for v in target)or target[1]!=foot
+                        or any(abs(target[i])>29_999_984 for i in (0,2))):
+                    raise StockBlocked('Ground-reach entry and exit must retain the declared actual foot level')
+                walks.append(target)
+        if not walks:raise StockBlocked('Ground reach needs an actual registered floor walk')
+    expected=[{'pos':[x-1.5,foot,z+offset+.5],'face':'west'}for offset in (2,3,4)]
+    if (not isinstance(stances,list)or len(stances)!=3
+            or any(not isinstance(s,dict)or set(s)!={'pos','face'}for s in stances)
+            or any(not isinstance(s['pos'],list)or len(s['pos'])!=3
+                   or any(type(v)not in(int,float)or not math.isfinite(v)for v in s['pos'])
+                   or any(abs(s['pos'][i])>29_999_984 for i in (0,2))for s in stances)
+            or stances!=expected):
+        raise StockBlocked('Ground reach requires the three explicit reversible west aisle stances on the original floor')
+    return {**deepcopy(value),'sources':sources}
+
+
+def _ground_reach(profile,pos,block_state):
+    value=_ground_reach_profile(profile)
+    if value is None or pos not in value['sources']:return None
+    if _state_parts(block_state)[0]!=value['expected_block']:
+        raise StockBlocked('Declared reachable barrel changed; no alternate container is authorized')
+    return value
+
+
+def _ray_cell(start,end,pos):
+    """Voxel intersection of rays from any eye within the normal player body."""
+    lower,upper=0.0,1.0
+    for axis in (0,2):
+        delta=end[axis]-start[axis]
+        if abs(delta)<1e-12:
+            if not pos[axis]<=start[axis]<=pos[axis]+1:return False
+            continue
+        a,b=(pos[axis]-start[axis])/delta,(pos[axis]+1-start[axis])/delta
+        lower=max(lower,min(a,b));upper=min(upper,max(a,b))
+        if lower>upper:return False
+    # This broad body-to-face envelope is a filter, not an inferred eye pose.
+    ys=[start[1]+height+(end[1]-start[1]-height)*t for height in (0,1.8)for t in (lower,upper)]
+    return max(ys)>=pos[1]and min(ys)<pos[1]+1
+
+
+def _ground_reach_ray(session,pos,block_state,stance):
+    before=session.status();point=before['pos'];initial=session.initial
+    _check(before,initial)
+    if (math.dist(point,stance)>.55 or before.get('manual_movement')is not False
+            or before.get('screen') or before.get('navigating')or before.get('native_material_busy')or before.get('guard_busy')):
+        raise StockBlocked('Actual ground-reach stance is not idle and stable')
+    _body_clearance(session)
+    aim=[pos[0]+1e-5,pos[1]+.5,pos[2]+.5]
+    low=[math.floor(min(point[i],aim[i]))for i in range(3)]
+    high=[math.floor(max(point[i]+(1.8 if i==1 else 0),aim[i]))for i in range(3)]
+    reply=_scan(session,low,high)
+    target=None
+    for row in reply['blocks']:
+        if row['pos']==pos:
+            target=row
+            if row['state']!=block_state or row.get('fluid')is not False:
+                raise StockBlocked('Ground-reach target changed before native pre-use validation')
+        elif _ray_cell(point,aim,row['pos']):
+            if (row['state']!='Block{minecraft:air}'or row.get('fluid')is not False
+                    or row.get('passable')is not True or row.get('block_entity')is not False):
+                raise StockBlocked('Current conservative ground-reach ray envelope is occupied or unknown; no interaction')
+    if target is None:raise StockBlocked('Ground-reach ray lacks the exact current barrel')
+    after=session.status();_check(after,initial)
+    if math.dist(after['pos'],point)>.05:
+        raise StockBlocked('Actual ground-reach pose changed during the ray scan')
+    proof={'source':list(pos),'stance':list(point),'requested_face':'west','scan_request_id':reply.get('id'),
+           'scan_min':low,'scan_max':high,'scan_ended_at':reply.get('scan_ended_at'),
+           'ray_scope':'conservative_normal_player_body_to_barrel_face_voxels',
+           'eye_position_verified':False,'current_interaction_range_verified':False,'actual_used_face_verified':False,
+           'native_pre_use_required':'actual_eye_and_synced_range_outline_before_and_after_rotation'}
+    session.report.setdefault('ground_reach_proofs',[]).append(proof);session.save()
+    return proof
+
+
 def _container(session,pos):
     reply=_scan(session,pos,pos);row=next((v for v in reply['blocks']if v['pos']==pos),None)
     if row is None:raise StockBlocked('Requested storage block is absent; no interaction sent')
@@ -157,19 +257,20 @@ class _RegisteredRoute:
 def _open_container(session,pos,block_state,profile):
     from container_access import open_grounded_chest,wait_container_contents
     name,_=_state_parts(block_state)
+    ground_reach=_ground_reach(profile,pos,block_state)
     column=_scan(session,pos,[pos[0],min(319,pos[1]+6),pos[2]])
     overhead=any(v['pos'][1]>pos[1] for v in column['blocks'])
     if not overhead and name in ('minecraft:chest','minecraft:ender_chest'):
         return open_grounded_chest(session,pos,name,allow_empty=True)
     workbench=profile.get('workbench')
-    house=(overhead and profile.get('workbench_entry') and profile.get('workbench_exit') and workbench
+    house=((overhead or ground_reach is not None) and profile.get('workbench_entry') and profile.get('workbench_exit') and workbench
            and math.dist(pos,workbench)<=16)
     if overhead and not house and name in ('minecraft:chest','minecraft:ender_chest','minecraft:barrel'):
         raise StockBlocked('Roofed storage needs a local registered house entry route; preserve the structure')
     route=_RegisteredRoute(session,profile)
     if house and not session.in_house:
         exit_walks=[step.get('target')for step in profile['workbench_exit']if step.get('kind')=='walk']
-        if not exit_walks or abs(pos[1]-exit_walks[0][1])>2:
+        if not exit_walks or ground_reach is None and abs(pos[1]-exit_walks[0][1])>2:
             raise StockBlocked('High house storage has no registered same-level return to the door exit')
         staging=profile.get('workbench_staging')
         if staging:
@@ -177,8 +278,10 @@ def _open_container(session,pos,block_state,profile):
             _travel(session,staging,session.status,[],keep_cruise=True)
         session.in_house=True
         route.route('workbench_entry')
-    face=_side_access(session,pos,block_state,house=bool(house))
+    face=_side_access(session,pos,block_state,house=bool(house),profile=profile)
     session.checked('select_item',item='minecraft:diamond_sword')
+    if ground_reach is not None:
+        _ground_reach_ray(session,pos,block_state,session.report['storage_return']['stance'])
     session.checked('interact',pos=pos,face=face,expected_state=block_state,expected_hand='minecraft:diamond_sword')
     return wait_container_contents(session,MENU_LAYOUTS[name][0],require_nonempty=False)
 
@@ -216,18 +319,23 @@ def _follow_clear_points(session,points):
             raise StockBlocked('Original storage corridor endpoint was not confirmed')
 
 
-def _side_access(session,pos,block_state,*,house=False):
+def _side_access(session,pos,block_state,*,house=False,profile=None):
     """Select an exact stance only after proving its finite reversible corridor."""
     before=session.status();origin=list(before['pos'])
     if (math.hypot(origin[0]-pos[0]-.5,origin[2]-pos[2]-.5)>16
             or not house and before.get('flight')is not True):
         raise StockBlocked('Storage side access needs the nearby verified guarded start')
     foot_y=origin[1]if house else pos[1]+.02
-    if house and abs(pos[1]-foot_y)>2:
+    ground_reach=_ground_reach(profile or{},pos,block_state)if house else None
+    if ground_reach is not None and abs(foot_y-ground_reach['foot_y'])>.55:
+        raise StockBlocked('Actual house foot pose differs from the declared existing floor')
+    if house and ground_reach is None and abs(pos[1]-foot_y)>2:
         raise StockBlocked('High house storage lacks a same-level registered return corridor')
     candidates=[(face,[pos[0]+.5+dx*distance,foot_y,pos[2]+.5+dz*distance])
                 for distance in (1,2)for face,dx,dz in
                 (('west',-1,0),('north',0,-1),('south',0,1),('east',1,0))]
+    if ground_reach is not None:
+        candidates=[(s['face'],s['pos'])for s in sorted(ground_reach['stances'],key=lambda s:math.dist(s['pos'],[pos[0],foot_y,pos[2]+.5]))]
     for face,stance in candidates:
         bend=[stance[0],origin[1],origin[2]if house else stance[2]]
         if not (_clear_sweep(session,origin,bend)and _clear_sweep(session,bend,stance)):continue
@@ -238,6 +346,8 @@ def _side_access(session,pos,block_state,*,house=False):
                                          'points':deepcopy(session.return_points),'house':house,'state':'proved_before_entry'}
         session.save()
         _follow_clear_points(session,[bend,stance])
+        if ground_reach is not None:
+            _ground_reach_ray(session,pos,block_state,stance)
         return face
     raise StockBlocked('No finite reversible storage side corridor; remain outside')
 
@@ -447,6 +557,7 @@ def run(game_dir,out,depots,profile=None,*,client_factory=MaterialClient,survey_
     settings=(deepcopy(profile)if isinstance(profile,dict)else json.loads(path.read_text())if path.exists()else{})
     if settings and (server_key(settings.get('server'))!=server_key(initial['server'])
                      or settings.get('dimension')!=initial['dimension']):raise StockBlocked('Registered house profile belongs to another server/dimension')
+    _ground_reach_profile(settings)  # Validate explicit opt-in before any lease or game request.
     out.mkdir(parents=True);(out/'receipts').mkdir();report={'schema':1,'phase':'preflight','complete':False,'read_only_inventory':True,
         'evidence_scope':'two_distinct_stable_current_menu_frames_per_container_not_atomic_all_depots',
         'depots':depots,'scope':_identity(initial),'inventory_before':_inventory(initial),'containers':[],
