@@ -36,6 +36,8 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
     enum Outcome { RUNNING,DONE,WAITING }
     private static final Set<String> SPENT=new HashSet<>();
     private static final int ACK_TIMEOUT=100;
+    private final dev.twob2tkit.runtime.engine.BorerMiningConfirmation predictions=new dev.twob2tkit.runtime.engine.BorerMiningConfirmation();
+    private final Object level,connection;
     private final ProjectionScaffoldPolicy.Row row;
     private final List<BlockPos> positions;
     private final Set<BlockPos> baseline=new HashSet<>();
@@ -52,7 +54,7 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
     private final BooleanSupplier owner;
     private RotationAim.Look look;
     private BlockPos candidate;
-    private String failure="",stage="aligning";
+    private String failure="",failureReason="",stage="aligning";
     private boolean closed,completed;
     private boolean deferredFlightRestore;
     private int sentCount,confirmedCount,inventoryNow;
@@ -67,47 +69,94 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
     }
     /** Fungible inventory is proved in aggregate; never assigned to individual pending cells. */
     static final class AckWindow {
+        static final int PREDICTION_TIMEOUT=100,ATTEMPT_TIMEOUT=240;
+        record Observation(Boolean predictionPending,Boolean worldMatch,Boolean serverChunk) {}
         private static final class Entry {
             final String expected;final long sentTick;long ack=-1;boolean settled;
+            long packetTick=-1,lastPacketTick=-1,predictionClearTick=-1,observedTick=-1,stableSince=-1;
+            String packetState="";Boolean packetApplied,predictionPending,worldMatch,serverChunk;
             Entry(String expected,long sentTick){this.expected=expected;this.sentTick=sentTick;}
         }
         private final Map<String,Entry> entries=new LinkedHashMap<>();
-        private boolean failed;
+        private boolean failed,closed;
+        private String failureReason="";
         private boolean inventoryExact=true;
         private boolean inventoryRecovery;
         private long inventoryExactSince=-1;
-        boolean canSend(){return !failed&&inventoryExact&&!inventoryRecovery&&ProjectionScaffoldPolicy.windowAvailable(pending());}
+        boolean canSend(){return !failed&&!closed&&inventoryExact&&!inventoryRecovery&&ProjectionScaffoldPolicy.windowAvailable(pending());}
         boolean sent(String target,String expected){return sent(target,expected,0);}
         boolean sent(String target,String expected,long tick){
             if(!canSend()||entries.containsKey(target))return false;
-            entries.put(target,new Entry(expected,tick));return true;
+            if(tick<0)return false;
+            entries.put(target,new Entry(expected,tick));inventoryExactSince=-1;return true;
         }
         boolean acknowledge(String target,String actual,long tick){
-            var entry=entries.get(target);if(entry==null||failed)return false;
-            if(!entry.expected.equals(actual)){failed=true;return false;}
+            return packet(target,actual,true,true,tick);
+        }
+        boolean packet(String target,String actual,boolean currentContext,boolean applied,long tick){
+            var entry=entries.get(target);
+            if(entry==null||failed||closed||!currentContext||tick<entry.sentTick)return false;
+            entry.lastPacketTick=tick;entry.packetState=actual;entry.packetApplied=applied;
+            if(entry.packetTick<0)entry.packetTick=tick;
+            if(!entry.expected.equals(actual))return reject("SERVER_PACKET_CORRECTION");
             if(entry.ack<0)entry.ack=tick;return true;
         }
         boolean observe(int inventoryStart,int inventoryNow,Map<String,Boolean> currentStates,long tick){
+            var observations=new LinkedHashMap<String,Observation>();
+            for(var pair:currentStates.entrySet())observations.put(pair.getKey(),new Observation(false,pair.getValue(),true));
+            return observeProof(inventoryStart,inventoryNow,observations,tick);
+        }
+        boolean observeProof(int inventoryStart,int inventoryNow,Map<String,Observation> observations,long tick){
+            if(failed||closed)return false;
             int delta=inventoryStart-inventoryNow,pending=pending();
             // Only the outstanding, bounded window may have a not-yet-synchronized item delta.
             // Already settled consumption may never roll back; extra consumption is never credited.
-            if(failed||inventoryNow<0||pending>2||delta<settled()||delta>entries.size()
-                ||entries.size()-delta>pending){failed=true;return false;}
+            if(inventoryNow<0||pending>2||delta<settled()||delta>entries.size()
+                ||entries.size()-delta>pending)return reject("CUMULATIVE_INVENTORY_DIVERGED");
             inventoryExact=delta==entries.size();
             if(!inventoryExact){inventoryRecovery=true;inventoryExactSince=-1;}
-            else if(inventoryRecovery&&inventoryExactSince<0)inventoryExactSince=tick;
+            else if(inventoryExactSince<0)inventoryExactSince=tick;
             for(var pair:entries.entrySet()){
-                if(!Boolean.TRUE.equals(currentStates.get(pair.getKey()))){failed=true;return false;}
                 var entry=pair.getValue();
-                if(!entry.settled&&tick-entry.sentTick>=ACK_TIMEOUT){failed=true;return false;}
-                // A server ACK without the exact cumulative inventory remains pending.
-                long proofTick=inventoryRecovery?Math.max(entry.ack,inventoryExactSince):entry.ack;
-                if(inventoryExact&&entry.ack>=0&&tick-proofTick>=ProjectionScaffoldPolicy.SETTLE_TICKS)entry.settled=true;
+                var observed=observations.get(pair.getKey());entry.observedTick=tick;
+                if(observed==null)return reject("WORLD_OBSERVATION_MISSING");
+                entry.predictionPending=observed.predictionPending();entry.worldMatch=observed.worldMatch();entry.serverChunk=observed.serverChunk();
+                if(!Boolean.TRUE.equals(entry.serverChunk))return reject("SERVER_CHUNK_NOT_CURRENT");
+                if(entry.settled&&!Boolean.TRUE.equals(entry.worldMatch))return reject("WORLD_STATE_DIVERGED");
+                if(entry.packetTick<0&&tick-entry.sentTick>=ACK_TIMEOUT)return reject("NO_SERVER_PACKET_TIMEOUT");
+                if(!entry.settled&&tick-entry.sentTick>=ATTEMPT_TIMEOUT)return reject("ATTEMPT_TIMEOUT");
+                if(entry.predictionPending==null||entry.predictionPending){
+                    entry.predictionClearTick=-1;entry.stableSince=-1;
+                    if(entry.packetTick>=0&&tick-entry.packetTick>=PREDICTION_TIMEOUT)
+                        return reject(entry.predictionPending==null?"PREDICTION_QUERY_UNAVAILABLE":"PREDICTION_UNRESOLVED_TIMEOUT");
+                    continue;
+                }
+                if(entry.predictionClearTick<0)entry.predictionClearTick=tick;
+                if(!Boolean.TRUE.equals(entry.worldMatch))return reject("WORLD_STATE_DIVERGED");
+                if(!entry.settled){
+                    if(!inventoryExact||entry.ack<0){entry.stableSince=-1;continue;}
+                    long since=Math.max(entry.ack,Math.max(entry.predictionClearTick,inventoryExactSince));
+                    entry.stableSince=since;
+                    if(tick-since>=ProjectionScaffoldPolicy.SETTLE_TICKS)entry.settled=true;
+                }
             }
             if(inventoryRecovery&&inventoryExact&&pending()==0)inventoryRecovery=false;
             return true;
         }
         boolean inventoryPending(){return (!inventoryExact||inventoryRecovery)&&!failed;}
+        boolean reject(String reason){if(!failed){failureReason=reason;failed=true;}return false;}
+        String failureReason(){return failureReason;}
+        void close(){closed=true;}
+        JsonObject diagnostic(String target){
+            var entry=entries.get(target);var out=new JsonObject();if(entry==null)return out;
+            out.addProperty("sent_tick",entry.sentTick);out.addProperty("packet_tick",entry.packetTick);
+            out.addProperty("last_packet_tick",entry.lastPacketTick);out.addProperty("ack_tick",entry.ack);
+            out.addProperty("observed_tick",entry.observedTick);out.addProperty("packet_state",entry.packetState);
+            out.addProperty("packet_applied",entry.packetApplied);out.addProperty("prediction_pending",entry.predictionPending);
+            out.addProperty("prediction_clear_tick",entry.predictionClearTick);out.addProperty("world_match",entry.worldMatch);
+            out.addProperty("server_chunk",entry.serverChunk);out.addProperty("stable_since",entry.stableSince);
+            out.addProperty("settled",entry.settled);return out;
+        }
         boolean settled(String target){var entry=entries.get(target);return entry!=null&&entry.settled;}
         int pending(){int n=0;for(var entry:entries.values())if(!entry.settled)n++;return n;}
         int settled(){return entries.size()-pending();}
@@ -116,6 +165,7 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
     ProjectionScaffoldFill(Minecraft c,JsonObject request,String world,long revision,
                            long damageAt,BooleanSupplier owner)throws Exception {
         this.world=world;this.revision=revision;this.damageAt=damageAt;this.owner=owner;
+        level=c.level;connection=c.getConnection();
         requestId=text(request,"id");placement=text(request,"placement_key");
         positions=parsePositions(request);int firstY=positions.getFirst().getY(),firstZ=positions.getFirst().getZ();
         String id=text(request,"expected_item");item=BuiltInRegistries.ITEM.getValue(Identifier.parse(id));
@@ -197,6 +247,7 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
     }
     private boolean safe(Minecraft c){
         return !closed&&failure.isEmpty()&&owner.getAsBoolean()&&c.player!=null&&c.level!=null&&c.gameMode!=null
+            &&c.level==level&&c.getConnection()==connection
             &&c.gameMode.getPlayerMode()==GameType.SURVIVAL&&c.screen==null&&!c.player.isDeadOrDying()
             &&c.player.getHealth()>=initialHealth&&!c.player.isInWater()&&!c.player.isInLava()&&!c.player.isOnFire()
             &&KitClient.config().lastAttackTimeEpochMillis<=damageAt
@@ -205,10 +256,14 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
             &&scaffold.settingsCurrent()&&flight.current();
     }
     private int pending(){int n=0;for(var attempt:attempts.values())if(!attempt.settled)n++;return n;}
-    private Map<String,Boolean> currentStates(Minecraft c){
-        var states=new LinkedHashMap<String,Boolean>();
-        for(var attempt:attempts.values())states.put(attempt.pos.toShortString(),
-            serverChunk(c,attempt.pos)&&attempt.state.equals(c.level.getBlockState(attempt.pos)));
+    private Map<String,AckWindow.Observation> currentStates(Minecraft c){
+        var states=new LinkedHashMap<String,AckWindow.Observation>();
+        for(var attempt:attempts.values()){
+            Boolean pending=null;
+            try{pending=predictions.pending(c.level,attempt.pos);}catch(RuntimeException unavailable){/* Unknown waits only within the finite prediction/attempt limits. */}
+            states.put(attempt.pos.toShortString(),new AckWindow.Observation(pending,
+                attempt.state.equals(c.level.getBlockState(attempt.pos)),serverChunk(c,attempt.pos)));
+        }
         return states;
     }
     private boolean baselineCurrent(Minecraft c){
@@ -222,7 +277,9 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
         if(!AutomationBridge.guardBusy()){release(c);try{flight.speed(0);}catch(Exception ignored){}}
     }
     void pauseBeforeGuard(Minecraft c){stopPlacement(c);}
-    void fail(Minecraft c,String reason){if(failure.isEmpty())failure=reason;stopPlacement(c);}
+    void fail(Minecraft c,String reason){if(failure.isEmpty()){
+        failure=reason;failureReason=ackWindow.failureReason().isEmpty()?"CONTROLLER_REJECTED":ackWindow.failureReason();
+    }stopPlacement(c);}
     private boolean bodyClear(Minecraft c,Vec3 step){
         AABB swept=c.player.getBoundingBox().expandTowards(step);
         if(!c.level.noCollision(c.player,swept))return false;
@@ -279,7 +336,7 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
         if(!safe(c)){fail(c,"Scaffold candidate no longer owns a safe material lease");return false;}
         if(!baselineCurrent(c)){fail(c,"Preexisting confirmed Scaffold row state changed or unloaded");return false;}
         inventoryNow=count(c,false);
-        if(!ackWindow.observe(inventoryStart,inventoryNow,currentStates(c),tick)){fail(c,"Scaffold inventory/window diverged before placement");return false;}
+        if(!ackWindow.observeProof(inventoryStart,inventoryNow,currentStates(c),tick)){fail(c,"Scaffold inventory/window diverged before placement");return false;}
         if(!ackWindow.canSend()){stage=ackWindow.inventoryPending()?"awaiting_inventory_sync":"awaiting_acks";stopPlacement(c);return false;}
         if(!scaffold.activeOwned()||!ProjectionScaffoldPolicy.windowAvailable(pending())||!ProjectionScaffoldPolicy.contains(row,pos.getX(),pos.getY(),pos.getZ()))return false;
         String key=world+'|'+pos.toShortString();if(SPENT.contains(key)||baseline.contains(pos)||attempts.containsKey(pos))return false;
@@ -313,14 +370,15 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
     }
     void candidateEnded(){candidate=null;}
     void serverBlock(Minecraft c,BlockPos pos,BlockState packet,boolean applied,long tick){
-        var attempt=attempts.get(pos);if(closed||attempt==null||!applied)return;
+        var attempt=attempts.get(pos);
+        if(closed||!failure.isEmpty()||attempt==null||tick<attempt.sentTick||c.level!=level||c.getConnection()!=connection)return;
         if(!safe(c)){fail(c,"Scaffold server update belongs to an expired or unsafe owner");return;}
-        if(!attempt.state.equals(packet)){fail(c,"Server corrected or rejected a Scaffold cell; all unsent cells stopped");return;}
-        if(!ackWindow.acknowledge(pos.toShortString(),packet.toString(),tick)){fail(c,"Scaffold server acknowledgement identity diverged");return;}
-        attempt.acknowledged=true;if(attempt.ackTick<0)attempt.ackTick=tick;
-        for(var known:attempts.values())if(!known.state.equals(c.level.getBlockState(known.pos))){
-            fail(c,"Known pending Scaffold world state diverged after a server update");return;
+        // Receipt of the current connection's packet is proof of reception,
+        // not proof that vanilla has already resolved its prediction scope.
+        if(!ackWindow.packet(pos.toShortString(),packet.toString(),true,applied,tick)){
+            fail(c,"Scaffold server acknowledgement identity diverged");return;
         }
+        attempt.acknowledged=true;if(attempt.ackTick<0)attempt.ackTick=tick;
     }
     Outcome observe(Minecraft c,long tick,boolean timedOut){
         if(closed||!failure.isEmpty())return Outcome.WAITING;
@@ -332,9 +390,8 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
             observedPosition=position;rawVelocity=c.player.getDeltaMovement();observedMotionTick=tick;
         }
         inventoryNow=count(c,false);
-        if(!ackWindow.observe(inventoryStart,inventoryNow,currentStates(c),tick)){fail(c,"Scaffold ACK window, world states or cumulative inventory diverged");return Outcome.WAITING;}
+        if(!ackWindow.observeProof(inventoryStart,inventoryNow,currentStates(c),tick)){fail(c,"Scaffold ACK window, world states or cumulative inventory diverged");return Outcome.WAITING;}
         for(var attempt:attempts.values()){
-            if(!attempt.state.equals(c.level.getBlockState(attempt.pos))){fail(c,"Scaffold world state was corrected; no resend");return Outcome.WAITING;}
             if(!attempt.settled&&ackWindow.settled(attempt.pos.toShortString())){attempt.settled=true;confirmedCount++;}
         }
         if(ackWindow.inventoryPending()){stage="awaiting_inventory_sync";stopPlacement(c);}
@@ -360,7 +417,17 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
         out.addProperty("pending",pending());out.addProperty("pending_limit",2);out.addProperty("inventory_start",inventoryStart);out.addProperty("inventory_now",inventoryNow);
         out.addProperty("cumulative_inventory_verified",ProjectionScaffoldPolicy.cumulativeInventoryMatches(inventoryStart,inventoryNow,sentCount));
         out.addProperty("inventory_sync_pending",ackWindow.inventoryPending());
-        out.addProperty("complete",completed);out.addProperty("failure",failure);out.addProperty("automatic_retry_allowed",false);
+        out.addProperty("complete",completed);out.addProperty("failure",failure);out.addProperty("failure_reason",failureReason);out.addProperty("automatic_retry_allowed",false);
+        var observed=new JsonArray();
+        for(var attempt:attempts.values()){
+            var diagnostic=ackWindow.diagnostic(attempt.pos.toShortString());
+            var position=new JsonArray();position.add(attempt.pos.getX());position.add(attempt.pos.getY());position.add(attempt.pos.getZ());
+            diagnostic.add("pos",position);
+            diagnostic.addProperty("expected_state",attempt.state.toString());observed.add(diagnostic);
+        }
+        out.add("attempts",observed);
+        out.addProperty("no_packet_limit_ticks",ACK_TIMEOUT);out.addProperty("prediction_limit_ticks",AckWindow.PREDICTION_TIMEOUT);
+        out.addProperty("attempt_limit_ticks",AckWindow.ATTEMPT_TIMEOUT);out.addProperty("settle_ticks",ProjectionScaffoldPolicy.SETTLE_TICKS);
         out.addProperty("cleanup_pending",cleanupPending());
         out.addProperty("real_y_step",realYStep);out.addProperty("real_horizontal_step",realHorizontalStep);
         var velocity=new JsonArray();velocity.add(rawVelocity.x);velocity.add(rawVelocity.y);velocity.add(rawVelocity.z);out.add("raw_velocity",velocity);
@@ -369,7 +436,7 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
     }
     static void release(Minecraft c){if(c.options!=null)for(var key:KitKeys.movementKeys(c))key.setDown(false);}
     @Override public void close(){
-        if(closed)return;var c=Minecraft.getInstance();stopPlacement(c);scaffold.close();
+        if(closed)return;ackWindow.close();var c=Minecraft.getInstance();stopPlacement(c);scaffold.close();
         if(scaffold.acquired()){failure="Owned Scaffold disable is unconfirmed; hover and candidate gate retained";return;}
         if(AutomationBridge.guardBusy()){deferredFlightRestore=true;return;}
         deferredFlightRestore=false;

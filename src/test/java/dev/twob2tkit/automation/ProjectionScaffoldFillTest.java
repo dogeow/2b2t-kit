@@ -13,9 +13,11 @@ class ProjectionScaffoldFillTest {
         assertTrue(window.sent("a","cobble"));assertTrue(window.sent("b","cobble"));
         assertFalse(window.sent("c","cobble"));assertEquals(2,window.pending());
         assertTrue(window.acknowledge("a","cobble",10));
+        assertTrue(window.observe(128,126,Map.of("a",true,"b",true),10));
         assertTrue(window.observe(128,126,Map.of("a",true,"b",true),18));
         assertEquals(1,window.settled());assertEquals(1,window.pending());
         assertTrue(window.acknowledge("b","cobble",20));
+        assertTrue(window.observe(128,126,Map.of("a",true,"b",true),20));
         assertTrue(window.observe(128,126,Map.of("a",true,"b",true),27));assertEquals(1,window.pending());
         assertTrue(window.observe(128,126,Map.of("a",true,"b",true),28));assertEquals(0,window.pending());
     }
@@ -56,6 +58,7 @@ class ProjectionScaffoldFillTest {
         assertTrue(window.observe(128,126,states,11));
         assertTrue(window.observe(128,126,states,19));assertEquals(1,window.settled());assertFalse(window.canSend());
         window.acknowledge("b","cobble",20);
+        assertTrue(window.observe(128,126,states,20));
         assertTrue(window.observe(128,126,states,27));assertFalse(window.canSend());
         assertTrue(window.observe(128,126,states,28));assertEquals(0,window.pending());assertTrue(window.canSend());
     }
@@ -87,12 +90,14 @@ class ProjectionScaffoldFillTest {
             String key=Integer.toString(i);long tick=i*10;
             assertTrue(window.sent(key,"cobble",tick));states.put(key,true);
             assertTrue(window.acknowledge(key,"cobble",tick));
+            assertTrue(window.observe(204,204-i,states,tick));
             assertTrue(window.observe(204,204-i,states,tick+8));
         }
         assertEquals(13,window.settled());assertEquals(0,window.pending());
     }
     @Test void settledCellsStillCannotBeResentAndLaterWorldCorrectionInvalidatesTheWindow() {
         var window=new ProjectionScaffoldFill.AckWindow();window.sent("a","cobble");window.acknowledge("a","cobble",10);
+        assertTrue(window.observe(128,127,Map.of("a",true),10));
         assertTrue(window.observe(128,127,Map.of("a",true),18));assertFalse(window.sent("a","cobble"));
         assertFalse(window.observe(128,127,Map.of("a",false),19));assertFalse(window.canSend());
     }
