@@ -5,6 +5,7 @@ from pathlib import Path
 from build_supervisor import SafetyHeartbeat,stocks
 from run_evidence import observed_delta,write_manifest
 from sensitive_data import sanitize,scrub_confirmed_json
+from material_ground_finish import GroundFinishStop,optional_main_inventory,idle_read_proof
 class Handoff(Exception):pass
 def reply_observation(path):
  try:raw=path.read_text()
@@ -133,6 +134,7 @@ class Client:
    s=self.raw() if wait_seconds is None else self.raw(wait_seconds=wait_seconds)
    if not s.get('connected') or s.get('world_session')!=self.world or s.get('control_revision')!=self.rev or s.get('manual_movement'):
     self.last_owned_ground_walk=None
+    self.last_owned_idle_ground_read=None
     raise Handoff('Control or world changed; no more commands')
    paused=s.get('interface_pause_protocol')==1 and s.get('interface_paused') is True
    if paused:
@@ -171,6 +173,7 @@ class Client:
   req={'id':rid,'op':op,'server':s['server'],'dimension':s['dimension'],'site':self.anchor,
        'world_session':self.world,'expected_revision':self.rev,'expires_at':int(time.time()*1000)+5000,**params}
   evidence_before=s;request_started=time.monotonic()
+  self.last_owned_idle_ground_read=None  # A new dispatch cannot reuse an older read baseline.
   if op not in ('snapshot','scan'):self.last_owned_ground_walk=None
   expected=expected_native_revision(op,self.rev)
   tmp=path.with_suffix('.materials.tmp');tmp.write_text(json.dumps(req))
@@ -250,13 +253,25 @@ class Client:
       fields=('time','connected','world_session','control_revision','server','dimension','screen','last_request',
               'pos','health','flight','under_water','kill_aura','auto_log','navigating','native_material_busy',
               'guard_armed','guard_pve_only','guard_busy','manual_movement','recent_hurt_at','recent_attacker',
-              'safety_hold','supervision_lease','movement_keys','velocity','on_ground')
+              'safety_hold','supervision_lease','movement_keys','velocity','on_ground',
+              'inventory','player_uuid','projection_selection','food')
       self.last_owned_ground_walk=json.loads(json.dumps({
        'request_id':rid,'task_session':getattr(self,'task',None),'world_session':self.world,
        'revision':current['control_revision'],'phase':'done','op':'walk','params':sanitize(params),
+       'pose_rebase_schema':1,
+       'before_inventory':optional_main_inventory(evidence_before),
        'before_damage':{key:evidence_before.get(key) for key in ('recent_hurt_at','recent_attacker')},
        'before_safety_hold':evidence_before.get('safety_hold'),
        'terminal':{key:current.get(key) for key in fields}}))
+     idle_proof=idle_read_proof(self,op,sanitize(params),evidence_before,result,current)
+     if idle_proof is not None:
+      self.last_owned_idle_ground_read=idle_proof
+      try:
+       (self.out/('idle-ground-read-'+rid+'.json')).write_text(json.dumps(idle_proof,ensure_ascii=False,indent=2)+'\n')
+      except OSError:
+       # The exact returned read remains a success; absent durable evidence
+       # does not authorize this optional path.
+       self.last_owned_idle_ground_read=None
      try:
       scrub_confirmed_json(path,rid,self.world)
       scrub_confirmed_json(reply,rid,self.world)
@@ -443,84 +458,25 @@ class MaterialClient(Client):
        and math.dist(position,waypoint)<3):
     raise RuntimeError('Canopy waypoint has a nearby entity')
  def _settle_owned_ground_walk(self,state):
-  """Observe at most two seconds of one completed ground walk's tiny landing.
+  """Observe bounded landing of one exactly proved completed ground walk.
 
   Read-only scans may replace last_terminal_evidence, so keep a dedicated proof
   that every later movement/menu/inventory dispatch invalidates.
   """
   proof=getattr(self,'last_owned_ground_walk',None)
-  if not isinstance(proof,dict):raise RuntimeError('Ground settlement has no owned completed walk')
-  terminal=proof.get('terminal',{});params=proof.get('params',{})
-  if (not isinstance(terminal,dict) or not isinstance(params,dict)
-      or proof.get('op')!='walk' or proof.get('phase')!='done' or params.get('restore_flight') is not False
-      or proof.get('world_session')!=self.world or proof.get('task_session')!=self.task
-      or proof.get('revision')!=self.rev or not isinstance(proof.get('request_id'),str) or not proof['request_id']
-      or params.get('water_descend') or 'freefall_brake_y' in params):
-   raise RuntimeError('Ground settlement walk ownership is unverified')
-  def vector(value):
-   return (isinstance(value,list) and len(value)==3
-           and all(type(v) in (int,float) and math.isfinite(v) for v in value))
-  origin=terminal.get('pos');target=params.get('target');arrival=params.get('arrival',.65)
-  if (not vector(origin) or not vector(target) or type(arrival) not in (int,float)
-      or not math.isfinite(arrival) or not 0<arrival<=1
-      or type(terminal.get('time')) is not int
-      or type(terminal.get('recent_hurt_at')) is not int
-      or terminal.get('last_request')!=proof['request_id']
-      or proof.get('before_safety_hold')!=terminal.get('safety_hold')
-      or proof.get('before_damage')!={key:terminal.get(key) for key in ('recent_hurt_at','recent_attacker')}):
-   raise RuntimeError('Ground settlement pose, arrival or damage proof is incomplete')
-  def safe(sample):
-   lease=sample.get('supervision_lease') or {};hold=sample.get('safety_hold')
-   if (sample.get('connected') is not True or sample.get('world_session')!=self.world
-       or sample.get('control_revision')!=self.rev or sample.get('last_request')!=self.last
-       or not isinstance(terminal.get('server'),str) or not terminal['server']
-       or sample.get('server')!=terminal['server'] or sample.get('dimension')!=terminal.get('dimension')
-       or sample.get('screen')!=''
-       or sample.get('health')!=20 or sample.get('flight') is not False
-       or sample.get('kill_aura') is not True or sample.get('auto_log') is not True
-       or sample.get('guard_armed') is not True or sample.get('guard_pve_only') is not True
-       or sample.get('guard_busy') is not False or sample.get('under_water') is not False
-       or sample.get('manual_movement') is not False or sample.get('navigating') or sample.get('native_material_busy')
-       or not isinstance(hold,dict) or hold.get('active') is not False or hold!=terminal.get('safety_hold')
-       or any(sample.get(key)!=terminal.get(key) for key in ('recent_hurt_at','recent_attacker'))
-       or lease.get('kind')!='materials' or lease.get('id')!=self.heartbeat.id
-       or lease.get('job_session')!=self.task or lease.get('world_session')!=self.world
-       or lease.get('revision')!=self.rev or lease.get('remote_finish')!='guard'):
-    raise RuntimeError('Ground settlement ownership or protection changed')
-   pos=sample.get('pos');keys=sample.get('movement_keys');velocity=sample.get('velocity')
-   if (not vector(pos) or not vector(velocity) or not isinstance(keys,dict)
-       or not {'forward','back','jump','sneak'}.issubset(keys)
-       or any(value is not False for value in keys.values())
-       or math.hypot(pos[0]-origin[0],pos[2]-origin[2])>1
-       or math.hypot(pos[0]-target[0],pos[2]-target[2])>arrival
-       or not -.5<=pos[1]-origin[1]<=.05
-       or type(sample.get('time')) is not int or sample['time']<terminal['time']):
-    raise RuntimeError('Ground settlement residual motion is outside the owned walk bounds')
-   return pos,velocity
-  # Check the actual terminal protection as well as every subsequent sample.
-  safe({**terminal,'last_request':self.last})
-  deadline=time.monotonic()+2;stable=None;sample=state
-  while True:
-   pos,velocity=safe(sample)
-   if sample.get('on_ground') is True and math.hypot(velocity[0],velocity[2])<=.03 and abs(velocity[1])<=.1:
-    if (stable is not None and sample['time']-stable['time']>=400
-        and math.dist(pos,stable['pos'])<=.08):
-     (self.out/'park-ground-settlement.json').write_text(json.dumps({
-      'scope':'owned_completed_ground_walk_read_only_settlement','world_session':self.world,
-      'request_id':proof['request_id'],'from':origin,'settled':pos,
-      'observed_span_ms':sample['time']-stable['time'],'maximum_wait_seconds':2},ensure_ascii=False,indent=2))
-     return sample
-    if stable is None or math.dist(pos,stable['pos'])>.08:stable=sample
-   else:stable=None
-   remaining=deadline-time.monotonic()
-   if remaining<=0:raise RuntimeError('Owned ground walk did not settle within two seconds')
-   time.sleep(min(.05,remaining))
-   sample=self.status(wait_seconds=0)
+  if (isinstance(proof,dict) and proof.get('pose_rebase_schema')==1
+      or proof is None and getattr(self,'last_owned_idle_ground_read',None) is not None):
+   from material_ground_finish import settle
+   return settle(self,state)
+  raise GroundFinishStop('Ground finish requires complete current-schema owned walk evidence')
  def _finish_vertical(self,state,emergency=False):
   """One verified same-column route; never follow an uncertain reply with another move."""
-  if (not emergency and state.get('flight') is False
-      and getattr(self,'last_owned_ground_walk',None) is not None):
+  if not emergency and state.get('flight') is False:
    state=self._settle_owned_ground_walk(state)
+   if getattr(self,'ground_finish_rebase',None) is not None:
+    from material_ground_finish import ascend
+    return ascend(self,state)
+   raise GroundFinishStop('Ground finish has no complete current-pose rebase proof')
   start=list(state['pos']);target_y=self.park_target[1]
   # GuardEscapePolicy accepts at most 64 vertical blocks. Each settled
   # segment stays below that cap; an uncertain segment is never repeated.
@@ -770,6 +726,21 @@ class MaterialClient(Client):
    and lease.get('job_session')==self.task and lease.get('world_session')==self.world
    and lease.get('remote_finish')=='guard'
    and lease.get('revision')==state.get('control_revision'))
+ def _owned_native_parking_anchor(self,state,finish_revision):
+  """A current native park can justify waiting, never a synthetic finish receipt."""
+  if (not self._owned_guarded_finish_state(state,'parking')
+      or state.get('connected') is not True
+      or type(state.get('control_revision')) is not int
+      or state.get('control_revision') not in (finish_revision,finish_revision+1)
+      or state.get('navigating') or state.get('native_material_busy')):return None
+  lease=state.get('supervision_lease') or {};target=lease.get('park_target');pos=state.get('pos')
+  if (not isinstance(target,list) or len(target)!=3
+      or not isinstance(pos,list) or len(pos)!=3
+      or any(type(value) not in (int,float) or not math.isfinite(value) for value in target+pos)
+      or not -64<=target[1]<320 or not -64<=pos[1]<320
+      or abs(pos[1]-target[1])>2
+      or (pos[0]-target[0])**2+(pos[2]-target[2])**2>self.PARK_RADIUS_SQR):return None
+  return target[:]
  def _rebase_guarded_finish(self,error):
   """Keep a healthy guarded flyer online at its latest verified column."""
   latest=self.status()
@@ -834,47 +805,86 @@ class MaterialClient(Client):
   if self.remote_finish=='guard' and not self._prepare_guarded_finish():return
   self.heartbeat.close()
   p=self.root/('supervision-receipt-'+self.heartbeat.id+'.json')
-  for _ in range(200 if self.remote_finish=='guard' else 600):
-   pending_disconnect=False
-   if p.exists():
-    d=json.loads(p.read_text())
-    if self.remote_finish=='guard' and d.get('action')=='KEEP_PVE_GUARD':
-     try:s=self.raw()
-     except RuntimeError:break
-     if self._owned_guarded_finish_state(s,'parking') and self.park_near(s):
-      (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('HIGH_GUARD_CONFIRMED',flush=True);return
-    pending_disconnect=d.get('action')=='LOGOUT' and not d.get('confirmed')
-    if d.get('confirmed'):
-     if d.get('action')=='LOGOUT' and d.get('lease')==self.heartbeat.id and d.get('job_session')==self.task:
-      if isinstance(d.get('snapshot'),dict):self._observe_owned_health(d['snapshot'])
-      self._record_health_stop('Native material finish logged out after health loss',logout_attempted=True)
-     (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('DISCONNECT_CONFIRMED',d['action'],d['cause'],flush=True);return
+  finish_revision=self.rev;ack_seconds=30 if self.remote_finish=='guard' else 90
+  ack_deadline=time.monotonic()+ack_seconds;waiting_guard_ack=False
+  while True:
+   receipt_state,d=reply_observation(p)
+   matching=(receipt_state=='valid' and d.get('lease')==self.heartbeat.id and d.get('job_session')==self.task)
+   pending_disconnect=bool(matching and d.get('action')=='LOGOUT' and not d.get('confirmed'))
+   if matching and d.get('confirmed') and d.get('action') in ('LOGOUT','PAUSE_LOCAL'):
+    if d.get('action')=='LOGOUT':
+     if isinstance(d.get('snapshot'),dict):self._observe_owned_health(d['snapshot'])
+     self._record_health_stop('Native material finish logged out after health loss',logout_attempted=True)
+    (self.out/'stock-safety.json').write_text(json.dumps(d,ensure_ascii=False,indent=2));print('DISCONNECT_CONFIRMED',d['action'],d['cause'],flush=True);return
    try:s=self.raw()
-   except RuntimeError:
+   except (Handoff,RuntimeError):
     print('Native finish acknowledgement unavailable; heartbeat has stopped',flush=True);return
-   lease=s.get('supervision_lease',{})
-   if lease.get('id')==self.heartbeat.id and lease.get('kind')=='parking':self.rev=s['control_revision']
-   if s.get('world_session')!=self.world or s.get('manual_movement') or s.get('control_revision')!=self.rev and not pending_disconnect:
+   lease=s.get('supervision_lease') or {}
+   if not s.get('connected') or s.get('world_session')!=self.world or s.get('manual_movement'):
     self._record_health_stop('Material finish lost its connection after health loss');return
-   if lease and lease.get('id')!=self.heartbeat.id:return
+   if pending_disconnect:
+    if lease and (lease.get('id')!=self.heartbeat.id or lease.get('job_session')!=self.task
+        or lease.get('world_session')!=self.world):return
+    if time.monotonic()>=ack_deadline:break
+    time.sleep(.15);continue
+   if self.remote_finish=='guard':
+    if (lease.get('id')!=self.heartbeat.id or lease.get('job_session')!=self.task
+        or lease.get('world_session')!=self.world or lease.get('remote_finish')!='guard'):
+     return
+    revision=s.get('control_revision');lease_revision=lease.get('revision')
+    # stopWork publishes a temporary new revision before the native lease is
+    # changed to parking. It is not a control handoff, but it is never proof.
+    closing_material=(lease.get('kind')=='materials' and type(lease_revision)is int and lease_revision==finish_revision
+     and type(revision)is int and revision in (finish_revision,finish_revision+1))
+    owned_parking=(lease.get('kind')=='parking' and type(revision)is int
+     and type(lease_revision)is int and lease_revision==revision
+     and revision in (finish_revision,finish_revision+1))
+    if not closing_material and not owned_parking:return
+    stop=s.get('control_stop') or {}
+    if stop.get('kind') in ('manual','emergency') and stop.get('revision')==revision:return
+    native_keep=(matching and d.get('action')=='KEEP_PVE_GUARD'
+     and type(d.get('time'))is int and d['time']>0
+     and isinstance(d.get('snapshot'),dict) and d['snapshot'].get('world_session')==self.world
+     and not d.get('local_verified') and not d.get('lease_transition_pending'))
+    # Exact native receipts are synchronous; status is coalesced off-thread.
+    # Re-observe all scope changes immediately, and require a status at or
+    # after the receipt before adopting the coherent owned parking revision.
+    current_anchor=self._owned_native_parking_anchor(s,finish_revision)
+    if waiting_guard_ack and current_anchor is None:break
+    if (native_keep and owned_parking and type(s.get('time'))is int and s['time']>=d['time']
+        and current_anchor is not None):
+     # The native watchdog may have reanchored the same healthy hover. Adopt
+     # its current target only with the exact original native finish receipt.
+     self.park_target=current_anchor
+     self.rev=revision
+     proof={**d,'native_receipt':True,'parking_confirmation':{k:s.get(k) for k in
+      ('time','world_session','control_revision','supervision_lease','health','flight',
+       'guard_armed','guard_pve_only','manual_movement','connected','pos','under_water','safety_hold')}}
+     (self.out/'stock-safety.json').write_text(json.dumps(proof,ensure_ascii=False,indent=2));print('HIGH_GUARD_CONFIRMED',flush=True);return
+   elif s.get('control_revision')!=self.rev and not pending_disconnect:return
+   elif lease and lease.get('id')!=self.heartbeat.id:return
+   if time.monotonic()>=ack_deadline:
+    if (self.remote_finish=='guard' and not pending_disconnect
+        and self._owned_native_parking_anchor(s,finish_revision) is not None):
+     (self.out/'park-ack-wait.json').write_text(json.dumps({
+      'action':'WAIT_OWNED_NATIVE_PARKING','confirmed':False,'native_receipt':False,
+      'receipt_state':receipt_state,'world_session':self.world,'lease':self.heartbeat.id,
+      'job_session':self.task,'finish_revision':finish_revision,
+      'observed_revision':s.get('control_revision'),'time':s.get('time'),
+      'park_target':lease.get('park_target'),'pos':s.get('pos'),'health':s.get('health'),
+      'heartbeat_finished':True,'native_lease_retained':True,
+      'observation_window_seconds':ack_seconds},ensure_ascii=False,indent=2))
+     print('GUARD_FINISH_ACK_WAITING: native parking retained; original finish unconfirmed',flush=True)
+     waiting_guard_ack=True
+     ack_deadline=time.monotonic()+ack_seconds
+    else:break
    time.sleep(.15)
   if self.remote_finish=='guard':
-   try:
-    s=self.raw();lease=s.get('supervision_lease') or {}
-    kind=lease.get('kind')
-    if kind in ('materials','parking') and self._owned_guarded_finish_state(s,kind) and self.park_near(s):
-     (self.out/'stock-safety.json').write_text(json.dumps({
-      'action':'KEEP_PVE_GUARD','lease':lease.get('id'),
-      'job_session':lease.get('job_session'),'snapshot':s,
-      'confirmed':False,'local_verified':True,
-      'lease_transition_pending':kind=='materials'},ensure_ascii=False,indent=2))
-     print('HIGH_GUARD_CONFIRMED',flush=True);return
-   except (Handoff,RuntimeError,KeyError,OSError,ValueError):pass
    attempted=False;previous=getattr(self,'last',None)
    try:self.request('safe_logout');attempted=True
    except (Handoff,RuntimeError):attempted=getattr(self,'last',None)!=previous
    finally:self._record_health_stop('High hover acknowledgement failed after health loss',logout_attempted=attempted)
-   print('High hover was not confirmed; requested safe logout',flush=True)
+   print('High hover was not confirmed; '+('requested safe logout' if attempted else 'yielded to native safety'),flush=True)
  def _wait_guarded_finish(self,error,seconds=30):
   """Remain a live, stoppable owner while native defense settles.
 
@@ -903,10 +913,17 @@ class MaterialClient(Client):
    time.sleep(.25)
  def _prepare_guarded_finish(self):
   guard_finish_started=time.monotonic()
+  ground_finish_mode=bool(getattr(self,'last_owned_ground_walk',None) or getattr(self,'last_owned_idle_ground_read',None))
+  def observe_finish():
+   if not ground_finish_mode:return self.status()
+   try:return self.status(wait_seconds=0,wait_interface=False)
+   except (RuntimeError,KeyError,TypeError,ValueError,OSError) as error:
+    raise GroundFinishStop('Ground finish observation unavailable; retain original owner: '+str(error))from error
   while True:
    health_exit_state=None
    try:
-    s=self._observe_owned_health(self.status())
+    s=self._observe_owned_health(observe_finish())
+    ground_finish_mode=ground_finish_mode or s.get('flight')is False and s.get('health')==20
     if not s.get('guard_armed'):raise RuntimeError('High parking needs PvE guard')
     if s['health']<14:
      health_exit_state=s
@@ -915,7 +932,7 @@ class MaterialClient(Client):
     if not self.park_near(s):
      deadline=time.monotonic()+12
      while True:
-      s=self.status()
+      s=observe_finish()
       if s['health']<14:
        health_exit_state=s
        if not s.get('under_water'):self._finish_vertical(s,emergency=True)
@@ -945,15 +962,36 @@ class MaterialClient(Client):
           and time.monotonic()<deadline):
        time.sleep(.25);continue
       raise RuntimeError('High parking route did not finish: '+str(r.get('detail')))
-    s=self.status()
+    s=observe_finish()
     if 14<=s['health']<19:s=self.recover_park_health()
     if s['health']<18 or not s.get('guard_armed') or not self.park_near(s):
      if s['health']<18:health_exit_state=s
      raise RuntimeError('High parking position or guard not verified')
+   except GroundFinishStop as error:
+    # A missing settlement/scan/ascent proof is not a healthy logout trigger.
+    # Keep the original heartbeat; callers can observe this owner or yield to
+    # native health/manual/world priority without replaying any operation.
+    self.guarded_ground_stop={'reason':str(error),'action':'WAIT_ORIGINAL_OWNER_NO_NEW_REQUEST',
+     'world_session':self.world,'task_session':getattr(self,'task',None),'lease_id':self.heartbeat.id,
+     'last_request':getattr(self,'last',None),'native_inflight':getattr(self,'native_inflight',None),
+     'last_terminal_evidence':getattr(self,'last_terminal_evidence',None),
+     'ground_rebase':getattr(self,'ground_finish_rebase',None),'native_parking_confirmed':False}
+    (self.out/'park-ground-deferred.json').write_text(json.dumps(self.guarded_ground_stop,ensure_ascii=False,indent=2)+'\n')
+    print('GROUND_FINISH_DEFERRED: original native proof retained; no logout or replacement action',flush=True)
+    return False
    except Handoff:
     self._record_health_stop('Owned material work disconnected after health loss')
     self.heartbeat.close();return False
    except (RuntimeError,KeyError) as error:
+    if ground_finish_mode and health_exit_state is None:
+     self.guarded_ground_stop={'reason':str(error),'action':'WAIT_ORIGINAL_OWNER_NO_NEW_REQUEST',
+      'world_session':self.world,'task_session':getattr(self,'task',None),'lease_id':self.heartbeat.id,
+      'last_request':getattr(self,'last',None),'native_inflight':getattr(self,'native_inflight',None),
+      'last_terminal_evidence':getattr(self,'last_terminal_evidence',None),
+      'ground_rebase':getattr(self,'ground_finish_rebase',None),'native_parking_confirmed':False}
+     (self.out/'park-ground-deferred.json').write_text(json.dumps(self.guarded_ground_stop,ensure_ascii=False,indent=2)+'\n')
+     print('GROUND_FINISH_DEFERRED: original proof retained; no logout',flush=True)
+     return False
     latest={}
     if health_exit_state is None:
      try:

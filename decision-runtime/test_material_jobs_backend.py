@@ -1024,6 +1024,7 @@ class BackendTest(unittest.TestCase):
         self.root=Path(self.temp.name)/'automation';self.root.mkdir()
         self.current=state()
         self.client=SimpleNamespace(world='w',task='task-a',rev=3,last='request-a',root=self.root,out=self.root,
+                                    PARK_RADIUS_SQR=backend.MaterialClient.PARK_RADIUS_SQR,
                                     heartbeat=SimpleNamespace(id='lease-a',close=Mock()),
                                     checked=Mock(return_value={'phase':'done'}),request=Mock(return_value={'phase':'done'}),
                                     finish=Mock(),status=Mock(side_effect=lambda:self.current))
@@ -1032,6 +1033,21 @@ class BackendTest(unittest.TestCase):
         self.job.cleaning=False;self.job.busy=False;self.job.ready=True;self.job.native_gravel_session=None
         self.job.request={'mode':'item','context':{'server':'simpcraft.com','dimension':'minecraft:overworld','world_session':'w','expected_revision':3}}
         self.job.checkpoint=Mock();self.job.close_owned_menu=Mock();self.job.stage_near_base=Mock()
+
+    def publish_native_finish(self):
+        self.client.rev=4
+        self.current.update(time=201,control_revision=4,phase='parking',
+                            pos=list(self.client.park_target),guard_armed=True,guard_pve_only=True,
+                            under_water=False,safety_hold={'active':False})
+        self.current['supervision_lease'].update(kind='parking',revision=4,remote_finish='guard')
+        native={'lease':'lease-a','job_session':'task-a','action':'KEEP_PVE_GUARD',
+                'time':200,'cause':'controller_finished','confirmed':False,
+                'server_survival_verified':False,'snapshot':copy.deepcopy(self.current)}
+        native['snapshot']['time']=200
+        receipt={**native,'native_receipt':True,'parking_confirmation':copy.deepcopy(self.current)}
+        (self.root/'supervision-receipt-lease-a.json').write_text(json.dumps(native))
+        (self.root/'stock-safety.json').write_text(json.dumps(receipt))
+        return native,receipt
 
     def test_cleanup_scope_requires_exact_lease_and_current_or_proved_own_revision(self):
         self.assertTrue(backend.owns_material_state(self.client,self.current))
@@ -1064,7 +1080,7 @@ class BackendTest(unittest.TestCase):
         self.client.checked=Mock(side_effect=lambda op,**kw:calls.append(op) or {'phase':'done'})
         def finish():
             calls.append('finish')
-            (self.root/'stock-safety.json').write_text(json.dumps({'lease':'lease-a','action':'KEEP_PVE_GUARD'}))
+            self.publish_native_finish()
         self.client.finish=Mock(side_effect=finish)
         with patch.object(backend,'read_fresh',return_value=self.current),patch('material_cleanup.run',side_effect=lambda c:calls.append('cleanup') or []),patch.object(backend,'local_park',side_effect=lambda c:calls.append('park') or [0,110,0]),patch.object(backend,'leave_quarry',side_effect=lambda c,d:calls.append('exit')):
             self.job.finish()
@@ -1074,6 +1090,121 @@ class BackendTest(unittest.TestCase):
     def test_missing_native_safety_receipt_cannot_report_successful_finish(self):
         with patch.object(backend,'read_fresh',return_value=self.current),patch('material_cleanup.run',return_value=[]),patch.object(backend,'local_park',return_value=[0,110,0]):
             with self.assertRaisesRegex(JobBlocked,'尚未得到原生确认'):self.job.finish()
+
+    def run_finish_proof_check(self,change=None):
+        def finish():
+            native,receipt=self.publish_native_finish()
+            if change:
+                change(native,receipt,self.current)
+                (self.root/'supervision-receipt-lease-a.json').write_text(json.dumps(native))
+                (self.root/'stock-safety.json').write_text(json.dumps(receipt))
+        self.client.finish=Mock(side_effect=finish)
+        self.job.record_recovery=Mock()
+        with patch.object(backend,'read_fresh',return_value=self.current), \
+                patch('material_cleanup.run',return_value=[]), \
+                patch.object(backend,'leave_quarry'), \
+                patch.object(backend,'local_park',return_value=[0,110,0]):
+            self.job.finish()
+
+    def test_matching_canonical_receipt_and_current_protected_parking_finish(self):
+        self.run_finish_proof_check()
+        self.job.record_recovery.assert_called_once_with(self.client)
+        self.client.request.assert_not_called()
+        self.assertIsNone(self.job.client)
+
+    def test_worker_finish_proof_cannot_be_minimal_synthetic_or_from_other_scope(self):
+        changes=[
+            ('minimal proof',lambda n,r,s:r.clear() or r.update(lease='lease-a',action='KEEP_PVE_GUARD')),
+            ('missing native marker',lambda n,r,s:r.pop('native_receipt')),
+            ('synthetic local proof',lambda n,r,s:r.update(local_verified=True)),
+            ('pending transition',lambda n,r,s:r.update(lease_transition_pending=True)),
+            ('foreign worker lease',lambda n,r,s:r.update(lease='other')),
+            ('foreign worker job',lambda n,r,s:r.update(job_session='other')),
+            ('different worker action',lambda n,r,s:r.update(action='LOGOUT')),
+            ('different worker time',lambda n,r,s:r.update(time=199)),
+            ('noninteger worker time',lambda n,r,s:r.update(time=True)),
+            ('foreign worker world',lambda n,r,s:r['snapshot'].update(world_session='other')),
+            ('missing parking observation',lambda n,r,s:r.pop('parking_confirmation')),
+            ('parking observed before receipt',lambda n,r,s:r['parking_confirmation'].update(time=199)),
+            ('untransitioned worker lease',lambda n,r,s:r['parking_confirmation']['supervision_lease'].update(kind='materials')),
+            ('worker revision mismatch',lambda n,r,s:r['parking_confirmation'].update(control_revision=5)),
+        ]
+        for name,change in changes:
+            with self.subTest(name=name):
+                self.setUp()
+                with self.assertRaisesRegex(JobBlocked,'尚未得到原生确认'):
+                    self.run_finish_proof_check(change)
+                self.job.record_recovery.assert_not_called()
+                self.client.request.assert_not_called()
+                self.assertIsNone(self.job.client)
+
+    def test_canonical_receipt_must_match_exact_native_scope_and_time(self):
+        changes=[
+            ('foreign canonical lease',lambda n,r,s:n.update(lease='other')),
+            ('foreign canonical job',lambda n,r,s:n.update(job_session='other')),
+            ('different canonical action',lambda n,r,s:n.update(action='LOGOUT')),
+            ('different canonical time',lambda n,r,s:n.update(time=202)),
+            ('foreign canonical world',lambda n,r,s:n['snapshot'].update(world_session='other')),
+            ('missing native snapshot',lambda n,r,s:n.pop('snapshot')),
+            ('synthetic canonical proof',lambda n,r,s:n.update(local_verified=True)),
+            ('pending canonical transition',lambda n,r,s:n.update(lease_transition_pending=True)),
+        ]
+        for name,change in changes:
+            with self.subTest(name=name):
+                self.setUp()
+                with self.assertRaisesRegex(JobBlocked,'尚未得到原生确认'):
+                    self.run_finish_proof_check(change)
+                self.job.record_recovery.assert_not_called()
+                self.client.request.assert_not_called()
+
+    def test_current_parking_must_remain_fresh_owned_and_protected_after_receipt(self):
+        changes=[
+            ('stale current status',lambda n,r,s:s.update(time=199)),
+            ('manual takeover',lambda n,r,s:s.update(manual_movement=True)),
+            ('world change',lambda n,r,s:s.update(world_session='other')),
+            ('disconnected',lambda n,r,s:s.update(connected=False)),
+            ('foreign current lease',lambda n,r,s:s['supervision_lease'].update(id='other')),
+            ('foreign current job',lambda n,r,s:s['supervision_lease'].update(job_session='other')),
+            ('incoherent current revision',lambda n,r,s:s['supervision_lease'].update(revision=3)),
+            ('new current revision',lambda n,r,s:s.update(control_revision=5)),
+            ('current materials lease',lambda n,r,s:s['supervision_lease'].update(kind='materials')),
+            ('guard disabled',lambda n,r,s:s.update(guard_armed=False)),
+            ('flight disabled',lambda n,r,s:s.update(flight=False)),
+            ('pve scope changed',lambda n,r,s:s.update(guard_pve_only=False)),
+            ('new injury',lambda n,r,s:s.update(health=17)),
+            ('unsafe pose',lambda n,r,s:s.update(pos=[0,64,0])),
+            ('malformed pose',lambda n,r,s:s.update(pos=[0])),
+            ('malformed lease',lambda n,r,s:s.update(supervision_lease=[])),
+            ('safety hold',lambda n,r,s:s.update(safety_hold={'active':True})),
+        ]
+        for name,change in changes:
+            with self.subTest(name=name):
+                self.setUp()
+                with self.assertRaisesRegex(JobBlocked,'尚未得到原生确认'):
+                    self.run_finish_proof_check(change)
+                self.job.record_recovery.assert_not_called()
+                self.client.request.assert_not_called()
+
+    def test_missing_or_unreadable_canonical_receipt_keeps_safe_hover_unconfirmed(self):
+        for content in (None,'{','[]'):
+            with self.subTest(content=content):
+                self.setUp()
+                def finish():
+                    self.publish_native_finish()
+                    canonical=self.root/'supervision-receipt-lease-a.json'
+                    if content is None:canonical.unlink()
+                    else:canonical.write_text(content)
+                self.client.finish=Mock(side_effect=finish)
+                self.job.record_recovery=Mock()
+                with patch.object(backend,'read_fresh',return_value=self.current), \
+                        patch('material_cleanup.run',return_value=[]), \
+                        patch.object(backend,'leave_quarry'), \
+                        patch.object(backend,'local_park',return_value=[0,110,0]):
+                    with self.assertRaisesRegex(JobBlocked,'尚未得到原生确认'):
+                        self.job.finish()
+                self.job.record_recovery.assert_not_called()
+                self.client.request.assert_not_called()
+                self.assertTrue(self.current['flight'] and self.current['guard_armed'])
 
     def test_nonhealth_park_failure_is_reported_and_logout_is_not_replayed(self):
         with patch.object(backend,'read_fresh',return_value=self.current),patch('material_cleanup.run',return_value=[]),patch.object(backend,'local_park',side_effect=JobBlocked('屋顶遮挡')):
@@ -1255,7 +1386,7 @@ class BackendTest(unittest.TestCase):
         self.job.stage_near_base=Mock(side_effect=lambda depots:calls.append('base'))
         def finish():
             calls.append('finish')
-            (self.root/'stock-safety.json').write_text(json.dumps({'lease':'lease-a','action':'KEEP_PVE_GUARD'}))
+            self.publish_native_finish()
         self.client.finish=Mock(side_effect=finish)
         with patch.object(backend,'read_fresh',return_value=self.current),patch.object(backend,'leave_quarry',side_effect=lambda c,p:calls.append('shaft')),patch('material_cleanup.run',side_effect=lambda c:calls.append('restore') or []),patch.object(backend,'local_park',side_effect=lambda c:calls.append('park') or [0,110,0]):
             self.job.finish()
@@ -1264,7 +1395,7 @@ class BackendTest(unittest.TestCase):
 
     def test_returned_tools_need_no_base_round_trip(self):
         self.stored_tools(state='returned')
-        self.client.finish=Mock(side_effect=lambda:(self.root/'stock-safety.json').write_text(json.dumps({'lease':'lease-a','action':'KEEP_PVE_GUARD'})))
+        self.client.finish=Mock(side_effect=self.publish_native_finish)
         with patch.object(backend,'read_fresh',return_value=self.current),patch.object(backend,'leave_quarry'),patch('material_cleanup.run',return_value=[]),patch.object(backend,'local_park',return_value=[0,110,0]):self.job.finish()
         self.job.stage_near_base.assert_not_called()
 

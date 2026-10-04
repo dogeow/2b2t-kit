@@ -132,6 +132,26 @@ its own unique completed-batch directory so regrown trees are freshly surveyed;
 an old inflight directory is never bypassed. Existing discovery and regrowth
 implementations remain responsible for real natural-tree/plant/growth proof.
 """
+    return _run(c,profile,item,target_count,out,checkpoint)
+
+
+def run_carried(c,profile,item,target_count,out,checkpoint):
+    """Produce a bounded carried plank batch under the original projection scope."""
+    from .pipeline_dispatch import carried_context, CARRIED_SCOPE
+    if item not in PLANKS or type(target_count)is not int or not 1<=target_count<=2304:
+        raise ValueError('Carried wood adapter supports bounded ordinary planks only')
+    backend=getattr(c,'wood_backend',None) or getattr(c,'material_backend',None)
+    scope=carried_context(backend,c,item,target_count)
+    if scope is None:
+        return {'phase':'waiting','code':'WAIT_BACKEND','detail':'Exact original projection resource context required',
+                'target_scope':CARRIED_SCOPE}
+    result=_run(c,profile,item,target_count,out,checkpoint,carried_scope=scope)
+    return {**result,'target_scope':CARRIED_SCOPE}
+
+
+def _run(c,profile,item,target_count,out,checkpoint,carried_scope=None):
+    carried=carried_scope is not None
+    target_scope='absolute_backpack_total' if carried else 'approved_depot_total'
     if item not in LOGS and item not in PLANKS:
         return _wait('unsupported_wood', 'Only ordinary oak/dark-oak/cherry/acacia/spruce logs/planks are supported')
     if type(target_count) is not int or not 1 <= target_count <= 100000:
@@ -139,17 +159,18 @@ implementations remain responsible for real natural-tree/plant/growth proof.
     backend = getattr(c, 'wood_backend', None) or getattr(c, 'material_backend', None)
     if backend is None or getattr(backend, 'client', None) is not c or getattr(backend, 'profile', None) != profile:
         return _wait('wait_source', 'Bind an existing Backend.client to c and pass that Backend.profile; no new controller')
-    if getattr(backend, 'request', {}).get('mode') == 'projection':
+    if getattr(backend, 'request', {}).get('mode') == 'projection' and not carried:
         return _wait('wait_source', 'Stockpile wood requires an item-mode backend; projection fetch can withdraw unrelated finished outputs')
-    depots = profile.get('depots')
-    if (not isinstance(depots, list) or not depots or any(not isinstance(p, list) or len(p) != 3
+    depots = profile.get('depots',[])
+    if (not isinstance(depots, list) or not carried and not depots or any(not isinstance(p, list) or len(p) != 3
             or any(type(v) is not int for v in p) for p in depots)
             or len({tuple(p) for p in depots}) != len(depots)):
         return _wait('wait_source', 'Distinct approved canonical depot inventories are required')
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
-    path = out / 'wood-pipeline.json'
+    path = out / ('wood-carried-pipeline.json' if carried else 'wood-pipeline.json')
     spec = {'world_session': c.world, 'item': item, 'target': target_count,
-            'target_scope': 'approved_depot_total', 'depots': depots}
+            'target_scope': target_scope, 'depots': depots}
+    if carried:spec['request_scope']=carried_scope
     if path.exists():
         job = json.loads(path.read_text())
         if any(job.get(k) != v for k, v in spec.items()):
@@ -172,8 +193,16 @@ implementations remain responsible for real natural-tree/plant/growth proof.
         return proof['counts'][item], proof
     def operation(kind, callback):
         job['pending'] = {'kind': kind, 'sequence': job['sequence'] + 1}
+        if carried:
+            before=state()
+            job['pending'].update(request_before=getattr(c,'last',None),
+                                  inventory_before=dict(inventory_counts(before)))
         save()
-        result = callback()
+        try:
+            result = callback()
+        finally:
+            if carried:
+                job['pending']['request_after']=getattr(c,'last',None);save()
         state()
         return result
     def known(kind, receipt):
@@ -182,19 +211,26 @@ implementations remain responsible for real natural-tree/plant/growth proof.
         job['pending'] = None; save()
 
     state(); save()
-    current_depot, initial_audit = depot()
-    if job['expected_depot'] is not None and current_depot != job['expected_depot']:
+    current_depot, initial_audit = (0,None) if carried else depot()
+    if not carried and job['expected_depot'] is not None and current_depot != job['expected_depot']:
         return _wait('wait_depot', 'Approved depot stock changed outside the recorded pipeline; re-audit before resuming',
                      expected=job['expected_depot'], observed=current_depot)
-    job['expected_depot'] = current_depot; save()
-    if current_depot >= target_count:
+    if not carried:job['expected_depot'] = current_depot
+    save()
+    if not carried and current_depot >= target_count:
         job['complete'] = True; save()
         return {'phase': 'done', 'target_scope': 'approved_depot_total', 'item': item,
                 'target': target_count, 'depot_count': current_depot, 'audit': initial_audit}
 
-    def deliver():
+    def deliver(final=False):
         nonlocal current_depot
         held = stock().get(item, 0)
+        if carried:
+            if not final and held<target_count:return None
+            complete=held>=target_count
+            job.update(complete=complete,verified_carried_count=held);save()
+            return {'phase':'done' if complete else 'waiting','code':'complete' if complete else 'CARRIED_BATCH',
+                    'item':item,'target':target_count,'verified_carried_count':held,'journal':str(path)}
         amount = min(held, target_count - current_depot)
         if not amount:return None
         before_depot = current_depot
@@ -223,7 +259,7 @@ implementations remain responsible for real natural-tree/plant/growth proof.
     except (JobBlocked, ValueError, AttributeError) as error:
         return _wait('wait_source', str(error))
     fresh = state(); held = inventory_counts(fresh)
-    remaining = target_count - current_depot
+    remaining = target_count - (held.get(item,0) if carried else current_depot)
     room = room_for_item(fresh, item)
     wanted = min(remaining, MAX_NEW_LOGS if item in LOGS else MAX_PLANK_BATCH,
                  room if item in LOGS else room // 4 * 4)
@@ -363,4 +399,4 @@ implementations remain responsible for real natural-tree/plant/growth proof.
             return _wait('wait_receipt', 'Actual plank output/input delta or craft receipt is uncertain')
         known('craft', {'recipe_id': recipe_id, 'absolute_carried_target': target,
                         'produced': produced, 'result': result})
-    return deliver() or _wait('wait_source', 'No verified finished wood was available for delivery')
+    return deliver(final=True) or _wait('wait_source', 'No verified finished wood was available for delivery')

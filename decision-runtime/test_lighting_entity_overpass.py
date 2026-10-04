@@ -1,3 +1,4 @@
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +23,9 @@ class Moving(FakeClient):
                 entities=[entity]
             rows=[{'pos':[0,67,2],'state':'Block{minecraft:stone}'}] if self.solid and high[1]>67 else []
             return {'phase':'done','world_session':self.world,'blocks':rows,
+                    'control_revision':self.rev,'scan_start_revision':self.rev,'scan_end_revision':self.rev,
+                    'scan_cells_read':math.prod(b-a+1 for a,b in zip(low,high)),
+                    'scan_total_cells':math.prod(b-a+1 for a,b in zip(low,high)),
                     'scan_entity_scope':ENTITY_SCOPE_AT_SCAN_END,'scan_entities':entities}
         return super().request(op,**params)
     def checked(self,op,**params):

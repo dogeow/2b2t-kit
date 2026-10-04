@@ -1,6 +1,7 @@
 package dev.twob2tkit.automation;
 import com.google.gson.*;
 import dev.twob2tkit.builder.LitematicaAccess;
+import dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -9,6 +10,12 @@ import java.util.*;
 /** Read-only field-level differences. Existing blocks and block entities are reported, never removed. */
 public final class ProjectionAudit {
  private ProjectionAudit(){}
+ private static boolean serverChunk(Minecraft c,BlockPos p){
+  if(c.level==null)return false;
+  var chunk=c.level.getChunkSource().getChunk(Math.floorDiv(p.getX(),16),Math.floorDiv(p.getZ(),16),
+      net.minecraft.world.level.chunk.status.ChunkStatus.FULL,false);
+  return LoadedServerChunkEvidence.isServerChunk(c.level,chunk);
+ }
  static String kind(String expected,String actual,boolean replaceable){return expected.equals(actual)?"state_only":replaceable?"missing":"occupied";}
  public static JsonObject scan(Minecraft c){
   var pick=LitematicaAccess.buildSelection();String loading=LitematicaAccess.loadingReason(pick);if(!loading.isEmpty())throw new IllegalStateException(loading);
@@ -18,7 +25,7 @@ public final class ProjectionAudit {
   int matched=0,total=0;var rows=new JsonArray();var kinds=new TreeMap<String,Integer>();var wantedItems=new TreeMap<String,Integer>();var actualBlocks=new TreeMap<String,Integer>();
   for(var p:BlockPos.betweenClosed(pick.min(),pick.max())){
    if(!pick.contains(p)||!LitematicaAccess.inVisibleLayer(p))continue;
-   if(!c.level.getChunkSource().hasChunk(p.getX()>>4,p.getZ()>>4))throw new IllegalStateException("Projection chunk is not loaded");
+   if(!serverChunk(c,p))throw new IllegalStateException("Projection chunk is not loaded");
    var expected=world.getBlockState(p);if(expected.is(Blocks.STRUCTURE_VOID))continue;selectedCells.add(p.immutable());
    var actual=c.level.getBlockState(p);var blockEntity=c.level.getBlockEntity(p);
    if(blockEntity instanceof net.minecraft.world.level.block.entity.BannerBlockEntity banner)banners.add(ProjectionDecorations.banner(banner));
@@ -38,6 +45,7 @@ public final class ProjectionAudit {
   var out=new JsonObject();out.addProperty("audit_schema",2);out.addProperty("observed_at",System.currentTimeMillis());
   out.addProperty("server",c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip);out.addProperty("dimension",c.level.dimension().identifier().toString());
   out.addProperty("loaded_chunks_verified",true);out.addProperty("entity_coverage","client_loaded_entities_only");
+  out.addProperty("loaded_server_chunks_verified",true);out.addProperty("chunk_evidence_scope","server_supplied_chunks_only");
   out.addProperty("enclosed_air_cells",enclosed.size());out.add("enclosed_air_conflicts",interiorRows);out.addProperty("exterior_air_conflicts_excluded",airConflicts.size()-interiorRows.size());
   out.add("decorations",ProjectionDecorations.entities(c,pick.min(),pick.max()));out.add("banners",banners);
   out.addProperty("name",pick.name());out.addProperty("placement_key",pick.key());out.addProperty("matched",matched);out.addProperty("total",total);out.add("mismatches",rows);out.add("kinds",new Gson().toJsonTree(kinds));out.add("replacement_items",new Gson().toJsonTree(wantedItems));out.add("actual_mismatch_blocks",new Gson().toJsonTree(actualBlocks));return out;
@@ -52,14 +60,14 @@ public final class ProjectionAudit {
   var rows=new JsonArray();var hashLines=new ArrayList<String>();
   for(var p:BlockPos.betweenClosed(pick.min(),pick.max())){
    if(!pick.contains(p)||!LitematicaAccess.inVisibleLayer(p))continue;
-   if(!c.level.hasChunkAt(p))throw new IllegalStateException("Projection chunk is not loaded");
+   if(!serverChunk(c,p))throw new IllegalStateException("Projection chunk is not loaded");
    var expected=world.getBlockState(p);if(expected.isAir()||expected.is(Blocks.STRUCTURE_VOID))continue;
    String state=expected.toString(),item=BuiltInRegistries.ITEM.getKey(expected.getBlock().asItem()).toString();
    var row=new JsonObject();row.add("pos",new Gson().toJsonTree(new int[]{p.getX(),p.getY(),p.getZ()}));row.addProperty("state",state);row.addProperty("item",item);rows.add(row);
    hashLines.add(p.getX()+","+p.getY()+","+p.getZ()+"\t"+state+"\t"+item);
   }
   var bounds=new JsonObject();bounds.add("min",new Gson().toJsonTree(new int[]{pick.min().getX(),pick.min().getY(),pick.min().getZ()}));bounds.add("max",new Gson().toJsonTree(new int[]{pick.max().getX(),pick.max().getY(),pick.max().getZ()}));
-  var out=new JsonObject();out.addProperty("model_schema",1);out.addProperty("placement_key",pick.key());out.add("bounds",bounds);out.addProperty("observed_at",System.currentTimeMillis());out.addProperty("loaded_chunks_verified",true);out.addProperty("total",rows.size());out.add("expected",rows);out.addProperty("content_hash",contentHash(hashLines));return out;
+  var out=new JsonObject();out.addProperty("model_schema",1);out.addProperty("placement_key",pick.key());out.add("bounds",bounds);out.addProperty("observed_at",System.currentTimeMillis());out.addProperty("loaded_chunks_verified",true);out.addProperty("loaded_server_chunks_verified",true);out.addProperty("chunk_evidence_scope","server_supplied_chunks_only");out.addProperty("total",rows.size());out.add("expected",rows);out.addProperty("content_hash",contentHash(hashLines));return out;
  }
  static String contentHash(Collection<String> rows){
   try{var digest=java.security.MessageDigest.getInstance("SHA-256");for(String row:rows.stream().sorted().toList())digest.update((row+"\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));return java.util.HexFormat.of().formatHex(digest.digest());}
@@ -69,7 +77,7 @@ public final class ProjectionAudit {
   var r=new JsonObject();r.add("pos",new Gson().toJsonTree(new int[]{p.getX(),p.getY(),p.getZ()}));r.addProperty("expected",expected);r.addProperty("actual",c.level.getBlockState(p).toString());r.addProperty("kind",kind);
   r.addProperty("block_entity",c.level.getBlockEntity(p)!=null);r.addProperty("fluid",!c.level.getFluidState(p).isEmpty());
   boolean adjacentFluid=false;for(var d:net.minecraft.core.Direction.values()){
-   if(!c.level.hasChunkAt(p.relative(d))){r.addProperty("neighbors_loaded",false);return r;}
+   if(!serverChunk(c,p.relative(d))){r.addProperty("neighbors_loaded",false);return r;}
    adjacentFluid|=!c.level.getFluidState(p.relative(d)).isEmpty();
   }
   r.addProperty("neighbors_loaded",true);r.addProperty("adjacent_fluid",adjacentFluid);return r;

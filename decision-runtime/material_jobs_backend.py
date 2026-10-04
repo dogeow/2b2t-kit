@@ -554,7 +554,12 @@ class Backend:
                 return {'phase': 'done', 'detail': '背包已有所需材料'}
             self.prepare_travel()
             self.stage_near_base(self.profile['depots'])
-            ready=self.finished_supply_pass(c,out,targets) if self.request['mode']=='projection' else None
+            # Resource pipelines fetch their explicit ingredient targets on the
+            # same projection backend. Opportunistic finished projection stock
+            # must not replace those targets or occupy their processing slots.
+            ready=(self.finished_supply_pass(c,out,targets)
+                   if self.request['mode']=='projection'
+                   and not getattr(self,'resource_pipeline_context',None) else None)
             if ready is not None and ready['ready_for_build']:
                 # Useful finished output is now physically carried. Do not
                 # continue to Ender/raw ingredient errands before using it.
@@ -1224,12 +1229,70 @@ class Backend:
             return harden(c,item,count,self.profile,out,self.checkpoint)
 
     def run_pipeline(self, item, target_count, out, *, target_scope, checkpoint=None):
-        from material_jobs.pipeline_dispatch import run
+        from material_jobs.pipeline_dispatch import describe, run
         from material_jobs.pipeline_experience import record_outcome
+        route=describe(item)
+        carried=bool(route.get('carried_target_scope') and target_scope==route['carried_target_scope'])
+        if target_scope!=route['target_scope'] and not carried:
+            raise ValueError('Expected target_scope='+route['target_scope']+' for '+item)
+        maximum=route['max_carried_target_count'] if carried else route['max_target_count']
+        if type(target_count) is not int or not 1<=target_count<=maximum:
+            raise ValueError('Invalid target count for '+item)
+        callback=self.checkpoint if checkpoint is None else checkpoint
+        projection=(getattr(self,'request',{}).get('mode')=='projection'
+                    and target_scope in ('absolute_backpack','absolute_backpack_total'))
+        original_checkpoint=self.checkpoint
+        absent=object()
+        original_context=getattr(self,'resource_pipeline_context',absent)
+        request=getattr(self,'request',None)
+        if projection:
+            if original_context is not absent and original_context is not None:
+                raise JobBlocked('材料流水线上下文仍在使用；不能嵌套开始新流水线')
+            identity=fingerprint(request)
+            context=dict(request['context'])
+            key=request['projection_key']
+            state=read_fresh(self.root)
+            require_unlocked(self.root,state)
+            require_scope(state,context)
+            selection=state.get('projection_selection') or {}
+            if (selection.get('key')!=key
+                    or any(not isinstance(selection.get(k),list) or len(selection[k])!=3
+                           or any(type(v) is not int for v in selection[k]) for k in ('min','max'))):
+                raise JobBlocked('已锁定的投影发生变化或范围不可读；未开始材料流水线')
+            bounds={k:list(selection[k]) for k in ('min','max')}
+
+            def resource_checkpoint():
+                if self.request is not request or fingerprint(self.request)!=identity:
+                    raise JobBlocked('原投影任务范围已变化；保留材料流水线记录')
+                callback()
+                if self.request is not request or fingerprint(self.request)!=identity:
+                    raise JobBlocked('原投影任务范围已变化；保留材料流水线记录')
+                current=read_fresh(self.root)
+                require_unlocked(self.root,current)
+                require_scope(current,context)
+                actual=current.get('projection_selection') or {}
+                if actual.get('key')!=key or any(actual.get(k)!=v for k,v in bounds.items()):
+                    raise JobBlocked('已锁定的投影发生变化；保留材料流水线记录')
+
+            self.resource_pipeline_context={'projection_key':key,'world_session':context['world_session'],
+                                            'target_scope':target_scope,'item':item,'target_count':target_count,
+                                            'request_id':request['id'],'request_fingerprint':identity,
+                                            'selection_bounds':bounds}
+            self.checkpoint=resource_checkpoint
         started = time.monotonic()
         try:
-            result = run(self, item, target_count, out,
-                         self.checkpoint if checkpoint is None else checkpoint, target_scope)
+            try:
+                result = run(self, item, target_count, out,
+                             self.checkpoint if projection else callback, target_scope)
+                if projection:
+                    resource_checkpoint()
+            finally:
+                if projection:
+                    self.checkpoint=original_checkpoint
+                    if original_context is absent:
+                        del self.resource_pipeline_context
+                    else:
+                        self.resource_pipeline_context=original_context
         except ValueError:
             raise  # An invalid contract is not an observed game failure.
         except Exception as error:
@@ -1587,9 +1650,38 @@ class Backend:
                 record = json.loads(fallback.read_text())
                 raise JobBlocked('收尾已切换保护下线：'+str(record.get('reason','停靠未确认')))
             proof=c.out/'stock-safety.json'
-            receipt=json.loads(proof.read_text()) if proof.is_file() else {}
-            if receipt.get('lease')!=c.heartbeat.id or receipt.get('action')!='KEEP_PVE_GUARD':
-                raise JobBlocked('安全收尾尚未得到原生确认，物品进度已保留')
+            try:
+                receipt=json.loads(proof.read_text())
+                canonical=self.root/('supervision-receipt-'+c.heartbeat.id+'.json')
+                native=json.loads(canonical.read_text())
+                fresh=read_fresh(self.root)
+                if not isinstance(receipt,dict) or not isinstance(native,dict) or not isinstance(fresh,dict):
+                    raise ValueError('Finish proof is not an object')
+                observed=receipt.get('parking_confirmation')
+                native_snapshot=native.get('snapshot')
+                worker_snapshot=receipt.get('snapshot')
+                if (receipt.get('native_receipt') is not True
+                        or any(record.get('local_verified') or record.get('lease_transition_pending') for record in (receipt,native))
+                        or native.get('lease')!=c.heartbeat.id or native.get('job_session')!=c.task
+                        or native.get('action')!='KEEP_PVE_GUARD'
+                        or type(native.get('time')) is not int or native['time']<=0
+                        or type(receipt.get('time')) is not int
+                        or any(receipt.get(key)!=native.get(key) for key in ('lease','job_session','action','time'))
+                        or not isinstance(native_snapshot,dict) or native_snapshot.get('world_session')!=c.world
+                        or not isinstance(worker_snapshot,dict) or worker_snapshot.get('world_session')!=c.world
+                        or not isinstance(observed,dict) or type(observed.get('time')) is not int
+                        or observed['time']<native['time'] or observed.get('control_revision')!=c.rev
+                        or not MaterialClient._owned_guarded_finish_state(c,observed,'parking')
+                        or not MaterialClient.park_near(c,observed)
+                        or type(fresh.get('time')) is not int or fresh['time']<observed['time']
+                        or fresh.get('control_revision')!=c.rev
+                        or not MaterialClient._owned_guarded_finish_state(c,fresh,'parking')
+                        or not MaterialClient.park_near(c,fresh)):
+                    raise ValueError('Native receipt and current guarded parking do not agree')
+            except (OSError,RuntimeError,ValueError,KeyError,TypeError,IndexError,AttributeError) as error:
+                # This is an evidence check after cleanup, never a new movement,
+                # cleanup replay or permission to replace healthy high guarding.
+                raise JobBlocked('安全收尾尚未得到原生确认，物品进度已保留') from error
             self.record_recovery(c)
         finally:
             c.heartbeat.close()

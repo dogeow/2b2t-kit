@@ -101,6 +101,31 @@ def block_id(row):
     return state.split('}', 1)[0].removeprefix('Block{') if isinstance(state, str) else ''
 
 
+def verified_own_torch(row, placements, world, task, observed_at=None):
+    """Only a noncolliding torch proved by this same batch may cross a sweep."""
+    if (not isinstance(row, dict) or row.get('state') != 'Block{minecraft:torch}'
+            or row.get('passable') is not True or row.get('solid') is not False
+            or row.get('fluid') is not False or row.get('block_entity') is not False):
+        return False
+    try:
+        target = point(row.get('pos'))
+        matched = [p for p in placements if isinstance(p, dict) and point(p.get('target')) == target]
+    except (TypeError, ValueError):
+        return False
+    if len(matched) != 1:
+        return False
+    placed = matched[0]
+    return bool(placed.get('state') == 'verified' and placed.get('later_verified_frames') == 2
+                and placed.get('world_session') == world and placed.get('task_session') == task
+                and placed.get('evidence_scope') == EVIDENCE
+                and isinstance(placed.get('interaction_request'), str) and placed['interaction_request']
+                and type(placed.get('before_stock')) is int and type(placed.get('after_stock')) is int
+                and placed['after_stock'] >= 0 and placed['before_stock'] - placed['after_stock'] == 1
+                and type(placed.get('before_time')) is int and type(placed.get('after_time')) is int
+                and placed['before_time'] < placed['after_time']
+                and (observed_at is None or type(observed_at) is int and placed['after_time'] <= observed_at))
+
+
 def scan_cells(reply, low, high, world=None):
     """Native scan omits AIR; validate every returned non-AIR coordinate."""
     low, high = bounds(low, high)
@@ -122,6 +147,58 @@ def scan_cells(reply, low, high, world=None):
         if not isinstance(row.get('state'), str):
             raise LightingBlocked('Scan state unavailable')
         cells[pos] = row
+    return cells
+
+
+def swept_entities(reply,start,target,scan_low,scan_high,world,revision):
+    """Integer scan coverage is wider than the conservative real player body."""
+    if (reply.get('phase')!='done'or reply.get('world_session')!=world
+            or not valid_entity_scope(reply.get('scan_entity_scope'))
+            or not isinstance(reply.get('scan_entities'),list)):
+        raise LightingBlocked('Current swept entity observation unavailable')
+    entities=reply['scan_entities']
+    if entities:
+        volume=math.prod(b-a+1 for a,b in zip(scan_low,scan_high))
+        if (type(revision)is not int
+                or any(type(reply.get(k))is not int or reply[k]!=revision for k in
+                       ('control_revision','scan_start_revision','scan_end_revision'))
+                or any(type(reply.get(k))is not int or reply[k]!=volume for k in ('scan_cells_read','scan_total_cells'))):
+            raise LightingBlocked('Complete same-revision swept entity scan unavailable')
+    if (any(not isinstance(p,(list,tuple))or len(p)!=3
+            or any(type(v)not in(int,float)or not math.isfinite(v)for v in p)for p in (start,target))):
+        raise LightingBlocked('Actual movement body coordinates unavailable')
+    minimum=[min(start[i],target[i])-(.35 if i!=1 else 0)for i in range(3)]
+    maximum=[max(start[i],target[i])+(.35 if i!=1 else 1.8)for i in range(3)]
+    intersecting=[]
+    for entity in entities:
+        box=entity.get('bounds')if isinstance(entity,dict)else None
+        if (not isinstance(entity,dict)or not isinstance(entity.get('type'),str)or not entity['type']
+                or type(entity.get('alive'))is not bool or type(entity.get('hostile'))is not bool
+                or entity.get('world_session',world)!=world or not isinstance(box,dict)):
+            raise LightingBlocked('Complete current entity AABB unavailable')
+        low,high=box.get('min'),box.get('max')
+        if (not isinstance(low,list)or not isinstance(high,list)or len(low)!=3 or len(high)!=3
+                or any(type(v)not in(int,float)or not math.isfinite(v)for v in low+high)
+                or any(low[i]>=high[i]for i in range(3))):
+            raise LightingBlocked('Complete current entity AABB unavailable')
+        if not all(high[i]>scan_low[i]and low[i]<scan_high[i]+1 for i in range(3)):
+            raise LightingBlocked('Current entity AABB contradicts its bounded scan scope')
+        # Match strict AABB overlap; a touching face is not a collision volume.
+        if all(high[i]>minimum[i]and low[i]<maximum[i]for i in range(3)):
+            intersecting.append(entity)
+    return intersecting
+
+
+def validate_native_details(cells):
+    """Unknown native details cannot become a completed zero-candidate scan."""
+    for row in cells.values():
+        if (any(type(row.get(k))is not bool for k in ('solid','fluid','passable','replaceable','block_entity',
+                                                      'zombie_spawn_floor','zombie_block_light_risk'))
+                or any(type(row.get(k))is not int or not 0<=row[k]<=15
+                       for k in ('spawn_block_light','monster_spawn_block_light_limit'))
+                or row['zombie_block_light_risk']!=(row['zombie_spawn_floor']
+                    and row['spawn_block_light']<=row['monster_spawn_block_light_limit'])):
+            raise LightingBlocked('Complete consistent native lighting details unavailable')
     return cells
 
 
@@ -147,20 +224,23 @@ def safe_dark_support(row):
     return safe_support(row)
 
 
-def candidates(cells, low, high, start=None, protected=None):
-    """Score actual dark safe supports; potential is ordering, never light proof."""
+def candidates(cells, low, high, start=None, protected=None, *, include_lit=False):
+    """Roof-free supports; lit neighbors require the batch planner's AIR proof."""
+    if type(include_lit)is not bool:raise ValueError('Lit neighbor candidate mode must be boolean')
     low, high = bounds(low, high)
     risky = {p for p, v in cells.items() if v.get('zombie_block_light_risk') is True}
     result = []
     park_y = high[1] - 2
     for pos, row in cells.items():
         x, y, z = pos
-        if (pos not in risky or not safe_dark_support(row)
+        if ((not include_lit and pos not in risky)or not safe_support(row,require_dark=not include_lit)
                 or candidate_protected(pos, (x, y + 1, z), protected)
                 or park_y - (y + 1) < 20
                 or any((x, h, z) in cells for h in range(y + 1, high[1] + 1))):
             continue
-        score = sum(sum(abs(a - b) for a, b in zip(pos, r)) <= 11 for r in risky)
+        score = sum(sum(abs(a - b) for a, b in zip(pos, r)) <= (13 if include_lit else 11)for r in risky)
+        if include_lit and not score:
+            continue
         distance = math.dist(start, [x + .5, y + 2.5, z + .5]) if start else 0
         result.append({'support': list(pos), 'target': [x, y + 1, z],
                        'support_state': row['state'], 'priority_dark_floor_count': score,
@@ -354,8 +434,9 @@ class LightingRun:
                 raise LightingBlocked('Unresolved prior lighting interaction; inspect intent before any replay: ' + str(path))
 
     def move(self, target, *, allow_entity_overpass=True):
-        # Fresh native AIR and entity intersection checks cover the full swept
-        # player body, not just endpoint cells. Native air_only checks again.
+        # Fresh native body/entity checks cover the whole sweep. An exact
+        # same-batch verified torch has no collision/fluid; native air_only
+        # rechecks actual collisions and hazards before and during movement.
         state = self.fresh()
         start = state['pos']
         low = [math.floor(min(start[i], target[i]) - (.35 if i != 1 else 0)) for i in range(3)]
@@ -363,11 +444,16 @@ class LightingRun:
         if any(low[i] < self.move_low[i] or high[i] > self.move_high[i] for i in range(3)):
             raise LightingBlocked('Movement body sweep exceeds authorized movement bounds')
         sweep = self.scan(low, high)
-        if sweep['blocks']:
+        if any(not verified_own_torch(row, self.report['placed'], self.c.world, self.c.task,
+                                     state.get('time')) for row in sweep['blocks']):
             raise LightingBlocked('Fresh movement body sweep is occupied')
-        entities = sweep.get('scan_entities')
-        if not isinstance(entities, list):
-            raise LightingBlocked('Current swept entity observation unavailable')
+        if sweep['blocks']:
+            self.report.setdefault('own_torch_sweep_checks', []).append({
+                'request_id': sweep.get('id'), 'targets': [row['pos'] for row in sweep['blocks']],
+                'world_session': self.c.world, 'task_session': self.c.task,
+                'observed_at': sweep.get('scan_ended_at', state.get('time')),
+                'native_air_only_required': True})
+        entities = swept_entities(sweep,start,target,low,high,self.c.world,self.c.rev)
         blockers = [e for e in entities if not isinstance(e, dict)
                     or e.get('type') not in ('minecraft:item', 'minecraft:experience_orb')]
         if blockers:
@@ -425,7 +511,7 @@ class LightingRun:
         if any(low[i] < self.move_low[i] or high[i] > self.move_high[i] for i in range(3)):
             raise LightingBlocked('Defended position left authorized movement bounds; no old-target interaction')
         sweep = self.scan(low, high, f'station-{index}-{attempt}-sweep.json')
-        entities = sweep['scan_entities']
+        entities = swept_entities(sweep,start,target,low,high,self.c.world,self.c.rev)
         clear = not sweep['blocks'] and all(isinstance(entity, dict) and entity.get('type') in
                   ('minecraft:item', 'minecraft:experience_orb') for entity in entities)
         if clear:
@@ -587,8 +673,8 @@ class LightingRun:
             dark_floor_observation_stage='after_run',
             protected_dark_floor=self.report['after']['protected_dark_floor'],
             unprotected_dark_floor=self.report['remaining_unprotected_risk'],
-            eligible_candidates=len(candidates(scan_cells(final, self.low, self.high),
-                                               self.low, self.high, protected=self.protected)))
+            eligible_candidates=len(plan_batch(scan_cells(final,self.low,self.high),self.low,self.high,
+                                               self.fresh()['pos'],self.protected,limit=min(8,self.limit))))
         self.c.set_progress(done=len(self.report['placed']),
                             phase=f"本批结束；已扫区域暗点 {self.report['remaining_unprotected_risk']}")
         self.save()

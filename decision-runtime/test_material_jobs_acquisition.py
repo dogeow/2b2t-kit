@@ -21,6 +21,7 @@ class FakeClient:
     world='world'
     def __init__(self, item='minecraft:cobbled_deepslate', before=0, gain=None, native_phase='done', resource='deepslate'):
         self.item=item;self.actions=[];self.gain=gain;self.native_phase=native_phase;self.still_active=False
+        self.rev=7
         self.state={'world_session':self.world,'health':20,'food':20,'guard_armed':True,'guard_pve_only':True,
                     'pos':[.5,70.1,.5],'time':1,'quarry_protocol':1,'rock_quarry_protocol':1,'tree_survey_protocol':1,
                     'air_only_navigation_protocol':2,
@@ -39,7 +40,12 @@ class FakeClient:
     def request(self,op,**params):
         self.actions.append((op,copy.deepcopy(params)))
         if op=='scan':
-            return {'blocks':copy.deepcopy([r for r in self.rows if all(params['min'][i]<=r['pos'][i]<=params['max'][i] for i in range(3))])}
+            cells=math.prod(params['max'][i]-params['min'][i]+1 for i in range(3))
+            self.last='scan-'+str(len(self.actions))
+            return {'id':self.last,'phase':'done','world_session':self.world,'control_revision':self.rev,
+                    'scan_start_revision':self.rev,'scan_end_revision':self.rev,
+                    'scan_cells_read':cells,'scan_total_cells':cells,
+                    'blocks':copy.deepcopy([r for r in self.rows if all(params['min'][i]<=r['pos'][i]<=params['max'][i] for i in range(3))])}
         if op=='scan_trees':return {'tree_survey':{'trees':copy.deepcopy(self.trees),'unloaded_columns':0}}
         if op=='select_item':self.state['selected_slot']=params['slot'];return {'phase':'done'}
         if op=='navigate':self.state['pos']=params['target'];return {'phase':'done'}
@@ -98,7 +104,9 @@ class AcquisitionTest(unittest.TestCase):
                     self.changed=True;self.last='nav-owned'
                     self.actions.append((op,copy.deepcopy(params)))
                     if self.obstacle:
-                        self.rows=[block((0,100,0),'stone')]
+                        # The first vertical request is now a bounded <=32
+                        # leg. Only a blocker inside that exact leg is proof.
+                        self.rows=[block((0,125,0),'stone')]
                     self.state.update(id=self.last,last_request=self.last,
                                       phase='waiting',guard_busy=False)
                     return {'id':self.last,'world_session':self.world,
@@ -401,7 +409,7 @@ class AcquisitionTest(unittest.TestCase):
     def test_flight_departure_from_chest_uses_native_air_only_before_any_horizontal_move(self):
         c=FakeClient();c.state.update(pos=[.5,64.875,.5],on_ground=False,flight=True,velocity=[0,0,0])
         chest=block((0,64,0),'chest',block_entity=True);chest['solid']=False
-        c.rows=[chest,block((5,80,0),'white_concrete')];trace=[]
+        c.rows=[chest]+[block((5,y,0),'white_concrete')for y in range(70,81)];trace=[]
         _travel(c,[10.5,70.1,10.5],lambda:None,trace)
         moves=[p for op,p in c.actions if op=='navigate']
         self.assertTrue(moves);self.assertEqual([.5,.5],[moves[0]['target'][0],moves[0]['target'][2]])
@@ -441,7 +449,7 @@ class AcquisitionTest(unittest.TestCase):
 
     def test_flight_height_clears_observed_roof_before_crossing(self):
         c=FakeClient();c.state['pos']=[.5,70.1,.5]
-        c.rows=[block((5,80,0),'white_concrete')]
+        c.rows=[block((5,y,0),'white_concrete')for y in range(70,81)]
         trace=[]
         _travel(c,[10.5,70.1,10.5],lambda:None,trace)
         moves=[p['target'] for op,p in c.actions if op=='navigate']
@@ -500,7 +508,7 @@ class AcquisitionTest(unittest.TestCase):
 
         cases=[]
         scan=ScanFailure();cases.append(('route_uncertain',scan))
-        blocked=FakeClient();blocked.rows=[block((-100,318,0),'stone')]
+        blocked=FakeClient();blocked.rows=[block((-100,y,0),'stone')for y in range(145,319)]
         cases.append(('route_geometry_blocked',blocked))
         guard=GuardFailure();guard.rows=[];cases.append(('guard_displaced',guard))
         for expected,c in cases:
@@ -1002,8 +1010,9 @@ class AcquisitionTest(unittest.TestCase):
             with self.subTest(controller=controller),tempfile.TemporaryDirectory() as out:
                 c=FakeClient();self.stopped_collect(c);stopped=c.request
                 def reactivated(op,**params):
+                    previous=getattr(c,'last',None)
                     reply=stopped(op,**params)
-                    if op=='scan' and getattr(c,'last',None)=='collect-resupply':c.state[controller]=True
+                    if op=='scan' and previous=='collect-resupply':c.state[controller]=True
                     return reply
                 c.request=reactivated
                 result=self.run_acquire(c,out)

@@ -1,6 +1,7 @@
 """Offline contracts for bounded natural surface-snow acquisition."""
 import copy
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -44,6 +45,7 @@ class FakeClient:
 
     def __init__(self, item, rows, *, silk=True, protocol=1, before=0, slot=20):
         self.item, self.rows, self.actions, self.last = item, copy.deepcopy(rows), [], None
+        self.rev=7;self.native_inflight=None
         inventory = [{'slot': i, 'item': 'minecraft:air', 'count': 0, 'max_stack': 64}
                      for i in range(36)]
         inventory[slot] = {'slot': slot, 'item': 'minecraft:diamond_shovel', 'count': 1,
@@ -53,6 +55,7 @@ class FakeClient:
         if before:
             inventory[1] = {'slot': 1, 'item': item, 'count': before, 'max_stack': 64}
         self.state = {'world_session': self.world, 'pos': [3.5, 70.1, 3.5],
+                      'connected':True,'control_revision':self.rev,'navigating':False,'native_material_busy':False,
                       'health': 20, 'food': 20, 'under_water': False,
                       'guard_armed': True, 'guard_pve_only': True,
                       'manual_movement': False, 'safety_hold': {'active': False},
@@ -73,7 +76,11 @@ class FakeClient:
         self.actions.append((op, copy.deepcopy(params)))
         self.last = 'offline-' + str(len(self.actions))
         if op == 'scan':
-            return {'blocks': [copy.deepcopy(row) for row in self.rows
+            total=math.prod(b-a+1 for a,b in zip(params['min'],params['max']))
+            return {'id':self.last,'phase':'done','world_session':self.world,
+                    'control_revision':self.rev,'scan_start_revision':self.rev,'scan_end_revision':self.rev,
+                    'scan_cells_read':total,'scan_total_cells':total,
+                    'blocks': [copy.deepcopy(row) for row in self.rows
                                if all(params['min'][i] <= row['pos'][i] <= params['max'][i]
                                       for i in range(3))]}
         if op == 'navigate':
@@ -124,6 +131,25 @@ class SnowAcquisitionTest(unittest.TestCase):
         settled = patch('material_jobs.navigation.settled_state',
                         side_effect=lambda c, *args, **kwargs: c.status())
         settled.start(); self.addCleanup(settled.stop)
+
+    def test_unproved_travel_scan_cannot_navigate_or_harvest_snow(self):
+        for malformed in ('missing','partial','stale_id','foreign_world','revision'):
+            with self.subTest(malformed=malformed),tempfile.TemporaryDirectory() as directory:
+                c=FakeClient(SNOW,patch_rows(),silk=True);original=c.request
+                def request(op,**params):
+                    reply=original(op,**params)
+                    if op=='scan':
+                        if malformed=='missing':reply.pop('scan_cells_read')
+                        elif malformed=='partial':reply['scan_cells_read']-=1
+                        elif malformed=='stale_id':reply['id']='previous-read'
+                        elif malformed=='foreign_world':reply['world_session']='foreign-world'
+                        else:reply['scan_end_revision']+=1
+                    return reply
+                c.request=request
+                result=acquire(c,SNOW,1,profile(SNOW),directory,lambda:None)
+                self.assertEqual('waiting',result['phase'])
+                self.assertNotIn('navigate',[op for op,_ in c.actions])
+                self.assertNotIn('mine_block',[op for op,_ in c.actions])
 
     def test_silk_touch_layer_yield_has_exact_inventory_receipt(self):
         with tempfile.TemporaryDirectory() as directory:

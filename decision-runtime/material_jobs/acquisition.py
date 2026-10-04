@@ -6,6 +6,7 @@ the lease. Targets are absolute main-inventory counts, never assumed block drops
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -242,6 +243,11 @@ RAW_IRON_BLOCK_MIN_Y, RAW_IRON_BLOCK_MAX_Y = -60, -8
 DIRECT_ROUTE_LIMIT = 384.0
 SEGMENT_ROUTE_LIMIT = 256.0
 SEARCH_TILE_MARGIN = 16.0
+LOADED_ROUTE_LEG = 32.0
+NATIVE_ROUTE_STEP = 31.0
+MAX_NATIVE_AXIS_STEPS = 16
+MAX_LOADED_ROUTE_LEGS = 64
+MAX_LOADED_ROUTE_SECONDS = 1800
 
 
 class Unavailable(Exception):
@@ -305,11 +311,18 @@ def _resource_route_scope(profile, region):
 
 
 def _scan(c, low, high, checkpoint):
-    if math.prod(high[i]-low[i]+1 for i in range(3)) > 50000:
+    cells = math.prod(high[i]-low[i]+1 for i in range(3))
+    if cells > 50000:
         raise Unavailable('扫描体积超过原生上限，需继续分段')
     checkpoint()
     reply = c.request('scan', min=low, max=high, details=True)
-    if not isinstance(reply.get('blocks'), list):
+    native_counts = any(key in reply for key in ('scan_cells_read', 'scan_total_cells'))
+    if (reply.get('phase') not in (None, 'done')
+            or 'world_session' in reply and reply['world_session'] != c.world
+            or not isinstance(reply.get('blocks'), list)
+            or native_counts and (reply.get('phase') != 'done' or reply.get('world_session') != c.world
+                or type(reply.get('scan_cells_read')) is not int or type(reply.get('scan_total_cells')) is not int
+                or reply['scan_cells_read'] != cells or reply['scan_total_cells'] != cells)):
         raise Unavailable('区域尚未完整加载或扫描失败：' + str(reply.get('detail', '缺少方块回执')), 'waiting')
     return reply['blocks']
 
@@ -532,8 +545,102 @@ def _persist_segment_trace(c, target, trace, phase, **extra):
         pass
 
 
-def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *, clearance_padding=.32, obstacle_margin=3.1):
+def _require_route_authorization(point, authorized):
+    if authorized is not None:
+        origin, radius = authorized['search_origin'], authorized['search_radius'] + SEARCH_TILE_MARGIN
+        if any(abs(point[axis]-origin[axis]) > radius for axis in (0, 2)):
+            raise Unavailable('当前位置已离开原分段搜索授权，不扩大路线',
+                              'waiting', code='route_uncertain')
+
+
+def _loaded_route_state(c, checkpoint, authorized):
+    checkpoint()
+    state = c.status(); _safe(state)
+    if state.get('world_session') != c.world or state.get('connected') is False:
+        raise Unavailable('分段接近期间世界已变化，保留原请求而不继续',
+                          'waiting', code='route_uncertain')
+    if (state.get('navigating') or state.get('native_material_busy')
+            or getattr(c, 'native_inflight', None)):
+        raise Unavailable('原生动作仍在运行或结果未知，保留原请求而不重复导航',
+                          'waiting', code='route_uncertain',
+                          evidence={'request_id': getattr(c, 'last', None)})
+    point = state.get('pos')
+    if (not isinstance(point, list) or len(point) != 3
+            or any(type(value) not in (int, float) or not math.isfinite(value) for value in point)
+            or not OVERWORLD_MIN_Y <= point[1] <= OVERWORLD_MAX_Y):
+        raise Unavailable('分段接近期间当前位置不可核验，不提交下一航段',
+                          'waiting', code='route_uncertain')
+    _require_route_authorization(point, authorized)
+    return state
+
+
+def _travel_loaded_segment(c, target, checkpoint, trace, budget, authorized, final_target,
+                           *, clearance_padding, obstacle_margin, keep_cruise):
+    """Load only the next inspected local leg, retaining the original destination.
+
+    Distant server chunks cannot be certified by scanning a complete corridor
+    before moving. Intermediate legs keep the freshly observed cruise height;
+    the original low destination is approached only after it is nearby.
+    """
+    while True:
+        state = _loaded_route_state(c, checkpoint, authorized)
+        here = list(state['pos'])
+        if time.monotonic()-budget['started'] >= MAX_LOADED_ROUTE_SECONDS:
+            raise Unavailable('分段接近时间上限已到，原目标与请求记录保留',
+                              'waiting', code='route_uncertain')
+        if math.hypot(target[0]-here[0], target[2]-here[2]) <= LOADED_ROUTE_LEG:
+            options = {}
+            if clearance_padding != .32 or obstacle_margin != 3.1:
+                options.update(clearance_padding=clearance_padding, obstacle_margin=obstacle_margin)
+            if keep_cruise or list(target) != list(final_target):
+                options['keep_cruise'] = True
+            if authorized is not None:
+                options['route_authorized'] = authorized
+            if not options:
+                return _travel_once(c, target, checkpoint, trace)
+            return _travel_once(c, target, checkpoint, trace, **options)
+        if budget['legs'] >= MAX_LOADED_ROUTE_LEGS:
+            raise Unavailable('分段接近航段上限已到，不扩大原搜索或重复未知动作',
+                              'waiting', code='route_uncertain')
+        axis = 0 if abs(target[0]-here[0]) >= abs(target[2]-here[2]) else 2
+        point = list(here)
+        point[axis] += max(-LOADED_ROUTE_LEG, min(LOADED_ROUTE_LEG, target[axis]-here[axis]))
+        point[1] = max(here[1], target[1])
+        budget['legs'] += 1
+        leg = budget['legs']
+        trace.append({'event': 'loaded_chunk_approach_start', 'leg': leg,
+                      'from': here, 'segment_target': list(point), 'final_target': list(final_target)})
+        _persist_segment_trace(c, final_target, trace, 'loaded_leg_start', loaded_leg=leg)
+        try:
+            _travel_once(c, point, checkpoint, trace, clearance_padding=clearance_padding,
+                         obstacle_margin=obstacle_margin, keep_cruise=True, route_authorized=authorized)
+            actual = _loaded_route_state(c, checkpoint, authorized)
+            if math.hypot(actual['pos'][0]-point[0], actual['pos'][2]-point[2]) > .55:
+                raise Unavailable('已提交短航段的位置未到达，不重放原导航',
+                                  'waiting', code='route_uncertain')
+        except Exception as error:
+            trace.append({'event': 'loaded_chunk_approach_stopped', 'leg': leg,
+                          'segment_target': list(point), 'final_target': list(final_target),
+                          'request_id': getattr(c, 'last', None), 'reason': str(error),
+                          'route_code': getattr(error, 'code', None)})
+            _persist_segment_trace(c, final_target, trace, 'loaded_leg_stopped', loaded_leg=leg)
+            raise
+        trace.append({'event': 'loaded_chunk_approach_done', 'leg': leg,
+                      'segment_target': list(point), 'actual': list(actual['pos']),
+                      'final_target': list(final_target), 'request_id': getattr(c, 'last', None)})
+        _persist_segment_trace(c, final_target, trace, 'loaded_leg_done', loaded_leg=leg)
+
+
+def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *, clearance_padding=.32,
+            obstacle_margin=3.1, keep_cruise=False):
     """Reach one target through fresh bounded legs; never substitute a deposit."""
+    if (not isinstance(target, (list, tuple)) or len(target) != 3
+            or any(type(value) not in (int, float) or not math.isfinite(value) for value in target)
+            or not OVERWORLD_MIN_Y <= target[1] <= OVERWORLD_MAX_Y):
+        raise ValueError('Travel target must be one finite legal-world position')
+    if type(keep_cruise) is not bool:
+        raise ValueError('Travel cruise retention must be explicit boolean')
+    checkpoint()
     segments, plan = _segmented_targets(c, target, route_scope)
     segmented = plan is not None
     if segmented:
@@ -541,6 +648,7 @@ def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *
         _persist_segment_trace(c, target, trace, 'planned')
     guard_budget = {} if guard_budget is None else guard_budget
     replans = guard_budget.get('replans', 0)
+    loaded_budget = {'legs': 0, 'started': time.monotonic()}
     for index, segment in enumerate(segments, 1):
         if segmented:
             trace.append({'event': 'resource_route_segment_start',
@@ -550,11 +658,9 @@ def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *
         try:
             while True:
                 try:
-                    if clearance_padding == .32 and obstacle_margin == 3.1:
-                        _travel_once(c, segment, checkpoint, trace)
-                    else:
-                        _travel_once(c, segment, checkpoint, trace,
-                                     clearance_padding=clearance_padding, obstacle_margin=obstacle_margin)
+                    _travel_loaded_segment(c, segment, checkpoint, trace, loaded_budget, plan, target,
+                                           clearance_padding=clearance_padding, obstacle_margin=obstacle_margin,
+                                           keep_cruise=keep_cruise)
                     break
                 except Unavailable as error:
                     if error.code != 'guard_displaced':
@@ -572,7 +678,7 @@ def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *
                                   **({'final_target': list(target), 'segment': index}
                                      if segmented else {})})
         except JobPaused as error:
-            if segmented:
+            if segmented or loaded_budget['legs']:
                 trace.append({'event': 'resource_route_segment_stopped',
                               'segment': index, 'segment_target': list(segment),
                               'final_target': list(target), 'reason': str(error),
@@ -580,7 +686,7 @@ def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *
                 _persist_segment_trace(c, target, trace, 'checkpoint_paused', segment=index)
             raise
         except Unavailable as error:
-            if segmented:
+            if segmented or loaded_budget['legs']:
                 if error.code is None:
                     error.code = 'route_uncertain'
                     error.phase = 'waiting'
@@ -594,6 +700,14 @@ def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *
                 _persist_segment_trace(c, target, trace, 'stopped', segment=index,
                                        route_code=error.code)
             raise
+        except Exception as error:
+            trace.append({'event': 'resource_route_segment_stopped',
+                          'segment': index, 'segment_target': list(segment),
+                          'final_target': list(target), 'reason': str(error),
+                          'request_id': getattr(c, 'last', None), 'route_code': 'native_exception'})
+            _persist_segment_trace(c, target, trace, 'stopped', segment=index,
+                                   route_code='native_exception')
+            raise
         if segmented:
             trace.append({'event': 'resource_route_segment_done',
                           'segment': index, 'segment_target': list(segment),
@@ -603,39 +717,129 @@ def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *
                                    segment=index)
 
 
-def _travel_once(c, target, checkpoint, trace, *, clearance_padding=.32, obstacle_margin=3.1):
+def _actual_route_steps(c, points, checkpoint, authorized):
+    """Anchor each request to its latest actual origin, leaving a one-block reserve.
+
+    Native DONE permits a small arrival error. Reusing the old requested pose
+    adds that error to the next 32-block leg and can exceed a strict owner bound.
+    Keep the original inspected axis waypoints, correcting small arrival drift
+    inside each fresh body sweep; never replay a prior request.
+    """
+    for destination in points:
+        for _ in range(MAX_NATIVE_AXIS_STEPS):
+            state = _loaded_route_state(c, checkpoint, authorized)
+            start = state['pos']
+            distance = math.dist(start, destination)
+            if distance <= .55:
+                break
+            ratio = min(1, NATIVE_ROUTE_STEP/distance)
+            point = (list(destination) if ratio == 1 else
+                     [start[i]+(destination[i]-start[i])*ratio for i in range(3)])
+            yield state, point
+            if ratio == 1:
+                # The consumer resumes only after exact native DONE, settled
+                # arrival <=.55 and safety/scope validation. Do not resend an
+                # already confirmed endpoint merely for sub-block precision.
+                _loaded_route_state(c, checkpoint, authorized)
+                break
+        else:
+            raise Unavailable('已确认航段没有在有界步数内到达原目标轴，不重复导航',
+                              'waiting', code='route_uncertain')
+
+
+def _cruise_band_clear(c, legs, here, cruise, checkpoint, trace, authorized, padding):
+    """Prove only the padded horizontal cruise body, not the column to sky."""
+    # Native arrival permits .55 actual error; subsequent requests still use
+    # their fresh origins and their ordinary complete body/entity checks.
+    margin = padding + .55
+    bottom, top = math.floor(cruise-margin), math.floor(cruise+1.81+margin)
+    if bottom < OVERWORLD_MIN_Y or top > OVERWORLD_MAX_Y:
+        return False  # This known bound cannot support the fast proof; retain full terrain planning.
+    blocked = False
+    observations=[]
+    for start, end in legs:
+        axis = 0 if abs(start[0]-end[0]) >= abs(start[2]-end[2]) else 2
+        low = [math.floor(min(start[0],end[0])-margin),bottom,
+               math.floor(min(start[2],end[2])-margin)]
+        high = [math.floor(max(start[0],end[0])+margin),top,
+                math.floor(max(start[2],end[2])+margin)]
+        for base in range(low[axis],high[axis]+1,32):
+            lo, hi = list(low), list(high); lo[axis]=base; hi[axis]=min(high[axis],base+31)
+            checkpoint()
+            reply = c.request('scan',min=lo,max=hi,details=True)
+            total = math.prod(hi[i]-lo[i]+1 for i in range(3))
+            if (reply.get('phase')!='done' or reply.get('world_session')!=c.world
+                    or not isinstance(reply.get('id'),str) or not reply['id'] or reply['id']!=getattr(c,'last',None)
+                    or any(type(reply.get(key))is not int for key in ('scan_cells_read','scan_total_cells',
+                               'control_revision','scan_start_revision','scan_end_revision'))
+                    or reply['scan_cells_read']!=total or reply['scan_total_cells']!=total
+                    or reply['control_revision']!=reply['scan_start_revision']
+                    or reply['control_revision']!=reply['scan_end_revision']
+                    or type(getattr(c,'rev',None))is not int or reply['control_revision']!=c.rev
+                    or not isinstance(reply.get('blocks'),list)):
+                raise Unavailable('巡航高度带未获完整同世界原生核验；不下降或重发',
+                                  'waiting',code='route_uncertain',evidence={'request_id':getattr(c,'last',None)})
+            seen=set()
+            for row in reply['blocks']:
+                pos=row.get('pos')if isinstance(row,dict)else None
+                if (not isinstance(pos,list) or len(pos)!=3 or any(type(v)is not int for v in pos)
+                        or tuple(pos)in seen or any(not lo[i]<=pos[i]<=hi[i]for i in range(3))
+                        or not isinstance(row.get('state'),str)
+                        or type(row.get('fluid'))is not bool or type(row.get('passable'))is not bool):
+                    raise Unavailable('巡航高度带方块详情未知；不作为净空', 'waiting',code='route_uncertain')
+                seen.add(tuple(pos));blocked |= row['fluid'] or not row['passable']
+            actual = _loaded_route_state(c,checkpoint,authorized)
+            if (actual.get('guard_busy') or _combat_displacement(actual)
+                    or any(abs(actual['pos'][i]-here[i])>.55 for i in range(3))):
+                raise Unavailable('巡航高度带核验期间实际位置或防护变化；保留原目标',
+                                  'waiting',code='route_uncertain',evidence={'request_id':getattr(c,'last',None)})
+            observations.append({'min':lo,'max':hi,'cruise':cruise,
+                          'world_session':c.world,'request_id':getattr(c,'last',None),
+                          'clear':not blocked,'coverage':'complete_padded_cruise_band_only_not_full_height'})
+            if getattr(c,'out',None):
+                write_json(Path(c.out)/'cruise-band-latest.json',{'world_session':c.world,
+                    'target':list(legs[-1][1]),'observations':observations,'placement_credit':0})
+            if blocked:
+                return False
+    return True
+
+
+def _travel_once(c, target, checkpoint, trace, *, clearance_padding=.32, obstacle_margin=3.1,
+                 keep_cruise=False, route_authorized=None):
     """Use inspected axis-aligned clear segments; never fly down through an unmined cap."""
     if (type(clearance_padding) not in (int, float) or type(obstacle_margin) not in (int, float)
             or not .32 <= clearance_padding <= 2.32 or not 3.1 <= obstacle_margin <= 6.1):
         raise ValueError('Flight planning margins are outside the bounded supported range')
-    here = list(c.status()['pos'])
+    here = list(_loaded_route_state(c, checkpoint, route_authorized)['pos'])
     if c.status().get('air_only_navigation_protocol',0)<2:
         raise Unavailable('当前 Kit 缺少仅走空气的材料导航接口，请更新后再开始')
     if math.hypot(target[0]-here[0], target[2]-here[2]) > DIRECT_ROUTE_LIMIT:
         raise Unavailable('资源区离当前控制点太远，需由发现路线分段接近', 'waiting')
     cruise = max(here[1], target[1])
-    # Read the complete two-leg flight corridor before picking its height.
-    # A ground-level depot must not make the next quarry route cross a roof.
     bend=[target[0],here[1],here[2]]
-    for start,end in ((here,bend),(bend,target)):
-        axis=0 if abs(start[0]-end[0])>=abs(start[2]-end[2]) else 2
-        low=math.floor(min(start[axis],end[axis])-clearance_padding)
-        high=math.floor(max(start[axis],end[axis])+clearance_padding)
-        for base in range(low,high+1,32):
-            lo=[math.floor(min(start[0],end[0])-clearance_padding),math.floor(min(here[1],target[1])),math.floor(min(start[2],end[2])-clearance_padding)]
-            hi=[math.floor(max(start[0],end[0])+clearance_padding),319,math.floor(max(start[2],end[2])+clearance_padding)]
-            lo[axis]=base;hi[axis]=min(high,base+31)
-            observed=_scan(c,lo,hi,checkpoint)
-            cruise=max(cruise,max((r['pos'][1]+obstacle_margin for r in observed if r.get('fluid') or not r.get('passable',False)),default=cruise))
+    legs=((here,bend),(bend,target))
+    if not _cruise_band_clear(c,legs,here,cruise,checkpoint,trace,route_authorized,clearance_padding):
+        # A proved obstacle retains the original full-height terrain fallback.
+        # Incomplete/unknown band evidence raises above, never reaches this branch.
+        for start,end in legs:
+            axis=0 if abs(start[0]-end[0])>=abs(start[2]-end[2]) else 2
+            low=math.floor(min(start[axis],end[axis])-clearance_padding)
+            high=math.floor(max(start[axis],end[axis])+clearance_padding)
+            for base in range(low,high+1,32):
+                lo=[math.floor(min(start[0],end[0])-clearance_padding),math.floor(min(here[1],target[1])),math.floor(min(start[2],end[2])-clearance_padding)]
+                hi=[math.floor(max(start[0],end[0])+clearance_padding),319,math.floor(max(start[2],end[2])+clearance_padding)]
+                lo[axis]=base;hi[axis]=min(high,base+31)
+                observed=_scan(c,lo,hi,checkpoint)
+                cruise=max(cruise,max((r['pos'][1]+obstacle_margin for r in observed if r.get('fluid') or not r.get('passable',False)),default=cruise))
     if cruise>=317:
         raise Unavailable('已观察航线上方没有足够净空，不穿过障碍',
                           code='route_geometry_blocked')
     points = [[here[0], cruise, here[2]], [target[0], cruise, here[2]],
-              [target[0], cruise, target[2]], list(target)]
-    for point in points:
-        state = c.status(); _safe(state); start = state['pos']
-        if math.dist(start, point) <= .3:
-            continue
+              [target[0], cruise, target[2]]]
+    if not keep_cruise:
+        points.append(list(target))
+    for state, point in _actual_route_steps(c, points, checkpoint, route_authorized):
+        start = state['pos']
         low = [math.floor(min(start[0], point[0])-.32), math.floor(min(start[1], point[1])),
                math.floor(min(start[2], point[2])-.32)]
         high = [math.floor(max(start[0], point[0])+.32), math.floor(max(start[1], point[1])+1.81),
@@ -654,7 +858,18 @@ def _travel_once(c, target, checkpoint, trace, *, clearance_padding=.32, obstacl
             raise Unavailable('资源区入口或航线仍有障碍；不会穿越地层或挖开区域外建筑',
                               code='route_geometry_blocked')
         checkpoint()
-        reply = c.request('navigate', target=point, arrival=.25, air_only=True, seconds=90)
+        request_before = getattr(c, 'last', None)
+        try:
+            reply = c.request('navigate', target=point, arrival=.25, air_only=True, seconds=90)
+        except Exception:
+            trace.append({'target': list(point), 'actual': list(start), 'phase': 'unknown',
+                          'request_id': (getattr(c, 'last', None)
+                                         if getattr(c, 'last', None) != request_before else None),
+                          'request_before': request_before,
+                          'world_session': c.world,
+                          'native_inflight': copy.deepcopy(getattr(c, 'native_inflight', None))})
+            raise
+        request_id = getattr(c, 'last', None)
         if reply.get('phase')!='done':
             # Read-only incident capture remains valid even if combat reduced
             # health; the next mutation still passes the ordinary safety gate.
@@ -688,8 +903,15 @@ def _travel_once(c, target, checkpoint, trace, *, clearance_padding=.32, obstacl
             raise Unavailable('前往资源区的空气航线未确认：'+str(reply.get('detail')),
                               'waiting',code=code,evidence=evidence)
         from .navigation import settled_state
-        actual = settled_state(c,point,.55); _safe(actual)
-        trace.append({'target': point, 'actual': actual['pos'], 'phase': reply.get('phase')})
+        actual = settled_state(c,point,.55)
+        trace.append({'target': point, 'actual': actual['pos'], 'phase': reply.get('phase'),
+                      'request_id': request_id})
+        _safe(actual)
+        if actual.get('world_session') != c.world or actual.get('connected') is False:
+            raise Unavailable('导航回执之后世界已变化，不提交下一航段',
+                              'waiting', code='route_uncertain',
+                              evidence={'request_id': request_id})
+        _require_route_authorization(actual['pos'], route_authorized)
         if math.dist(actual['pos'], point) > .55:
             raise Unavailable('前往资源区的安全路线没有到达，保留本次位置', 'waiting')
 

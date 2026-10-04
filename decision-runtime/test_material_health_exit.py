@@ -20,7 +20,7 @@ class FakeClient(MaterialClient):
             'navigating':False,'native_material_busy':False,
             'last_request':'request','phase':'done',
             'supervision_lease':{'id':'test','kind':'materials','job_session':'task',
-                'world_session':'world','revision':1,'remote_finish':'guard'},
+                'world_session':'world','revision':1,'remote_finish':'guard','park_target':self.park_target[:]},
             'server':'simpcraft.com','inventory':[{'slot':3,'item':'minecraft:cooked_porkchop','count':2}],
             'menu':{'id':0,'type':'InventoryMenu','cursor':{'count':0},'slots':[]}}
         client=self
@@ -28,11 +28,11 @@ class FakeClient(MaterialClient):
             id='test';closed=False
             def close(self):
                 self.closed=True
-                client.state['supervision_lease'].update(kind='parking')
+                client.state['supervision_lease'].update(kind='parking',park_target=client.park_target[:])
                 snapshot=client.state.copy()
                 (client.root/'supervision-receipt-test.json').write_text(json.dumps({
                     'action':'KEEP_PVE_GUARD','lease':'test','job_session':'task',
-                    'snapshot':snapshot}))
+                    'time':snapshot['time'],'snapshot':snapshot}))
         self.heartbeat=Heartbeat()
     def advise(self,*args,**kwargs):return {'id':'test','choice':'wait'}
     def status(self,*args,**kwargs):

@@ -91,30 +91,12 @@ class Tests(unittest.TestCase):
   c.request=lambda op,**kw:{'phase':'error','world_session':c.world,'blocks':[]}
   with self.assertRaisesRegex(RuntimeError,'not freshly scanned'):
    c.ascent_obstacles({'pos':[100.5,64.2,200.5]})
- def test_grounded_full_health_guard_takes_off_in_bounded_verified_segments(self):
+ def test_grounded_healthy_pose_without_completed_walk_cannot_authorize_ascent(self):
   c=MaterialClient.__new__(MaterialClient);c.world='world-2';c.park_target=[100.5,145,200.5]
   grounded={'pos':[100.5,64.875,200.5],'guard_armed':True,'guard_busy':False,
             'flight':False,'on_ground':True,'under_water':False,'health':20}
-  middle={**grounded,'pos':[100.5,112.875,200.5],'flight':True,'on_ground':False}
-  reached={**middle,'pos':[100.5,145,200.5]}
-  states=iter([grounded,middle,middle,reached]);c.status=lambda:next(states)
-  calls=[]
-  def request(op,**params):
-   calls.append((op,params))
-   if op=='scan':return {'phase':'done','world_session':c.world,'blocks':[]}
-   if op=='navigate':return {'phase':'done'}
-   raise AssertionError(op)
-  c.request=request
-  first=c._finish_vertical(grounded)
-  self.assertIs(first,middle)
-  result=c._finish_vertical(first)
-  self.assertIs(result,reached)
-  self.assertEqual([op for op,_ in calls],['scan','navigate','scan','navigate'])
-  moves=[params for op,params in calls if op=='navigate']
-  self.assertEqual(len(moves),2)
-  self.assertTrue(all(m['air_only'] for m in moves))
-  self.assertEqual(moves[0]['target'],[100.5,112.875,200.5])
-  self.assertEqual(moves[1]['target'],[100.5,145,200.5])
+  c.request=lambda *args,**kwargs:self.fail('Pose alone does not authorize an ascent')
+  with self.assertRaisesRegex(RuntimeError,'current-schema'):c._finish_vertical(grounded)
 
  def test_grounded_takeoff_rechecks_pose_health_and_guard_after_clear_scan(self):
   original={'pos':[100.5,64.875,200.5],'guard_armed':True,'guard_busy':False,
@@ -132,18 +114,19 @@ class Tests(unittest.TestCase):
      if op=='scan':return {'phase':'done','world_session':c.world,'blocks':[]}
      raise AssertionError('No movement may follow a stale takeoff scan')
     c.request=request
-    with self.assertRaisesRegex(RuntimeError,'position or protection changed'):
+    with self.assertRaisesRegex(RuntimeError,'current-schema'):
      c._finish_vertical(original)
-    self.assertEqual([op for op,_ in calls],['scan'])
- def test_grounded_blocked_column_uses_logout_fallback_without_movement(self):
+    self.assertEqual(calls,[])
+ def test_grounded_unproved_takeoff_retains_owner_without_logout(self):
   with tempfile.TemporaryDirectory() as temp:
    c=MaterialClient.__new__(MaterialClient)
    c.root=c.out=Path(temp);c.world='world-2';c.park_target=[100.5,145,200.5]
-   c.remote_finish='guard';c.heartbeat=Mock();c.owned_material_menu=None
+   c.remote_finish='guard';c.heartbeat=Mock();c.heartbeat.id='lease';c.owned_material_menu=None
+   c.task='task';c.rev=42;c.last='read-owned'
    state={'pos':[100.5,64.875,200.5],'guard_armed':True,'guard_busy':False,
           'flight':False,'on_ground':True,'under_water':False,'air_supply':300,'health':20,
           'menu':{'type':'InventoryMenu','slots':[{'count':0}]*5,'cursor':{'count':0}}}
-   c.status=lambda:state
+   c.status=lambda **kwargs:state
    calls=[]
    def request(op,**params):
     calls.append((op,params))
@@ -154,9 +137,10 @@ class Tests(unittest.TestCase):
    c.request=request
    with patch('material_cleanup.run'),patch('craft_recovery.clear_owned_workbench'):
     c._finish()
-   self.assertEqual([op for op,_ in calls],['scan','safe_logout'])
-   self.assertEqual(json.loads((c.out/'park-fallback.json').read_text())['action'],'safe_logout')
-   c.heartbeat.close.assert_called_once()
+   self.assertEqual(calls,[])
+   self.assertFalse(json.loads((c.out/'park-ground-deferred.json').read_text())['native_parking_confirmed'])
+   self.assertFalse((c.out/'park-fallback.json').exists())
+   c.heartbeat.close.assert_not_called()
  def test_only_pre_dispatch_guard_busy_is_retried(self):
   c=MaterialClient.__new__(MaterialClient);c.task='t';c.status=lambda:{}
   with patch.object(c,'_wait_guard_admission',return_value=True),patch.object(Client,'request',side_effect=[{'phase':'error','detail':BUSY},{'phase':'done'}]) as call,patch('material_client.time.sleep'):

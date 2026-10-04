@@ -36,7 +36,7 @@ class ProjectionBatchWiringTest {
         assertTrue(c.indexOf("externalMaterialScope")<c.indexOf("set"));assertTrue(c.indexOf("loadingReason")<c.indexOf("set"));
     }
     @Test void modelRequiresLoadedProjectionAndExportsExpectedNotActual()throws Exception{
-        var c=calls(method("automation/ProjectionAudit","model"));assertTrue(c.containsAll(List.of("buildSelection","loadingReason","hasChunkAt","inVisibleLayer","isAir","contentHash")));
+        var c=calls(method("automation/ProjectionAudit","model"));assertTrue(c.containsAll(List.of("buildSelection","loadingReason","serverChunk","inVisibleLayer","isAir","contentHash")));
         assertFalse(c.contains("scan"));assertFalse(c.contains("projectionBatchAllows"));
     }
     @Test void feetLimitGuardsStationsProposalsAndFinalClicksButNotNormalNavigation()throws Exception{

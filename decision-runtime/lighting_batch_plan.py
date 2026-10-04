@@ -14,6 +14,12 @@ import lighting_cli as lighting
 TORCH_LEVEL = 14
 MAX_BATCH = 8
 _AIR = frozenset(('minecraft:air', 'minecraft:cave_air', 'minecraft:void_air'))
+# Minecraft 26.1.2: these exact unfluidized states have light dampening 0
+# and no light-face occlusion. They only transmit predicted light; they are
+# never promoted to AIR for candidates, placement, clearance, or movement.
+_LIGHT_TRANSMITTING_STATES = frozenset((
+    'Block{minecraft:short_grass}', 'Block{minecraft:dandelion}',
+))
 _BOOLEAN_DETAILS = ('solid', 'fluid', 'block_entity', 'zombie_spawn_floor',
                     'zombie_block_light_risk')
 _LIGHT_DETAILS = ('spawn_block_light', 'monster_spawn_block_light_limit')
@@ -46,16 +52,22 @@ def _observations(cells, low, high):
             raise lighting.LightingBlocked('Inconsistent observed dark spawn-floor risk')
 
 
-class _AirGrid:
-    """At most 50,000 cells; integer adjacency keeps repeated bounded BFS small."""
+def _light_transmitting(row):
+    return (row['state'] in _LIGHT_TRANSMITTING_STATES
+            and row['fluid'] is False and row['block_entity'] is False
+            and row['solid'] is False and row.get('passable') is True)
+
+
+class _LightGrid:
+    """Bounded light paths through known AIR and two verified plant states."""
     def __init__(self, cells, low, high, protected):
         self.low, self.high = low, high
         self.ny, self.nz = high[1] - low[1] + 1, high[2] - low[2] + 1
         self.x_stride = self.ny * self.nz
         self.size = (high[0] - low[0] + 1) * self.x_stride
-        self.air = bytearray(b'\x01') * self.size
-        for pos in cells:
-            self.air[self.index(pos)] = 0
+        self.transmits = bytearray(b'\x01') * self.size
+        for pos, row in cells.items():
+            self.transmits[self.index(pos)] = int(_light_transmitting(row))
         # Protected footprints are outside this conservative prediction domain.
         for box in protected:
             minimum = [max(low[i], box['min'][i]) for i in range(3)]
@@ -65,13 +77,13 @@ class _AirGrid:
                     if minimum[2] <= maximum[2]:
                         first = self.index((x, y, minimum[2]))
                         width = maximum[2] - minimum[2] + 1
-                        self.air[first:first + width] = b'\x00' * width
+                        self.transmits[first:first + width] = b'\x00' * width
         self.adjacent = [()] * self.size
         for x in range(high[0] - low[0] + 1):
             for y in range(self.ny):
                 for z in range(self.nz):
                     here = x * self.x_stride + y * self.nz + z
-                    if not self.air[here]:
+                    if not self.transmits[here]:
                         continue
                     options = []
                     if x:
@@ -86,7 +98,7 @@ class _AirGrid:
                         options.append(here - 1)
                     if z < self.nz - 1:
                         options.append(here + 1)
-                    self.adjacent[here] = tuple(nxt for nxt in options if self.air[nxt])
+                    self.adjacent[here] = tuple(nxt for nxt in options if self.transmits[nxt])
         self.visited = [0] * self.size
         self.stamp = 0
 
@@ -98,9 +110,9 @@ class _AirGrid:
                 + (pos[1] - self.low[1]) * self.nz + pos[2] - self.low[2])
 
     def coverage(self, target, risk_at):
-        """Only known AIR transmits light; every edge attenuates it by one."""
+        """Every allowed light-path edge, including a plant, attenuates by one."""
         first = self.index(target)
-        if not self.air[first]:
+        if not self.transmits[first]:
             return 0
         self.stamp += 1
         stamp, visited, adjacent = self.stamp, self.visited, self.adjacent
@@ -123,11 +135,11 @@ class _AirGrid:
         return covered
 
 
-def plan(cells, low, high, start, protected=None, limit=MAX_BATCH):
+def plan(cells, low, high, start, protected=None, limit=MAX_BATCH, *, residual=True):
     """Return ordered placement-compatible candidates, with prediction counts.
 
     Candidate/support checks and observed risk counts each run once on the
-    original snapshot. Greedy coverage is simulated through in-bounds AIR and
+    original snapshot. Greedy coverage uses in-bounds known light paths and
     positive torch light; equal coverage prefers the nearest next station.
     Exact support state is preserved for the caller's narrow live preflight.
     """
@@ -140,16 +152,18 @@ def plan(cells, low, high, start, protected=None, limit=MAX_BATCH):
     protected = lighting.protection_boxes(protected)
     _observations(cells, low, high)
     counts = lighting.risk_counts(cells, protected)
-    options = lighting.candidates(cells, low, high, start, protected)
+    if type(residual)is not bool:
+        raise ValueError('Residual neighbor lighting mode must be boolean')
+    options = lighting.candidates(cells,low,high,start,protected,include_lit=residual)
     if not counts['unprotected_dark_floor'] or not options:
         return []
-    grid = _AirGrid(cells, low, high, protected)
+    grid = _LightGrid(cells, low, high, protected)
     risk_at = {}
     for support, row in cells.items():
         target = (support[0], support[1] + 1, support[2])
         if (row['zombie_block_light_risk'] and grid.contains(target)
                 and not lighting.candidate_protected(support, target, protected)
-                and grid.air[grid.index(target)]):
+                and grid.transmits[grid.index(target)]):
             risk_at[grid.index(target)] = (1 << len(risk_at), row['monster_spawn_block_light_limit'])
     remaining = (1 << len(risk_at)) - 1
     predicted = [(dict(candidate), grid.coverage(candidate['target'], risk_at)) for candidate in options]
@@ -170,6 +184,9 @@ def plan(cells, low, high, start, protected=None, limit=MAX_BATCH):
         candidate, coverage = predicted.pop(best)
         candidate['distance'] = best_key[1]
         candidate['predicted_coverage_count'] = -best_key[0]
+        candidate['placement_basis']=('safe_neighbor_of_observed_dark_floor'
+            if not cells[tuple(candidate['support'])]['zombie_block_light_risk']else'observed_dark_safe_support')
+        candidate['prediction_only']=True
         ordered.append(candidate)
         remaining &= ~coverage
         support = candidate['support']

@@ -9,12 +9,18 @@ class FakeClient:
  def __init__(self):
   self.world='world-a';self.current=state();self.current.update(pos=[.5,80,.5],air_only_navigation_protocol=2,guard_busy=False)
   self.moves=[]
+  self.rev=7
+  self.last=None;self.scans=0
  def status(self):return deepcopy(self.current)
  def request(self,op,**params):
   if op=='scan':
    row={'pos':[8,95,2],'state':'Block{minecraft:stone}','fluid':False,'passable':False,'solid':True,'block_entity':False}
-   rows=[row] if all(params['min'][i]<=row['pos'][i]<=params['max'][i] for i in range(3)) else []
-   return {'phase':'done','world_session':self.world,'blocks':rows}
+   wall=[{**row,'pos':[8,y,2]}for y in range(80,96)]
+   rows=[r for r in wall if all(params['min'][i]<=r['pos'][i]<=params['max'][i]for i in range(3))]
+   total=__import__('math').prod(params['max'][i]-params['min'][i]+1 for i in range(3))
+   self.scans+=1;self.last='scan-'+str(self.scans)
+   return {'id':self.last,'phase':'done','world_session':self.world,'blocks':rows,'scan_cells_read':total,'scan_total_cells':total,
+           'control_revision':self.rev,'scan_start_revision':self.rev,'scan_end_revision':self.rev}
   if op=='navigate':
    self.moves.append(params['target']);self.current['pos']=list(params['target']);return {'phase':'done'}
   raise AssertionError(op)

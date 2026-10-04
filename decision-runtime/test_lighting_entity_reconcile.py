@@ -12,7 +12,7 @@ def fixture():
     state={'connected':True,'world_session':'world','health':20,'manual_movement':False,
         'guard_armed':True,'guard_pve_only':True,'flight':True,'screen':'','control_revision':5,
         'time':int(time.time()*1000),'pos':[0,140,0],
-        'supervision_lease':{'kind':'parking','id':'lease','job_session':'task','revision':5,'park_target':[0,140,0]},
+        'supervision_lease':{'kind':'parking','id':'lease','job_session':'task','world_session':'world','revision':5,'park_target':[0,140,0]},
         'supervision_safety':{'action':'KEEP_PVE_GUARD','lease':'lease','job_session':'task'}}
     placement={'state':'verified','later_verified_frames':2,'world_session':'world','task_session':'task',
         'before_stock':8,'after_stock':7,'interaction_request':'place-id'}

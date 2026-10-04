@@ -152,6 +152,12 @@ def main(argv=None):
     choice.add_argument('--projection',action='store_true')
     choice.add_argument('--item')
     start.add_argument('--count',type=int)
+    audit=material_actions.add_parser('audit',help='完整核验当前投影，不移动或新建材料会话')
+    audit.add_argument('--out',type=Path,required=True)
+    stock=material_actions.add_parser('stock',help='实机只读核对指定仓库；不取料、寄存或拆潜影盒')
+    stock.add_argument('--depot',type=int,nargs=3,action='append',required=True)
+    stock.add_argument('--out',type=Path,required=True)
+    stock.add_argument('--profile',type=Path)
     status=material_actions.add_parser('status');status.add_argument('--job-id')
     for name in ('pause','resume','cancel'):
         control=material_actions.add_parser(name);control.add_argument('--job-id',required=True)
@@ -166,10 +172,13 @@ def main(argv=None):
     care.add_argument('--profile',type=Path,required=True)
     care.add_argument('--out',type=Path)
     lighting=sub.add_parser('lighting',help='固定配置分区补光，真实扫描与保护停靠；无 AI/UI')
-    lighting.add_argument('action',choices=('run','resume','audit','status','pause','stop','reconcile-travel','reconcile-entity','reconcile-guard'))
+    lighting.add_argument('action',choices=('run','resume','audit','status','pause','stop','reconcile-travel','reconcile-known-travel','reconcile-entity','reconcile-guard','reconcile-own-torch','reconcile-opening','reconcile-network-travel'))
     lighting.add_argument('--profile',type=Path,required=True)
     lighting.add_argument('--out',type=Path)
     lighting.add_argument('--verbose',action='store_true')
+    lighting.add_argument('--work-baseline',type=Path)
+    lighting.add_argument('--travel-evidence',type=Path)
+    lighting.add_argument('--audit-prefix',type=Path)
     lighting.add_argument('--auto-supply',action='store_true')
     lighting.add_argument('--torch-target',type=int,default=128)
     lighting.add_argument('--max-supplies',type=int,default=32)
@@ -197,6 +206,9 @@ def main(argv=None):
         command=['--game-dir',str(args.game_dir),'--profile',str(args.profile)]
         if args.out is not None:command += ['--out',str(args.out)]
         if args.verbose:command += ['--verbose']
+        if args.work_baseline is not None:command += ['--work-baseline',str(args.work_baseline)]
+        if args.travel_evidence is not None:command += ['--travel-evidence',str(args.travel_evidence)]
+        if args.audit_prefix is not None:command += ['--audit-prefix',str(args.audit_prefix)]
         if args.auto_supply:command += ['--auto-supply','--torch-target',str(args.torch_target),'--max-supplies',str(args.max_supplies)]
         return lighting_main(command+[args.action])
     if args.topic=='idle':
@@ -238,6 +250,15 @@ def main(argv=None):
         if args.no_move:argv += ['--no-move']
         return farm_main(argv)
     if args.topic=='materials':
+        if args.action=='stock':
+            from warehouse_audit_cli import main as stock_main
+            command=['--game-dir',str(args.game_dir),'--out',str(args.out)]
+            for pos in args.depot:command+=['--depot',*map(str,pos)]
+            if args.profile is not None:command+=['--profile',str(args.profile)]
+            return stock_main(command)
+        if args.action=='audit':
+            from material_audit_cli import main as audit_main
+            return audit_main(['--game-dir',str(args.game_dir),'--out',str(args.out)])
         from material_task_client import MaterialTaskClient, MaterialTaskError, compact as material_compact
         try:
             client=MaterialTaskClient(root)

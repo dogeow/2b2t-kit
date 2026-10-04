@@ -58,7 +58,11 @@ def run(c,profile,item,target_count,out,checkpoint):
     backend=getattr(c,'mud_backend',None) or getattr(c,'material_backend',None)
     if backend is None or backend.client is not c or backend.profile!=profile:
         raise JobBlocked('Bind mud pipeline to this exact existing backend/client/profile')
-    if backend.request.get('mode')=='projection':
+    resource_context=getattr(backend,'resource_pipeline_context',None)
+    if backend.request.get('mode')=='projection' and not (
+            isinstance(resource_context,dict) and resource_context.get('target_scope')==TARGET_SCOPE
+            and resource_context.get('projection_key')==backend.request.get('projection_key')
+            and resource_context.get('world_session')==backend.request.get('context',{}).get('world_session')):
         return {'phase':'waiting','code':'WAIT_BACKEND','detail':'Mud leaf workflow requires item-mode fetch semantics'}
     out=Path(out);out.mkdir(parents=True,exist_ok=True);path=out/'mud-pipeline.json'
     scope={'world_session':c.world,'item':item,'target':target_count,'target_scope':TARGET_SCOPE}

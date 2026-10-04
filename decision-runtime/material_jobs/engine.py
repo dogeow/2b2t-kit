@@ -401,6 +401,26 @@ class MaterialJob:
         self.active_advice = None
         self.fetch_tried.clear()
 
+    def _pipeline_step(self, targets):
+        """Use explicit carried projection adapters without changing depot defaults."""
+        if not callable(getattr(self.backend, 'run_pipeline', None)) or len(targets) != 1:
+            return False
+        from .pipeline_dispatch import describe
+        item, count = next(iter(targets.items()))
+        try:
+            route = describe(item)
+        except ValueError:
+            return False
+        scope = (route.get('carried_target_scope',route['target_scope'])
+                 if self.request['mode']=='projection' else route['target_scope'])
+        if scope not in ('absolute_backpack', 'absolute_backpack_total'):
+            return False
+        if count <= self.held.get(item, 0):
+            return False
+        directory = self.out / 'pipelines' / ('%06d-%s' % (self.steps + 1, item.split(':', 1)[1]))
+        self._call('run_pipeline', [item, count, scope, str(directory)], 'gathering', {item: count})
+        return True
+
     def _record_ready_build(self, receipt, before):
         """Accept a depot hint only after newly received projection output is observed."""
         if self.request['mode'] != 'projection' or receipt.get('ready_for_build') is not True:
@@ -469,6 +489,8 @@ class MaterialJob:
             if receipt.get('phase') == 'paused':
                 raise JobPaused(receipt.get('detail','恢复核验已暂停'))
             raise JobBlocked(receipt.get('detail','后端尚未确认旧动作安全结束，保留在制品'))
+        if pending.get('operation') == 'run_pipeline':
+            raise JobBlocked('流水线中断动作缺少原账本核销；背包现货不能替代回执核验')
         # In the absence of a reconciler, a fresh completed output target is the
         # only safe inference. Unseen furnace contents never become virtual stock.
         self._observe()
@@ -500,12 +522,16 @@ class MaterialJob:
         write_json(self.out / 'inflight.json', pending)
         self._write(stage, {'fetch':'仓库补料', 'acquire':'采集材料', 'craft':'合成材料',
                            'smelt':'熔炼材料', 'harden':'固化混凝土', 'build':'继续投影建造',
-                           'make_room':'存放本任务副产物'}[operation])
+                           'make_room':'存放本任务副产物', 'run_pipeline':'采集加工材料'}[operation])
         self._event('action_started', **pending)
         method = getattr(self.backend, operation, None)
         if method is None:
             raise JobBlocked('后端尚未实现：' + operation)
-        receipt = method(*args)
+        if operation == 'run_pipeline':
+            item, target, scope, directory = args
+            receipt = method(item, target, Path(directory), target_scope=scope, checkpoint=self.checkpoint)
+        else:
+            receipt = method(*args)
         if not isinstance(receipt, dict) or receipt.get('phase') not in ('done', 'waiting', 'blocked', 'paused'):
             raise JobBlocked('动作未返回有效回执；不能重复发送')
         receipts = self.out / 'receipts'
@@ -516,13 +542,27 @@ class MaterialJob:
             raise JobPaused(receipt.get('detail', '后端暂停作业'))
         if receipt['phase'] == 'blocked':
             raise JobBlocked(receipt.get('detail', '缺少能力或作业前置条件'))
-        if receipt.get('requirements'):
+        if operation == 'run_pipeline':
+            # A pipeline owns its dependency walk and journal. Handing its raw
+            # requirements back to the generic planner can select an unsupported
+            # source or abandon an owned work cell. Surface them as diagnostics.
+            self._write(pipeline_requirements=receipt.get('requirements', {}))
+            if (receipt.get('pending') or receipt.get('code', '').lower() in
+                    ('wait_reconcile', 'wait_receipt', 'route_uncertain')):
+                raise JobBlocked(receipt.get('detail', '流水线动作尚未核对；保留原回执，不重复执行'))
+            if receipt.get('target_scope', args[2]) != args[2]:
+                raise JobBlocked('流水线回执的数量范围不符；保留原动作记录')
+        elif receipt.get('requirements'):
             requirements = dict(quantities(receipt['requirements']))
             if len(requirements) > 32:
                 raise JobBlocked('加工前置材料数量异常')
             self.prerequisites.update(requirements)
             self._write(requirements=self.prerequisites)
         self._observe()
+        if operation == 'run_pipeline' and receipt['phase'] == 'done':
+            actual = inventory_counts(self.snapshot)
+            if any(actual.get(item, 0) < count for item, count in output_targets.items()):
+                raise JobBlocked('流水线完成回执没有达到当前实际背包目标；保留原动作记录')
         if self.request['mode'] == 'projection' and self.active_advice:
             recorder = getattr(self.backend, 'record_projection_advice_outcome', None)
             if callable(recorder):
@@ -555,7 +595,10 @@ class MaterialJob:
             # Eating, moving a spare tool, or changing depot hints is not
             # construction progress and must not reset the stuck-build guard.
             progressed = self.snapshot.get('projection_audit', {}).get('matched', 0) > before['matched']
-        key = fingerprint([operation, args,relevant]) if operation=='build' else fingerprint([operation,args])
+        # Pipeline directories identify individual transactions; they must not
+        # make an unchanged item/scope/target look like fresh production work.
+        progress_args = args[:3] if operation == 'run_pipeline' else args
+        key = fingerprint([operation, args,relevant]) if operation=='build' else fingerprint([operation,progress_args])
         self.no_progress[key] = 0 if progressed else self.no_progress[key] + 1
         if operation != 'fetch' and self.no_progress[key] >= 2:
             raise JobBlocked('同一步骤两次没有实际进展，已停止重复动作')
@@ -637,6 +680,8 @@ class MaterialJob:
             targets = self._item_batch(targets)
             if targets is None:
                 return
+        if self._pipeline_step(targets):
+            return
         self._write('planning', '计算材料净缺口')
         planned = self._plan(targets)
         write_json(self.out / 'plan.json', planned)

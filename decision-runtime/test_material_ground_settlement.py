@@ -41,35 +41,12 @@ class GroundSettlementTest(unittest.TestCase):
     def clock(self):
         return patch('material_client.time.monotonic',side_effect=itertools.count(step=.1))
 
-    def test_tiny_gravity_and_inertia_landing_rebases_before_fresh_column_scan_and_takeoff(self):
+    def test_legacy_proof_without_inventory_and_uuid_defers_before_any_action(self):
         c=self.client
-        settled={**self.landed,'time':3000}
-        reached={**settled,'time':4000,'pos':[self.LANDED[0],self.LANDED[1]+48,self.LANDED[2]],'flight':True}
-        states=iter([self.landed,settled,settled,reached])
-        def status(wait_seconds=None):
-            self.reads.append(wait_seconds);return next(states)
-        def request(op,**params):
-            self.actions.append((op,params))
-            if op=='scan':
-                self.assertEqual(761019,params['min'][0], 'Scan must use the landed body column, not the falling pose')
-                return {'phase':'done','world_session':c.world,'blocks':[]}
-            self.assertEqual('navigate',op);self.assertTrue(params['air_only'])
-            self.assertEqual([self.LANDED[0],self.LANDED[1]+48,self.LANDED[2]],params['target'])
-            return {'phase':'done'}
-        c.status=status;c.request=request
-        with self.clock(),patch('material_client.time.sleep'):
-            self.assertIs(reached,c._finish_vertical(self.state))
-        self.assertEqual([0,0,None,None],self.reads)
-        self.assertEqual(['scan','navigate'],[op for op,_ in self.actions])
-        evidence=json.loads((c.out/'park-ground-settlement.json').read_text())
-        self.assertEqual(self.LANDED,evidence['settled']);self.assertGreaterEqual(evidence['observed_span_ms'],400)
-
-    def test_repeated_same_snapshot_is_not_ground_settlement_and_wait_is_bounded(self):
-        c=self.client;c.status=lambda wait_seconds=None:copy.deepcopy(self.landed)
-        with self.clock(),patch('material_client.time.sleep') as sleeping:
-            with self.assertRaisesRegex(RuntimeError,'two seconds'):c._settle_owned_ground_walk(self.state)
-        self.assertFalse(self.actions);self.assertLessEqual(sleeping.call_count,21)
-        self.assertFalse((c.out/'park-ground-settlement.json').exists())
+        c.status=lambda **kwargs:self.fail('Legacy proof must not poll')
+        c.request=lambda *args,**kwargs:self.fail('Legacy proof must not scan or navigate')
+        with self.assertRaisesRegex(RuntimeError,'current-schema'):c._finish_vertical(self.state)
+        self.assertFalse(self.actions)
 
     def test_foreign_unfinished_manual_damage_drop_and_unbounded_motion_fail_before_action(self):
         cases={
@@ -115,14 +92,11 @@ class GroundSettlementTest(unittest.TestCase):
                 with self.clock(),patch('material_client.time.sleep'):
                     with self.assertRaises(RuntimeError):self.client._finish_vertical(self.state)
 
-    def test_unowned_falling_pose_keeps_the_existing_ascent_refusal(self):
-        c=self.client;c.last_owned_ground_walk=None;c.status=lambda:self.landed
-        def request(op,**params):
-            self.actions.append(op);self.assertEqual('scan',op)
-            return {'world_session':c.world,'blocks':[]}
-        c.request=request
-        with self.assertRaisesRegex(RuntimeError,'position or protection changed'):c._finish_vertical(self.state)
-        self.assertEqual(['scan'],self.actions)
+    def test_unowned_falling_pose_defers_without_scan_or_logout(self):
+        c=self.client;c.last_owned_ground_walk=None
+        c.request=lambda *args,**kwargs:self.fail('Missing original walk cannot authorize a request')
+        with self.assertRaisesRegex(RuntimeError,'current-schema'):c._finish_vertical(self.state)
+        self.assertFalse(self.actions)
 
 
 class GroundWalkProofLifetimeTest(unittest.TestCase):

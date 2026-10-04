@@ -63,16 +63,40 @@ def run(c, profile, item, target_count, out, checkpoint):
     the outer ``pending`` marker: the owner must reconcile that exact backend
     action/transfer before running again; inventory alone never clears it.
     """
+    return _run(c,profile,item,target_count,out,checkpoint)
+
+
+def run_carried(c,profile,item,target_count,out,checkpoint):
+    """Compress one bounded raw-iron batch for the original selected projection."""
+    from .pipeline_dispatch import carried_context, CARRIED_SCOPE
+    if item!=IRON or type(target_count)is not int or not 1<=target_count<=2304:
+        raise ValueError('Carried mineral adapter supports bounded raw_iron_block only')
+    backend,client=_bound_backend(c)
+    scope=carried_context(backend,client,item,target_count)
+    if scope is None:
+        return {'phase':'waiting','code':'WAIT_BACKEND','detail':'Exact original projection resource context required',
+                'target_scope':CARRIED_SCOPE}
+    recipes=getattr(getattr(backend,'catalog',None),'recipes',{}).get(IRON,[])
+    if not any(recipe.count==1 and len(recipe.cells)==9
+               and all(set(options)=={RAW} for _,options in recipe.cells) for recipe in recipes):
+        return {'phase':'waiting','code':'WAIT_RECIPE','detail':'Current recipe does not verify nine raw iron per block',
+                'target_scope':CARRIED_SCOPE}
+    return _run(c,profile,item,target_count,out,checkpoint,carried_scope=scope)
+
+
+def _run(c,profile,item,target_count,out,checkpoint,carried_scope=None):
+    carried=carried_scope is not None
+    target_scope='absolute_backpack_total' if carried else 'approved_depot_total'
     if item not in ITEMS or type(target_count) is not int or not 1 <= target_count <= 1_000_000:
         raise ValueError('Unsupported mineral item or finished target')
     backend, client = _bound_backend(c)
     if profile != backend.profile:
         raise JobBlocked('矿物流水线工位必须与当前已核验后端一致')
     depots = profile.get('depots', [])
-    if not depots or len({tuple(p) for p in depots}) != len(depots):
+    if (not carried and not depots) or len({tuple(p) for p in depots}) != len(depots):
         raise JobBlocked('矿物流水线需要不同的已登记仓库；不能由缓存坐标生成仓库')
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
-    path = out / 'mineral-pipeline.json'
+    path = out / ('mineral-carried-pipeline.json' if carried else 'mineral-pipeline.json')
     world = client.world
     current = _snapshot(client, world, checkpoint)
     scope = {k: current.get(k) for k in ('server', 'dimension', 'world_session')}
@@ -94,7 +118,9 @@ def run(c, profile, item, target_count, out, checkpoint):
             raise JobBlocked('矿物批次账本需要JSON对象，未移动或重新生产')
         if (journal.get('schema') != 1 or journal.get('scope') != scope
                 or journal.get('item') != item or journal.get('target') != target_count
-                or journal.get('depots') != depots):
+                or journal.get('depots') != depots
+                or journal.get('target_scope','approved_depot_total')!=target_scope
+                or carried and journal.get('request_scope')!=carried_scope):
             raise JobPaused('矿物流水线账本范围或目标已变化，不能沿用旧记录')
         batch = journal.get('batch')
         expected = journal.get('expected_depot')
@@ -107,11 +133,12 @@ def run(c, profile, item, target_count, out, checkpoint):
             raise JobBlocked('矿物批次账本格式不符，未移动或重新生产')
         if journal.get('pending'):
             return {'phase': 'waiting', 'code': 'WAIT_RECEIPT', 'detail': '旧动作结果尚未核对；不重放',
-                    'journal': str(path), 'pending': journal['pending'], 'ai_calls': 0}
+                    'journal': str(path), 'pending': journal['pending'], 'ai_calls': 0,'target_scope':target_scope}
     else:
         journal = {'schema': 1, 'scope': scope, 'item': item, 'target': target_count,
                    'depots': depots, 'expected_depot': None, 'deposited': 0,
-                   'batch': None, 'pending': None, 'receipts': []}
+                   'batch': None, 'pending': None, 'receipts': [],'target_scope':target_scope}
+        if carried:journal['request_scope']=carried_scope
         write_json(path, journal)
     actions = 0
     keep_inputs = {item, RAW}
@@ -143,6 +170,18 @@ def run(c, profile, item, target_count, out, checkpoint):
                                     'code': (result or {}).get('code'),
                                     'inventory_after': dict(inventory_counts(after))})
         journal['receipts'] = journal['receipts'][-32:]
+        if (carried and isinstance(result,dict)
+                and (result.get('pending') or str(result.get('code','')).lower() in
+                     HOLD_CODES|{'wait_receipt','wait_reconcile'})):
+            journal['pending'].update(receipt=result,request_after=getattr(client,'last',None))
+            write_json(path,journal)
+            raise _Wait('WAIT_RECEIPT','原矿物动作仍需核对；保留原请求，不根据背包数量重放')
+        if carried and kind=='craft':
+            # A native craft reply is not its conservation proof. Keep the
+            # original intent across every observation until produce verifies 9:1.
+            journal['pending'].update(receipt=result,request_after=getattr(client,'last',None))
+            write_json(path,journal)
+            return result or {'phase':'done'}
         journal['pending'] = None; write_json(path, journal)
         return result or {'phase': 'done'}
 
@@ -205,11 +244,15 @@ def run(c, profile, item, target_count, out, checkpoint):
                 reply = invoke('craft', lambda: backend.craft({IRON: desired}), [{IRON: desired}])
                 check_reply(reply, 'WAIT_CRAFT')
                 after = stock(); made = after.get(IRON, 0) - before.get(IRON, 0)
-                if made <= 0 or before.get(RAW, 0) - after.get(RAW, 0) != made * 9:
-                    journal['pending'] = {'kind': 'craft_verification',
+                if (reply.get('phase')!='done' or made <= 0
+                        or carried and made!=needed
+                        or before.get(RAW, 0) - after.get(RAW, 0) != made * 9):
+                    journal['pending'] = {**(journal['pending'] or {}),'kind': 'craft_verification',
                                           'inventory_before': before, 'inventory_after': after}
                     write_json(path, journal)
                     raise JobBlocked('粗铁压缩现物不满足九比一守恒；保留回执，不能再次合成')
+                if carried:
+                    journal['pending']=None;write_json(path,journal)
             return
         while stock().get(item, 0) < desired:
             if item in ROCK_SOURCES:
@@ -259,6 +302,19 @@ def run(c, profile, item, target_count, out, checkpoint):
         return amount
 
     try:
+        if carried:
+            before=stock().get(item,0)
+            desired=min(target_count,before+64)
+            produce(desired)
+            observed=stock().get(item,0)
+            if observed<desired:
+                raise _Wait('WAIT_SOURCE','本批实际背包成品不足，保留原材料记录')
+            complete=observed>=target_count
+            journal.update(completed=complete,verified_carried_count=observed)
+            write_json(path,journal)
+            return {'phase':'done' if complete else 'waiting','code':'complete' if complete else 'CARRIED_BATCH',
+                    'item':item,'target':target_count,'target_scope':target_scope,'verified_carried_count':observed,
+                    'produced':observed-before,'journal':str(path),'ai_calls':0}
         invoke('prepare_travel', backend.prepare_travel)
         # The existing backend stages a safe dry return from a distant mine.
         invoke('stage_near_base', lambda: backend.stage_near_base(depots))
@@ -321,4 +377,5 @@ def run(c, profile, item, target_count, out, checkpoint):
     except _Wait as stopped:
         return {'phase': 'waiting', 'code': stopped.code, 'detail': stopped.detail,
                 'verified_depot_count': journal['expected_depot'], 'deposited': journal['deposited'],
-                'journal': str(path), 'ai_calls': 0}
+                'journal': str(path), 'ai_calls': 0,'target_scope':target_scope,
+                **({'pending':journal['pending']} if journal['pending'] else {})}

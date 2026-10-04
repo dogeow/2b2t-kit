@@ -19,7 +19,110 @@ def floor(width=17, depth=17, y=63):
     return {(x, y, z): block(x, y, z) for x in range(width) for z in range(depth)}
 
 
+def plant(pos, state='Block{minecraft:short_grass}'):
+    return {**block(*pos, dark=False, state=state), 'solid': False, 'passable': True}
+
+
 class LightingBatchPlanTests(unittest.TestCase):
+    def under_roof(self):
+        dark=(760824,62,797823);neighbor=(760821,62,797824)
+        cells={dark:block(*dark,state='Block{minecraft:sand}'),
+               neighbor:{**block(*neighbor,state='Block{minecraft:sand}'),
+                         'spawn_block_light':3,'zombie_block_light_risk':False},
+               (760824,65,797823):block(760824,65,797823,dark=False,state='Block{minecraft:stone}')}
+        return cells,(760819,60,797820),(760827,90,797828),dark,neighbor
+
+    def test_actual_underroof_dark_sand_is_reached_from_safe_lit_exterior_neighbor(self):
+        cells,low,high,dark,neighbor=self.under_roof();original=copy.deepcopy(cells)
+        self.assertEqual(lighting.candidates(cells,low,high),[])
+        planned=batch.plan(cells,low,high,[neighbor[0]+.5,64.5,neighbor[2]+.5])
+        self.assertEqual(1,len(planned));self.assertEqual(list(neighbor),planned[0]['support'])
+        self.assertEqual(1,planned[0]['predicted_coverage_count'])
+        self.assertEqual('safe_neighbor_of_observed_dark_floor',planned[0]['placement_basis'])
+        self.assertTrue(planned[0]['prediction_only']);self.assertEqual(original,cells)
+        self.assertEqual(batch.plan(cells,low,high,[neighbor[0]+.5,64.5,neighbor[2]+.5],residual=False),[])
+
+    def test_lit_neighbor_is_useless_without_air_light_path(self):
+        cells,low,high,dark,neighbor=self.under_roof()
+        for y in range(low[1],high[1]+1):
+            for z in range(low[2],high[2]+1):
+                cells[(760822,y,z)]=block(760822,y,z,dark=False,state='Block{minecraft:stone}')
+        self.assertEqual(batch.plan(cells,low,high,[neighbor[0]+.5,64.5,neighbor[2]+.5]),[])
+
+    def test_verified_plants_at_dark_spawn_space_receive_neighbor_light(self):
+        for state in ('Block{minecraft:short_grass}', 'Block{minecraft:dandelion}'):
+            cells, low, high, dark, neighbor = self.under_roof()
+            spawn = (dark[0], dark[1] + 1, dark[2])
+            cells[spawn] = plant(spawn, state)
+            original = copy.deepcopy(cells)
+            with self.subTest(state=state):
+                planned = batch.plan(cells, low, high, [neighbor[0]+.5, 64.5, neighbor[2]+.5])
+                self.assertEqual(len(planned), 1)
+                self.assertEqual(planned[0]['support'], list(neighbor))
+                self.assertEqual(planned[0]['predicted_coverage_count'], 1)
+                self.assertNotIn(tuple(planned[0]['target']), cells)
+                self.assertEqual(cells, original)
+
+    def test_plants_transmit_in_both_directions_with_one_level_attenuation(self):
+        cells = {(3, 64, 0): plant((3, 64, 0)),
+                 (9, 64, 0): plant((9, 64, 0), 'Block{minecraft:dandelion}')}
+        grid = batch._LightGrid(cells, (0, 64, 0), (14, 64, 0), [])
+        risks = {grid.index((13, 64, 0)): (1, 0), grid.index((14, 64, 0)): (2, 0)}
+        self.assertEqual(grid.coverage((0, 64, 0), risks), 1)
+        self.assertEqual(grid.coverage((13, 64, 0), {grid.index((0, 64, 0)): (1, 0)}), 1)
+        self.assertEqual(grid.coverage((0, 64, 0), {grid.index((13, 64, 0)): (1, 1)}), 0)
+
+    def test_passable_or_unverified_plant_states_do_not_transmit(self):
+        other_states = ('Block{minecraft:fern}', 'Block{minecraft:poppy}',
+                        'Block{minecraft:tall_grass}[half=lower]',
+                        'Block{minecraft:short_grass}[unverified=true]',
+                        'Block{example:short_grass}', 'Block{minecraft:glass}',
+                        'Block{minecraft:water}')
+        bad_rows = [plant((1, 64, 0), state) for state in other_states]
+        for state in ('Block{minecraft:short_grass}', 'Block{minecraft:dandelion}'):
+            for flag, value in (('fluid', True), ('block_entity', True),
+                                ('solid', True), ('passable', False)):
+                bad_rows.append({**plant((1, 64, 0), state), flag: value})
+            bad_rows.append({key: value for key, value in plant((1, 64, 0), state).items()
+                             if key != 'passable'})
+        for row in bad_rows:
+            with self.subTest(row=row):
+                grid = batch._LightGrid({(1, 64, 0): row}, (0, 64, 0), (2, 64, 0), [])
+                self.assertEqual(grid.coverage((0, 64, 0), {grid.index((2, 64, 0)): (1, 0)}), 0)
+
+    def test_plant_bridge_in_protected_area_stays_outside_prediction_domain(self):
+        cells = {(1, 64, 0): plant((1, 64, 0))}
+        grid = batch._LightGrid(cells, (0, 64, 0), (2, 64, 0),
+                               [{'min': [1, 64, 0], 'max': [1, 64, 0]}])
+        self.assertEqual(grid.coverage((0, 64, 0), {grid.index((2, 64, 0)): (1, 0)}), 0)
+
+    def test_transmitting_plants_are_not_air_for_candidate_clearance_or_placement(self):
+        for state in ('Block{minecraft:short_grass}', 'Block{minecraft:dandelion}'):
+            for height in (62, 63, 65, 84):
+                cells, low, high, dark, neighbor = self.under_roof()
+                cells[(neighbor[0], height, neighbor[2])] = plant((neighbor[0], height, neighbor[2]), state)
+                original = copy.deepcopy(cells)
+                with self.subTest(state=state, height=height):
+                    self.assertEqual(batch.plan(cells, low, high,
+                                               [neighbor[0]+.5, 64.5, neighbor[2]+.5]), [])
+                    self.assertEqual(cells, original)
+
+    def test_neighbor_support_target_and_dark_target_masks_are_preserved(self):
+        cells,low,high,dark,neighbor=self.under_roof()
+        for protected_pos in (neighbor,(neighbor[0],neighbor[1]+1,neighbor[2]),dark):
+            protected=[{'min':list(protected_pos),'max':list(protected_pos)}]
+            self.assertEqual(batch.plan(cells,low,high,[neighbor[0]+.5,64.5,neighbor[2]+.5],protected),[])
+
+    def test_no_safe_roof_free_neighbor_means_no_placement_prediction(self):
+        for change in ('building','roof','fluid','no_dark'):
+            cells,low,high,dark,neighbor=self.under_roof()
+            if change=='building':cells[neighbor]['state']='Block{minecraft:oak_planks}'
+            elif change=='roof':cells[(neighbor[0],68,neighbor[2])]=block(neighbor[0],68,neighbor[2],dark=False,state='Block{minecraft:oak_leaves}')
+            elif change=='fluid':cells[neighbor]['fluid']=True
+            else:cells[dark].update(spawn_block_light=1,zombie_block_light_risk=False)
+            with self.subTest(change=change):
+                self.assertEqual(batch.plan(cells,low,high,[neighbor[0]+.5,64.5,neighbor[2]+.5]),[])
+
     def test_one_snapshot_source_contract_and_sparse_flat_ground_batch(self):
         cells = floor()
         original = copy.deepcopy(cells)

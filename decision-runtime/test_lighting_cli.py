@@ -425,7 +425,8 @@ class LightingPlanningTests(unittest.TestCase):
             with (
                 patch.object(runner, 'wait_for_guard', return_value=displaced),
                 patch.object(runner, 'scan', return_value={'blocks': [
-                    {'pos': [3, 66, 2], 'state': 'Block{minecraft:stone}'}], 'scan_entities': []}),
+                    {'pos': [3, 66, 2], 'state': 'Block{minecraft:stone}'}], 'scan_entities': [],
+                    'phase':'done','world_session':client.world,'scan_entity_scope':ENTITY_SCOPE_AT_SCAN_END}),
             ):
                 with self.assertRaisesRegex(lighting.LightingBlocked, 'movement body sweep'):
                     runner.place(candidate, 0)

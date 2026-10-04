@@ -110,7 +110,8 @@ class PipelineDispatchTests(unittest.TestCase):
                     result = dispatch.describe(item)
                     self.assertEqual({'item': item,
                                       'family': module.__name__.rsplit('.', 1)[-1].removesuffix('_pipeline'),
-                                      'target_scope': scope, 'max_target_count': maximum}, result)
+                                      'target_scope': scope, 'max_target_count': maximum},
+                                     {key:result[key] for key in ('item','family','target_scope','max_target_count')})
         self.backend.ensure_client.assert_not_called(); self.checkpoint.assert_not_called()
 
     def test_describe_rejects_unsupported_or_invalid_item_without_client(self):
