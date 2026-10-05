@@ -32,7 +32,7 @@ TESTS = (
     'test_lighting_known_travel_reconcile',
     'test_lighting_entity_aabb','test_lighting_high_preflight',
     'test_lighting_audit_prefix',
-    'test_lighting_batch_plan','test_lighting_cli','test_lighting_regions_cli',
+    'test_lighting_batch_plan','test_lighting_cli','test_lighting_regions_cli','test_lighting_ground_plan',
     'test_lighting_entity_overpass','test_lighting_entity_reconcile',
     'test_lighting_supply_workflow','test_lighting_travel_clearance',
     'test_lighting_audit_preflight_stop','test_lighting_audit_stop',
