@@ -18,6 +18,9 @@ final class BorerRangedCombat {
 	private final BorerCombatPeek peek;
 	private final BorerCombatContinuation continuation=new BorerCombatContinuation();
     private final BorerCombatSeparation separation=new BorerCombatSeparation();
+    private final GuardWeaponPolicy.SafetyRise safetyRise=new GuardWeaponPolicy.SafetyRise();
+    private int evidenceLogTick=Integer.MIN_VALUE;
+    private String evidenceLogKey="";
     private final GuardZombieApproach zombieApproach=new GuardZombieApproach();
     private Object combatWorld;
 	private String holdReason = "";
@@ -62,9 +65,10 @@ final class BorerRangedCombat {
 		for (var e : nearby) observed.put(e.getUUID(), e);
 		int passive = 0;
 		for (var e : observed.values()) {
-			boolean present = c.level.getEntity(e.getId()) == e;
-			boolean eligible = present && BorerDefensePolicy.eligible(true, e.isAlive(), p.hasLineOfSight(e), rank(e), p.distanceTo(e));
+			boolean present = c.level.getEntity(e.getId()) == e && e.level()==c.level;
+			boolean eligible = present && BorerDefensePolicy.eligible(true, e.isAlive(), p.hasLineOfSight(e), rank(p,e), p.distanceTo(e));
 			boolean engaged = eligible && engine.engagement.shouldReact(p, e)
+				|| present && flightDefenseScope() && p.distanceTo(e)<=12 && BorerThreats.currentReceivedMobHit(e,p)
 				|| present && flightDefenseScope() && creeperAlert(c, e);
 			if (eligible && !engaged && !session.contains(e.getUUID())) passive++;
 			// isAlive() also becomes false on an unload. Health/death status is the required evidence.
@@ -123,7 +127,7 @@ final class BorerRangedCombat {
 			engine.fileLog(c,"guard-peek-visible uuid="+peek.target().getUUID()+" retry="+retry);peek.close(c);
 		}
 		var threats = session.targets().stream().filter(e -> session.canAttack(e.getUUID())).toList();
-		int chosen = BorerDefensePolicy.choose(threats.stream().map(e -> new BorerDefensePolicy.Candidate(e.getId(), rank(e), p.distanceTo(e), engine.engagement.recentAttacker(p, e))).toList(), target == null ? -1 : target.getId());
+		int chosen = BorerDefensePolicy.choose(threats.stream().map(e -> new BorerDefensePolicy.Candidate(e.getId(), rank(p,e), p.distanceTo(e), engine.engagement.recentAttacker(p, e))).toList(), target == null ? -1 : target.getId());
 		LivingEntity next = threats.stream().filter(e -> e.getId() == chosen).findFirst().orElse(null);
 		if (!missingRestored && !session.pending()) {
 			if (wasPending) engine.fileLog(c, "area-defense-resume-work reason=all-engaged-targets-dead");
@@ -146,6 +150,9 @@ final class BorerRangedCombat {
                 peek.close(c);target = emergency; return evadeCreeper(c, emergency);
             }
 		}
+        // Attackability is not permission to remain within a received attack.
+        // Only current actual engaged entities supply positions to this fixed ascent.
+        if(engine.standaloneGuard && safetyRise(c))return true;
 		if (next == null) {
             rangedMode(false);
             releaseMiningMelee();
@@ -159,6 +166,7 @@ final class BorerRangedCombat {
 			engine.mobs.raiseShield(c, p);
 			String reason = session.timedOut() ? "no-confirmed-damage-30s" : "target-unavailable";
 			if (!holdReason.equals(reason)) engine.fileLog(c, "area-defense-hold reason=" + reason + " unresolved=" + session.targets().size());
+            logThreatEvidence(c,"hold:"+reason,null);
 			holdReason = reason;
 			engine.status = session.timedOut() ? "未确认击杀，已保持停挖，请接管" : "目标暂时被挡或离开视野，未确认击杀，保持停挖";
 			return true;
@@ -170,8 +178,9 @@ final class BorerRangedCombat {
             if (minerCombat) resetMiningMelee();
 			cancelDraw(c);
 			target = next; blockedTicks = 0;
-			engine.fileLog(c, "area-defense-target id=" + next.getId() + " rank=" + rank(next) + " name=" + next.getName().getString()
+			engine.fileLog(c, "area-defense-target id=" + next.getId() + " rank=" + rank(p,next) + " name=" + next.getName().getString()
 				+ " engaged=true recentAttacker=" + engine.engagement.recentAttacker(p, next));
+            logThreatEvidence(c,"target",next);
             if (minerCombat) engine.fileLog(c, "mining-defense-pause mode=" + engine.mode
                 + " currentTarget=" + (engine.currentTarget == null ? "none" : BorerText.block(engine.currentTarget))
                 + " oreGoal=" + (engine.oreTargetPos == null ? "none" : BorerText.block(engine.oreTargetPos))
@@ -181,8 +190,7 @@ final class BorerRangedCombat {
         boolean meleeTarget = BorerMiningCombatPolicy.meleeTarget(
             target instanceof net.minecraft.world.entity.monster.piglin.Piglin,
             target instanceof net.minecraft.world.entity.monster.piglin.PiglinBrute,
-            BorerThreats.isRangedCombatThreat(target) || target.getMainHandItem().is(Items.BOW)
-                || target.getMainHandItem().is(Items.CROSSBOW), p.distanceTo(target), p.getY() - target.getY());
+            BorerThreats.isRangedCombatThreat(target,p), p.distanceTo(target), p.getY() - target.getY());
         if (minerCombat && meleeTarget) {
             cancelDraw(c);
             if (!miningMeleeFallback) {
@@ -208,7 +216,7 @@ final class BorerRangedCombat {
         if (miningMeleeLease) resetMiningMelee();
 
 		boolean zombieOnly=engine.standaloneGuard
-			&&ordinaryZombie(target)&&onlyZombiesNearby(c,nearby);
+			&&ordinaryZombie(p,target)&&onlyZombiesNearby(c,nearby);
 		if(zombieOnly){if(swordZombieFromHover(c,nearby))return true;}
 		else { zombieApproach.reset(); releaseZombieMelee(); }
 		if (engine.standaloneGuard && elevateBeforeCombat(c, threats)) return true;
@@ -299,7 +307,7 @@ final class BorerRangedCombat {
                 projected.distanceTo(e.position()),projectedY-e.getBoundingBox().maxY);
         }).toList();
         boolean otherThreat=nearby.stream().anyMatch(e->e.isAlive()&&(
-            BorerDefensePolicy.eligible(true,true,p.hasLineOfSight(e),rank(e),p.distanceTo(e))||creeperAlert(c,e)));
+            BorerDefensePolicy.eligible(true,true,p.hasLineOfSight(e),rank(p,e),p.distanceTo(e))||creeperAlert(c,e)));
         boolean healthyDryClear=p.getHealth()>=19&&p.hurtTime==0&&!p.isInWater()&&!p.isInLava()&&!p.isOnFire()
             &&safeAir(c,p.blockPosition())&&safeAir(c,p.blockPosition().above())&&c.level.noCollision(p,p.getBoundingBox());
         boolean safe=separation.observe(c.level,p.tickCount,BorerCombatSeparation.safe(engine.standaloneGuard,
@@ -337,7 +345,7 @@ final class BorerRangedCombat {
         if (p.tickCount < riseRetryAfter && p.getHealth() >= 14) return false;
 		double rise = GuardWeaponPolicy.combatRise(p.getY(), threats.stream()
 			.map(e -> new GuardWeaponPolicy.Threat(e.getY(),
-				e.getMainHandItem().is(Items.BOW) || e.getMainHandItem().is(Items.CROSSBOW), p.distanceTo(e)))
+				BorerThreats.isRangedCombatThreat(e,p), p.distanceTo(e)))
 			.toList());
 		if (rise <= .25) return false;
 		cancelDraw(c);rangedMode(false);engine.pauseGuardMovement(c);
@@ -361,6 +369,38 @@ final class BorerRangedCombat {
             return groundDefenseAfterRiseFailure(c, "flight_failed", "升空失败");
 		}
 	}
+    private boolean safetyRise(Minecraft c){
+        var p=c.player;
+        if(c.level!=combatWorld||c.screen!=null||BorerAreaRunner.physicalMovementHeld(c,c.options.keyUp,c.options.keyDown,
+            c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint))return false;
+        var observed=session.targets().stream().filter(e->e instanceof Enemy&&e.isAlive()&&e.level()==c.level
+            &&c.level.getEntity(e.getId())==e&&currentServerChunk(c,e.blockPosition())).toList();
+        if(observed.isEmpty())return false; // Unloaded memory is never a new location proof.
+        var near=observed.stream().filter(e->GuardWeaponPolicy.safetyRiseNeeded(engine.standaloneGuard,true,true,
+            session.contains(e.getUUID()),BorerThreats.isRangedCombatThreat(e,p),session.canAttack(e.getUUID()),
+            p.hasLineOfSight(e),p.distanceTo(e))).min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
+        double rise=safetyRise.remaining(c.level,p.getY(),p.tickCount,near!=null);
+        if(rise<=.25)return false;
+        if(p.tickCount<riseRetryAfter&&p.getHealth()>=14)return false;
+        cancelDraw(c);releaseZombieMelee();rangedMode(true);engine.pauseGuardMovement(c);
+        if(!clearWholeRise(c,rise)){
+            logThreatEvidence(c,"safety-rise-blocked",near);
+            return groundDefenseAfterRiseFailure(c,"safety_column_or_entity_blocked","当前整段升空身体或远离敌人的路线不安全");
+        }
+        try{
+            // A prior occlusion peek owns a different Flight lease. Close it before borrowing this one.
+            peek.close(c);
+            escapeFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/guard-hover-flight.bak"));
+            if(escapeFlight.acquire(p)!=null)return groundDefenseAfterRiseFailure(c,"safety_flight_unavailable","无法取得当前飞行设置");
+            escaping=true;hoverMelee=false;riseRetryAfter=0;lastRiseFailure="";
+            escapeFlight.speed(.16);c.options.keyJump.setDown(true);
+            // Keep the current view: hidden/unattackable entities receive no bow/attack input.
+            logThreatEvidence(c,"safety-rise",near);
+            engine.status="先沿当前安全柱升空，保留未解决敌人记录";return true;
+        }catch(IllegalStateException unavailable){
+            return groundDefenseAfterRiseFailure(c,"safety_flight_failed","安全升空飞行设置未确认");
+        }
+    }
     /** A ceiling blocks ascent, not defense. Work remains paused by the enclosing combat session. */
     private boolean groundDefenseAfterRiseFailure(Minecraft c, String code, String reason) {
         releaseEscape(c); cancelDraw(c); rangedMode(false);
@@ -387,9 +427,12 @@ final class BorerRangedCombat {
 		var p = c.player;
 		return c.level.getEntities(p, p.getBoundingBox().inflate(12)).stream()
 			.anyMatch(e -> e instanceof Enemy && e instanceof LivingEntity living && living.isAlive()
-				&& p.distanceTo(e) <= (living.getMainHandItem().is(Items.BOW)
-					|| living.getMainHandItem().is(Items.CROSSBOW) ? 12 : 9)
-				&& (p.hasLineOfSight(e) || p.distanceTo(e) < 3));
+                &&e.level()==c.level&&c.level.getEntity(e.getId())==e
+                &&(GuardWeaponPolicy.safetyRiseNeeded(engine.standaloneGuard,true,true,
+                    session.contains(e.getUUID())||BorerThreats.currentReceivedMobHit(e,p),BorerThreats.isRangedCombatThreat(e,p),
+                    session.canAttack(e.getUUID()),p.hasLineOfSight(e),p.distanceTo(e))
+                    ||p.distanceTo(e) <= (BorerThreats.isRangedCombatThreat(living,p) ? 12 : 9)
+				    && (p.hasLineOfSight(e) || p.distanceTo(e) < 3)));
 	}
 	private boolean evadeCreeper(Minecraft c,Creeper creeper) {
         hoverMelee=false;
@@ -431,20 +474,17 @@ final class BorerRangedCombat {
         boolean found=false;
         for(var mob:nearby){
             if(!mob.isAlive()||c.level.getEntity(mob.getId())!=mob)continue;
-            if(BorerThreats.isRangedCombatThreat(mob)
-                    ||mob.getMainHandItem().is(Items.BOW)||mob.getMainHandItem().is(Items.CROSSBOW)
-                    ||mob.getMainHandItem().is(Items.TRIDENT))return false;
+            if(BorerThreats.isRangedCombatThreat(mob,c.player))return false;
             if(c.player.distanceTo(mob)>12)continue;
-            if(!ordinaryZombie(mob))return false;
+            if(!ordinaryZombie(c.player,mob))return false;
             found=true;
         }
         return found;
     }
-    private static boolean ordinaryZombie(LivingEntity mob) {
+    private static boolean ordinaryZombie(net.minecraft.client.player.LocalPlayer p,LivingEntity mob) {
         return GuardWeaponPolicy.ordinaryZombie(
             net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType()).toString(),
-            mob.getMainHandItem().is(Items.BOW) || mob.getMainHandItem().is(Items.CROSSBOW)
-                || mob.getMainHandItem().is(Items.TRIDENT));
+            BorerThreats.isRangedCombatThreat(mob,p));
     }
     private boolean durableSwordAvailable(Minecraft c){
         for(int slot=0;slot<36;slot++){
@@ -460,7 +500,7 @@ final class BorerRangedCombat {
                 ||!durableSwordAvailable(c)||p.distanceTo(target)>=9||!p.hasLineOfSight(target)){
             zombieApproach.reset();releaseZombieMelee();return false;
         }
-        double highest=nearby.stream().filter(e->ordinaryZombie(e)
+        double highest=nearby.stream().filter(e->ordinaryZombie(p,e)
                 &&e.isAlive()&&p.distanceTo(e)<=12).mapToDouble(LivingEntity::getY).max().orElse(target.getY());
         double safeFeet=highest+3.0;
         double horizontal=Math.hypot(target.getX()-p.getX(),target.getZ()-p.getZ());
@@ -570,9 +610,63 @@ final class BorerRangedCombat {
         return true;
     }
     private boolean clearWholeRise(Minecraft c,double rise){
-        if(!c.level.noCollision(c.player,c.player.getBoundingBox().expandTowards(0,rise+.15,0)))return false;
-        for(int i=1;i<=Math.ceil(rise+2);i++)if(!safeAir(c,c.player.blockPosition().above(i)))return false;
+        if(c.player==null||c.level==null||!Double.isFinite(rise)||rise<0
+            ||!GuardWeaponPolicy.finiteVector(c.player.position())||!GuardWeaponPolicy.finiteVector(c.player.getDeltaMovement())
+            ||!GuardWeaponPolicy.finiteBox(c.player.getBoundingBox()))return false;
+        var swept=c.player.getBoundingBox().expandTowards(0,rise+.15,0);
+        if(!GuardWeaponPolicy.finiteBox(swept)||swept.maxY>=319||!c.level.noCollision(c.player,swept))return false;
+        for(var pos:net.minecraft.core.BlockPos.betweenClosed(net.minecraft.core.BlockPos.containing(swept.minX,swept.minY,swept.minZ),
+            net.minecraft.core.BlockPos.containing(swept.maxX-1e-7,swept.maxY-1e-7,swept.maxZ-1e-7)))if(!safeAir(c,pos))return false;
+        // Actual client observations only. Do not fly toward/through an above ghast or creeper.
+        for(var entity:c.level.getEntities(c.player,swept.inflate(40))){
+            if(!(entity instanceof LivingEntity)||!(entity instanceof Enemy)||!entity.isAlive())continue;
+            if(entity.level()!=c.level||c.level.getEntity(entity.getId())!=entity||!currentServerChunk(c,entity.blockPosition())
+                ||!GuardWeaponPolicy.finiteVector(entity.position())||!GuardWeaponPolicy.finiteBox(entity.getBoundingBox()))return false;
+            double radius=entity instanceof Creeper creeper?(creeper.isPowered()?12:6):
+                BorerThreats.isRangedCombatThreat(entity,c.player)?12:9;
+            if(!GuardWeaponPolicy.riseThreatClear(c.player.getY(),entity.getY(),swept,entity.getBoundingBox(),radius))return false;
+        }
         return true;
+    }
+    private boolean currentServerChunk(Minecraft c,net.minecraft.core.BlockPos pos){
+        if(c.level==null)return false;
+        var chunk=c.level.getChunkSource().getChunk(pos.getX()>>4,pos.getZ()>>4,
+            net.minecraft.world.level.chunk.status.ChunkStatus.FULL,false);
+        return LoadedServerChunkEvidence.isServerChunk(c.level,chunk);
+    }
+    /** Real observations only; changing status is logged once, steady states at most every two seconds. */
+    private void logThreatEvidence(Minecraft c,String stage,LivingEntity hinted){
+        if(c.player==null||c.level==null)return;
+        var p=c.player;LivingEntity mob=hinted;
+        if(mob==null)mob=session.targets().stream().filter(e->e.level()==c.level&&c.level.getEntity(e.getId())==e&&e.isAlive())
+            .min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
+        boolean current=mob!=null&&mob.level()==c.level&&c.level.getEntity(mob.getId())==mob&&mob.isAlive();
+        boolean visible=current&&p.hasLineOfSight(mob),attack=current&&session.canAttack(mob.getUUID());
+        String reason=!current?"unknown_current_entity":!visible?"no_los":
+            !BorerDefensePolicy.eligible(true,true,true,rank(p,mob),p.distanceTo(mob))?"outside_attack_distance":
+            !attack?"unresolved_attack_budget":"attack_available";
+        String key=stage+'|'+(current?mob.getUUID():"unknown")+'|'+reason;
+        if(key.equals(evidenceLogKey)&&(long)p.tickCount-evidenceLogTick<40)return;
+        evidenceLogKey=key;evidenceLogTick=p.tickCount;
+        var source=p.getLastDamageSource();var direct=source==null?null:source.getDirectEntity();var owner=source==null?null:source.getEntity();
+        boolean directCurrent=direct!=null&&direct.level()==c.level&&c.level.getEntity(direct.getId())==direct;
+        boolean ownerCurrent=owner!=null&&owner.level()==c.level&&c.level.getEntity(owner.getId())==owner&&owner.isAlive();
+        engine.fileLog(c,"guard-threat-evidence stage="+stage+" current_entity="+current+" reason="+reason
+            +" player="+p.position()+" player_box="+p.getBoundingBox()+" health="+p.getHealth()
+            +" player_main="+net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(p.getMainHandItem().getItem())
+            +" player_off="+net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(p.getOffhandItem().getItem())
+            +" using_shield="+p.getUseItem().is(Items.SHIELD)
+            +(current?" id="+mob.getId()+" uuid="+mob.getUUID()+" mob="+mob.position()+" mob_box="+mob.getBoundingBox()
+                +" mob_main="+net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(mob.getMainHandItem().getItem())
+                +" mob_off="+net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(mob.getOffhandItem().getItem())
+                +" mob_health="+mob.getHealth()+" ranged="+BorerThreats.isRangedCombatThreat(mob,p)+" distance="+p.distanceTo(mob)
+                +" visible="+visible+" can_attack="+attack:" mob=unknown")
+            +" damage_msg="+(source==null?"unknown":source.getMsgId())
+            +" damage_trident="+(source!=null&&source.is(net.minecraft.world.damagesource.DamageTypes.TRIDENT))
+            +" direct_current="+directCurrent+" direct="+(directCurrent?direct.getId()+":"+direct.getUUID():"unknown")
+            +" owner_current="+ownerCurrent+" owner="+(ownerCurrent?owner.getId()+":"+owner.getUUID():"unknown")
+            +" fixed_rise_target="+(Double.isFinite(safetyRise.target())?safetyRise.target():"unplanned")
+            +" unresolved="+session.targets().size());
     }
 	private boolean clearRise(Minecraft c){
 		if(!c.level.noCollision(c.player,c.player.getBoundingBox().expandTowards(0,1.1,0)))return false;
@@ -580,17 +674,17 @@ final class BorerRangedCombat {
 		return true;
 	}
 	private boolean safeAir(Minecraft c,net.minecraft.core.BlockPos p){
-		if(!c.level.hasChunkAt(p))return false;var s=c.level.getBlockState(p);
-		return s.getFluidState().isEmpty()&&!s.is(net.minecraft.world.level.block.Blocks.FIRE)&&!s.is(net.minecraft.world.level.block.Blocks.COBWEB)&&!s.is(net.minecraft.world.level.block.Blocks.POWDER_SNOW);
+		if(!currentServerChunk(c,p))return false;var s=c.level.getBlockState(p);
+		return s.getFluidState().isEmpty()&&!s.is(net.minecraft.world.level.block.Blocks.FIRE)&&!s.is(net.minecraft.world.level.block.Blocks.SOUL_FIRE)&&!s.is(net.minecraft.world.level.block.Blocks.COBWEB)&&!s.is(net.minecraft.world.level.block.Blocks.POWDER_SNOW);
 	}
 	private void releaseEscape(Minecraft c){
 		if(!escaping)return;engine.pauseGuardMovement(c);
 		if(c.player!=null&&!c.player.onGround())escapeFlight.closeKeepingFlight();else escapeFlight.close();
 		escaping=false;escapeFlightFailed=false;hoverMelee=false;
 	}
-	private static int rank(LivingEntity e) {
+	private static int rank(net.minecraft.client.player.LocalPlayer p,LivingEntity e) {
 		return BorerDefensePolicy.priority(e instanceof Creeper,
-            BorerThreats.isRangedCombatThreat(e) || e.getMainHandItem().is(Items.BOW) || e.getMainHandItem().is(Items.CROSSBOW));
+            BorerThreats.isRangedCombatThreat(e,p));
 	}
 	private static boolean usableBow(net.minecraft.world.item.ItemStack stack){return GuardWeaponPolicy.usableBow(stack.is(Items.BOW),stack.isDamageableItem(),stack.getMaxDamage()-stack.getDamageValue());}
 	private boolean selectBow(Minecraft c) {
@@ -624,6 +718,7 @@ final class BorerRangedCombat {
 		drawing = false; releasePending = false; look = null; viewGate.reset(); viewWaitTicks = 0;
 	}
 	void end(Minecraft c) {
+        safetyRise.clear();evidenceLogKey="";evidenceLogTick=Integer.MIN_VALUE;
         riseRetryAfter = 0; lastRiseFailure = "";
 		session.clear(); continuation.clear(); separation.clear(); combatWorld=null; holdReason = "";
         miningMeleeProgress.clear(); miningMeleeFallback = false;
@@ -709,7 +804,7 @@ final class BorerRangedCombat {
 		p.connection.send(new net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.Rot(look.yaw(), look.pitch(), p.onGround(), p.horizontalCollision));
 		drawing = false; releasePending = false; cooldown = 6; viewWaitTicks = 0;
 		engine.status = "放箭反击 " + target.getName().getString();
-		engine.fileLog(c, "area-defense-shot id=" + target.getId() + " rank=" + rank(target) + " visible=true look=" + look
+		engine.fileLog(c, "area-defense-shot id=" + target.getId() + " rank=" + rank(c.player,target) + " visible=true look=" + look
 			+ " target=" + target.position() + " " + engine.host.borerBowDiagnostics());
 		return true;
 	}

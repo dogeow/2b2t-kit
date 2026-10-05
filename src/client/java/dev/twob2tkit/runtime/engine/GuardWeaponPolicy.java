@@ -1,5 +1,7 @@
 package dev.twob2tkit.runtime.engine;
 import java.util.List;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 final class GuardWeaponPolicy {
     static final int SWORD_RESERVE=32;
     static boolean usableSword(boolean sword,int remaining){return usableSword(sword,remaining,SWORD_RESERVE);}
@@ -48,5 +50,44 @@ final class GuardWeaponPolicy {
 		return Math.max(0.0, desired - playerY);
 	}
     static boolean riseFailureNeedsExit(double health) { return health < 14; }
+    static boolean safetyRiseNeeded(boolean standalone,boolean current,boolean aliveHostile,boolean engaged,
+                                    boolean ranged,boolean canAttack,boolean visible,double distance){
+        return standalone&&current&&aliveHostile&&engaged&&Double.isFinite(distance)&&distance>=0&&distance<=12
+            &&(ranged||!canAttack||!visible);
+    }
+    static boolean finiteVector(Vec3 value){
+        return value!=null&&Double.isFinite(value.x)&&Double.isFinite(value.y)&&Double.isFinite(value.z);
+    }
+    static boolean finiteBox(AABB box){
+        return box!=null&&Double.isFinite(box.minX)&&Double.isFinite(box.minY)&&Double.isFinite(box.minZ)
+            &&Double.isFinite(box.maxX)&&Double.isFinite(box.maxY)&&Double.isFinite(box.maxZ)
+            &&box.minX<box.maxX&&box.minY<box.maxY&&box.minZ<box.maxZ;
+    }
+    /** A far above hostile is not a ceiling; a nearby above hostile or body intersection still is. */
+    static boolean riseThreatClear(double playerY,double mobY,AABB swept,AABB mob,double radius){
+        if(!Double.isFinite(playerY)||!Double.isFinite(mobY)||!Double.isFinite(radius)||radius<=0
+            ||!finiteBox(swept)||!finiteBox(mob)||swept.intersects(mob))return false;
+        double dx=Math.max(0,Math.max(swept.minX-mob.maxX,mob.minX-swept.maxX));
+        double dy=Math.max(0,Math.max(swept.minY-mob.maxY,mob.minY-swept.maxY));
+        double dz=Math.max(0,Math.max(swept.minZ-mob.maxZ,mob.minZ-swept.maxZ));
+        return dx*dx+dy*dy+dz*dz>radius*radius||StandaloneCreeperPolicy.riseMovesAway(playerY,mobY);
+    }
+    /** One fixed player-derived ascent for the same unresolved encounter, never currentY+12 each tick. */
+    static final class SafetyRise {
+        private Object world;private double target=Double.NaN;private long started;private boolean spent;
+        double remaining(Object currentWorld,double feet,long tick,boolean trigger){
+            if(world!=currentWorld){clear();world=currentWorld;}
+            if(currentWorld==null||!Double.isFinite(feet)||tick<0||spent)return 0;
+            if(Double.isNaN(target)){
+                if(!trigger)return 0;
+                target=Math.min(316,feet+12);started=tick;
+            }
+            if(tick-started>=200||feet>=target-.25){spent=true;return 0;}
+            return Math.max(0,target-feet);
+        }
+        double target(){return target;}
+        boolean active(){return !spent&&!Double.isNaN(target);}
+        void clear(){world=null;target=Double.NaN;started=0;spent=false;}
+    }
     private GuardWeaponPolicy(){}
 }

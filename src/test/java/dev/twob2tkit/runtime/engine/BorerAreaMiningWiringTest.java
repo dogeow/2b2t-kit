@@ -90,7 +90,23 @@ class BorerAreaMiningWiringTest {
         assertFalse(hold.contains("rescanAfterStall"));
         assertFalse(hold.contains("mine"));
         assertFalse(hold.contains("move"));
-        assertTrue(calls(method("runtime/engine/BorerAreaRunner","manualMovementHeld")).contains("glfwGetMouseButton"));
+        var manual=method("runtime/engine/BorerAreaRunner","manualMovementHeld");
+        assertTrue(calls(manual).contains("physicalMovementHeld"),"Area hold delegates its actual input check");
+        var movementKeys=new ArrayList<String>();
+        for(var instruction:manual.instructions)
+            if(instruction instanceof FieldInsnNode field && field.owner.equals("net/minecraft/client/Options")
+                &&field.name.startsWith("key"))movementKeys.add(field.name);
+        assertEquals(List.of("keyUp","keyDown","keyLeft","keyRight"),movementKeys,
+            "Advice hold retains exactly its four original movement mappings");
+        var physical=method("runtime/engine/BorerAreaRunner","physicalMovementHeld");
+        boolean actualMouse=false,actualKeyboard=false,boundKey=false;
+        for(var instruction:physical.instructions)if(instruction instanceof MethodInsnNode call){
+            actualMouse|=call.owner.equals("org/lwjgl/glfw/GLFW")&&call.name.equals("glfwGetMouseButton");
+            actualKeyboard|=call.owner.equals("com/mojang/blaze3d/platform/InputConstants")&&call.name.equals("isKeyDown");
+            boundKey|=call.owner.equals("net/fabricmc/fabric/api/client/keymapping/v1/KeyMappingHelper")&&call.name.equals("getBoundKeyOf");
+        }
+        assertTrue(actualMouse&&actualKeyboard&&boundKey,"Shared helper reads actual bound mouse and keyboard input");
+        assertTrue(calls(physical).contains("isWindowActive"));
         assertFalse(calls(method("runtime/engine/BorerAreaRunner","safeForAdvice")).contains("isWindowActive"),
             "Unfocused, safe incidents may still get anonymous advice");
     }

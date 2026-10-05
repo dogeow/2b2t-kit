@@ -209,9 +209,37 @@ public final class BorerThreats {
 
 	/** 会远程输出的怪：贴近前举盾，通道里也要拐弯躲开。 */
 	public static boolean isRangedCombatThreat(Entity entity) {
-		if (entity == null || !entity.isAlive()) return false;
-		return isRangedCombatType(typeId(entity));
+		return entity instanceof LivingEntity living && entity instanceof Enemy && entity.isAlive()
+            && rangedCombatThreat(true,true,typeId(entity),living.getMainHandItem().is(Items.BOW),
+                living.getMainHandItem().is(Items.CROSSBOW),living.getMainHandItem().is(Items.TRIDENT),false);
 	}
+
+    /** Current observation, including one strictly attributed typed trident hit. */
+    public static boolean isRangedCombatThreat(Entity entity,LocalPlayer player){
+        if(!(entity instanceof LivingEntity living)||!(entity instanceof Enemy)||player==null
+            ||entity.level()!=player.level()||player.level().getEntity(entity.getId())!=entity||!entity.isAlive())return false;
+        var source=player.getLastDamageSource();
+        int age=player.tickCount-player.getLastHurtByMobTimestamp();
+        boolean trident=receivedTrident(true,true,true,source!=null&&source.is(DamageTypes.TRIDENT),
+            source!=null&&isEnvironmental(source),source!=null&&source.getEntity()==entity,
+            player.getLastHurtByMob()==entity,age);
+        return rangedCombatThreat(true,true,typeId(entity),living.getMainHandItem().is(Items.BOW),
+            living.getMainHandItem().is(Items.CROSSBOW),living.getMainHandItem().is(Items.TRIDENT),trident);
+    }
+    static boolean rangedCombatThreat(boolean livingEnemy,boolean alive,String type,boolean bow,boolean crossbow,
+                                     boolean trident,boolean receivedTrident){
+        return livingEnemy&&alive&&(isRangedCombatType(type)||bow||crossbow||trident||receivedTrident);
+    }
+    static boolean receivedTrident(boolean current,boolean alive,boolean enemy,boolean typedTrident,boolean environmental,
+                                   boolean exactSourceOwner,boolean exactLastAttacker,int age){
+        return current&&alive&&enemy&&typedTrident&&!environmental&&exactSourceOwner&&exactLastAttacker&&age>=0&&age<=100;
+    }
+    static boolean currentReceivedMobHit(Entity entity,LocalPlayer player){
+        if(!(entity instanceof LivingEntity)||!(entity instanceof Enemy)||player==null||!entity.isAlive()
+            ||entity.level()!=player.level()||player.level().getEntity(entity.getId())!=entity)return false;
+        var source=player.getLastDamageSource();int age=player.tickCount-player.getLastHurtByMobTimestamp();
+        return source!=null&&!isEnvironmental(source)&&source.getEntity()==entity&&player.getLastHurtByMob()==entity&&age>=0&&age<=100;
+    }
 
 	/** 类型 id 是否远程威胁。 */
 	public static boolean isRangedCombatType(String type) {

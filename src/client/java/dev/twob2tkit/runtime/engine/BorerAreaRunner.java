@@ -820,9 +820,11 @@ final class BorerAreaRunner {
 				BorerMobPolicy.pauseRadius(engine.host.borerMobRadius())) == null);
 	}
 	private static boolean manualMovementHeld(Minecraft client) {
+        return physicalMovementHeld(client,client.options.keyUp,client.options.keyDown,client.options.keyLeft,client.options.keyRight);
+    }
+    static boolean physicalMovementHeld(Minecraft client,KeyMapping... mappings){
 		if (client.screen != null || !client.isWindowActive()) return false;
-		for (KeyMapping key : new KeyMapping[]{client.options.keyUp, client.options.keyDown,
-			client.options.keyLeft, client.options.keyRight}) {
+		for (KeyMapping key : mappings) {
 			var bound = net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper.getBoundKeyOf(key);
 			if (bound.getType() == com.mojang.blaze3d.platform.InputConstants.Type.MOUSE
 				&& org.lwjgl.glfw.GLFW.glfwGetMouseButton(client.getWindow().handle(), bound.getValue()) == org.lwjgl.glfw.GLFW.GLFW_PRESS) return true;

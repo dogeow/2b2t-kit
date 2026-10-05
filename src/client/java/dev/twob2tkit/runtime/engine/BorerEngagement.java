@@ -67,7 +67,7 @@ final class BorerEngagement {
 			creeper.isIgnited() || creeper.getSwellDir() > 0 || creeper.getSwelling(1) > .15, creeper.isPowered(), distance);
 		Vec3 toward = p.getEyePosition().subtract(living.getEyePosition()).normalize();
 		boolean facing = living.getViewVector(1).dot(toward) > .94;
-		boolean ranged = living.getMainHandItem().is(Items.BOW) || living.getMainHandItem().is(Items.CROSSBOW);
+		boolean ranged = BorerThreats.isRangedCombatThreat(living,p);
 		boolean attackPose = facing && e instanceof Mob mob && mob.isAggressive()
 			&& (ranged && living.isUsingItem() || !ranged && distance <= 3);
 		boolean visible = p.hasLineOfSight(e);
