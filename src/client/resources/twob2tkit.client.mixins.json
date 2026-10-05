@@ -14,6 +14,7 @@
     "LocalAdvancementSelectionMixin",
     "LocalPlayerShiftMixin",
     "LocalRecipePlacementMixin",
+    "MeteorFlightWorldGuardMixin",
     "MeteorKillAuraWorldGuardMixin",
     "MeteorScaffoldTargetMixin",
     "MeteorScaffoldModuleLifecycleMixin",
