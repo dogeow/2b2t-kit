@@ -408,6 +408,20 @@ class WarehouseAuditTests(unittest.TestCase):
                 result=self.execute(configure)
                 self.assertFalse(result['complete']);self.assertEqual([],result['containers'])
 
+    def test_ordinary_furnace_reports_three_slots_without_loading_or_collecting(self):
+        def configure(client):
+            client.put_chest(self.depots[0],[{'item':'minecraft:cobblestone','count':7},
+                {'item':'minecraft:coal','count':2},{'item':'minecraft:stone','count':4}],
+                kind='minecraft:furnace',properties='[facing=north,lit=false]',size=3)
+            client.contents[tuple(self.depots[0])]['type']='FurnaceMenu'
+        result=self.execute(configure)
+        self.assertTrue(result['complete'])
+        self.assertEqual({'minecraft:cobblestone':7,'minecraft:coal':2,'minecraft:stone':4},result['loose_counts'])
+        self.assertEqual('FurnaceMenu',result['containers'][0]['menu_type'])
+        self.assertEqual({'0':'input','1':'fuel','2':'output'},result['containers'][0]['visible_slot_roles'])
+        self.assertEqual(3,len(result['containers'][0]['slots']))
+        self.assertFalse(any(op in ('slot_click','use_item','smelt')for op,_ in self.client.calls))
+
     def test_roofed_rocket_hopper_uses_side_face_without_wrong_house_route(self):
         pos=[1,64,1];block_state='Block{minecraft:hopper}[enabled=true,facing=down]'
         answer={'phase':'done','world_session':'world','control_revision':4,'scan_start_revision':4,

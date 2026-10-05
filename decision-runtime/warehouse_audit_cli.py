@@ -25,6 +25,7 @@ ALLOWED=frozenset(('scan','snapshot','navigate','walk','approach_block','select_
 ITEM=re.compile(r'[a-z0-9_.-]+:[a-z0-9_./-]+')
 MENU_LAYOUTS={'minecraft:chest':('ChestMenu',27),'minecraft:ender_chest':('ChestMenu',27),
               'minecraft:barrel':('ChestMenu',27),'minecraft:hopper':('HopperMenu',5),
+              'minecraft:furnace':('FurnaceMenu',3),
               'minecraft:blast_furnace':('BlastFurnaceMenu',3)}
 READ_TERMINALS=frozenset(('scan','snapshot','navigate','walk','approach_block','select_item','close_menu'))
 
@@ -611,7 +612,7 @@ def run(game_dir,out,depots,profile=None,*,client_factory=MaterialClient,survey_
             record={'identity':key,'positions':positions,'block_state':state,'opened_block_state':after_state,'observed_at':frame['time'],
                     'menu_id':frame['menu']['id'],'menu_type':kind,'slots':rows,'loose_counts':loose,'packed_counts':packed,
                     'unknown_packed_slots':unknown,'two_distinct_menu_frames':True,'reached_body_clearance':body_clearance}
-            if kind=='BlastFurnaceMenu':
+            if kind in ('FurnaceMenu','BlastFurnaceMenu'):
                 record['visible_slot_roles']={'0':'input','1':'fuel','2':'output'}
             report['containers'].append(record);seen.add(key)
             session.checked('close_menu');session.save()
