@@ -343,7 +343,7 @@ class ManufactureTests(unittest.TestCase):
 
     def test_dependencies_execute_and_finished_planks_survive(self):
         c = Client(self.root, {'minecraft:oak_log': 3})
-        with patch('material_manufacture.craft_recipe.execute', side_effect=c.execute):
+        with patch('material_manufacture.craft_recipe.execute', side_effect=c.execute),patch('material_manufacture.stack_recipe.execute',side_effect=c.execute):
             result = manufacture(c, self.catalog, {'minecraft:oak_door': 2, 'minecraft:oak_planks': 4})
         self.assertTrue(result['complete'])
         self.assertEqual(c.crafted, ['minecraft:oak_planks', 'minecraft:oak_door', 'minecraft:oak_planks'])
@@ -374,7 +374,7 @@ class ManufactureTests(unittest.TestCase):
 
     def test_partial_batch_uses_real_stock_and_keeps_the_full_remaining_goal(self):
         c=Client(self.root,{'minecraft:oak_log':2})
-        with patch('material_manufacture.craft_recipe.execute',side_effect=c.execute):
+        with patch('material_manufacture.craft_recipe.execute',side_effect=c.execute),patch('material_manufacture.stack_recipe.execute',side_effect=c.execute):
             result=manufacture(c,self.catalog,{'minecraft:oak_door':9},allow_partial=True)
         self.assertEqual(c.stock['minecraft:oak_door'],3)
         self.assertEqual(result['remaining_targets'],{'minecraft:oak_door':6})
@@ -383,7 +383,7 @@ class ManufactureTests(unittest.TestCase):
 
     def test_partial_mode_still_protects_personal_reserves(self):
         c=Client(self.root,{'minecraft:oak_log':2})
-        with patch('material_manufacture.craft_recipe.execute',side_effect=c.execute):
+        with patch('material_manufacture.craft_recipe.execute',side_effect=c.execute),patch('material_manufacture.stack_recipe.execute',side_effect=c.execute):
             result=manufacture(c,self.catalog,{'minecraft:oak_door':9},{'minecraft:oak_log':1},allow_partial=True)
         self.assertEqual(c.stock['minecraft:oak_log'],1)
         self.assertFalse(result['complete']);self.assertEqual(c.stock['minecraft:oak_door'],0)
@@ -394,7 +394,7 @@ class ManufactureTests(unittest.TestCase):
             state = c.execute(*args)
             (self.root / 'safety-hold.json').write_text('{"active":true}')
             return state
-        with patch('material_manufacture.craft_recipe.execute', side_effect=craft_then_lock):
+        with patch('material_manufacture.craft_recipe.execute', side_effect=craft_then_lock),patch('material_manufacture.stack_recipe.execute',side_effect=craft_then_lock):
             with self.assertRaises(RuntimeError):
                 manufacture(c, self.catalog, {'minecraft:oak_door': 2})
         self.assertEqual(c.crafted, ['minecraft:oak_planks'])
