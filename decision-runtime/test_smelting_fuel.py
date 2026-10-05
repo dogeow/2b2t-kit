@@ -59,6 +59,15 @@ class FuelPlanTest(unittest.TestCase):
 
 @unittest.skipUnless(JAR.exists(),'Current Minecraft jar not available')
 class ActualFuelFactsTest(unittest.TestCase):
+    def test_blaze_rods_are_checked_native_fuel_but_never_enabled_by_default(self):
+        c=FuelCatalog(JAR)
+        self.assertEqual(2400,c.durations['minecraft:blaze_rod'])
+        self.assertNotIn('minecraft:blaze_rod',policy(c,{}, {})[1])
+        p=select_fuels(c,{'minecraft:blaze_rod':32,'minecraft:cobblestone':322},[20]*16,
+                      200,'minecraft:cobblestone','minecraft:stone',
+                      {'minecraft:cobblestone':2},['minecraft:blaze_rod'])
+        self.assertTrue(p['ready']);self.assertEqual({'minecraft:blaze_rod':32},p['fuel_totals'])
+        self.assertTrue(all(e['fuel']==2 and e['planned_fuel_ticks']==4800 for e in p['entries']))
     def test_current_compiled_fuel_class_and_tags_verify_four_requested_families(self):
         c=FuelCatalog(JAR);self.assertTrue(c.evidence['extra_fuels_verified'])
         self.assertEqual(1600,c.durations[COAL]);self.assertEqual(1600,c.durations[CHARCOAL])

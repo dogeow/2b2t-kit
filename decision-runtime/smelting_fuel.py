@@ -44,6 +44,9 @@ class FuelCatalog:
                 tags[name]=result;return result
             self.wood=(expand('minecraft:logs')|expand('minecraft:planks'))-expand('minecraft:non_flammable_wood')
             self.durations.update({item:300 for item in self.wood});self.durations[CHARCOAL]=1600
+            # The exact checked FuelValues class adds BLAZE_ROD at12 base units.
+            # This remains opt-in through a task fuel_allow_items declaration.
+            self.durations['minecraft:blaze_rod']=2400
             self.evidence={'kind':'vanilla26.1.2_FuelValues','extra_fuels_verified':True,
                            'fuel_class_sha256':digest,'base_unit_ticks':200,'tag_sha256':digests}
 

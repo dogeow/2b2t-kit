@@ -14,7 +14,7 @@ TESTS = (
     'test_live_snapshot', 'test_job_progress', 'test_safety_interlock', 'test_server_probe',
     'test_inventory_session', 'test_stack_recipe', 'test_material_manufacture', 'test_material_bulk_planks', 'test_material_bulk_diorite', 'test_craft_recovery',
     'test_container_access', 'test_material_depots', 'test_concrete_soil', 'test_shore_concrete', 'test_concrete_shelter',
-    'test_furnace_batches', 'test_furnace_bank', 'test_smelting_workflow', 'test_journal', 'test_decision_advisor',
+    'test_furnace_batches', 'test_furnace_bank', 'test_smelting_workflow', 'test_smelting_fuel', 'test_journal', 'test_decision_advisor',
     'test_construction_materials', 'test_construction_obstruction',
     'test_construction_obstruction_cli', 'test_goal_workflow',
     'test_projection_material_plan', 'test_projection_stock_plan', 'test_projection_patch_plan', 'test_projection_advice', 'test_material_jobs', 'test_material_processing',
