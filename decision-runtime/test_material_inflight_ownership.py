@@ -142,7 +142,7 @@ class InflightLifecycleTests(unittest.TestCase):
                 self.assertIs(state,client.status(.5,wait_interface=False))
             status.assert_called_once_with(.5,wait_interface=False)
 
-    def test_real_jobclient_stop_logout_and_pause_forward_status_options_before_dispatch(self):
+    def test_real_jobclient_stop_logout_and_pause_admit_during_defense_without_changing_scope(self):
         for op,revision in (('stop',15),('safe_logout',15),('material_job_pause',13)):
             with self.subTest(op=op),tempfile.TemporaryDirectory() as folder:
                 client=self.make_client(Path(folder));calls=[];ids=set();polls=0
@@ -153,12 +153,14 @@ class InflightLifecycleTests(unittest.TestCase):
                 def read(*args,**kwargs):
                     nonlocal polls
                     path=client.root/'request.json'
-                    if not path.exists():return snapshot()
+                    if not path.exists():return snapshot(guard_busy=True)
                     req=json.loads(path.read_text());ids.add(req['id']);polls+=1
                     self.assertEqual(op,req['op']);self.assertEqual('task-a',req['task_session'])
+                    self.assertEqual('world',req['world_session']);self.assertEqual(13,req['expected_revision'])
+                    self.assertNotIn('guard_busy',req)
                     if op=='material_job_pause':self.assertIs(req['release'],False)
                     phase='running' if polls==1 else 'stopped' if op=='stop' else 'done'
-                    return snapshot(revision,id=req['id'],last_request=req['id'],op=op,phase=phase,time=100+polls)
+                    return snapshot(revision,id=req['id'],last_request=req['id'],op=op,phase=phase,time=100+polls,guard_busy=True)
                 with patch('live_snapshot.read_fresh',side_effect=read), \
                      patch('safety_interlock.require_unlocked'),patch('material_client.time.sleep'), \
                      patch.object(Client,'status',status):

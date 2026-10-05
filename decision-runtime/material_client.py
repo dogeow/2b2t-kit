@@ -148,7 +148,7 @@ class Client:
   while True:
    s=self.status(wait_interface=False) if op in ('stop','safe_logout','material_job_pause') else self.status()
    if op!='safe_logout' and s.get('health',0)<14 and not vertical_surface_escape(s,op,params):raise RuntimeError('Low health')
-   if op in ('guard','snapshot','scan','scan_trees','safe_logout','use_item') or not s.get('guard_busy'):break
+   if op in ('guard','snapshot','scan','scan_trees','stop','material_job_pause','safe_logout','use_item') or not s.get('guard_busy'):break
    vertical_escape=vertical_surface_escape(s,op,params)
    if s.get('under_water') and not vertical_escape:
     raise RuntimeError('Defense is busy underwater; surface before another action')
