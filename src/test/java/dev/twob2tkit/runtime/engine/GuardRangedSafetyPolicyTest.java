@@ -46,21 +46,38 @@ class GuardRangedSafetyPolicyTest {
         assertFalse(GuardWeaponPolicy.safetyRiseNeeded(true,true,true,true,true,false,false,12.01));
         assertFalse(GuardWeaponPolicy.safetyRiseNeeded(true,true,true,true,true,false,false,Double.NaN));
     }
-    @Test void fixedPlayerDerivedTargetNeverAddsTwelveAgainForSameEncounter(){
+    @Test void fixedTargetLatchesUntilTriggerResetsOrARealDescentRearms(){
         Object world=new Object();var rise=new GuardWeaponPolicy.SafetyRise();
         assertEquals(12,rise.remaining(world,65,10,true));assertEquals(77,rise.target());
         assertEquals(10,rise.remaining(world,67,11,true));assertEquals(77,rise.target());
-        assertEquals(8,rise.remaining(world,69,12,false));assertEquals(77,rise.target());
         assertEquals(0,rise.remaining(world,77,30,true));
-        assertEquals(0,rise.remaining(world,65,31,true));assertFalse(rise.active());
+        assertEquals(0,rise.remaining(world,77,31,true));assertFalse(rise.active());
+        assertEquals(0,rise.remaining(world,76.5,32,true));
+        assertEquals(12,rise.remaining(world,65,33,true));assertEquals(77,rise.target());
+        assertEquals(0,rise.remaining(world,69,34,false));assertFalse(rise.active());
+        assertEquals(12,rise.remaining(world,69,35,true));assertEquals(81,rise.target());
     }
-    @Test void fixedRiseHasFiniteDeadlineAndARealNewWorldOrExplicitEndResetsIt(){
-        Object first=new Object(),second=new Object();var rise=new GuardWeaponPolicy.SafetyRise();
-        assertEquals(0,rise.remaining(first,65,0,false));
-        assertEquals(12,rise.remaining(first,65,1,true));
-        assertEquals(0,rise.remaining(first,65,201,true));assertEquals(0,rise.remaining(first,65,202,true));
-        assertEquals(12,rise.remaining(second,65,202,true));
-        rise.clear();assertEquals(12,rise.remaining(second,65,203,true));
+    @Test void partialRiseDescentStartsFromCurrentFeetAndNeverClimbsBackAnOldUnboundedTarget(){
+        Object world=new Object();var rise=new GuardWeaponPolicy.SafetyRise();
+        rise.remaining(world,65,1,true);
+        assertEquals(8,rise.remaining(world,69,2,true));
+        assertEquals(12,rise.remaining(world,60,3,true));assertEquals(72,rise.target());
+        assertEquals(0,rise.remaining(world,Double.NaN,4,true));assertFalse(rise.active());
+        assertEquals(12,rise.remaining(world,60,5,true));
+    }
+    @Test void deadlineCountsOnlyActualUniqueInputTicksNotPauseCooldownOrBlockedChecks(){
+        Object world=new Object();var rise=new GuardWeaponPolicy.SafetyRise();
+        assertEquals(12,rise.remaining(world,65,1,true));
+        assertEquals(12,rise.remaining(world,65,5000,true));
+        for(int tick=5000;tick<5199;tick++){
+            assertEquals(12,rise.remaining(world,65,tick,true));rise.attempted(tick);rise.attempted(tick);
+        }
+        assertEquals(12,rise.remaining(world,65,5199,true));rise.attempted(5199);
+        assertEquals(0,rise.remaining(world,65,5200,true));
+        assertEquals(0,rise.remaining(world,65,6000,true));
+        rise.cancel();assertEquals(12,rise.remaining(world,65,6001,true));
+        assertEquals(12,rise.remaining(new Object(),65,6002,true));
+        rise.clear();assertEquals(12,rise.remaining(world,65,6003,true));
         assertEquals(0,new GuardWeaponPolicy.SafetyRise().remaining(null,65,1,true));
     }
     @Test void upwardMotionCannotApproachAnAboveGhastOrCreeperAndOriginalHealthThresholdStays(){
@@ -87,23 +104,37 @@ class GuardRangedSafetyPolicyTest {
         assertFalse(GuardWeaponPolicy.finiteBox(null));
     }
     @Test void farAboveActualHostilesOutsideTheEntireRiseDangerRadiusDoNotActAsCeilings(){
-        var swept=new AABB(-.3,65,-.3,.3,78.95,.3);
+        var start=new AABB(-.3,65,-.3,.3,66.8,.3);
+        var swept=start.expandTowards(0,12.15,0);
         var thirtyBlocksBeside=new AABB(29.7,72,-.3,30.3,74,.3);
         var farAbove=new AABB(-.5,100,-.5,.5,102,.5);
-        assertTrue(GuardWeaponPolicy.riseThreatClear(65,72,swept,thirtyBlocksBeside,12));
-        assertTrue(GuardWeaponPolicy.riseThreatClear(65,100,swept,farAbove,12));
+        assertTrue(GuardWeaponPolicy.riseThreatClear(start,swept,thirtyBlocksBeside,12));
+        assertTrue(GuardWeaponPolicy.riseThreatClear(start,swept,farAbove,12));
         var nearAbove=new AABB(7.7,72,-.3,8.3,74,.3);
-        assertFalse(GuardWeaponPolicy.riseThreatClear(65,72,swept,nearAbove,9));
-        assertTrue(GuardWeaponPolicy.riseThreatClear(65,72,swept,nearAbove,6));
-        assertFalse(GuardWeaponPolicy.riseThreatClear(65,72,swept,nearAbove,12));
+        assertFalse(GuardWeaponPolicy.riseThreatClear(start,swept,nearAbove,9));
+        assertTrue(GuardWeaponPolicy.riseThreatClear(start,swept,nearAbove,6));
+        assertFalse(GuardWeaponPolicy.riseThreatClear(start,swept,nearAbove,12));
     }
     @Test void bodyIntersectionNearbyAboveAndUnknownBoundsAlwaysRefuseTheAscent(){
-        var swept=new AABB(-.3,65,-.3,.3,78.95,.3);
-        assertFalse(GuardWeaponPolicy.riseThreatClear(65,64,swept,new AABB(-.2,64,-.2,.2,65.8,.2),9));
-        assertFalse(GuardWeaponPolicy.riseThreatClear(65,84,swept,new AABB(-.3,84,-.3,.3,86,.3),6));
-        assertTrue(GuardWeaponPolicy.riseThreatClear(65,60,swept,new AABB(2,60,2,2.6,61.8,2.6),12));
-        assertFalse(GuardWeaponPolicy.riseThreatClear(65,100,swept,new AABB(Double.NaN,100,0,1,102,1),12));
-        assertFalse(GuardWeaponPolicy.riseThreatClear(65,100,swept,new AABB(0,100,0,1,Double.POSITIVE_INFINITY,1),12));
-        assertFalse(GuardWeaponPolicy.riseThreatClear(65,Double.NaN,swept,new AABB(30,100,0,31,102,1),12));
+        var start=new AABB(-.3,65,-.3,.3,66.8,.3);
+        var swept=start.expandTowards(0,12.15,0);
+        assertFalse(GuardWeaponPolicy.riseThreatClear(start,swept,new AABB(-.2,64,-.2,.2,65.8,.2),9));
+        assertFalse(GuardWeaponPolicy.riseThreatClear(start,swept,new AABB(-.3,84,-.3,.3,86,.3),6));
+        assertTrue(GuardWeaponPolicy.riseThreatClear(start,swept,new AABB(2,60,2,2.6,61.8,2.6),12));
+        assertFalse(GuardWeaponPolicy.riseThreatClear(start,swept,new AABB(Double.NaN,100,0,1,102,1),12));
+        assertFalse(GuardWeaponPolicy.riseThreatClear(start,swept,new AABB(0,100,0,1,Double.POSITIVE_INFINITY,1),12));
+        assertFalse(GuardWeaponPolicy.riseThreatClear(null,swept,new AABB(30,100,0,31,102,1),12));
     }
+    @Test void slightlyHigherFeetWithInitialBodyOverlapAllowHorizontalSeparationToGrow(){
+        var start=new AABB(-.3,65,-.3,.3,66.8,.3);
+        var swept=start.expandTowards(0,12.15,0);
+        for(double feet:List.of(65.1,65.5,66.0)){
+            var mob=new AABB(4.7,feet,-.3,5.3,feet+1.8,.3);
+            assertTrue(GuardWeaponPolicy.riseThreatClear(start,swept,mob,12));
+        }
+        assertFalse(GuardWeaponPolicy.riseThreatClear(start,swept,new AABB(4.7,67,-.3,5.3,68.8,.3),12),
+            "A nearer point midway through the ascent cannot be hidden by a distant endpoint");
+        assertFalse(GuardWeaponPolicy.riseThreatClear(start,swept,new AABB(-.3,65.5,-.3,.3,67.3,.3),12));
+    }
+
 }

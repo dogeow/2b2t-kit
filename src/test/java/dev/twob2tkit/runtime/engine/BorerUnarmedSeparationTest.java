@@ -80,7 +80,7 @@ class BorerUnarmedSeparationTest {
     @Test void nearThenFarThenUnloadNeedsAnotherFullCurrentQuietWindow(){
         var gate=new BorerCombatSeparation();var id=UUID.randomUUID();
         gate.seen(world,id,0,52,0,54,false,false,true);gate.observe(world,0,true);gate.observe(world,20,true);gate.verifyDeferred(world,List.of(id));
-        gate.seen(world,id,0,88,0,90,false,false,true);assertFalse(gate.observe(world,21,safe(unarmed(true,2,0))));
+        gate.seen(world,id,0,88,0,90,false,false,true);gate.revokeUnarmed(world,id);assertFalse(gate.observe(world,21,safe(unarmed(true,2,0))));
         gate.seen(world,id,0,52,0,54,false,false,true);
         assertFalse(safe(gate.unloaded(world,id,0,90,0)),"Moving far again does not resurrect a revoked proof");
         assertFalse(gate.observe(world,22,true));assertFalse(gate.observe(world,41,true));
@@ -95,4 +95,26 @@ class BorerUnarmedSeparationTest {
         var gate=new BorerCombatSeparation();gate.observe(world,0,true);assertTrue(gate.observe(world,20,true));
         assertFalse(gate.observe(new Object(),21,true));assertFalse(gate.retain(world));
     }
+    @Test void unrelatedThreatHealthOrFlightFailurePreservesPerUuidProofButRestartsQuietWindow(){
+        var gate=new BorerCombatSeparation();var safeId=UUID.randomUUID();var unsafeId=UUID.randomUUID();
+        for(var id:List.of(safeId,unsafeId))gate.seen(world,id,0,52,0,54,false,false,true);
+        gate.observe(world,0,true);gate.observe(world,20,true);gate.verifyDeferred(world,List.of(safeId,unsafeId));
+        gate.revokeUnarmed(world,unsafeId);gate.observe(world,21,false);
+        assertNull(gate.lastVerified(world,unsafeId));assertNotNull(gate.lastVerified(world,safeId));
+        assertTrue(safe(gate.unloaded(world,safeId,0,90,0)));
+        assertFalse(gate.observe(world,22,true));assertFalse(gate.observe(world,41,true));
+        assertTrue(gate.observe(world,42,true));
+    }
+    @Test void unavailableChunkKeepsLastReliablePositionWhileUnsafeClassificationRevokesOnlyThatId(){
+        var gate=new BorerCombatSeparation();var id=UUID.randomUUID();
+        gate.seen(world,id,0,52,0,54,false,false,true);gate.observe(world,0,true);
+        gate.observe(world,20,true);gate.verifyDeferred(world,List.of(id));
+        var reliable=gate.lastVerified(world,id);
+        gate.observe(world,21,false);
+        assertEquals(reliable,gate.lastVerified(world,id));
+        assertTrue(safe(gate.unloaded(world,id,0,90,0)));
+        gate.revokeUnarmed(new Object(),id);assertEquals(reliable,gate.lastVerified(world,id));
+        gate.revokeUnarmed(world,id);assertNull(gate.lastVerified(world,id));
+    }
+
 }

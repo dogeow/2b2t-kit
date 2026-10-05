@@ -50,6 +50,10 @@ final class BorerCombatSeparation {
         if(!yielding||!retain(world))return;
         for(UUID id:currentlyObservedIds){var seen=lastSeen.get(id);if(seen!=null&&(seen.ordinaryCreeper||seen.unarmedZombie)&&!seen.swelling)verifiedSafeIds.add(id);}
     }
+    void revokeUnarmed(Object world,UUID id){
+        var seen=observationWorld==world?lastSeen.get(id):null;
+        if(seen!=null&&seen.unarmedZombie)verifiedSafeIds.remove(id);
+    }
     LastSeen lastVerified(Object world,UUID id){return retain(world)&&verifiedSafeIds.contains(id)?lastSeen.get(id):null;}
     Threat unloaded(Object world,UUID id,double playerX,double predictedFeetY,double playerZ){
         var seen=lastVerified(world,id);
@@ -61,10 +65,7 @@ final class BorerCombatSeparation {
         if(world==null){clear();return false;}
         if(observationWorld!=world){clear();observationWorld=world;}
         if(!safe){
-            // A current unsafe observation revokes new unarmed proofs, including
-            // near/low/damaged/body-unknown cases. Becoming far/empty again is
-            // not permission to skip a new complete twenty-tick current watch.
-            verifiedSafeIds.removeIf(id->{var seen=lastSeen.get(id);return seen!=null&&seen.unarmedZombie;});
+            // Aggregate failure restarts the quiet window; UUID evidence is revoked separately.
             safeSince=Long.MIN_VALUE;yielding=false;return false;
         }
         if(safeSince==Long.MIN_VALUE||tick<safeSince)safeSince=tick;

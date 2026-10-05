@@ -63,31 +63,40 @@ final class GuardWeaponPolicy {
             &&Double.isFinite(box.maxX)&&Double.isFinite(box.maxY)&&Double.isFinite(box.maxZ)
             &&box.minX<box.maxX&&box.minY<box.maxY&&box.minZ<box.maxZ;
     }
-    /** A far above hostile is not a ceiling; a nearby above hostile or body intersection still is. */
-    static boolean riseThreatClear(double playerY,double mobY,AABB swept,AABB mob,double radius){
-        if(!Double.isFinite(playerY)||!Double.isFinite(mobY)||!Double.isFinite(radius)||radius<=0
-            ||!finiteBox(swept)||!finiteBox(mob)||swept.intersects(mob))return false;
-        double dx=Math.max(0,Math.max(swept.minX-mob.maxX,mob.minX-swept.maxX));
-        double dy=Math.max(0,Math.max(swept.minY-mob.maxY,mob.minY-swept.maxY));
-        double dz=Math.max(0,Math.max(swept.minZ-mob.maxZ,mob.minZ-swept.maxZ));
-        return dx*dx+dy*dy+dz*dz>radius*radius||StandaloneCreeperPolicy.riseMovesAway(playerY,mobY);
+    static double boxDistanceSquared(AABB first,AABB second){
+        if(!finiteBox(first)||!finiteBox(second))return Double.NaN;
+        double dx=Math.max(0,Math.max(first.minX-second.maxX,second.minX-first.maxX));
+        double dy=Math.max(0,Math.max(first.minY-second.maxY,second.minY-first.maxY));
+        double dz=Math.max(0,Math.max(first.minZ-second.maxZ,second.minZ-first.maxZ));
+        return dx*dx+dy*dy+dz*dz;
     }
-    /** One fixed player-derived ascent for the same unresolved encounter, never currentY+12 each tick. */
+    /** Within reach, no point of the ascent may be closer than the starting body. */
+    static boolean riseThreatClear(AABB start,AABB swept,AABB mob,double radius){
+        if(!Double.isFinite(radius)||radius<=0||!finiteBox(start)||!finiteBox(swept)
+            ||!finiteBox(mob)||swept.intersects(mob))return false;
+        double closest=boxDistanceSquared(swept,mob);
+        return closest>radius*radius||closest>=boxDistanceSquared(start,mob);
+    }
+    /** Completion stays latched until the trigger resets or the player descends. */
     static final class SafetyRise {
-        private Object world;private double target=Double.NaN;private long started;private boolean spent;
+        private Object world;private double target=Double.NaN,highestFeet=Double.NaN;
+        private long lastAttempt=Long.MIN_VALUE;private int attempts;private boolean spent;
         double remaining(Object currentWorld,double feet,long tick,boolean trigger){
             if(world!=currentWorld){clear();world=currentWorld;}
-            if(currentWorld==null||!Double.isFinite(feet)||tick<0||spent)return 0;
+            if(currentWorld==null||!Double.isFinite(feet)||tick<0||!trigger){cancel();return 0;}
+            if(feet<highestFeet-1||tick<lastAttempt)cancel();
             if(Double.isNaN(target)){
-                if(!trigger)return 0;
-                target=Math.min(316,feet+12);started=tick;
+                target=Math.min(316,feet+12);highestFeet=feet;
             }
-            if(tick-started>=200||feet>=target-.25){spent=true;return 0;}
-            return Math.max(0,target-feet);
+            highestFeet=Math.max(highestFeet,feet);
+            if(spent||attempts>=200||feet>=target-.25){spent=true;return 0;}
+            return Math.min(12,Math.max(0,target-feet));
         }
+        void attempted(long tick){if(active()&&tick>=0&&tick!=lastAttempt){attempts++;lastAttempt=tick;}}
         double target(){return target;}
         boolean active(){return !spent&&!Double.isNaN(target);}
-        void clear(){world=null;target=Double.NaN;started=0;spent=false;}
+        void cancel(){target=highestFeet=Double.NaN;lastAttempt=Long.MIN_VALUE;attempts=0;spent=false;}
+        void clear(){world=null;cancel();}
     }
     private GuardWeaponPolicy(){}
 }

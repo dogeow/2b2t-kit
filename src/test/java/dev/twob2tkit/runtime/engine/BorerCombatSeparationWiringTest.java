@@ -48,7 +48,7 @@ class BorerCombatSeparationWiringTest {
     @Test void unarmedWatchRequiresExactCurrentWeaponsDamageAndFullActualBody()throws Exception{
         var c=calls("BorerRangedCombat","safeVerticalSeparation");
         assertTrue(c.containsAll(List.of("ordinaryZombie","getMainHandItem","getOffhandItem","isEmpty",
-            "currentReceivedMobHit","recentlyHurt","shouldYieldToCombat","finiteVector","finiteBox",
+            "currentReceivedMobHit","revokeUnarmed","recentlyHurt","shouldYieldToCombat","finiteVector","finiteBox",
             "clearSeparationBody","currentServerChunk")));
         assertTrue(calls("BorerRangedCombat","ordinaryZombie").contains("isRangedCombatThreat"));
         var body=calls("BorerRangedCombat","clearSeparationBody");

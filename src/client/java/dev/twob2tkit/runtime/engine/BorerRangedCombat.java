@@ -35,7 +35,7 @@ final class BorerRangedCombat {
 	private boolean releasePending;
 	private final BorerBowViewGate viewGate = new BorerBowViewGate();
 	private int lookTick = Integer.MIN_VALUE, viewWaitTicks;
-    private int riseRetryAfter;
+    private int riseRetryAfter,safetyRiseRetryAfter;
     private String lastRiseFailure = "";
 	private RotationAim.Look look;
 	private int previousSlot = -1, cooldown, blockedTicks, passiveTicks;
@@ -93,6 +93,7 @@ final class BorerRangedCombat {
         // permits other work; returning into reach/LOS makes this gate false immediately.
         boolean previouslyYielding=separation.yielding();
         if(!missingRestored && safeVerticalSeparation(c,nearby)){
+            safetyRise.cancel();
             if(!previouslyYielding){
                 engine.fileLog(c,"area-defense-safe-deferred unresolved="+session.targets().size()+" confirmed_deaths=0");
                 logThreatEvidence(c,"safe-watch",null);
@@ -102,6 +103,7 @@ final class BorerRangedCombat {
         }
         if(missingRestored)separation.observe(c.level,p.tickCount,false);
         if(!missingRestored&&separation.verifying()){
+            safetyRise.cancel();
             releaseControls(c);session.pause(p.tickCount);engine.mobs.raiseShield(c,p);
             engine.status="已离开爆炸范围，正在确认安全高度";return true;
         }
@@ -116,6 +118,7 @@ final class BorerRangedCombat {
 		if(!missingRestored && (engine.standaloneGuard||separation.retain(c.level)) && session.pending() && session.targets().stream()
 			.allMatch(e -> BorerDefensePolicy.encounterLeftBehind(p.getX()-e.getX(),p.getZ()-e.getZ()))) {
             if(separation.retain(c.level)){
+                safetyRise.cancel();
                 releaseControls(c);session.pause(p.tickCount);holdReason="safe-deferred-relocated";
                 engine.status="已离开旧威胁区域，保留未解决敌人记录";return false;
             }
@@ -153,8 +156,6 @@ final class BorerRangedCombat {
                 peek.close(c);target = emergency; return evadeCreeper(c, emergency);
             }
 		}
-        // Attackability is not permission to remain within a received attack.
-        // Only current actual engaged entities supply positions to this fixed ascent.
         if(engine.standaloneGuard && safetyRise(c))return true;
 		if (next == null) {
             rangedMode(false);
@@ -302,19 +303,23 @@ final class BorerRangedCombat {
         var threats=session.targets().stream().map(e->{
             boolean present=e.level()==c.level&&c.level.getEntity(e.getId())==e&&e.isAlive();
             if(!present)return separation.unloaded(c.level,e.getUUID(),p.getX(),projectedY,p.getZ());
-            if(!currentServerChunk(c,e.blockPosition())||!GuardWeaponPolicy.finiteVector(e.position())
-                ||!GuardWeaponPolicy.finiteBox(e.getBoundingBox())){
+            boolean unarmed=ordinaryZombie(p,e)&&e.getMainHandItem().isEmpty()&&e.getOffhandItem().isEmpty()
+                &&!BorerThreats.currentReceivedMobHit(e,p);
+            if(!unarmed)separation.revokeUnarmed(c.level,e.getUUID());
+            if(!GuardWeaponPolicy.finiteVector(e.position())||!GuardWeaponPolicy.finiteBox(e.getBoundingBox())){
                 separation.seen(c.level,e.getUUID(),Double.NaN,Double.NaN,Double.NaN,Double.NaN,false,false,false);
                 return new BorerCombatSeparation.Threat(false,false,false,false,Double.NaN,Double.NaN);
             }
+            if(!currentServerChunk(c,e.blockPosition()))
+                return new BorerCombatSeparation.Threat(false,false,false,false,Double.NaN,Double.NaN);
             boolean ordinary=e instanceof Creeper creeper&&!creeper.isPowered();
             boolean swelling=e instanceof Creeper creeper&&swelling(creeper);
-            boolean unarmed=ordinaryZombie(p,e)&&e.getMainHandItem().isEmpty()&&e.getOffhandItem().isEmpty()
-                &&!BorerThreats.currentReceivedMobHit(e,p);
             separation.seen(c.level,e.getUUID(),e.getX(),e.getY(),e.getZ(),e.getBoundingBox().maxY,ordinary,swelling,unarmed);
+            double distance=projected.distanceTo(e.position()),clearance=projectedY-e.getBoundingBox().maxY;
+            if(unarmed&&(distance<12||clearance<6))separation.revokeUnarmed(c.level,e.getUUID());
             currentlyObserved.add(e.getUUID());
             return new BorerCombatSeparation.Threat(true,ordinary,p.hasLineOfSight(e),swelling,
-                projected.distanceTo(e.position()),projectedY-e.getBoundingBox().maxY,false,unarmed);
+                distance,clearance,false,unarmed);
         }).toList();
         boolean otherThreat=nearby.stream().anyMatch(e->e.isAlive()&&(
             BorerDefensePolicy.eligible(true,true,p.hasLineOfSight(e),rank(p,e),p.distanceTo(e))||creeperAlert(c,e)));
@@ -339,6 +344,7 @@ final class BorerRangedCombat {
     }
     /** Ordinary task switches release inputs without forgetting a safely deferred same-world fight. */
     void handoff(Minecraft c){
+        safetyRise.cancel();
         if(c.player!=null&&c.level!=null&&session.pending()&&separation.retain(c.level)){
             releaseControls(c);session.pause(c.player.tickCount);continuation.save(c,session);return;
         }
@@ -394,39 +400,49 @@ final class BorerRangedCombat {
     private boolean safetyRise(Minecraft c){
         var p=c.player;
         if(c.level!=combatWorld||c.screen!=null||BorerAreaRunner.physicalMovementHeld(c,c.options.keyUp,c.options.keyDown,
-            c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint))return false;
+            c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint)){
+            safetyRise.cancel();return false;
+        }
         var observed=session.targets().stream().filter(e->e instanceof Enemy&&e.isAlive()&&e.level()==c.level
             &&c.level.getEntity(e.getId())==e&&currentServerChunk(c,e.blockPosition())).toList();
-        if(observed.isEmpty())return false; // Unloaded memory is never a new location proof.
+        if(observed.isEmpty()){safetyRise.cancel();return false;}
         var near=observed.stream().filter(e->GuardWeaponPolicy.safetyRiseNeeded(engine.standaloneGuard,true,true,
             session.contains(e.getUUID()),BorerThreats.isRangedCombatThreat(e,p),session.canAttack(e.getUUID()),
             p.hasLineOfSight(e),p.distanceTo(e))).min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
         double rise=safetyRise.remaining(c.level,p.getY(),p.tickCount,near!=null);
         if(rise<=.25)return false;
-        if(p.tickCount<riseRetryAfter&&p.getHealth()>=14)return false;
+        if(p.tickCount<safetyRiseRetryAfter&&p.getHealth()>=14)return false;
         cancelDraw(c);releaseZombieMelee();rangedMode(true);engine.pauseGuardMovement(c);
         if(!clearWholeRise(c,rise)){
             logThreatEvidence(c,"safety-rise-blocked",near);
-            return groundDefenseAfterRiseFailure(c,"safety_column_or_entity_blocked","当前整段升空身体或远离敌人的路线不安全");
+            return safetyDefenseAfterRiseFailure(c,"safety_column_or_entity_blocked","当前整段升空身体或远离敌人的路线不安全");
         }
         try{
             // A prior occlusion peek owns a different Flight lease. Close it before borrowing this one.
             peek.close(c);
             escapeFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/guard-hover-flight.bak"));
-            if(escapeFlight.acquire(p)!=null)return groundDefenseAfterRiseFailure(c,"safety_flight_unavailable","无法取得当前飞行设置");
-            escaping=true;hoverMelee=false;riseRetryAfter=0;lastRiseFailure="";
+            if(escapeFlight.acquire(p)!=null)return safetyDefenseAfterRiseFailure(c,"safety_flight_unavailable","无法取得当前飞行设置");
+            escaping=true;hoverMelee=false;safetyRiseRetryAfter=0;lastRiseFailure="";
             escapeFlight.speed(.16);c.options.keyJump.setDown(true);
+            safetyRise.attempted(p.tickCount);
             // Keep the current view: hidden/unattackable entities receive no bow/attack input.
             logThreatEvidence(c,"safety-rise",near);
             engine.status="先沿当前安全柱升空，保留未解决敌人记录";return true;
         }catch(IllegalStateException unavailable){
-            return groundDefenseAfterRiseFailure(c,"safety_flight_failed","安全升空飞行设置未确认");
+            return safetyDefenseAfterRiseFailure(c,"safety_flight_failed","安全升空飞行设置未确认");
         }
+    }
+    private boolean safetyDefenseAfterRiseFailure(Minecraft c,String code,String reason){
+        safetyRiseRetryAfter=c.player.tickCount+40;
+        return defendAfterRiseFailure(c,code,reason);
     }
     /** A ceiling blocks ascent, not defense. Work remains paused by the enclosing combat session. */
     private boolean groundDefenseAfterRiseFailure(Minecraft c, String code, String reason) {
-        releaseEscape(c); cancelDraw(c); rangedMode(false);
         riseRetryAfter = c.player.tickCount + 40;
+        return defendAfterRiseFailure(c,code,reason);
+    }
+    private boolean defendAfterRiseFailure(Minecraft c,String code,String reason){
+        releaseEscape(c); cancelDraw(c); rangedMode(false);
         engine.mobs.raiseShield(c, c.player);
         if (!lastRiseFailure.equals(code)) {
             engine.fileLog(c, "guard-ascent-fallback reason=" + code + " action=ground_defense");
@@ -639,14 +655,15 @@ final class BorerRangedCombat {
         if(!GuardWeaponPolicy.finiteBox(swept)||swept.maxY>=319||!c.level.noCollision(c.player,swept))return false;
         for(var pos:net.minecraft.core.BlockPos.betweenClosed(net.minecraft.core.BlockPos.containing(swept.minX,swept.minY,swept.minZ),
             net.minecraft.core.BlockPos.containing(swept.maxX-1e-7,swept.maxY-1e-7,swept.maxZ-1e-7)))if(!safeAir(c,pos))return false;
-        // Actual client observations only. Do not fly toward/through an above ghast or creeper.
         for(var entity:c.level.getEntities(c.player,swept.inflate(40))){
             if(!(entity instanceof LivingEntity)||!(entity instanceof Enemy)||!entity.isAlive())continue;
-            if(entity.level()!=c.level||c.level.getEntity(entity.getId())!=entity||!currentServerChunk(c,entity.blockPosition())
+            if(entity.level()!=c.level||c.level.getEntity(entity.getId())!=entity
                 ||!GuardWeaponPolicy.finiteVector(entity.position())||!GuardWeaponPolicy.finiteBox(entity.getBoundingBox()))return false;
+            if(GuardWeaponPolicy.boxDistanceSquared(swept,entity.getBoundingBox())>12*12)continue;
+            if(!currentServerChunk(c,entity.blockPosition()))return false;
             double radius=entity instanceof Creeper creeper?(creeper.isPowered()?12:6):
                 BorerThreats.isRangedCombatThreat(entity,c.player)?12:9;
-            if(!GuardWeaponPolicy.riseThreatClear(c.player.getY(),entity.getY(),swept,entity.getBoundingBox(),radius))return false;
+            if(!GuardWeaponPolicy.riseThreatClear(c.player.getBoundingBox(),swept,entity.getBoundingBox(),radius))return false;
         }
         return true;
     }
@@ -732,6 +749,7 @@ final class BorerRangedCombat {
 	}
 	/** Keep the aura lease until eating finishes; do not restore a tool over Meteor's food. */
 	void pauseForEating(Minecraft c) {
+        safetyRise.cancel();
 		if (c.player != null) session.pause(c.player.tickCount);
 		if (c.player != null && c.player.isUsingItem() && c.player.getUseItem().is(Items.BOW)) {
 			c.player.stopUsingItem();
@@ -741,13 +759,14 @@ final class BorerRangedCombat {
 	}
 	void end(Minecraft c) {
         safetyRise.clear();evidenceLogKey="";evidenceLogTick=Integer.MIN_VALUE;
-        riseRetryAfter = 0; lastRiseFailure = "";
+        riseRetryAfter = safetyRiseRetryAfter = 0; lastRiseFailure = "";
 		session.clear(); continuation.clear(); separation.clear(); combatWorld=null; holdReason = "";
         miningMeleeProgress.clear(); miningMeleeFallback = false;
 		releaseControls(c);
 	}
 	/** A menu suspends input, not our knowledge of the unfinished fight. */
 	void pause(Minecraft c) {
+        safetyRise.cancel();
 		if (c.player != null) session.pause(c.player.tickCount);
 		releaseControls(c);
 	}

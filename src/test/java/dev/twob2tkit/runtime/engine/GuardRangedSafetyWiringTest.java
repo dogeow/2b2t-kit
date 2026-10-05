@@ -38,7 +38,7 @@ class GuardRangedSafetyWiringTest {
         var c=calls("BorerRangedCombat","safetyRise");
         assertTrue(c.containsAll(List.of("targets","getEntity","level","isAlive","currentServerChunk",
             "contains","isRangedCombatThreat","canAttack","hasLineOfSight","safetyRiseNeeded","remaining",
-            "physicalMovementHeld","clearWholeRise","pauseGuardMovement","acquire","speed","setDown")));
+            "physicalMovementHeld","cancel","attempted","clearWholeRise","pauseGuardMovement","acquire","speed","setDown")));
         assertTrue(c.indexOf("getEntity")<c.indexOf("remaining"));assertTrue(c.indexOf("clearWholeRise")<c.indexOf("acquire"));
         assertFalse(c.contains("attack"));assertFalse(c.contains("clear"));assertFalse(c.contains("setPos"));
         assertFalse(c.contains("setDeltaMovement"));assertFalse(c.contains("enablePveMelee"));
@@ -51,7 +51,7 @@ class GuardRangedSafetyWiringTest {
             "level","isAlive","currentServerChunk","riseThreatClear","getBoundingBox","finiteVector","finiteBox","getDeltaMovement")));
         assertTrue(c.indexOf("finiteVector")<c.indexOf("betweenClosed"));
         assertTrue(c.indexOf("finiteBox")<c.indexOf("betweenClosed"));
-        assertTrue(calls("GuardWeaponPolicy","riseThreatClear").containsAll(List.of("intersects","riseMovesAway","finiteBox")));
+        assertTrue(calls("GuardWeaponPolicy","riseThreatClear").containsAll(List.of("intersects","boxDistanceSquared","finiteBox")));
         assertTrue(calls("BorerRangedCombat","currentServerChunk").contains("isServerChunk"));
     }
     @Test void sharedClassifierCoversPriorityRiseFoodPauseOrdinaryAndEngagement()throws Exception{
@@ -73,4 +73,19 @@ class GuardRangedSafetyWiringTest {
             "getOffhandItem","getLastDamageSource","getDirectEntity","getEntity","getMsgId","isAlive","fileLog")));
         assertFalse(c.contains("attack"));assertFalse(c.contains("setPos"));
     }
+    @Test void pauseAndSafeWatchCancelOnlyTheRisePlanAndCooldownsStayIndependent()throws Exception{
+        for(String name:List.of("pause","pauseForEating","handoff","tick"))
+            assertTrue(calls("BorerRangedCombat",name).contains("cancel"),name);
+        for(String name:List.of("safetyRise","elevateBeforeCombat","safetyDefenseAfterRiseFailure","groundDefenseAfterRiseFailure")){
+            var fields=new HashSet<String>();
+            for(var i:method("BorerRangedCombat",name).instructions)
+                if(i instanceof FieldInsnNode field&&field.name.endsWith("RetryAfter"))fields.add(field.name);
+            assertEquals(Set.of(name.startsWith("safety")?"safetyRiseRetryAfter":"riseRetryAfter"),fields,name);
+        }
+        var c=calls("BorerRangedCombat","safetyRise");
+        assertTrue(c.indexOf("setDown")<c.indexOf("attempted"));
+        var whole=calls("BorerRangedCombat","clearWholeRise");
+        assertTrue(whole.indexOf("boxDistanceSquared")<whole.indexOf("currentServerChunk"));
+    }
+
 }

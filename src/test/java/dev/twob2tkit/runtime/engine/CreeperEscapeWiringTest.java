@@ -37,7 +37,7 @@ class CreeperEscapeWiringTest {
         assertTrue(engine.indexOf("hasCreeperEmergency")<engine.indexOf("pauseForMeteorFood"));
     }
     @Test void blockedAscentRetainsOrdinaryDefenseAndNeverPretendsCombatFinished()throws Exception{
-        var fallback=method("runtime/engine/BorerRangedCombat","groundDefenseAfterRiseFailure");
+        var fallback=method("runtime/engine/BorerRangedCombat","defendAfterRiseFailure");
         var linked=calls(fallback);
         assertTrue(linked.containsAll(List.of("releaseEscape","cancelDraw","rangedMode","raiseShield","riseFailureNeedsExit","requestEmergencyExit")));
         assertFalse(linked.contains("end"));assertFalse(linked.contains("clear"));
