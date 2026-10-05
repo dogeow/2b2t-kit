@@ -17,7 +17,7 @@ TESTS = (
     'test_furnace_batches', 'test_furnace_bank', 'test_smelting_workflow', 'test_journal', 'test_decision_advisor',
     'test_construction_materials', 'test_construction_obstruction',
     'test_construction_obstruction_cli', 'test_goal_workflow',
-    'test_projection_material_plan', 'test_projection_stock_plan', 'test_projection_advice', 'test_material_jobs', 'test_material_processing',
+    'test_projection_material_plan', 'test_projection_stock_plan', 'test_projection_patch_plan', 'test_projection_advice', 'test_material_jobs', 'test_material_processing',
     'test_material_jobs_backend', 'test_projection_ready_supply', 'test_targeted_supply',
     'test_native_pipeline_dispatch','test_backend_pipeline_context','test_material_finish_wait',
     'test_material_jobs_acquisition', 'test_material_discovery', 'test_snow_biome_search',
