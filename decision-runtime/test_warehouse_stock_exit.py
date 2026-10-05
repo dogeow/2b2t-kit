@@ -93,6 +93,43 @@ class WarehouseExitTests(unittest.TestCase):
         self.assertFalse(self.session.in_house)
         self.assertTrue(all(abs(params['target'][1]-65)<1e-6 for op,params in self.core.calls if op=='navigate'))
 
+    def test_overhead_leaves_use_proved_side_corridor_and_return_to_original_pose(self):
+        self.core.put_chest(self.pos,[])
+        leaf=[20,66,20]
+        self.core.scans[tuple(leaf)]={'pos':leaf,'state':'Block{minecraft:oak_leaves}',
+            'passable':False,'fluid':False,'solid':True,'block_entity':False}
+        origin=self.core.state['pos'][:]
+        with self.follow():
+            stock._open_container(self.session,self.pos,self.core.scans[tuple(self.pos)]['state'],{})
+            self.assertEqual('proved_before_entry',self.report['storage_return']['state'])
+            self.assertFalse(self.session.in_house)
+            stock._exit_storage(self.session,{})
+        self.assertEqual(origin,self.core.state['pos'])
+        self.assertEqual('returned_to_original_verified_start',self.report['storage_return']['state'])
+        self.assertFalse(any(op in ('walk','slot_click','break','place')for op,_ in self.core.calls))
+
+    def test_full_block_above_lid_refuses_before_descent_or_interaction(self):
+        self.core.put_chest(self.pos,[])
+        covered=[20,65,20]
+        self.core.scans[tuple(covered)]={'pos':covered,'state':'Block{minecraft:stone}',
+            'passable':False,'fluid':False,'solid':True,'block_entity':False}
+        with self.assertRaisesRegex(stock.StockBlocked,'lid'):
+            stock._open_container(self.session,self.pos,self.core.scans[tuple(self.pos)]['state'],{})
+        self.assertFalse(any(op in ('navigate','interact','slot_click')for op,_ in self.core.calls))
+
+    def test_overhead_container_with_blocked_sides_still_refuses_before_descent(self):
+        self.core.put_chest(self.pos,[])
+        p=[20,66,20]
+        self.core.scans[tuple(p)]={'pos':p,'state':'Block{minecraft:oak_leaves}',
+            'passable':False,'fluid':False,'solid':True,'block_entity':False}
+        for dx,dz in ((-1,0),(0,-1),(0,1),(1,0),(-2,0),(0,-2),(0,2),(2,0)):
+            p=[20+dx,70,20+dz]
+            self.core.scans[tuple(p)]={'pos':p,'state':'Block{minecraft:white_concrete}',
+                'passable':False,'fluid':False,'solid':True,'block_entity':False}
+        with self.assertRaisesRegex(stock.StockBlocked,'remain outside'):
+            stock._open_container(self.session,self.pos,self.core.scans[tuple(self.pos)]['state'],{})
+        self.assertFalse(any(op in ('navigate','interact','slot_click')for op,_ in self.core.calls))
+
     def test_house_high_barrel_refuses_before_entry_or_staging(self):
         pos=[20,71,20];self.core.put_chest(pos,[],kind='minecraft:barrel',properties='[facing=west,open=false]')
         self.core.scans[(20,72,20)]={'pos':[20,72,20],'state':'Block{minecraft:oak_planks}'}

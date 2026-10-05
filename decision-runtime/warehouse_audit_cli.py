@@ -260,13 +260,22 @@ def _open_container(session,pos,block_state,profile):
     ground_reach=_ground_reach(profile,pos,block_state)
     column=_scan(session,pos,[pos[0],min(319,pos[1]+6),pos[2]])
     overhead=any(v['pos'][1]>pos[1] for v in column['blocks'])
+    if name in ('minecraft:chest','minecraft:ender_chest') and any(
+            v['pos']==[pos[0],pos[1]+1,pos[2]] and v.get('solid')is True for v in column['blocks']):
+        raise StockBlocked('Chest lid is covered by a full collision block; preserve the cover')
     if not overhead and name in ('minecraft:chest','minecraft:ender_chest'):
         return open_grounded_chest(session,pos,name,allow_empty=True)
     workbench=profile.get('workbench')
     house=((overhead or ground_reach is not None) and profile.get('workbench_entry') and profile.get('workbench_exit') and workbench
            and math.dist(pos,workbench)<=16)
-    if overhead and not house and name in ('minecraft:chest','minecraft:ender_chest','minecraft:barrel'):
+    foliage_only=overhead and all(_state_parts(v['state'])[0].endswith('_leaves')
+                                and v.get('fluid')is False
+                                for v in column['blocks']if v['pos'][1]>pos[1])
+    if overhead and not house and not foliage_only and name in ('minecraft:chest','minecraft:ender_chest','minecraft:barrel'):
         raise StockBlocked('Roofed storage needs a local registered house entry route; preserve the structure')
+    # Overhead foliage is not evidence that the actor must enter a house.
+    # The existing side-access kernel proves a dry, finite body/entity sweep
+    # and its reverse before moving; blocked columns still remain outside.
     route=_RegisteredRoute(session,profile)
     if house and not session.in_house:
         exit_walks=[step.get('target')for step in profile['workbench_exit']if step.get('kind')=='walk']
