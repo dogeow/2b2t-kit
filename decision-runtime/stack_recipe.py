@@ -11,7 +11,7 @@ from kit_runtime.inventory import InventorySession
 from craft_grid import InventoryCapacity,count
 
 STACKABLE_OUTPUTS={'minecraft:bone_meal','minecraft:white_dye','minecraft:white_concrete_powder',
-    'minecraft:oak_planks','minecraft:spruce_planks',
+    'minecraft:oak_planks','minecraft:spruce_planks','minecraft:diorite',
     'minecraft:stick','minecraft:arrow','minecraft:furnace','minecraft:blast_furnace','minecraft:andesite','minecraft:polished_andesite',
     'minecraft:polished_deepslate','minecraft:deepslate_bricks','minecraft:deepslate_tiles'}
 
