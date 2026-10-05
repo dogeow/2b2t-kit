@@ -58,6 +58,9 @@ public final class ProfessionalPrinter {
     private static net.minecraft.core.BlockPos candidateTarget,pendingTarget,pendingAnchor;
     private static net.minecraft.world.level.block.state.BlockState candidateState;
     private static final JsonObject lastProposal=new JsonObject();
+    private static void resetProposalEvidence(){
+        for(var key:java.util.Set.copyOf(lastProposal.keySet()))lastProposal.remove(key);
+    }
     private static String lastHandMismatch="";
     public static void prepareActualTool(Object action,Minecraft c,net.minecraft.client.player.LocalPlayer player){
         if(!owned||paused||c.screen!=null||c.player!=player||player.containerMenu!=player.inventoryMenu||!player.containerMenu.getCarried().isEmpty()||player.isUsingItem())return;
@@ -139,6 +142,8 @@ public final class ProfessionalPrinter {
                 }
             }
             if(pendingTarget==null||pendingState==null)throw new IllegalStateException("Printer action has no verified target");
+            resetProposalEvidence();
+            lastProposal.addProperty("interaction_seen",false);lastProposal.addProperty("server_update_seen",false);
             lastProposal.addProperty("target",pendingTarget.toShortString());lastProposal.addProperty("expected",pendingState.toString());lastProposal.addProperty("final_target",pendingFinalState.toString());
             lastProposal.addProperty("hand",String.valueOf(expectedHand));lastProposal.addProperty("anchor",pendingAnchor==null?"":pendingAnchor.toShortString());
             batchCompletion.queued(pendingTarget);
@@ -149,12 +154,18 @@ public final class ProfessionalPrinter {
     }
     public static void noteInteraction(net.minecraft.client.player.LocalPlayer player,net.minecraft.world.InteractionHand hand,net.minecraft.world.phys.BlockHitResult hit){
         if(!owned||pendingTarget==null||pendingState==null||paused)return;
-        if(hit.getBlockPos().equals(pendingAnchor)&&hit.getDirection()==pendingFace&&(expectedHand==null||expectedHand==net.minecraft.world.item.Items.AIR||player.getItemInHand(hand).is(expectedHand))){travel.sent(pendingTarget);pacing.sent(elapsedTicks);}
+        lastProposal.addProperty("interaction_anchor",hit.getBlockPos().toShortString());
+        lastProposal.addProperty("interaction_face",hit.getDirection().toString());
+        boolean matching=hit.getBlockPos().equals(pendingAnchor)&&hit.getDirection()==pendingFace&&(expectedHand==null||expectedHand==net.minecraft.world.item.Items.AIR||player.getItemInHand(hand).is(expectedHand));
+        lastProposal.addProperty("interaction_matches_proposal",matching);
+        if(matching){travel.sent(pendingTarget);pacing.sent(elapsedTicks);lastProposal.addProperty("interaction_seen",true);lastProposal.addProperty("sent_tick",elapsedTicks);}
     }
     public static void serverBlock(net.minecraft.core.BlockPos pos,net.minecraft.world.level.block.state.BlockState state){
         if(!owned)return;
         batchCompletion.serverBlock(pos,state);
-        if(pendingTarget==null||!pos.equals(pendingTarget)||!pacing.sent())return;
+        if(pendingTarget==null||!pos.equals(pendingTarget))return;
+        lastProposal.addProperty("server_update_seen",true);lastProposal.addProperty("server_update_state",state.toString());lastProposal.addProperty("server_update_tick",elapsedTicks);
+        if(!pacing.sent()){lastProposal.addProperty("server_update_before_tracked_send",true);return;}
         boolean finalMatch=pendingFinalState!=null&&PrinterStateConfirmation.matches(pendingFinalState,state);
         if(PrinterStateConfirmation.matches(pendingState,state)||finalMatch){
             boolean travelAcknowledged=travel.acknowledge(pos);lastProposal.addProperty("ack_actual",state.toString());lastProposal.addProperty("ack_final",finalMatch);
@@ -196,6 +207,7 @@ public final class ProfessionalPrinter {
     public static void start(){start(true);}
     public static void start(boolean acceleratePlainBlocks){start(acceleratePlainBlocks,java.util.Set.of());}
     static void start(boolean acceleratePlainBlocks,java.util.Collection<net.minecraft.core.BlockPos> completionTargets){
+        resetProposalEvidence();
         batchCompletion.begin(completionTargets);
         try{
             if(!PrinterGateInstalled.class.isAssignableFrom(Class.forName("me.aleksilassila.litematica.printer.Printer")))throw new IllegalStateException("Native printer safety gate is not installed");

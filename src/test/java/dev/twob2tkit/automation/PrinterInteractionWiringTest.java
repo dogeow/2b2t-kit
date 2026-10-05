@@ -5,6 +5,14 @@ import org.objectweb.asm.tree.*;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 class PrinterInteractionWiringTest {
+    @Test void proposalEvidenceIsClearedAtEveryWindowAndEveryQueuedAction()throws Exception{
+        var node=new ClassNode();
+        try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/ProfessionalPrinter.class")){new ClassReader(in).accept(node,0);}
+        var start=node.methods.stream().filter(m->m.name.equals("start")&&m.desc.equals("(ZLjava/util/Collection;)V")).findFirst().orElseThrow();
+        assertTrue(calls(start).contains("resetProposalEvidence"));
+        assertTrue(calls(method("automation/ProfessionalPrinter","nativeProposalQueued")).contains("resetProposalEvidence"));
+        assertTrue(calls(method("automation/ProfessionalPrinter","resetProposalEvidence")).contains("remove"));
+    }
     private MethodNode method(String cls,String name)throws Exception{var c=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/"+cls+".class")){new ClassReader(in).accept(c,0);}return c.methods.stream().filter(m->m.name.equals(name)).findFirst().orElseThrow();}
     private List<String> calls(MethodNode m){var r=new ArrayList<String>();for(var n:m.instructions)if(n instanceof MethodInsnNode i)r.add(i.name);return r;}
     @Test void interactionIsCheckedBeforeStorageClickAndSneakIsSentAtTheActualClick()throws Exception{

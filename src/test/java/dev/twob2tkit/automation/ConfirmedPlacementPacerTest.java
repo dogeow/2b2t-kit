@@ -18,7 +18,16 @@ class ConfirmedPlacementPacerTest {
             for(int tick=1;tick<delay+2;tick++)assertFalse(p.acquire(tick,false,true));
             p.acknowledge();assertTrue(p.acquire(Math.max(8,delay+2),false,true));
         }
-        var p=new ConfirmedPlacementPacer();p.queued(0,true);p.sent(3);assertTrue(p.timedOut(63));assertFalse(p.acquire(100,false,true));
+        var p=new ConfirmedPlacementPacer();p.queued(0,true);p.sent(3);assertTrue(p.timedOut(163));assertFalse(p.acquire(200,false,true));
+    }
+    @Test void delayedAckWithinEightSecondsNeverAllowsReplayOrPrematureFailure(){
+        var p=new ConfirmedPlacementPacer();p.queued(0,true);p.sent(3);
+        for(int tick=4;tick<163;tick++){
+            assertFalse(p.timedOut(tick));assertFalse(p.acquire(tick,false,true));
+        }
+        assertTrue(p.acknowledge());assertFalse(p.timedOut(200));assertTrue(p.acquire(200,false,true));
+        p=new ConfirmedPlacementPacer();p.queued(0,true);p.sent(3);
+        assertTrue(p.timedOut(163));assertTrue(p.awaiting());assertFalse(p.acquire(300,false,true));
     }
     @Test void conservativeAndComplexPlacementsKeepTwentyTickCadence(){
         var p=new ConfirmedPlacementPacer(false);p.queued(1,true);p.sent(5);p.acknowledge();

@@ -2,7 +2,7 @@ package dev.twob2tkit.automation;
 
 /** One proposal at a time. Plain cubes may advance sooner only after the exact server acknowledgement. */
 public final class ConfirmedPlacementPacer {
-    public static final int FAST_PERIOD=8, LEGACY_PERIOD=20, TIMEOUT=60;
+    public static final int FAST_PERIOD=8, LEGACY_PERIOD=20, TIMEOUT=160;
     private final int simplePeriod;
     public ConfirmedPlacementPacer(){this(true);}
     public ConfirmedPlacementPacer(boolean accelerated){simplePeriod=accelerated?FAST_PERIOD:LEGACY_PERIOD;}
