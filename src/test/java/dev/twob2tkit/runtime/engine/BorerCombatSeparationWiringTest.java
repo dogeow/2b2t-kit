@@ -39,10 +39,25 @@ class BorerCombatSeparationWiringTest {
     }
     @Test void unloadedTargetsUsePerUuidProofAndLoadedTargetsRefreshRealEvidence()throws Exception{
         var c=calls("BorerRangedCombat","safeVerticalSeparation");
-        assertTrue(c.containsAll(List.of("getEntity","isAlive","hasChunkAt","getUUID","unloaded","seen","verifyDeferred")));
+        assertTrue(c.containsAll(List.of("getEntity","isAlive","currentServerChunk","getUUID","unloaded","seen","verifyDeferred")));
         assertTrue(c.indexOf("observe")<c.indexOf("verifyDeferred"),"Do not authorize an unknown UUID before the safety window has completed");
         assertFalse(c.contains("end"));assertFalse(c.contains("clear"));
         assertTrue(calls("BorerCombatSeparation","unloaded").contains("lastVerified"));
+    }
+
+    @Test void unarmedWatchRequiresExactCurrentWeaponsDamageAndFullActualBody()throws Exception{
+        var c=calls("BorerRangedCombat","safeVerticalSeparation");
+        assertTrue(c.containsAll(List.of("ordinaryZombie","getMainHandItem","getOffhandItem","isEmpty",
+            "currentReceivedMobHit","recentlyHurt","shouldYieldToCombat","finiteVector","finiteBox",
+            "clearSeparationBody","currentServerChunk")));
+        assertTrue(calls("BorerRangedCombat","ordinaryZombie").contains("isRangedCombatThreat"));
+        var body=calls("BorerRangedCombat","clearSeparationBody");
+        assertTrue(body.containsAll(List.of("position","getDeltaMovement","getBoundingBox","finiteVector","finiteBox",
+            "noCollision","betweenClosed","safeAir")));
+        assertTrue(body.indexOf("finiteBox")<body.indexOf("betweenClosed"));
+        assertTrue(calls("BorerRangedCombat","currentServerChunk").contains("isServerChunk"));
+        assertFalse(body.contains("attack"));assertFalse(body.contains("setPos"));
+        assertFalse(c.contains("clear"));assertFalse(c.contains("end"));
     }
 
 }

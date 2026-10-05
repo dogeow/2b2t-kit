@@ -93,7 +93,10 @@ final class BorerRangedCombat {
         // permits other work; returning into reach/LOS makes this gate false immediately.
         boolean previouslyYielding=separation.yielding();
         if(!missingRestored && safeVerticalSeparation(c,nearby)){
-            if(!previouslyYielding)engine.fileLog(c,"area-defense-safe-deferred unresolved="+session.targets().size()+" confirmed_deaths=0");
+            if(!previouslyYielding){
+                engine.fileLog(c,"area-defense-safe-deferred unresolved="+session.targets().size()+" confirmed_deaths=0");
+                logThreatEvidence(c,"safe-watch",null);
+            }
             releaseControls(c);session.pause(p.tickCount);holdReason="safe-deferred";
             engine.status="已安全升空脱离，保留未解决敌人记录；靠近后恢复防御";return false;
         }
@@ -297,23 +300,42 @@ final class BorerRangedCombat {
         var projected=new Vec3(p.getX(),projectedY,p.getZ());
         var currentlyObserved=new java.util.ArrayList<java.util.UUID>();
         var threats=session.targets().stream().map(e->{
-            boolean observed=c.level.getEntity(e.getId())==e&&e.isAlive()&&c.level.hasChunkAt(e.blockPosition());
-            if(!observed)return separation.unloaded(c.level,e.getUUID(),p.getX(),projectedY,p.getZ());
+            boolean present=e.level()==c.level&&c.level.getEntity(e.getId())==e&&e.isAlive();
+            if(!present)return separation.unloaded(c.level,e.getUUID(),p.getX(),projectedY,p.getZ());
+            if(!currentServerChunk(c,e.blockPosition())||!GuardWeaponPolicy.finiteVector(e.position())
+                ||!GuardWeaponPolicy.finiteBox(e.getBoundingBox())){
+                separation.seen(c.level,e.getUUID(),Double.NaN,Double.NaN,Double.NaN,Double.NaN,false,false,false);
+                return new BorerCombatSeparation.Threat(false,false,false,false,Double.NaN,Double.NaN);
+            }
             boolean ordinary=e instanceof Creeper creeper&&!creeper.isPowered();
             boolean swelling=e instanceof Creeper creeper&&swelling(creeper);
-            separation.seen(c.level,e.getUUID(),e.getX(),e.getY(),e.getZ(),e.getBoundingBox().maxY,ordinary,swelling);
+            boolean unarmed=ordinaryZombie(p,e)&&e.getMainHandItem().isEmpty()&&e.getOffhandItem().isEmpty()
+                &&!BorerThreats.currentReceivedMobHit(e,p);
+            separation.seen(c.level,e.getUUID(),e.getX(),e.getY(),e.getZ(),e.getBoundingBox().maxY,ordinary,swelling,unarmed);
             currentlyObserved.add(e.getUUID());
             return new BorerCombatSeparation.Threat(true,ordinary,p.hasLineOfSight(e),swelling,
-                projected.distanceTo(e.position()),projectedY-e.getBoundingBox().maxY);
+                projected.distanceTo(e.position()),projectedY-e.getBoundingBox().maxY,false,unarmed);
         }).toList();
         boolean otherThreat=nearby.stream().anyMatch(e->e.isAlive()&&(
             BorerDefensePolicy.eligible(true,true,p.hasLineOfSight(e),rank(p,e),p.distanceTo(e))||creeperAlert(c,e)));
-        boolean healthyDryClear=p.getHealth()>=19&&p.hurtTime==0&&!p.isInWater()&&!p.isInLava()&&!p.isOnFire()
-            &&safeAir(c,p.blockPosition())&&safeAir(c,p.blockPosition().above())&&c.level.noCollision(p,p.getBoundingBox());
+        boolean healthyDryClear=p.getHealth()>=19&&p.hurtTime==0&&!BorerThreats.recentlyHurt(p)
+            &&!BorerThreats.shouldYieldToCombat(p)&&!p.isInWater()&&!p.isInLava()&&!p.isOnFire()
+            &&safeAir(c,p.blockPosition())&&safeAir(c,p.blockPosition().above())&&c.level.noCollision(p,p.getBoundingBox())
+            &&clearSeparationBody(c);
         boolean safe=separation.observe(c.level,p.tickCount,BorerCombatSeparation.safe(engine.standaloneGuard,
             Boolean.TRUE.equals(BorerFlight.meteorFlightActive()),healthyDryClear,false,otherThreat,threats));
         if(safe)separation.verifyDeferred(c.level,currentlyObserved);
         return safe;
+    }
+    private boolean clearSeparationBody(Minecraft c){
+        var p=c.player;
+        if(p==null||c.level==null||!GuardWeaponPolicy.finiteVector(p.position())
+            ||!GuardWeaponPolicy.finiteVector(p.getDeltaMovement())||!GuardWeaponPolicy.finiteBox(p.getBoundingBox()))return false;
+        var body=p.getBoundingBox().inflate(.02,0,.02);
+        if(!GuardWeaponPolicy.finiteBox(body)||!c.level.noCollision(p,body))return false;
+        for(var pos:net.minecraft.core.BlockPos.betweenClosed(net.minecraft.core.BlockPos.containing(body.minX,body.minY,body.minZ),
+            net.minecraft.core.BlockPos.containing(body.maxX-1e-7,body.maxY-1e-7,body.maxZ-1e-7)))if(!safeAir(c,pos))return false;
+        return true;
     }
     /** Ordinary task switches release inputs without forgetting a safely deferred same-world fight. */
     void handoff(Minecraft c){
