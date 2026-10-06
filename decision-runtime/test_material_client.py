@@ -62,7 +62,7 @@ class Tests(unittest.TestCase):
   c.request=request
   self.assertEqual([],c.ascent_obstacles({'pos':[100.5,300,200.5]}))
   self.assertEqual(calls[0]['max'][1],319)
- def test_leaf_canopy_forces_safe_logout_before_high_park_navigation(self):
+ def test_healthy_leaf_canopy_without_ground_exit_retains_owner_without_logout_or_unverified_flight(self):
   with tempfile.TemporaryDirectory() as temp:
    c=MaterialClient.__new__(MaterialClient)
    c.root=c.out=Path(temp);c.world='world-2';c.park_target=[100.5,145,200.5]
@@ -81,11 +81,12 @@ class Tests(unittest.TestCase):
    c.request=request
    with patch('material_cleanup.run'),patch('craft_recovery.clear_owned_workbench'):
     c._finish()
-   self.assertEqual([op for op,_ in calls],['scan','scan','safe_logout'])
+   self.assertEqual([op for op,_ in calls],['scan','scan'])
    self.assertEqual(calls[0][1]['min'],[100,65,200])
    self.assertEqual(json.loads((c.out/'park-column-obstacle.json').read_text())['count'],1)
-   self.assertEqual(json.loads((c.out/'park-fallback.json').read_text())['action'],'safe_logout')
-   c.heartbeat.close.assert_called_once()
+   self.assertEqual(json.loads((c.out/'park-canopy-deferred.json').read_text())['action'],'WAIT_OWNED_CANOPY_ROUTE_REPLAN')
+   self.assertFalse((c.out/'park-fallback.json').exists())
+   c.heartbeat.close.assert_not_called()
  def test_unverified_high_park_column_never_sends_navigation(self):
   c=MaterialClient.__new__(MaterialClient);c.world='world-2';c.park_target=[100.5,145,200.5]
   c.request=lambda op,**kw:{'phase':'error','world_session':c.world,'blocks':[]}

@@ -1016,6 +1016,15 @@ class MaterialClient(Client):
     if kept:
      health_exit_state=None
     else:
+     if (str(error)=='No verified short natural-ground exit from canopy' and health_exit_state is None
+         and latest.get('health',0)>=19 and latest.get('guard_armed') is True and latest.get('flight') is True
+         and not any(latest.get(k) for k in ('under_water','is_in_lava','on_fire','manual_movement'))):
+      self.guarded_ground_stop={'reason':str(error),'action':'WAIT_OWNED_CANOPY_ROUTE_REPLAN',
+       'world_session':self.world,'task_session':getattr(self,'task',None),
+       'last_request':getattr(self,'last',None),'native_parking_confirmed':False}
+      (self.out/'park-canopy-deferred.json').write_text(json.dumps(self.guarded_ground_stop,ensure_ascii=False,indent=2)+'\n')
+      print('CANOPY_FINISH_DEFERRED: healthy original owner retained; no logout',flush=True)
+      return False
      (self.out/'park-fallback.json').write_text(json.dumps({
       'reason':str(error),'action':'safe_logout',
       'elapsed_seconds':round(time.monotonic()-guard_finish_started,3)},ensure_ascii=False))

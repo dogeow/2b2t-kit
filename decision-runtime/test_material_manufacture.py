@@ -7,8 +7,28 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from material_manufacture import manufacture, inventory_plan
+from material_manufacture import manufacture, inventory_plan, _inventory_batch
+from craft_grid import InventoryCapacity
 from recipe_catalog import RecipeCatalog
+
+
+class CherryBatchCapacityTest(unittest.TestCase):
+    def test_full_backpack_can_consume_all_fifteen_logs_for_sixty_planks(self):
+        slots = [{'slot': i, 'item': 'minecraft:stick', 'count': 64, 'max_stack': 64}
+                 for i in range(45)]
+        slots[9].update(item='minecraft:cherry_log', count=15)
+        state = {'menu': {'slots': slots}, 'inventory': [
+            {**row, 'slot': i} for i, row in enumerate(slots[9:45])]}
+        spec = {'output': 'minecraft:cherry_planks', 'produces': 4,
+                'width': 2, 'ingredients': {'minecraft:cherry_log': [1]}}
+        batch = _inventory_batch(state, spec, 60)
+        self.assertEqual((15, 60), (batch['rounds'], batch['produced']))
+        self.assertEqual(15, batch['actions'][0]['count'])
+        self.assertEqual(15, slots[9]['count'])
+        slots[9]['count'] = 16
+        state['inventory'][0]['count'] = 16
+        with self.assertRaises(InventoryCapacity):
+            _inventory_batch(state, spec, 60)
 
 
 class Client:
