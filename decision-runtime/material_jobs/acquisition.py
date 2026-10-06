@@ -26,6 +26,19 @@ SAPLING_SOILS = {'minecraft:grass_block', 'minecraft:dirt', 'minecraft:coarse_di
                  'minecraft:moss_block'}
 
 
+def _outside_future_trunk(state, root, species_item=None, margin=.35):
+    """Require the entire player footprint beside the future trunk, at any height."""
+    point = state.get('pos')
+    if (not isinstance(point, (list, tuple)) or len(point) != 3
+            or any(type(v) not in (int, float) or not math.isfinite(v) for v in point)):
+        return False
+    x, _, z = root
+    spread = int(species_item in {'minecraft:spruce_log', 'minecraft:jungle_log',
+                                  'minecraft:dark_oak_log', 'minecraft:pale_oak_log'})
+    return (point[0]+margin <= x-spread or point[0]-margin >= x+1+spread
+            or point[2]+margin <= z-spread or point[2]-margin >= z+1+spread)
+
+
 def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
     x,y,z=pos;budget=min(6,carried(c.status(),'minecraft:bone_meal'))
     if not budget:
@@ -43,6 +56,9 @@ def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
     if not any(row['pos']==[x,y,z] and block_id(row)==sapling_item for row in nearby):
         result.update(stage='sapling_site_changed',detail='接近后树苗状态已改变；不使用骨粉')
         return result
+    if not _outside_future_trunk(c.status(),pos,species_item):
+        result.update(stage='sapling_kept_unsafe_stand',detail='角色与未来树干格重叠或站位未知；请先站到旁侧')
+        return result
     c.checked('select_item',item='minecraft:bone_meal')
     for _ in range(budget):
         checkpoint();state=c.status();_safe(state)
@@ -50,6 +66,11 @@ def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
         sapling=next((r for r in rows if r['pos']==[x,y,z] and block_id(r)==sapling_item),None)
         if sapling is None:
             result.update(stage='grown_or_changed',detail='树苗格已改变；停止催熟')
+            break
+        # Read again after the scan: the approach or manual input may have moved us.
+        state=c.status();_safe(state)
+        if not _outside_future_trunk(state,pos,species_item):
+            result.update(stage='sapling_kept_unsafe_stand',detail='骨粉前站位不安全；未使用骨粉')
             break
         before=carried(state,'minecraft:bone_meal')
         c.checked('interact',pos=[x,y,z],face='up',expected_state=sapling['state'],expected_hand='minecraft:bone_meal')

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from material_jobs.acquisition import _replant_tree_with_bonemeal, Unavailable
+from material_jobs.acquisition import _replant_tree_with_bonemeal, _apply_bone_meal, _outside_future_trunk, Unavailable
 
 
 def native_cell(pos, state, *, solid=False, passable=True):
@@ -27,10 +27,11 @@ class NativeTreeClient:
         self.items = {'minecraft:oak_sapling': 2, 'minecraft:bone_meal': 6}
         self.actions = []
         self.time = 100
+        self.pos = [1.5, 64, 3.5]
 
     def status(self):
         self.time += 1
-        return {'world_session': self.world, 'health': 20, 'food': 20,
+        return {'world_session': self.world, 'pos': self.pos, 'health': 20, 'food': 20,
                 'guard_armed': True, 'guard_pve_only': True, 'time': self.time,
                 'entities': [], 'inventory': [
                     {'slot': i, 'item': item, 'count': count, 'max_stack': 64}
@@ -96,6 +97,43 @@ class TreeRegrowthTest(unittest.TestCase):
                 self.assertEqual({'minecraft:oak_sapling': 1, 'minecraft:bone_meal': 5}, client.items)
                 self.assertEqual('Block{minecraft:oak_log}[axis=y]', client.cells[(2, 64, 3)]['state'])
                 self.assertEqual(2, sum(op == 'interact' for op, _ in client.actions))
+
+    def test_future_trunk_excludes_body_overlap_at_any_height_and_unknown_pose(self):
+        for point in ([2.5,64,3.5], [2.5,90,3.5], [1.8,64,3.5],
+                      [3.2,64,3.5], None, [], [float('nan'),64,3.5], [True,64,3.5]):
+            with self.subTest(point=point):
+                self.assertFalse(_outside_future_trunk({'pos':point},[2,64,3]))
+        self.assertTrue(_outside_future_trunk({'pos':[1.5,64,3.5]},[2,64,3]))
+        self.assertFalse(_outside_future_trunk({'pos':[1.5,64,3.5]},[2,64,3],'minecraft:dark_oak_log'))
+        self.assertTrue(_outside_future_trunk({'pos':[.5,64,3.5]},[2,64,3],'minecraft:dark_oak_log'))
+
+    def test_approach_into_root_never_uses_bone_meal(self):
+        client=NativeTreeClient()
+        def inside(*args, **kwargs):
+            client.pos=[2.5,64,3.5]
+            return 'up'
+        with patch('material_jobs.acquisition.approach_faces', side_effect=inside):
+            result=self.regrow(client)
+        self.assertEqual('sapling_kept_unsafe_stand',result['stage'])
+        self.assertEqual(6,client.items['minecraft:bone_meal'])
+        self.assertFalse(any(args.get('expected_hand')=='minecraft:bone_meal' for _,args in client.actions))
+
+    def test_pose_changes_after_scan_before_bone_click_are_rechecked(self):
+        client=NativeTreeClient()
+        client.cells[(2,64,3)]=native_cell([2,64,3],'Block{minecraft:oak_sapling}[stage=0]')
+        scan=client.request
+        scans=0
+        def moving_scan(op, **args):
+            nonlocal scans
+            result=scan(op,**args);scans+=1
+            if scans==3:client.pos=[2.5,80,3.5]
+            return result
+        client.request=moving_scan
+        with patch('material_jobs.acquisition.approach_faces',return_value='up'):
+            result=_apply_bone_meal(client,'minecraft:oak_log','minecraft:oak_sapling',[2,64,3],{},lambda:None)
+        self.assertEqual('sapling_kept_unsafe_stand',result['stage'])
+        self.assertEqual(6,client.items['minecraft:bone_meal'])
+        self.assertFalse(any(op=='interact' for op,_ in client.actions))
 
     def test_occupied_stump_retains_sapling_and_bone_meal(self):
         client = NativeTreeClient('Block{minecraft:stone}')

@@ -21,6 +21,14 @@ public record ChopperFixedTreePlan(BlockPos root, BlockPos min, BlockPos max) {
         return p!=null&&p.getX()>=min.getX()&&p.getX()<=max.getX()
             &&p.getY()>=min.getY()&&p.getY()<=max.getY()&&p.getZ()>=min.getZ()&&p.getZ()<=max.getZ();
     }
+    boolean outsideFutureTrunk(double x,double z,String type){
+        if(!Double.isFinite(x)||!Double.isFinite(z))return false;
+        boolean wide=Set.of("minecraft:spruce_log","minecraft:jungle_log","minecraft:dark_oak_log","minecraft:pale_oak_log").contains(type);
+        // Wide roots can extend one cell on either side of the selected stump.
+        int spread=wide?1:0;
+        return x+.35<=root.getX()-spread||x-.35>=root.getX()+1+spread
+            ||z+.35<=root.getZ()-spread||z-.35>=root.getZ()+1+spread;
+    }
     boolean accepts(Collection<BlockPos> logs,Collection<BlockPos> stumps,String type){
         boolean wide=Set.of("minecraft:spruce_log","minecraft:jungle_log","minecraft:dark_oak_log","minecraft:pale_oak_log").contains(type);
         int margin=wide?1:0;

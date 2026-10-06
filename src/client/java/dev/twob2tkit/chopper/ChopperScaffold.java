@@ -66,6 +66,24 @@ final class ChopperScaffold {
         if(c.player!=null&&!c.player.onGround())flight.closeKeepingFlight();else flight.close();
         phase=Phase.READY;pendingTree=Set.of();ticks=bodyWait=0;route=List.of();
     }
+    BlockPos fixedStandby(Minecraft c,ChopperFixedTreePlan tree,String type){
+        var root=tree.root();List<BlockPos> choices=new ArrayList<>();
+        for(int x=-3;x<=3;x++)for(int z=-3;z<=3;z++)for(int y=0;y>=-4;y--){
+            var feet=root.offset(x,y,z);
+            if(tree.outsideFutureTrunk(feet.getX()+.5,feet.getZ()+.5,type)&&safeStandby(c,feet))choices.add(feet);
+        }
+        choices.sort(Comparator.comparingDouble(p->c.player.position().distanceToSqr(Vec3.atBottomCenterOf(p))));
+        if(choices.isEmpty())throw new IllegalStateException("固定树旁没有已验证的安全站位，未开始砍树");
+        return choices.getFirst().immutable();
+    }
+    boolean safeStandby(Minecraft c,BlockPos feet){return feet!=null&&clear(c,feet)&&clear(c,feet.above())&&floor(c,feet.below());}
+    void returnToStandby(Minecraft c,BlockPos feet){
+        checkWorld(c);
+        if(busy()||hasBlocks())throw new IllegalStateException("工作平台尚未清理，不能返回补种站位");
+        if(!safeStandby(c,feet))throw new IllegalStateException("旁侧站位已变化，未计为完成");
+        pendingTree=Set.of();home=feet;lastGround=feet;landingHome=true;acquire(c);
+        travelTo(c,Vec3.atBottomCenterOf(feet).add(0,.12,0),Phase.RETURN_LAND);
+    }
     void beginCleanup(){pendingTree=Set.of();landingHome=true;phase=Phase.CLEAN;ticks=0;}
     void moveToTree(Minecraft c,Collection<BlockPos> logs){
         checkWorld(c);pendingTree=Set.copyOf(logs);landingHome=false;
@@ -174,7 +192,7 @@ final class ChopperScaffold {
         }
         if(phase==Phase.RETURN_LAND){
             status="安全落地后拾取掉落物";
-            if(!floor(c,home.below()))throw new IllegalStateException("原落地点已变化，保持悬停");
+            if(!safeStandby(c,home))throw new IllegalStateException("原落地点已变化，保持悬停");
             flight.digOnFoot();if(p.onGround()){flight.close();home=null;landingHome=false;phase=Phase.READY;save();}return true;
         }
         return true;

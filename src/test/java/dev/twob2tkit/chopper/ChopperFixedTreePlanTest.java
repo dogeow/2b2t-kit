@@ -25,6 +25,14 @@ class ChopperFixedTreePlanTest {
         assertFalse(plan.accepts(roots,roots,"minecraft:cherry_log"));
         assertFalse(plan.accepts(roots,List.of(root,root.offset(2,0,0)),"minecraft:spruce_log"));
     }
+    @Test void standbyExcludesFullBodyAndWideRoots(){
+        assertTrue(plan.outsideFutureTrunk(761032.5,797882.5,"minecraft:cherry_log"));
+        assertFalse(plan.outsideFutureTrunk(761033.7044,797882.8637,"minecraft:cherry_log"));
+        assertFalse(plan.outsideFutureTrunk(761032.8,797882.5,"minecraft:cherry_log"));
+        assertFalse(plan.outsideFutureTrunk(Double.NaN,797882.5,"minecraft:cherry_log"));
+        assertFalse(plan.outsideFutureTrunk(761032.5,797882.5,"minecraft:dark_oak_log"));
+        assertTrue(plan.outsideFutureTrunk(761031.5,797882.5,"minecraft:dark_oak_log"));
+    }
     @Test void mutationAndWitnessBoundsRemainFiniteAndContainTheRequestedRoot(){
         assertTrue(plan.contains(root));assertFalse(plan.contains(root.below()));assertFalse(plan.contains(null));
         assertThrows(IllegalArgumentException.class,()->new ChopperFixedTreePlan(root,root.above(),root.above(4)));

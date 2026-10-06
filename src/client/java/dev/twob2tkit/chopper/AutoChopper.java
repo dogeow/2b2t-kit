@@ -44,7 +44,7 @@ import dev.twob2tkit.KitKeys;
  */
 public final class AutoChopper {
 	/** 挖树主机逻辑版本（打进诊断日志）。 */
-	public static final String VERSION = "1.9.50";
+	public static final String VERSION = "1.9.51";
 	/** 无进度时多久再点一次攻击（tick）。 */
 	private static final int RETRY_TICKS = 40;
 	/** 挖不动多久跳过这块（tick）。 */
@@ -73,6 +73,7 @@ public final class AutoChopper {
 	private String materialLog="";
 	private int materialTreeLimit;
 	private ChopperFixedTreePlan fixedTree;
+	private BlockPos fixedStandby;
 	private String status = "";
 	private BlockPos mineTarget;
 	private BlockPos walkTarget;
@@ -112,8 +113,9 @@ public final class AutoChopper {
 	public void startMaterial(Minecraft client,String logId){start(client);materialLog=logId;}
 	public void startMaterialFixed(Minecraft client,String logId,ChopperFixedTreePlan plan){
 		if(ChopperTrees.findFixed(client,plan,logId)==null)throw new IllegalStateException("Fixed tree is absent, ambiguous, unloaded or outside its bounds");
+		BlockPos standby=scaffold.fixedStandby(client,plan,logId);
 		startMaterial(client,logId);if(!active)return;
-		fixedTree=plan;materialTreeLimit=1;
+		fixedTree=plan;fixedStandby=standby;materialTreeLimit=1;
 		fileLog(client,"fixed-tree root="+format(plan.root())+" min="+format(plan.min())+" max="+format(plan.max()));
 	}
 	public int remainingLogs(){return treeLogs.size();}
@@ -149,7 +151,7 @@ public final class AutoChopper {
 	public void start(Minecraft client) {
 		if (client.player == null || client.level == null) return;
 		active = true;
-		finishRequested=false;materialTargetFinished=false;materialLog="";materialTreeLimit=0;fixedTree=null;
+		finishRequested=false;materialTargetFinished=false;materialLog="";materialTreeLimit=0;fixedTree=null;fixedStandby=null;
 		clearTree();
 		try { scaffold.start(client); miningModules.acquire(); } catch (IllegalStateException e) { stop(client,e.getMessage()); return; }
 		ignored.clear();
@@ -250,6 +252,7 @@ public final class AutoChopper {
 						return;
 					}
 				}
+				if (ensureFixedStandby(client,player)) return;
 				if (replantDelay > 0) {
 					replantDelay--;
 					applyFlight(player, false);
@@ -260,6 +263,7 @@ public final class AutoChopper {
 					if (tryReplant(client, player)) return;
 					stumps.clear();
 				}
+				if (ensureFixedStandby(client,player)) return;
 				if(finishRequested || materialTreeLimit>0 && treesDone>=materialTreeLimit){stop(client,finishRequested?"数量目标已达到，整棵树与掉落物处理完毕":"本批树木已收完，继续搜索材料");materialTargetFinished=true;return;}
 				if (searchCooldown > 0) {
 					searchCooldown--;
@@ -531,6 +535,20 @@ public final class AutoChopper {
 		return true;
 	}
 
+	/** Returning beside the sapling is part of completion, before and after replant. */
+	private boolean ensureFixedStandby(Minecraft client,LocalPlayer player){
+		if(fixedTree==null)return false;
+		try{
+			if(!scaffold.safeStandby(client,fixedStandby))throw new IllegalStateException("固定树旁侧站位已变化，未计为完成");
+			Vec3 center=Vec3.atBottomCenterOf(fixedStandby);
+			if(player.onGround()&&player.position().distanceToSqr(center)<.04
+				&&fixedTree.outsideFutureTrunk(player.getX(),player.getZ(),materialLog))return false;
+			scaffold.returnToStandby(client,fixedStandby);
+			fileLog(client,"fixed-tree-return standby="+format(fixedStandby));
+		}catch(IllegalStateException e){stop(client,e.getMessage());}
+		return true;
+	}
+
 	/** 在树桩上补种对应树苗；够不着则走近。成功或正在走近返回 true。 */
 	private boolean tryReplant(Minecraft client, LocalPlayer player) {
 		if (saplingItem == null || !hasItem(player, saplingItem)) {
@@ -555,6 +573,7 @@ public final class AutoChopper {
 				continue;
 			}
 			if (!BorerAim.inReach(player, soil)) {
+				if(fixedTree!=null){stop(client,"旁侧站位无法够到补种格，保留树苗，未计为完成");return true;}
 				if (config.chopperWalk) {
 					Item seed=saplingItem;
 					if(!approach(client,player,soil)){
