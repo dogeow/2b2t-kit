@@ -694,6 +694,31 @@ class AcquisitionTest(unittest.TestCase):
                 self.assertEqual('blocked',self.run_acquire(c,out,target=6,profile=profile)['phase'])
                 self.assertEqual(count,len(c.actions))
 
+    def test_owned_tree_uses_explicit_root_only_when_the_native_protocol_is_available(self):
+        for protocol in (0,1):
+            with self.subTest(protocol=protocol), tempfile.TemporaryDirectory() as out:
+                c=FakeClient(item='minecraft:cherry_log',before=2,gain=4)
+                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=protocol)
+                c.rows=[block((x,63,z),'grass_block')for x in range(-11,12)for z in range(-11,12)]
+                c.rows += [block((0,y,0),'cherry_log')for y in range(64,68)]
+                c.trees=[{'pos':[0,64,0],'top':68,'natural_leaves':8}]
+                original=c.request
+                def request(op,**params):
+                    reply=original(op,**params)
+                    if op=='scan_trees'and params.get('radius')==12:
+                        reply['tree_survey']['trees']=[{'pos':[-2,64,0],'top':68,'natural_leaves':8}]
+                    return reply
+                c.request=request
+                profile=self.profile(c.item,[-12,60,-12],[12,105,12])
+                profile['resource_regions'][0]['source']='owned_seeded_cherry_tree_farm'
+                result=self.run_acquire(c,out,target=6,profile=profile)
+                chops=[params for op,params in c.actions if op=='chop']
+                if not protocol:self.assertNotEqual('done',result['phase']);self.assertEqual([],chops)
+                else:
+                    self.assertEqual('done',result['phase']);self.assertEqual(1,len(chops))
+                    self.assertEqual([0,64,0],chops[0]['tree_root'])
+                    self.assertEqual(([-12,60,-12],[12,105,12]),(chops[0]['tree_min'],chops[0]['tree_max']))
+
     def test_inventory_target_does_not_discharge_an_original_inflight_mining_record(self):
         with tempfile.TemporaryDirectory() as out:
             c=FakeClient(before=20)

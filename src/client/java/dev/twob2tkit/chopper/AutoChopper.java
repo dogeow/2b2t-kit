@@ -44,7 +44,7 @@ import dev.twob2tkit.KitKeys;
  */
 public final class AutoChopper {
 	/** 挖树主机逻辑版本（打进诊断日志）。 */
-	public static final String VERSION = "1.9.49";
+	public static final String VERSION = "1.9.50";
 	/** 无进度时多久再点一次攻击（tick）。 */
 	private static final int RETRY_TICKS = 40;
 	/** 挖不动多久跳过这块（tick）。 */
@@ -72,6 +72,7 @@ public final class AutoChopper {
 	private boolean finishRequested,materialTargetFinished;
 	private String materialLog="";
 	private int materialTreeLimit;
+	private ChopperFixedTreePlan fixedTree;
 	private String status = "";
 	private BlockPos mineTarget;
 	private BlockPos walkTarget;
@@ -109,6 +110,12 @@ public final class AutoChopper {
 	public void finishCurrentTree(){if(active)finishRequested=true;}
 	public boolean materialTargetFinished(){return materialTargetFinished;}
 	public void startMaterial(Minecraft client,String logId){start(client);materialLog=logId;}
+	public void startMaterialFixed(Minecraft client,String logId,ChopperFixedTreePlan plan){
+		if(ChopperTrees.findFixed(client,plan,logId)==null)throw new IllegalStateException("Fixed tree is absent, ambiguous, unloaded or outside its bounds");
+		startMaterial(client,logId);if(!active)return;
+		fixedTree=plan;materialTreeLimit=1;
+		fileLog(client,"fixed-tree root="+format(plan.root())+" min="+format(plan.min())+" max="+format(plan.max()));
+	}
 	public int remainingLogs(){return treeLogs.size();}
 	public int platforms(){return scaffold.count();}
 	public boolean ownsMining() { return active && combatPauseTicks==0 && (mineTarget!=null || scaffold.busy()); }
@@ -142,7 +149,7 @@ public final class AutoChopper {
 	public void start(Minecraft client) {
 		if (client.player == null || client.level == null) return;
 		active = true;
-		finishRequested=false;materialTargetFinished=false;materialLog="";materialTreeLimit=0;
+		finishRequested=false;materialTargetFinished=false;materialLog="";materialTreeLimit=0;fixedTree=null;
 		clearTree();
 		try { scaffold.start(client); miningModules.acquire(); } catch (IllegalStateException e) { stop(client,e.getMessage()); return; }
 		ignored.clear();
@@ -263,6 +270,7 @@ public final class AutoChopper {
 					return;
 				}
 				if (!lockNextTree(client, player)) {
+					if(!active)return;
 					applyFlight(player, false);
 					if (config.chopperPickup && loot.beginNear(client, player)) {
 						status = "没有新树，先捡剩下的掉落物";
@@ -372,8 +380,10 @@ public final class AutoChopper {
 	private boolean lockNextTree(Minecraft client, LocalPlayer player) {
 		clearTree();
 		int range = Math.max(4, (int)Math.round(config.chopperRange));
-		ChopperTrees.Tree best = ChopperTrees.findNearest(client, player, range, config.chopperRequireLeaves, ignored,materialLog);
-		if (best == null) return false;
+		ChopperTrees.Tree best = fixedTree==null
+			?ChopperTrees.findNearest(client, player, range, config.chopperRequireLeaves, ignored,materialLog)
+			:ChopperTrees.findFixed(client,fixedTree,materialLog);
+		if (best == null) {if(fixedTree!=null)stop(client,"固定树已变化，保留原目标，不搜索另一棵");return false;}
 		treeLogs.addAll(best.logs());
 		crownWitness=best.witness();crownWood=client.level.getBlockState(best.logs().getFirst()).getBlock();completionTicks=0;
 		stumps.addAll(best.stumps());
@@ -432,6 +442,7 @@ public final class AutoChopper {
 				for (int dy = -1; dy <= 6; dy++) {
 					for (int dz = -range; dz <= range; dz++) {
 						BlockPos pos = log.offset(dx, dy, dz);
+						if (fixedTree!=null&&!fixedTree.contains(pos))continue;
 						if (!client.level.getBlockState(pos).is(BlockTags.LEAVES) || !ChopperTrees.canBreak(client, pos)) continue;
 						if (!BorerAim.inReach(player, pos)) continue;
 						double dist = player.getEyePosition().distanceToSqr(Vec3.atCenterOf(pos));
@@ -448,6 +459,7 @@ public final class AutoChopper {
 
 	/** 原木或树叶且允许破坏。 */
 	private boolean isMineableTreeBlock(Minecraft client, BlockPos pos) {
+		if(fixedTree!=null&&!fixedTree.contains(pos))return false;
 		if (!ChopperTrees.canBreak(client, pos)) return false;
 		BlockState state = client.level.getBlockState(pos);
 		return treeLogs.contains(pos) && ChopperTrees.isWood(state) || state.is(BlockTags.LEAVES) || disposableGrass(state);
@@ -717,6 +729,7 @@ public final class AutoChopper {
 
 	/** 目标仍是可砍原木，或（勾选/还在砍树时）可砍树叶。 */
 	private boolean stillValid(Minecraft client, BlockPos pos) {
+		if(fixedTree!=null&&!fixedTree.contains(pos))return false;
 		BlockState state = client.level.getBlockState(pos);
 		if (ChopperTrees.isWood(state)) return ChopperTrees.canBreak(client, pos);
 		if (disposableGrass(state)) return !treeLogs.isEmpty();

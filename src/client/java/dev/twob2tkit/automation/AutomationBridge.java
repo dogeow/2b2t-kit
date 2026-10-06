@@ -2202,6 +2202,15 @@ public final class AutomationBridge {
             boolean materialHandoff=Set.of("navigate","walk","walk_path","chop","print").contains(command)
 				&&currentMaterialRequest(c,r);
 			boolean materialNavigation=command.equals("navigate")&&materialHandoff;
+            dev.twob2tkit.chopper.ChopperFixedTreePlan fixedTree=null;
+            if(command.equals("chop")&&(r.has("tree_root")||r.has("tree_min")||r.has("tree_max"))){
+                if(!materialHandoff)throw new IllegalStateException("Fixed tree requires the current material session");
+                fixedTree=new dev.twob2tkit.chopper.ChopperFixedTreePlan(fixedTreePoint(r,"tree_root"),
+                    fixedTreePoint(r,"tree_min"),fixedTreePoint(r,"tree_max"));
+                for(String key:java.util.List.of("tree_root","tree_min","tree_max"))checkSiteTarget(r,r.getAsJsonArray(key));
+                if(r.has("tree_limit")&&r.get("tree_limit").getAsInt()!=1)
+                    throw new IllegalArgumentException("Fixed tree batch contains exactly one tree");
+            }
             if(command.equals("navigate")&&r.has("air_only")){
                 if(!r.get("air_only").isJsonPrimitive()||!r.getAsJsonPrimitive("air_only").isBoolean())
                     throw new IllegalArgumentException("air_only must be boolean");
@@ -2268,7 +2277,8 @@ public final class AutomationBridge {
                 if(!r.has("item"))active.addProperty("item","minecraft:oak_log");
                 desiredCount=Math.max(1,Math.min(512,r.get("target_count").getAsInt()));
                 String logId=str(active,"item");if(!Set.of("minecraft:oak_log","minecraft:spruce_log","minecraft:birch_log","minecraft:jungle_log","minecraft:acacia_log","minecraft:dark_oak_log","minecraft:mangrove_log","minecraft:cherry_log","minecraft:pale_oak_log").contains(logId))throw new IllegalArgumentException("A natural log target is required");
-                KitClient.chopper().startMaterial(c,logId);
+                if(fixedTree==null)KitClient.chopper().startMaterial(c,logId);
+                else KitClient.chopper().startMaterialFixed(c,logId,fixedTree);
                 if(r.has("tree_limit"))KitClient.chopper().limitTrees(Math.max(1,Math.min(16,r.get("tree_limit").getAsInt())));
             }else if(!KitClient.machines().start(c))throw new IllegalStateException("Could not start printer");
         }else if(command.equals("guard")){
@@ -2550,6 +2560,18 @@ public final class AutomationBridge {
     private static boolean ordinaryMiningRequested(JsonObject request){
         return request!=null&&Set.of("mine_block","recover_shulker").contains(str(request,"op"))
             &&!terrainReplaceRequested(request)&&!dryPavingRequested(request);
+    }
+    private static BlockPos fixedTreePoint(JsonObject request,String key){
+        if(!request.has(key)||!request.get(key).isJsonArray()||request.getAsJsonArray(key).size()!=3)
+            throw new IllegalArgumentException("Fixed tree requires integer "+key+" [x,y,z]");
+        var point=request.getAsJsonArray(key);int[] coordinates=new int[3];
+        for(int i=0;i<3;i++){
+            if(!point.get(i).isJsonPrimitive()||!point.get(i).getAsJsonPrimitive().isNumber())
+                throw new IllegalArgumentException("Fixed tree coordinates must be integers");
+            try{coordinates[i]=point.get(i).getAsBigDecimal().intValueExact();}
+            catch(ArithmeticException error){throw new IllegalArgumentException("Fixed tree coordinates must be exact integers",error);}
+        }
+        return new BlockPos(coordinates[0],coordinates[1],coordinates[2]);
     }
     private static BlockPos singleBlockTarget(JsonObject request){
         var pos=request.getAsJsonArray("pos");return new BlockPos(pos.get(0).getAsInt(),pos.get(1).getAsInt(),pos.get(2).getAsInt());
@@ -3729,6 +3751,7 @@ public final class AutomationBridge {
         j.add("safety_hold",dev.twob2tkit.combat.EmergencyExit.snapshot(c));
         j.addProperty("interface_pause_protocol",1);j.addProperty("interface_paused",interfacePaused(c));
         j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("job_hud_protocol",1);j.addProperty("quarry_protocol",1);j.addProperty("raw_iron_block_quarry_protocol",1);j.addProperty("tree_survey_protocol",1);j.addProperty("snow_biome_survey_protocol",SnowBiomeSurvey.PROTOCOL);j.addProperty("snow_seed_locator_protocol",SnowSeedExpedition.PROTOCOL);j.addProperty("snow_seed_locator_available",KitClient.seedScout()!=null&&KitClient.seedScout().hasStoredWorldSeed());j.addProperty("material_protocol",2);j.addProperty("air_return_protocol",1);j.addProperty("horse_nudge_protocol",1);j.addProperty("inventory_cursor_precondition_protocol",1);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("material_mining_isolation_protocol",1);j.addProperty("material_mining_cleanup_pending",materialMiningCleanupPending);j.add("material_mining_isolation",MaterialMiningLease.snapshot(materialMiningLease,!materialMiningScope(c).isEmpty()&&materialMiningScope(c).equals(materialMiningOwner)));j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("freefall_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",4);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.screen==null?"":c.screen.getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
+        j.addProperty("fixed_tree_chop_protocol",1);
         var gravelState=GravelCollector.snapshot();
         if(nativeMaterialOwner!=null&&GravelCollector.isActive())gravelState.addProperty("session",nativeMaterialOwner.job);
         j.add("gravel",gravelState);

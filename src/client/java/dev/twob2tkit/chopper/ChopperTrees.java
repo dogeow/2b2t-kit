@@ -31,6 +31,19 @@ public final class ChopperTrees {
 	/** 一棵树：原木列表、可补种树桩、最低基座。 */
 	public record Tree(List<BlockPos> logs, List<BlockPos> stumps, BlockPos base, Set<BlockPos> witness) {
 	}
+	public static Tree findFixed(Minecraft client,ChopperFixedTreePlan plan,String logId){
+		if(client.level==null||!client.level.hasChunkAt(plan.root())
+			||!BuiltInRegistries.BLOCK.getKey(client.level.getBlockState(plan.root()).getBlock()).toString().equals(logId))return null;
+		for(int x=plan.min().getX()>>4;x<=plan.max().getX()>>4;x++)for(int z=plan.min().getZ()>>4;z<=plan.max().getZ()>>4;z++){
+			var chunk=client.level.getChunkSource().getChunk(x,z,net.minecraft.world.level.chunk.status.ChunkStatus.FULL,false);
+			if(!dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence.isServerChunk(client.level,chunk))return null;
+		}
+		Tree tree=flood(client,plan.root(),new HashSet<>(),true,new HashSet<>());
+		if(tree==null||!plan.accepts(tree.logs(),tree.stumps(),logId)
+			||tree.logs().stream().anyMatch(p->!client.level.hasChunkAt(p)||!canBreak(client,p)
+				||!BuiltInRegistries.BLOCK.getKey(client.level.getBlockState(p).getBlock()).toString().equals(logId)))return null;
+		return new Tree(tree.logs(),tree.stumps(),plan.root(),tree.witness().stream().filter(plan::contains).collect(java.util.stream.Collectors.toUnmodifiableSet()));
+	}
 
 	/** 玩家附近最近一棵合法树；没有则 null。 */
 	public static Tree findNearest(Minecraft client, LocalPlayer player, int range, boolean requireLeaves, Set<BlockPos> ignored) {

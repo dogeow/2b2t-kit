@@ -1834,7 +1834,10 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
         if not isinstance(nearby, dict):raise Unavailable('落点附近树木尚未核验', 'waiting')
         fresh = c.status()
         nearest = min(nearby.get('trees', []), key=lambda t: math.dist([n+.5 for n in t['pos']], fresh['pos']), default=None)
-        if nearest is None or nearest['pos'] != root:
+        fixed_tree = (type(fresh.get('fixed_tree_chop_protocol')) is int
+                      and fresh['fixed_tree_chop_protocol'] >= 1
+                      and region.get('source') == 'owned_seeded_cherry_tree_farm')
+        if not fixed_tree and (nearest is None or nearest['pos'] != root):
             raise Unavailable('原生砍树的最近目标已变化，先重新核验，避免砍到区域外树木')
         _choose_tool(c, tool, checkpoint)
         before = carried(c.status(), item)
@@ -1852,7 +1855,11 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
             plant_cell = [root[0], root[1], root[2]]
         entry = {'state': 'inflight', 'root': root, 'before': before, 'route': trace}
         ledger['visited'][key] = entry; write_json(path, ledger); checkpoint()
-        reply = c.request('chop', item=item, target_count=target, tree_limit=1, seconds=240)
+        fixed_params = {}
+        if fixed_tree:
+            lo, hi = _bounds(region)
+            fixed_params = {'tree_root': root, 'tree_min': lo, 'tree_max': hi}
+        reply = c.request('chop', item=item, target_count=target, tree_limit=1, seconds=240, **fixed_params)
         after = c.status(); _safe(after)
         entry['native'] = {name: reply[name] for name in ('id', 'world_session', 'phase', 'detail')
                            if name in reply}
