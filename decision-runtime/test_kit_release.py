@@ -65,6 +65,15 @@ class KitReleaseTest(unittest.TestCase):
 if __name__=='__main__':unittest.main()
 
 class ProcessInspectionTest(unittest.TestCase):
+    def test_matches_both_fabric_entrypoints_and_vanilla(self):
+        import re
+        from types import SimpleNamespace
+        from kit_release import minecraft_running
+        with patch('kit_release.subprocess.run',return_value=SimpleNamespace(returncode=1)) as run:
+            self.assertFalse(minecraft_running())
+        pattern=run.call_args.args[0][-1]
+        for entry in ('net.fabricmc.loader.launch.knot.KnotClient','net.fabricmc.loader.impl.launch.knot.KnotClient','net.minecraft.client.main.Main'):
+            self.assertIsNotNone(re.search(pattern,entry))
     def test_inspection_error_is_not_treated_as_a_stopped_game(self):
         from types import SimpleNamespace
         from kit_release import minecraft_running

@@ -37,6 +37,7 @@ public final class MaterialJobPages {
                 () -> config.materialJobCount, value -> config.materialJobCount = (int)value);
             page.note("例如：选择白色混凝土 800。后台会计算原料和制作步骤；现有能力不支持的物品会明确列出原因。");
         }
+        page.action("本地决策模型", "设置常驻模型与按需游戏画面。", () -> LocalDecisionPages.open(page,config));
         page.section("当前任务");
         page.liveNote(MaterialJobs::status);
         page.action("暂停任务", "先安全收尾，再暂停。不会重新连接服务器。", () -> perform(page, () -> MaterialJobs.pause(mc())));

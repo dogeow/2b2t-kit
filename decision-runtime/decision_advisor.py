@@ -17,10 +17,19 @@ from kit_runtime.diagnostics import EventLog
 from decisions import PRIVATE,Jev,choose,DecisionError,status
 
 DEFAULTS={'enabled':True,'calls_per_hour':120,'timeout_seconds':4,
-          'cache_seconds':60,'min_confidence':.5,'min_probability':.6,'provider_retry_seconds':30}
+          'cache_seconds':60,'min_confidence':.5,'min_probability':.6,'provider_retry_seconds':30,
+          'provider':'jev','local_model':'clef-flash','context_length':4096,
+          'keep_loaded':True,'vision_mode':'auto'}
 FIELDS=('world_session','control_revision','server','dimension','connected',
         'manual_movement','screen','health','food','under_water','guard_armed',
-        'guard_busy','air_return_active')
+        'guard_busy','air_return_active','selected_slot','projection_selection')
+
+def local_opt_in(settings_dir):
+    """The native menu enables only loopback advice, never a cloud provider."""
+    try:
+        config=json.loads((Path(settings_dir)/'settings.json').read_text())
+        return isinstance(config,dict) and config.get('provider')=='ollama' and config.get('enabled') is True
+    except (OSError,ValueError):return False
 
 
 def context(state):
@@ -40,6 +49,8 @@ def safe_to_consult(state):
             not state.get('screen') and state.get('health',0)>=14 and
             state.get('guard_armed') and not state.get('guard_busy') and
             not state.get('under_water') and not state.get('air_return_active') and
+            not state.get('navigating') and not state.get('printing') and not state.get('chopping') and
+            not state.get('unknown_action') and not state.get('quantity_mismatch') and
             not state.get('safety_hold',{}).get('active'))
 
 
@@ -68,7 +79,7 @@ def bounded_scene(scene,limit=12000):
 
 
 class Advisor:
-    def __init__(self,out,settings_dir=None,model_factory=Jev):
+    def __init__(self,out,settings_dir=None,model_factory=None):
         self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True)
         self.settings_dir=Path(settings_dir or PRIVATE/'decision-advisor')
         self.settings_dir.mkdir(parents=True,exist_ok=True)
@@ -80,10 +91,14 @@ class Advisor:
             self.config={**DEFAULTS,**json.loads(path.read_text())}
         c=self.config
         if (not isinstance(c['enabled'],bool) or not 1<=c['calls_per_hour']<=600
-                or not .1<=c['timeout_seconds']<=6 or not 0<=c['cache_seconds']<=300
+                or not .1<=c['timeout_seconds']<=30 or not 0<=c['cache_seconds']<=300
                 or not 0<=c['min_confidence']<=1 or not 0<=c['min_probability']<=1
-                or not 1<=c['provider_retry_seconds']<=300):
-            raise ValueError('Invalid Jev advisor settings')
+                or not 1<=c['provider_retry_seconds']<=300
+                or c['provider'] not in ('jev','ollama','native')
+                or c['local_model'] not in ('nimble','clef-flash')
+                or c['context_length'] not in (2048,4096,8192)
+                or type(c['keep_loaded']) is not bool or c['vision_mode'] not in ('off','auto','always')):
+            raise ValueError('Invalid decision advisor settings')
         self.model_factory=model_factory;self.cache={};self.failures=0;self.retry_after=0
         self.events=EventLog(self.out/'jev-decisions.jsonl');self.logging_error=None
     def log(self,kind,**data):
@@ -95,7 +110,7 @@ class Advisor:
     def provider_failed(self):
         self.failures+=1
         self.retry_after=time.monotonic()+min(300,self.config['provider_retry_seconds']*2**min(self.failures-1,4))
-    def select(self,goal,candidates,read_state,scene=None,fallback='wait'):
+    def select(self,goal,candidates,read_state,scene=None,fallback='wait',*,image_supplier=None,on_wait=None):
         if not 2<=len(candidates)<=12 or 'wait' not in candidates or fallback not in candidates:
             raise ValueError('Provide 2..12 locally verified choices including wait and fallback')
         if any(not isinstance(k,str) or not 1<=len(k)<=64 or not isinstance(v,str) or not 1<=len(v)<=1000 for k,v in candidates.items()):
@@ -111,11 +126,29 @@ class Advisor:
             if source=='cache':result.update(elapsed_ms=0,usage={'input_tokens':0,'output_tokens':0})
             result['log_written']=self.log('decision',goal=goal,candidates=candidates,scene=scene or {},health=before.get('health'),**result)
             return result
-        if not self.config['enabled']:return finish(fallback,'local','advisor_disabled')
+        if not self.config['enabled'] or self.config['provider']=='native':return finish(fallback,'local','advisor_disabled')
         # Emergencies and manual control are never offered to the model.
         if not safe_to_consult(before):return finish('wait','local','urgent_or_unowned_state')
         if not bounded_scene(scene):return finish('wait','local','context_too_large_or_invalid')
-        signature=hashlib.sha256(json.dumps([goal,candidates,scene,context(before),[math.floor(v) for v in before.get('pos',[])]],sort_keys=True).encode()).hexdigest()
+        image=None;image_proof=None
+        wants_image=(self.config['vision_mode']=='always' or self.config['vision_mode']=='auto' and
+                     isinstance(scene,dict) and any(scene.get(k) is True for k in ('needs_image','visual_check','route_blocked')))
+        if wants_image:
+            if self.config['provider']!='ollama' or self.config['local_model']!='clef-flash' or image_supplier is None:
+                return finish('wait','local','vision_unavailable')
+            try:
+                if on_wait:on_wait()
+                image_proof=image_supplier()
+                fresh=deepcopy(read_state())
+                if not stable(before,fresh) or not safe_to_consult(fresh):return finish('wait','local','state_changed')
+                from ollama_decision import checked_image
+                automation=self.settings_dir.parent/'automation'
+                image=checked_image(image_proof,automation,fresh)
+                before=fresh
+            except Exception as error:
+                self.log('image_unavailable',error_type=type(error).__name__)
+                return finish('wait','local','vision_unavailable')
+        signature=hashlib.sha256(json.dumps([goal,candidates,scene,context(before),image_proof.get('sha256') if image_proof else None,[math.floor(v) for v in before.get('pos',[])]],sort_keys=True).encode()).hexdigest()
         cached=self.cache.get(signature)
         if cached and time.monotonic()-cached[0]<self.config['cache_seconds']:
             fresh=read_state()
@@ -129,7 +162,11 @@ class Advisor:
         except (OSError,ValueError):return finish(fallback,'local','budget_unavailable')
         mailbox=DecisionMailbox()
         def work():
-            model=self.model_factory()
+            if self.model_factory:model=self.model_factory()
+            elif self.config['provider']=='ollama':
+                from ollama_decision import OllamaDecision
+                model=OllamaDecision(self.settings_dir,self.config,image=image)
+            else:model=Jev()
             try:
                 observation={'health':before.get('health'),'food':before.get('food'),
                              'air':before.get('air_supply'),'guarded':True,'under_water':False,
@@ -143,7 +180,9 @@ class Advisor:
             while time.monotonic()-start<self.config['timeout_seconds']:
                 # Also refreshes the owning controller heartbeat. No gameplay
                 # actions run in the network worker; stale answers are discarded.
-                fresh=read_state()
+                if on_wait:on_wait()
+                try:fresh=read_state()
+                except Exception:return finish(fallback,'local','state_unavailable')
                 if not stable(before,fresh) or not safe_to_consult(fresh):
                     return finish('wait','local','state_changed')
                 delivery=mailbox.take()
@@ -158,7 +197,7 @@ class Advisor:
                             answer['probabilities'][key]<self.config['min_probability']):
                         return finish(fallback,'local','uncertain',answer)
                     self.cache[signature]=(time.monotonic(),answer)
-                    return finish(key,'jev',answer=answer)
+                    return finish(key,'ollama' if self.config['provider']=='ollama' else 'jev',answer=answer)
                 time.sleep(.05)
             self.provider_failed()
             return finish(fallback,'local','timeout')

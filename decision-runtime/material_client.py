@@ -670,8 +670,14 @@ class MaterialClient(Client):
   if getattr(self,'job_progress',None):self.set_progress(done=self.job_progress.done+amount)
  def advise(self,goal,candidates,scene=None,fallback='wait'):
   from decision_advisor import Advisor
-  if not hasattr(self,'advisor'):self.advisor=Advisor(self.out)
-  return self.advisor.select(goal,candidates,self.status,scene,fallback)
+  if not hasattr(self,'advisor'):self.advisor=Advisor(self.out,self.root.parent/'decision-advisor')
+  return self.advisor.select(goal,candidates,self.status,scene,fallback,image_supplier=self.decision_image,
+                             on_wait=self.heartbeat.touch if self.heartbeat else None)
+ def decision_image(self):
+  state=self.status()
+  if state.get('decision_image_protocol')!=1:raise RuntimeError('Native game image capture is unavailable')
+  reply=self.checked('decision_screenshot')
+  return reply['decision_image']
  def record_advice_outcome(self,decision,result,**evidence):
   if hasattr(self,'advisor'):self.advisor.outcome(decision,result,**evidence)
  def recover_park_health(self,seconds=60):

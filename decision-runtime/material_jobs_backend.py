@@ -315,7 +315,7 @@ class Backend:
                 self.baseline[item]=max(self.baseline.get(item,0),count)
             write_json(baseline,{'world_session':self.latest['world_session'],'counts':self.baseline})
         self.profile = load_profile(self.root, request['context'])
-        self.projection_jev_enabled = self.profile['projection_jev_advice']
+        self.projection_jev_enabled = self.projection_advice_enabled()
         self.catalog = ProcessingCatalog(self.profile['recipe_jar'])
         self.crafting_catalog = RecipeCatalog(self.profile['recipe_jar'])
         self.sequence = next_sequence(self.out)
@@ -444,6 +444,12 @@ class Backend:
             self.busy = previous
         return self.audit
 
+    def projection_advice_enabled(self):
+        from decision_advisor import local_opt_in
+        root=getattr(self,'root',None)
+        return (self.profile.get('projection_jev_advice') is True or
+                root is not None and local_opt_in(root.parent/'decision-advisor'))
+
     def advise_projection_supply(self, offer, expected_stock):
         """Rank prechecked material batches without giving Jev a game action.
 
@@ -451,9 +457,9 @@ class Backend:
         bounded model call. If either changes, the worker pauses and replans
         only after an explicit resume. No position or placement key is sent.
         """
-        # This is an explicit per-world opt-in. A direct caller cannot bypass
-        # the engine gate or spend a model call using a default profile.
-        if self.profile.get('projection_jev_advice') is not True:
+        # Cloud advice still needs the per-world opt-in. The Kit menu can
+        # instead explicitly enable local loopback decisions for this game.
+        if not self.projection_advice_enabled():
             return {'choice': offer['fallback'], 'source': 'local',
                     'reason': 'projection_jev_disabled', 'model_call_scheduled': False}
         from decision_advisor import Advisor, safe_to_consult
@@ -488,10 +494,12 @@ class Backend:
         if dict(inventory_counts(current_state())) != expected_stock:
             raise JobPaused('背包在建议前已改变，请重新规划')
         if not hasattr(self, 'projection_advisor'):
-            self.projection_advisor = Advisor(self.out)
+            self.projection_advisor = Advisor(self.out,self.root.parent/'decision-advisor')
         decision = self.projection_advisor.select(
             'Choose one useful next material batch for the selected projection; native planning and safety gates decide all execution.',
-            offer['choices'], current_state, offer['scene'], offer['fallback'])
+            offer['choices'], current_state, offer['scene'], offer['fallback'],
+            image_supplier=getattr(c,'decision_image',None),
+            on_wait=getattr(getattr(c,'heartbeat',None),'touch',None))
         fresh_fingerprint = current_fingerprint()
         fresh_state = current_state()
         if (fresh_fingerprint != fingerprint_before

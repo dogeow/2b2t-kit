@@ -4,7 +4,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from decision_advisor import Advisor,reserve_call
+from decision_advisor import Advisor,reserve_call,local_opt_in
 
 
 def state():
@@ -21,6 +21,12 @@ class Model:
     def close(self):pass
 
 class AdvisorTest(unittest.TestCase):
+    def test_native_menu_opt_in_never_enables_cloud_advice(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            p=Path(tmp)/'settings.json'
+            self.assertFalse(local_opt_in(tmp))
+            for config,expected in [({'provider':'ollama','enabled':True},True),({'provider':'jev','enabled':True},False),({'provider':'ollama','enabled':'true'},False),([],False)]:
+                p.write_text(json.dumps(config));self.assertEqual(expected,local_opt_in(tmp))
     def make(self,path,model,**settings):
         path=Path(path);(path/'settings.json').write_text(json.dumps(settings))
         return Advisor(path,path,lambda:model)
@@ -148,3 +154,32 @@ class AdvisorInputBudgetTest(unittest.TestCase):
    m=Model();a=Advisor(tmp,Path(tmp)/'settings',lambda:m)
    r=a.select('Recover',{'eat':'Eat','wait':'Wait'},state,{'risk':float('nan')})
    self.assertEqual('context_too_large_or_invalid',r['reason']);self.assertEqual(0,m.calls)
+
+class LocalAdvisorIntegrationTest(unittest.TestCase):
+ def test_native_mode_uses_verified_fallback_without_loading_a_model(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   path=Path(tmp);(path/'settings.json').write_text(json.dumps({'provider':'native'}));model=Model()
+   a=Advisor(path,path,lambda:model)
+   result=a.select('Recover',{'eat':'Eat','wait':'Wait'},state,fallback='eat')
+   self.assertEqual('eat',result['choice']);self.assertFalse(result['model_call_scheduled']);self.assertEqual(0,model.calls)
+ def test_active_or_unresolved_state_never_consults_model(self):
+  for change in ({'navigating':True},{'printing':True},{'chopping':True},{'unknown_action':True},{'quantity_mismatch':True}):
+   with self.subTest(change=change),tempfile.TemporaryDirectory() as tmp:
+    model=Model();a=Advisor(tmp,Path(tmp)/'settings',lambda:model)
+    result=a.select('Work',{'eat':'Eat','wait':'Wait'},lambda:{**state(),**change})
+    self.assertEqual('wait',result['choice']);self.assertEqual(0,model.calls)
+ def test_vision_request_cannot_leak_to_cloud_or_capture_during_manual_input(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   model=Model();a=Advisor(tmp,Path(tmp)/'settings',lambda:model);captured=[]
+   result=a.select('Inspect',{'eat':'Eat','wait':'Wait'},state,{'needs_image':True},image_supplier=lambda:captured.append(True))
+   self.assertEqual('vision_unavailable',result['reason']);self.assertEqual([],captured);self.assertEqual(0,model.calls)
+ def test_wait_hook_refreshes_controller_while_model_is_slow(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   event=threading.Event();touches=[]
+   class Slow(Model):
+    def predict(self,s,q):event.wait(.5);return super().predict(s,q)
+   path=Path(tmp);(path/'settings.json').write_text(json.dumps({'timeout_seconds':.15}));a=Advisor(path,path,lambda:Slow())
+   try:
+    result=a.select('Work',{'eat':'Eat','wait':'Wait'},state,on_wait=lambda:touches.append(time.monotonic()))
+    self.assertEqual('timeout',result['reason']);self.assertGreaterEqual(len(touches),2)
+   finally:event.set()

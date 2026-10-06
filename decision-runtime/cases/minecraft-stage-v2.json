@@ -1,0 +1,534 @@
+{
+  "prompt_version": "minecraft-stage-v2",
+  "scope": "32 offline stage-selection cases across eight families; no execution proof",
+  "cases": [
+    {
+      "id": "carried_first_16",
+      "family": "carried_first",
+      "goal": "Produce 16 planks. Prefer using carried resources.",
+      "facts": {
+        "planks": 0,
+        "logs": 4,
+        "craft_verified": true,
+        "depot_verified": true
+      },
+      "choices": {
+        "craft": "Craft the needed planks from carried logs.",
+        "depot": "Travel to a verified depot and take planks.",
+        "wait": "Make no progress."
+      },
+      "expected": "craft"
+    },
+    {
+      "id": "stock_ready_16",
+      "family": "stock_ready",
+      "goal": "Place the next 16 verified map pixels.",
+      "facts": {
+        "planks": 16,
+        "supported_mask_verified": true,
+        "no_pending_request": true
+      },
+      "choices": {
+        "print": "Use carried planks on the verified current mask.",
+        "extra_stock": "Collect additional material from a verified depot.",
+        "wait": "Make no progress."
+      },
+      "expected": "print"
+    },
+    {
+      "id": "depot_ready_16",
+      "family": "depot_ready",
+      "goal": "Obtain 16 planks for the map.",
+      "facts": {
+        "planks": 0,
+        "logs": 0,
+        "depot_planks": 16,
+        "depot_route_verified": true
+      },
+      "choices": {
+        "depot": "Take the required planks from the registered verified depot.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "depot"
+    },
+    {
+      "id": "grow_fixed_16",
+      "family": "grow_fixed",
+      "goal": "Obtain 16 cherry logs from the owned fixed tree.",
+      "facts": {
+        "root": "sapling",
+        "bone_meal_available": true,
+        "safe_side_stance_verified": true
+      },
+      "choices": {
+        "grow": "Grow the fixed sapling using native bone-meal workflow.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "grow"
+    },
+    {
+      "id": "chop_fixed_16",
+      "family": "chop_fixed",
+      "goal": "Obtain 16 cherry logs from the owned fixed tree.",
+      "facts": {
+        "root": "grown",
+        "tool_ready": true,
+        "inventory_space_verified": true
+      },
+      "choices": {
+        "chop": "Harvest the exact owned grown tree and its drops.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "chop"
+    },
+    {
+      "id": "goal_color_16",
+      "family": "goal_color",
+      "goal": "Prioritize the black outline: produce 16 black concrete.",
+      "facts": {
+        "black_recipe_ready": true,
+        "white_recipe_ready": true
+      },
+      "choices": {
+        "black": "Produce black concrete from verified materials.",
+        "white": "Produce white concrete from verified materials.",
+        "wait": "Make no progress."
+      },
+      "expected": "black"
+    },
+    {
+      "id": "avoid_house_16",
+      "family": "avoid_house",
+      "goal": "Reach the depot with 16 blocks of free inventory space. Avoid passing through the house.",
+      "facts": {
+        "route_a_verified": true,
+        "route_a_through_house": true,
+        "route_a_seconds": 10,
+        "route_b_verified": true,
+        "route_b_through_house": false,
+        "route_b_seconds": 20
+      },
+      "choices": {
+        "a": "Use route A through the house.",
+        "b": "Use route B around the house.",
+        "wait": "Make no progress."
+      },
+      "expected": "b"
+    },
+    {
+      "id": "no_relevant_action_16",
+      "family": "no_relevant_action",
+      "goal": "Obtain 16 white concrete; do not switch objectives.",
+      "facts": {
+        "white_concrete": 0,
+        "ingredients_available": false,
+        "verified_source_available": false
+      },
+      "choices": {
+        "fish": "Fish at the registered pond.",
+        "dirt": "Collect unrelated dirt.",
+        "wait": "Wait because no offered productive action advances the requested concrete goal."
+      },
+      "expected": "wait"
+    },
+    {
+      "id": "carried_first_32",
+      "family": "carried_first",
+      "goal": "Produce 32 planks. Prefer using carried resources.",
+      "facts": {
+        "planks": 0,
+        "logs": 8,
+        "craft_verified": true,
+        "depot_verified": true
+      },
+      "choices": {
+        "craft": "Craft the needed planks from carried logs.",
+        "depot": "Travel to a verified depot and take planks.",
+        "wait": "Make no progress."
+      },
+      "expected": "craft"
+    },
+    {
+      "id": "stock_ready_32",
+      "family": "stock_ready",
+      "goal": "Place the next 32 verified map pixels.",
+      "facts": {
+        "planks": 32,
+        "supported_mask_verified": true,
+        "no_pending_request": true
+      },
+      "choices": {
+        "print": "Use carried planks on the verified current mask.",
+        "extra_stock": "Collect additional material from a verified depot.",
+        "wait": "Make no progress."
+      },
+      "expected": "print"
+    },
+    {
+      "id": "depot_ready_32",
+      "family": "depot_ready",
+      "goal": "Obtain 32 planks for the map.",
+      "facts": {
+        "planks": 0,
+        "logs": 0,
+        "depot_planks": 32,
+        "depot_route_verified": true
+      },
+      "choices": {
+        "depot": "Take the required planks from the registered verified depot.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "depot"
+    },
+    {
+      "id": "grow_fixed_32",
+      "family": "grow_fixed",
+      "goal": "Obtain 32 cherry logs from the owned fixed tree.",
+      "facts": {
+        "root": "sapling",
+        "bone_meal_available": true,
+        "safe_side_stance_verified": true
+      },
+      "choices": {
+        "grow": "Grow the fixed sapling using native bone-meal workflow.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "grow"
+    },
+    {
+      "id": "chop_fixed_32",
+      "family": "chop_fixed",
+      "goal": "Obtain 32 cherry logs from the owned fixed tree.",
+      "facts": {
+        "root": "grown",
+        "tool_ready": true,
+        "inventory_space_verified": true
+      },
+      "choices": {
+        "chop": "Harvest the exact owned grown tree and its drops.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "chop"
+    },
+    {
+      "id": "goal_color_32",
+      "family": "goal_color",
+      "goal": "Prioritize the black outline: produce 32 black concrete.",
+      "facts": {
+        "black_recipe_ready": true,
+        "white_recipe_ready": true
+      },
+      "choices": {
+        "black": "Produce black concrete from verified materials.",
+        "white": "Produce white concrete from verified materials.",
+        "wait": "Make no progress."
+      },
+      "expected": "black"
+    },
+    {
+      "id": "avoid_house_32",
+      "family": "avoid_house",
+      "goal": "Reach the depot with 32 blocks of free inventory space. Avoid passing through the house.",
+      "facts": {
+        "route_a_verified": true,
+        "route_a_through_house": true,
+        "route_a_seconds": 10,
+        "route_b_verified": true,
+        "route_b_through_house": false,
+        "route_b_seconds": 20
+      },
+      "choices": {
+        "a": "Use route A through the house.",
+        "b": "Use route B around the house.",
+        "wait": "Make no progress."
+      },
+      "expected": "b"
+    },
+    {
+      "id": "no_relevant_action_32",
+      "family": "no_relevant_action",
+      "goal": "Obtain 32 white concrete; do not switch objectives.",
+      "facts": {
+        "white_concrete": 0,
+        "ingredients_available": false,
+        "verified_source_available": false
+      },
+      "choices": {
+        "fish": "Fish at the registered pond.",
+        "dirt": "Collect unrelated dirt.",
+        "wait": "Wait because no offered productive action advances the requested concrete goal."
+      },
+      "expected": "wait"
+    },
+    {
+      "id": "carried_first_64",
+      "family": "carried_first",
+      "goal": "Produce 64 planks. Prefer using carried resources.",
+      "facts": {
+        "planks": 0,
+        "logs": 16,
+        "craft_verified": true,
+        "depot_verified": true
+      },
+      "choices": {
+        "craft": "Craft the needed planks from carried logs.",
+        "depot": "Travel to a verified depot and take planks.",
+        "wait": "Make no progress."
+      },
+      "expected": "craft"
+    },
+    {
+      "id": "stock_ready_64",
+      "family": "stock_ready",
+      "goal": "Place the next 64 verified map pixels.",
+      "facts": {
+        "planks": 64,
+        "supported_mask_verified": true,
+        "no_pending_request": true
+      },
+      "choices": {
+        "print": "Use carried planks on the verified current mask.",
+        "extra_stock": "Collect additional material from a verified depot.",
+        "wait": "Make no progress."
+      },
+      "expected": "print"
+    },
+    {
+      "id": "depot_ready_64",
+      "family": "depot_ready",
+      "goal": "Obtain 64 planks for the map.",
+      "facts": {
+        "planks": 0,
+        "logs": 0,
+        "depot_planks": 64,
+        "depot_route_verified": true
+      },
+      "choices": {
+        "depot": "Take the required planks from the registered verified depot.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "depot"
+    },
+    {
+      "id": "grow_fixed_64",
+      "family": "grow_fixed",
+      "goal": "Obtain 64 cherry logs from the owned fixed tree.",
+      "facts": {
+        "root": "sapling",
+        "bone_meal_available": true,
+        "safe_side_stance_verified": true
+      },
+      "choices": {
+        "grow": "Grow the fixed sapling using native bone-meal workflow.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "grow"
+    },
+    {
+      "id": "chop_fixed_64",
+      "family": "chop_fixed",
+      "goal": "Obtain 64 cherry logs from the owned fixed tree.",
+      "facts": {
+        "root": "grown",
+        "tool_ready": true,
+        "inventory_space_verified": true
+      },
+      "choices": {
+        "chop": "Harvest the exact owned grown tree and its drops.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "chop"
+    },
+    {
+      "id": "goal_color_64",
+      "family": "goal_color",
+      "goal": "Prioritize the black outline: produce 64 black concrete.",
+      "facts": {
+        "black_recipe_ready": true,
+        "white_recipe_ready": true
+      },
+      "choices": {
+        "black": "Produce black concrete from verified materials.",
+        "white": "Produce white concrete from verified materials.",
+        "wait": "Make no progress."
+      },
+      "expected": "black"
+    },
+    {
+      "id": "avoid_house_64",
+      "family": "avoid_house",
+      "goal": "Reach the depot with 64 blocks of free inventory space. Avoid passing through the house.",
+      "facts": {
+        "route_a_verified": true,
+        "route_a_through_house": true,
+        "route_a_seconds": 10,
+        "route_b_verified": true,
+        "route_b_through_house": false,
+        "route_b_seconds": 20
+      },
+      "choices": {
+        "a": "Use route A through the house.",
+        "b": "Use route B around the house.",
+        "wait": "Make no progress."
+      },
+      "expected": "b"
+    },
+    {
+      "id": "no_relevant_action_64",
+      "family": "no_relevant_action",
+      "goal": "Obtain 64 white concrete; do not switch objectives.",
+      "facts": {
+        "white_concrete": 0,
+        "ingredients_available": false,
+        "verified_source_available": false
+      },
+      "choices": {
+        "fish": "Fish at the registered pond.",
+        "dirt": "Collect unrelated dirt.",
+        "wait": "Wait because no offered productive action advances the requested concrete goal."
+      },
+      "expected": "wait"
+    },
+    {
+      "id": "carried_first_128",
+      "family": "carried_first",
+      "goal": "Produce 128 planks. Prefer using carried resources.",
+      "facts": {
+        "planks": 0,
+        "logs": 32,
+        "craft_verified": true,
+        "depot_verified": true
+      },
+      "choices": {
+        "craft": "Craft the needed planks from carried logs.",
+        "depot": "Travel to a verified depot and take planks.",
+        "wait": "Make no progress."
+      },
+      "expected": "craft"
+    },
+    {
+      "id": "stock_ready_128",
+      "family": "stock_ready",
+      "goal": "Place the next 128 verified map pixels.",
+      "facts": {
+        "planks": 128,
+        "supported_mask_verified": true,
+        "no_pending_request": true
+      },
+      "choices": {
+        "print": "Use carried planks on the verified current mask.",
+        "extra_stock": "Collect additional material from a verified depot.",
+        "wait": "Make no progress."
+      },
+      "expected": "print"
+    },
+    {
+      "id": "depot_ready_128",
+      "family": "depot_ready",
+      "goal": "Obtain 128 planks for the map.",
+      "facts": {
+        "planks": 0,
+        "logs": 0,
+        "depot_planks": 128,
+        "depot_route_verified": true
+      },
+      "choices": {
+        "depot": "Take the required planks from the registered verified depot.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "depot"
+    },
+    {
+      "id": "grow_fixed_128",
+      "family": "grow_fixed",
+      "goal": "Obtain 128 cherry logs from the owned fixed tree.",
+      "facts": {
+        "root": "sapling",
+        "bone_meal_available": true,
+        "safe_side_stance_verified": true
+      },
+      "choices": {
+        "grow": "Grow the fixed sapling using native bone-meal workflow.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "grow"
+    },
+    {
+      "id": "chop_fixed_128",
+      "family": "chop_fixed",
+      "goal": "Obtain 128 cherry logs from the owned fixed tree.",
+      "facts": {
+        "root": "grown",
+        "tool_ready": true,
+        "inventory_space_verified": true
+      },
+      "choices": {
+        "chop": "Harvest the exact owned grown tree and its drops.",
+        "dirt": "Collect dirt from the registered field.",
+        "wait": "Make no progress."
+      },
+      "expected": "chop"
+    },
+    {
+      "id": "goal_color_128",
+      "family": "goal_color",
+      "goal": "Prioritize the black outline: produce 128 black concrete.",
+      "facts": {
+        "black_recipe_ready": true,
+        "white_recipe_ready": true
+      },
+      "choices": {
+        "black": "Produce black concrete from verified materials.",
+        "white": "Produce white concrete from verified materials.",
+        "wait": "Make no progress."
+      },
+      "expected": "black"
+    },
+    {
+      "id": "avoid_house_128",
+      "family": "avoid_house",
+      "goal": "Reach the depot with 128 blocks of free inventory space. Avoid passing through the house.",
+      "facts": {
+        "route_a_verified": true,
+        "route_a_through_house": true,
+        "route_a_seconds": 10,
+        "route_b_verified": true,
+        "route_b_through_house": false,
+        "route_b_seconds": 20
+      },
+      "choices": {
+        "a": "Use route A through the house.",
+        "b": "Use route B around the house.",
+        "wait": "Make no progress."
+      },
+      "expected": "b"
+    },
+    {
+      "id": "no_relevant_action_128",
+      "family": "no_relevant_action",
+      "goal": "Obtain 128 white concrete; do not switch objectives.",
+      "facts": {
+        "white_concrete": 0,
+        "ingredients_available": false,
+        "verified_source_available": false
+      },
+      "choices": {
+        "fish": "Fish at the registered pond.",
+        "dirt": "Collect unrelated dirt.",
+        "wait": "Wait because no offered productive action advances the requested concrete goal."
+      },
+      "expected": "wait"
+    }
+  ]
+}

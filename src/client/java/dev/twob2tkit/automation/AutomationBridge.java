@@ -1902,11 +1902,11 @@ public final class AutomationBridge {
         var previousIdleRequest=idleDispatchRequest;idleDispatchRequest=r;
         try{
             if(r.has("idle_service_id")&&!Set.of("material_session","snapshot","scan","scan_snow_biomes","snow_seed_candidates",
-                "scan_trees","projection_audit","projection_model","map_audit").contains(str(r,"op"))
+                "scan_trees","projection_audit","projection_model","map_audit","decision_screenshot").contains(str(r,"op"))
                 &&!IdleActivityPolicy.requestOwned(idleOwnerForAction(c),r))
                 throw new IllegalStateException("Idle action lacks a fresh exact owner; no foreign inputs stopped");
             if(!Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit",
-                "projection_model","map_audit","stop","material_job_pause","safe_logout").contains(str(r,"op")))
+                "projection_model","map_audit","decision_screenshot","stop","material_job_pause","safe_logout").contains(str(r,"op")))
                 preemptIdleForPlayer(c,"FORMAL_NATIVE_INPUT");
         String command=str(r,"op");
         if(command.equals("stop")){if(r.has("expected_revision") && (r.get("expected_revision").getAsLong()!=controlRevision || !str(r,"world_session").equals(session(c))))throw new IllegalStateException("Stop belongs to an old controller");statusId=lastId;ProfessionalPrinter.stop(c,true);KitClient.emergencyStop("本地脚本停止");active=null;phase="stopped";detail="stopped";writeStatus(c);return;}
@@ -1949,6 +1949,20 @@ public final class AutomationBridge {
             if(!r.has("expected_revision") || r.get("expected_revision").getAsLong()!=controlRevision)throw new IllegalStateException("Control was handed over; restart explicitly");
             long remaining=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
             if(remaining<0 || remaining>15000)throw new IllegalStateException("Expired survival action");
+        }
+        if(command.equals("decision_screenshot")){
+            String imageId=lastId;String imageWorld=session(c);long imageRevision=controlRevision;
+            phase="running";detail="capturing bounded native game frame";
+            DecisionImageCapture.request(c,imageId,imageWorld,imageRevision,()->controlRevision,image->{
+                JsonObject out=snapshot(c);out.addProperty("id",imageId);out.addProperty("op","decision_screenshot");
+                boolean valid=!image.has("error")&&imageWorld.equals(session(c))&&imageRevision==controlRevision;
+                out.addProperty("phase",valid?"done":"waiting");out.addProperty("detail",valid?"native game image captured":image.has("error")?image.get("error").getAsString():"game image context changed");
+                if(valid)out.add("decision_image",image);
+                if(lastId.equals(imageId)){phase=valid?"done":"waiting";detail=out.get("detail").getAsString();}
+                try{save(root(c).resolve("reply-"+safeId(imageId)+".json"),out);}catch(Exception failure){KitClient.LOGGER.warn("Could not save native decision image receipt",failure);}
+                writeStatus(c);
+            });
+            writeStatus(c);return;
         }
         if(Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","map_audit").contains(command)){
             if(survival(r)){survivalArmed=true;survivalBackground=background(r);}
@@ -3844,7 +3858,7 @@ public final class AutomationBridge {
         j.addProperty("borer_status",KitClient.borer().status());
         j.addProperty("planter_status",KitClient.planter().status());j.addProperty("planter_count",KitClient.planter().plantedCount());j.addProperty("harvest_count",KitClient.planter().harvestedCount());
         j.addProperty("feeder_status",KitClient.feeder().status());j.addProperty("feeder_count",KitClient.feeder().fedCount());
-        j.addProperty("borer_control_session",ownedBorerSession);j.addProperty("guard_reconnect_pending",pendingGuardReconnect!=null);j.addProperty("borer_active",KitClient.borer().isActive());j.addProperty("planter_active",KitClient.planter().isActive());j.addProperty("feeder_active",KitClient.feeder().isActive());j.addProperty("fisher_active",KitClient.fisher()!=null&&KitClient.fisher().isActive());j.addProperty("fisher_status",KitClient.fisher()==null?"":KitClient.fisher().status());j.add("build_job",KitClient.buildJob().snapshot());j.add("concrete",KitClient.concrete().snapshot());j.addProperty("guard_busy",guardBusy);j.addProperty("guard_armed",guardScope!=null);j.addProperty("guard_pve_only",guardScope!=null && guardScope.has("pve_only") && guardScope.get("pve_only").getAsBoolean());j.addProperty("health_recovery_hold",healthRecoveryHold);j.add("guard_food",dev.twob2tkit.combat.GuardFoodLease.snapshot());j.addProperty("guard_status",healthRecoveryHold?"等待生命恢复到 19 后继续工作":KitClient.borer().status());j.add("professional_printer",ProfessionalPrinter.status());j.addProperty("chopping",KitClient.chopper().isActive());j.addProperty("chopper_status",KitClient.chopper().status());j.addProperty("chopper_remaining",KitClient.chopper().remainingLogs());j.addProperty("chopper_verified_trees",KitClient.chopper().treesDone());j.addProperty("chopper_platforms",KitClient.chopper().platforms());j.addProperty("guide_active",KitClient.structureGuide().isActive());j.addProperty("guide_status",KitClient.structureGuide().status());j.addProperty("navigating",KitClient.controller().isActive());j.addProperty("printing",KitClient.machines().isPlacing());j.addProperty("printer_status",KitClient.machines().status());
+        j.addProperty("borer_control_session",ownedBorerSession);j.addProperty("guard_reconnect_pending",pendingGuardReconnect!=null);j.addProperty("borer_active",KitClient.borer().isActive());j.addProperty("planter_active",KitClient.planter().isActive());j.addProperty("feeder_active",KitClient.feeder().isActive());j.addProperty("fisher_active",KitClient.fisher()!=null&&KitClient.fisher().isActive());j.addProperty("fisher_status",KitClient.fisher()==null?"":KitClient.fisher().status());j.add("build_job",KitClient.buildJob().snapshot());j.add("concrete",KitClient.concrete().snapshot());j.addProperty("guard_busy",guardBusy);j.addProperty("guard_armed",guardScope!=null);j.addProperty("decision_image_protocol",1);j.addProperty("guard_pve_only",guardScope!=null && guardScope.has("pve_only") && guardScope.get("pve_only").getAsBoolean());j.addProperty("health_recovery_hold",healthRecoveryHold);j.add("guard_food",dev.twob2tkit.combat.GuardFoodLease.snapshot());j.addProperty("guard_status",healthRecoveryHold?"等待生命恢复到 19 后继续工作":KitClient.borer().status());j.add("professional_printer",ProfessionalPrinter.status());j.addProperty("chopping",KitClient.chopper().isActive());j.addProperty("chopper_status",KitClient.chopper().status());j.addProperty("chopper_remaining",KitClient.chopper().remainingLogs());j.addProperty("chopper_verified_trees",KitClient.chopper().treesDone());j.addProperty("chopper_platforms",KitClient.chopper().platforms());j.addProperty("guide_active",KitClient.structureGuide().isActive());j.addProperty("guide_status",KitClient.structureGuide().status());j.addProperty("navigating",KitClient.controller().isActive());j.addProperty("printing",KitClient.machines().isPlacing());j.addProperty("printer_status",KitClient.machines().status());
         JsonArray nearby=new JsonArray();for(var e:c.level.getEntities(c.player,c.player.getBoundingBox().inflate(16))){
             if(e.distanceToSqr(c.player)>256)continue;
             JsonObject v=new JsonObject();v.addProperty("id",e.getId());v.addProperty("uuid",e.getUUID().toString());v.addProperty("type",BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString());v.addProperty("name",e.getName().getString());v.addProperty("hostile",e instanceof net.minecraft.world.entity.monster.Enemy);v.addProperty("visible",c.player.hasLineOfSight(e));if(e instanceof net.minecraft.world.entity.LivingEntity living){v.addProperty("health",living.getHealth());v.addProperty("has_custom_name",living.hasCustomName());v.addProperty("is_baby",living.isBaby());}if(e instanceof net.minecraft.world.entity.item.ItemEntity drop)v.add("stack",stack(drop.getItem()));v.add("pos",JSON.toJsonTree(new double[]{e.getX(),e.getY(),e.getZ()}));nearby.add(v);

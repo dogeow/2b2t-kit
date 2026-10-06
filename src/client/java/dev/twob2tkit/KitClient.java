@@ -107,6 +107,7 @@ public final class KitClient implements ClientModInitializer {
 			dev.twob2tkit.automation.AutomationBridge.afterDisconnectCleanup();
 		});
 		net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+			dev.twob2tkit.material.LocalDecisionRuntime.stop(client);
 			emergencyStop("退出游戏");
 		});
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
@@ -118,6 +119,8 @@ public final class KitClient implements ClientModInitializer {
 	private void onEndTick(Minecraft client) {
 		dev.twob2tkit.automation.AutomationBridge.tick(client);
 		dev.twob2tkit.material.MaterialJobs.tick(client);
+        dev.twob2tkit.automation.DecisionImageCapture.tick(client);
+        dev.twob2tkit.material.LocalDecisionRuntime.tick(client,config);
         dev.twob2tkit.material.CaretakerJobs.tick(client);
 		boolean menuBeforeHeldKeys = client.screen instanceof KitHudScreen;
 		handleHeldKeys(client);

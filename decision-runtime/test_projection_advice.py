@@ -161,6 +161,18 @@ class ProjectionAdviceTests(unittest.TestCase):
             with self.assertRaises(JobBlocked):
                 load_profile(automation, context)
 
+    def test_local_menu_enables_projection_advice_without_cloud_profile_opt_in(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            root=Path(tmp)/'automation';root.mkdir()
+            settings=root.parent/'decision-advisor';settings.mkdir()
+            backend=material_jobs_backend.Backend.__new__(material_jobs_backend.Backend)
+            backend.root=root;backend.profile={'projection_jev_advice':False}
+            self.assertFalse(backend.projection_advice_enabled())
+            (settings/'settings.json').write_text(json.dumps({'provider':'ollama','enabled':True}))
+            self.assertTrue(backend.projection_advice_enabled())
+            (settings/'settings.json').write_text(json.dumps({'provider':'jev','enabled':True}))
+            self.assertFalse(backend.projection_advice_enabled())
+
     def test_world_profile_rejects_malformed_resource_and_search_shapes(self):
         with tempfile.TemporaryDirectory() as tmp:
             automation=Path(tmp)/'config'/'twob2tkit'/'automation';automation.mkdir(parents=True)

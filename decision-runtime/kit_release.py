@@ -27,7 +27,7 @@ def version_from_gradle(repo):
 
 
 def minecraft_running():
-    result=subprocess.run(['pgrep', '-f', 'net.fabricmc.loader.impl.launch.knot.KnotClient'],
+    result=subprocess.run(['pgrep', '-f', r'net\.fabricmc\.loader\.(impl\.)?launch\.knot\.KnotClient|net\.minecraft\.client\.main\.Main'],
                           capture_output=True, text=True)
     if result.returncode not in (0,1):
         raise RuntimeError('Cannot determine whether Minecraft is running; installation refused')
