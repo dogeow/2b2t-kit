@@ -674,6 +674,37 @@ class AcquisitionTest(unittest.TestCase):
             command=next(params for op,params in c.actions if op=='chop')
             self.assertEqual(1,command['tree_limit']);self.assertEqual(6,command['target_count'])
 
+    def test_stopped_chop_with_reset_counters_and_sufficient_stock_never_replants_or_replays(self):
+        for phase in ('stopped', 'waiting', 'error'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as out:
+                c=FakeClient(item='minecraft:spruce_log',before=2,gain=4,native_phase=phase)
+                c.state.update(pos=[-6.5,71,.5],chopper_remaining=0,chopper_platforms=0,chopping=False)
+                c.rows=[block((x,63,z),'grass_block') for x in range(-11,12) for z in range(-11,12)]
+                c.rows += [block((0,y,0),'spruce_log') for y in range(64,68)]
+                c.trees=[{'pos':[0,64,0],'top':68,'natural_leaves':8}]
+                profile=self.profile(c.item,[-12,60,-12],[12,105,12])
+                with patch('material_jobs.acquisition._replant_tree_with_bonemeal') as regrow:
+                    result=self.run_acquire(c,out,target=6,profile=profile)
+                    regrow.assert_not_called()
+                self.assertEqual(('blocked','tree_harvest_not_finished'),(result['phase'],result['code']))
+                self.assertEqual(6,result['after'])
+                entry=next(iter(json.loads(next(Path(out).glob('acquisition-*.json')).read_text())['visited'].values()))
+                self.assertEqual('inflight',entry['state']);self.assertEqual(phase,entry['native']['phase'])
+                count=len(c.actions)
+                self.assertEqual('blocked',self.run_acquire(c,out,target=6,profile=profile)['phase'])
+                self.assertEqual(count,len(c.actions))
+
+    def test_inventory_target_does_not_discharge_an_original_inflight_mining_record(self):
+        with tempfile.TemporaryDirectory() as out:
+            c=FakeClient(before=20)
+            path=Path(out)/'acquisition-cobbled_deepslate.json'
+            original={'schema':1,'world_session':c.world,'item':c.item,
+                      'visited':{'old':{'state':'inflight','native':{'id':'original-unconfirmed'}}}}
+            path.write_text(json.dumps(original));before=path.read_bytes()
+            result=self.run_acquire(c,out,target=12)
+            self.assertEqual('blocked',result['phase']);self.assertEqual([],c.actions)
+            self.assertEqual(before,path.read_bytes())
+
     def test_uncleared_overburden_is_not_tunneled_through(self):
         with tempfile.TemporaryDirectory() as out:
             c=FakeClient();c.rows.append(block((1,69,1),'stone'))

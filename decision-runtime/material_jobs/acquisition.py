@@ -1466,6 +1466,8 @@ def acquire(c, item, target_count, profile, out, checkpoint):
             and not hasattr(c,'bobby_snow_route_id')):
         return {'phase':'waiting','code':'bobby_route_recovery_required',
                 'detail':'Bobby 雪地分段路线在进程重启后失去临时控制权；停止等待核对'}
+    if early_ledger and any(v.get('state') == 'inflight' for v in early_ledger['visited'].values()):
+        return {'phase': 'blocked', 'detail': '前次采集回执不确定，需先核验原生任务与物品，不能凭库存完成或重放'}
     if before >= target_count and not (item in SNOW_PRODUCTS
                                        and (hasattr(c,'snow_expedition_token')
                                             or hasattr(c,'bobby_snow_route_id'))):
@@ -1481,8 +1483,6 @@ def acquire(c, item, target_count, profile, out, checkpoint):
     ledger = early_ledger or {'schema': 1, 'world_session': c.world, 'item': item, 'visited': {}}
     if ledger.get('world_session') != c.world or ledger.get('item') != item:
         return {'phase': 'blocked', 'detail': '采集记录属于另一世界或物品，不能沿用旧位置'}
-    if any(v.get('state') == 'inflight' for v in ledger['visited'].values()):
-        return {'phase': 'blocked', 'detail': '前次采集回执不确定，需先核验原生任务与物品，不能重放'}
     seed_region=next((region for region in profile.get('resource_regions',[])
                       if region.get('item')==item
                       and isinstance(region.get('seed_snow_route'),dict)),None)
@@ -1854,6 +1854,14 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
         ledger['visited'][key] = entry; write_json(path, ledger); checkpoint()
         reply = c.request('chop', item=item, target_count=target, tree_limit=1, seconds=240)
         after = c.status(); _safe(after)
+        entry['native'] = {name: reply[name] for name in ('id', 'world_session', 'phase', 'detail')
+                           if name in reply}
+        ledger['visited'][key] = entry; write_json(path, ledger)
+        # stop() clears chopper counters even when the crown is unfinished.
+        if reply.get('phase') != 'done' or after.get('chopping') or after.get('native_material_busy'):
+            return {'phase': 'blocked', 'code': 'tree_harvest_not_finished',
+                    'detail': '原生砍树未确认整棵收尾；保留原树记录，不补种或重放',
+                    'before': before, 'after': carried(after, item), 'native': entry['native']}
         if after.get('chopper_remaining') or after.get('chopper_platforms'):
             return {'phase': 'blocked', 'detail': '整棵树或临时垫脚方块尚未收尾，保留在途记录待核验'}
         try:
