@@ -240,9 +240,23 @@ class Runner:
         cells={(0,0):material,(0,1):material,(0,2):material,(1,1):'stick',(2,1):'stick'} if name.endswith('pickaxe') else {(0,0):material,(0,1):material,(1,0):material,(1,1):'stick',(2,1):'stick'}
         self.craft(name,cells)
     def food(self):
-        def amount(names):return sum(inventory(self.b.read()).get(n,0) for n in names)
-        while amount(FOOD)+amount(RAW)<4:
-            self.b.close();s=self.b.read();animals=[e for e in s.get('entities',[]) if e['type'] in ('minecraft:cow','minecraft:pig','minecraft:sheep','minecraft:chicken') and e.get('health',0)>0]
+        from smelting_fuel import recipe_jar_for_client
+        from survival_cooking import (ANIMALS,cooking_plan,cook_owned,require_no_pending_cooking)
+        jar=recipe_jar_for_client(self.b,getattr(self,'recipe_jar',None))
+        require_no_pending_cooking(self)
+        while True:
+            s=self.b.read();plan=cooking_plan(s,jar)
+            if not plan['fuel_ready']:
+                if plan['coal_requirement']:
+                    raise Paused('需要烹饪燃料：背包煤目标 '+str(plan['coal_requirement'])+'；现有生肉保留，不继续猎杀或采木。')
+                raise Paused('当前没有已观察的食物来源及可验证燃料计划。')
+            if not plan['raw_needed']:
+                if not plan['ready']:raise Paused('现有生肉和燃料不足以覆盖烹饪计划。')
+                cook_owned(self,plan)
+                if sum(inventory(self.b.read()).get(n,0) for n in FOOD)<4:raise Paused('还没有确认足够的可食用储备。')
+                return
+            self.b.close();s=self.b.read()
+            animals=[e for e in s.get('entities',[]) if ANIMALS.get(e.get('type'))==plan['hunting_source'] and e.get('health',0)>0]
             if not animals:raise Paused('附近没有可获取的食物，已保存开局进度。')
             animal=min(animals,key=lambda e:distance(s['pos'],e['pos']));identity=animal['uuid'];self.b.select('stone_axe')
             for _ in range(15):
@@ -253,27 +267,6 @@ class Runner:
                 if e:self.b.request('attack_passive',entity_id=e['id'],expected_uuid=identity)
             else:raise Paused('未确认食物目标已结束，停止追逐。')
             self.collect(set(RAW)|{'leather','feather','white_wool','black_wool','gray_wool'})
-        if amount(FOOD)>=4:return
-        for raw,cooked in RAW.items():
-            n=self.count(raw)
-            if not n:continue
-            fuel=self.planks(math.ceil(n/1.5))
-            self.station('furnace');s=self.b.read()
-            if any(s['menu']['slots'][i]['count'] for i in (0,1,2)):raise Paused('熔炉已有物品，保留原内容。')
-            for item,target in ((raw,0),(fuel,1)):
-                s=self.b.read();source=next(v['slot'] for v in s['menu']['slots'][3:39] if v['item']=='minecraft:'+item)
-                self.b.click(source);self.b.click(target)
-            before=self.count(cooked);limit=time.monotonic()+n*12+15
-            while time.monotonic()<limit:
-                self.check();s=self.b.read()
-                if s['menu']['slots'][2]['item']=='minecraft:'+cooked:self.b.click(2,'quick_move')
-                self.report_progress('烹饪食物',self.count(cooked)-before,n)
-                if self.count(cooked)>=before+n:break
-                self.b.wait(.8)
-            else:raise Paused('烹饪未按期完成，保留熔炉内容。')
-            if self.b.read()['menu']['slots'][1]['count']:self.b.click(1,'quick_move')
-            self.b.close()
-        if amount(FOOD)<4:raise Paused('还没有确认足够的可食用储备。')
     def eat_if_needed(self):
         s=self.b.read()
         if s['food']<16:

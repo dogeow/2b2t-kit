@@ -47,8 +47,21 @@ class FuelCatalog:
             # The exact checked FuelValues class adds BLAZE_ROD at12 base units.
             # This remains opt-in through a task fuel_allow_items declaration.
             self.durations['minecraft:blaze_rod']=2400
+            # Actual26.1.2 javap: Items.STICK at441 and Blocks.LEAF_LITTER
+            # at642 each use iload_2,iconst_2,idiv. The default overload passes
+            #200 ticks. These facts are gated by the same class hash above and
+            # do not change any profile/default fuel allowlist.
+            self.durations['minecraft:stick']=100
+            self.durations['minecraft:leaf_litter']=100
             self.evidence={'kind':'vanilla26.1.2_FuelValues','extra_fuels_verified':True,
-                           'fuel_class_sha256':digest,'base_unit_ticks':200,'tag_sha256':digests}
+                           'fuel_class_sha256':digest,'base_unit_ticks':200,'tag_sha256':digests,
+                           'explicit_fuel_constants':{
+                               'minecraft:stick':{'burn_ticks':100,'class_entry':FUEL_CLASS,
+                                   'method':'vanillaBurnTimes','field':'Items.STICK',
+                                   'bytecode_offset':441,'calculation':'base_unit_ticks / 2'},
+                               'minecraft:leaf_litter':{'burn_ticks':100,'class_entry':FUEL_CLASS,
+                                   'method':'vanillaBurnTimes','field':'Blocks.LEAF_LITTER',
+                                   'bytecode_offset':642,'calculation':'base_unit_ticks / 2'}}}
 
 
 def recipe_jar_for_client(client,explicit=None):

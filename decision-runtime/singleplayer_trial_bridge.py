@@ -17,13 +17,54 @@ MENUS = {'', 'InventoryScreen', 'CraftingScreen', 'FurnaceScreen',
 OPS = frozenset({'snapshot', 'scan', 'walk', 'walk_path', 'mine_block',
                  'select_item', 'slot_click', 'close_menu', 'craft_recipe',
                  'interact', 'attack_passive', 'use_item', 'decision_screenshot',
-                 'trial_respawn', 'trial_stop'})
+                 'trial_respawn', 'trial_stop', 'guard'})
 MUTATING_OPS = frozenset({'mine_block', 'craft_recipe', 'interact', 'slot_click',
-                        'select_item', 'use_item', 'attack_passive'})
+                        'select_item', 'use_item', 'attack_passive', 'guard'})
+GUARD_BLOCKED_OPS = frozenset({'walk', 'walk_path', 'mine_block', 'select_item',
+                             'slot_click', 'close_menu', 'craft_recipe', 'interact', 'attack_passive'})
+GUARD_BUSY_DETAIL = 'Construction guard is defending or eating; wait before changing items or starting work'
 
 
 class TrialDeath(Paused):
     pass
+
+
+class TrialGuardBusy(Paused):
+    """The native guard retained control before any requested action was sent."""
+    def __init__(self, op, arguments, receipt=None):
+        super().__init__(GUARD_BUSY_DETAIL)
+        self.op, self.arguments, self.receipt = op, arguments, receipt
+
+
+def guard_pre_dispatch_refusal(op, result, expected_revision):
+    # AutomationBridge's exact message precedes all action-specific dispatch.
+    # Its generic error snapshot intentionally lacks an operation/sequence.
+    no_sequence = lambda value: value is None or type(value) is int and value == -1
+    not_sent_flag = lambda key: key not in result or result[key] is False
+    return (op in GUARD_BLOCKED_OPS and result.get('phase') == 'error'
+            and result.get('detail') == GUARD_BUSY_DETAIL
+            and result.get('op') in (None, op)
+            and result.get('server') == 'singleplayer'
+            and result.get('guard_armed') is True and result.get('guard_busy') is True
+            and result.get('manual_movement') is False
+            and type(result.get('control_revision')) is int
+            and result['control_revision'] == expected_revision
+            and all(no_sequence(result.get(key)) for key in ('native_sequence', 'server_ack_sequence'))
+            and all(not_sent_flag(key) for key in ('outcome_pending', 'server_confirmed', 'server_update_seen'))
+            and result.get('confirmation_scope') in (None, 'none'))
+
+
+class TrialImageUnavailable(Paused):
+    """A matched read-only image was refused because a player menu is open."""
+    pass
+
+
+def image_interface_refusal(op, result):
+    return (op == 'decision_screenshot' and result.get('phase') == 'error'
+            and result.get('detail') == 'Close the game interface before requesting a world image'
+            and result.get('screen') in MENUS - {''}
+            and not result.get('decision_image') and result.get('outcome_pending') is not True
+            and result.get('manual_movement') is False)
 
 
 class TrialMovementBlocked(Paused):
@@ -206,11 +247,11 @@ class TrialBridge:
                 raise Paused('Fresh native observation was not confirmed before its deadline; do not replay')
             self.sleeper(.05)
 
-    def read(self, allow_dead=False):
+    def read(self, allow_dead=False, deadline=None):
         self.check_control()
         if self.halted:
             raise Paused('Unknown or handed-over native operation; no automatic replay')
-        state = validate_scope(self.observe(), self.registry, self.session,
+        state = validate_scope(self.observe(deadline=deadline), self.registry, self.session,
                                self.run_id, allow_dead=allow_dead)
         if (state['control_revision'] != self.revision
                 or state.get('last_request', '') != self.last):
@@ -223,7 +264,23 @@ class TrialBridge:
     def request(self, op, **args):
         if op not in OPS:
             raise Paused('Trial primitive is not explicitly supported: ' + str(op))
-        state = self.read(allow_dead=op in {'trial_respawn', 'trial_stop'})
+        deadline = time.monotonic() + max(12, min(600, args.get('seconds', 20)) + 15)
+        state = self.read(allow_dead=op in {'trial_respawn', 'trial_stop'}, deadline=deadline)
+        guard_waited = False
+        while (op in GUARD_BLOCKED_OPS and state.get('guard_armed') is True
+               and state.get('guard_busy') is True):
+            # No mailbox/action is created while native defense or eating owns
+            # the player. Every refreshed frame retains exact run/manual/revision
+            # checks and uses this same bounded request budget.
+            if time.monotonic() >= deadline:
+                raise TrialGuardBusy(op, args)
+            guard_waited = True
+            self.sleeper(.1)
+            state = self.read(allow_dead=op in {'trial_respawn', 'trial_stop'}, deadline=deadline)
+        if time.monotonic() >= deadline:
+            if guard_waited:
+                raise TrialGuardBusy(op, args)
+            raise Paused('Trial request observation budget expired before dispatch; no action sent')
         signature = walking_signature(op, args)
         if signature in self.rejected_paths:
             raise TrialMovementBlocked(op, args, self.rejected_paths[signature])
@@ -257,7 +314,6 @@ class TrialBridge:
         if op in MUTATING_OPS:
             self.pending_mutations[request_id] = {'id': request_id, 'op': op,
                 'world_session': self.session, 'arguments': args}
-        deadline = time.monotonic() + max(12, min(600, args.get('seconds', 20)) + 15)
         while time.monotonic() < deadline:
             self.check_control()
             current = self.observe(deadline=deadline)
@@ -292,6 +348,18 @@ class TrialBridge:
                     self.halted = True
                     raise Paused('Native scan volume or revision is incomplete; no terrain actions permitted')
                 if op != 'scan' and result.get('phase') != 'done':
+                    if (current['control_revision'] == envelope['expected_revision']
+                            and guard_pre_dispatch_refusal(op, result, envelope['expected_revision'])):
+                        self.pending_mutations.pop(request_id, None)
+                        self.last_receipt = {**self.last_receipt, 'code': 'guard_pre_dispatch_refusal',
+                                             'receipt_class': 'native_guard_busy_before_dispatch'}
+                        self.receipts[-1] = self.last_receipt
+                        raise TrialGuardBusy(op, args, self.last_receipt)
+                    if image_interface_refusal(op, result):
+                        self.last_receipt = {**self.last_receipt, 'code': 'image_interface_refusal',
+                                             'receipt_class': 'read_only_image_refusal'}
+                        self.receipts[-1] = self.last_receipt
+                        raise TrialImageUnavailable('Player interface is open; wait for it to close before observing another world image')
                     if confirmed_mining_not_sent(op, result, args):
                         self.pending_mutations.pop(request_id, None)
                         self.last_receipt = {**self.last_receipt, 'code': 'pre_dispatch_refusal',

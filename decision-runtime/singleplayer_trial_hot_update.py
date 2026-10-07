@@ -25,7 +25,7 @@ SCHEMA = 1
 REQUIRED = {'singleplayer_trial.py', 'singleplayer_trial_bridge.py',
             'singleplayer_experience.py', 'singleplayer_trial_cli.py',
             'singleplayer_trial_capabilities.py', 'singleplayer_trial_hot_update.py',
-            'trial_surface_recovery.py'}
+            'trial_surface_recovery.py', 'survival_cooking.py', 'trial_safety_preparation.py', 'trial_safety_routing.py'}
 
 
 def atomic_json(path, value):
@@ -62,6 +62,7 @@ def checkpoint_from_skills(registry, state, skills, pending=None):
             'station_anchor': skills.station_anchor,
             'rejected_routes': [[list(p) for p in route] for route in sorted(skills.rejected_routes)],
             'log_drops': skills.log_drops,
+            'small_shelter': getattr(skills,'small_shelter',None),
             'unresolved_native': list((pending or {}).values())}
 
 
@@ -185,6 +186,15 @@ def restore_checkpoint(skills, checkpoint, registry, state):
     if isinstance(owned, dict) and len(owned) <= 4096:
         skills.owned = {key: value for key, value in owned.items()
                         if isinstance(key, str) and isinstance(value, str) and len(key) <= 64 and len(value) <= 96}
+    small = checkpoint.get('small_shelter')
+    if isinstance(small,dict) and small.get('schema')==1 and small.get('world_id')==registry['world_id'] and small.get('dimension')==state.get('dimension') and point(small.get('inside')):
+        from trial_safety_preparation import _layout, _house_verified
+        layout=_layout(small['inside'])
+        if all(small.get(k)==v for k,v in layout.items()) and distance(state['pos'],small['inside'])<=24:
+            x,y,z=small['inside'];lo=[x-2,y-1,z-2];hi=[x+2,y+3,z+2]
+            observed=skills.b.request('scan',min=lo,max=hi,details=True)
+            world=World(observed['blocks'],lo,hi)
+            skills.small_shelter={**small,'verified':_house_verified(world,layout,small.get('door_item',''))}
     skills.excluded = {tuple(p) for p in checkpoint.get('excluded', []) if point(p)}
     for name in ('explored', 'tried_grids'):
         values = checkpoint.get(name, [])
@@ -238,7 +248,7 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
     session = first['world_session']
     def safe(state, *, old_run=True, released=False):
         validate_scope(state, registry, session, run if old_run else None)
-        if (state.get('health', 0) < 19 or state.get('food', 0) < 8
+        if (state.get('health', 0) <= 0 or state.get('food', 0) < 8
                 or state.get('safety_hold', {}).get('active') is True
                 or state.get('under_water') is True or state.get('screen')
                 or any(state.get(k) for k in ('printing', 'chopping', 'navigating', 'borer_active', 'guard_busy'))):

@@ -49,6 +49,14 @@ public final class SingleplayerTrialRuntime {
             server!=null&&server.getWorldData().isHardcore(),worldId(c),text(registry,"world_id"));
     }
     public static boolean activeHere(Minecraft c){return !cancelled&&process!=null&&process.isAlive()&&!run.isBlank()&&registeredHere(c);}
+    /** Authority comes from the actual unpublished Survival save, never request flags alone. */
+    public static TrialGuardPolicy.Owner currentOwner(Minecraft c,String worldSession,String dimension){
+        boolean registered=registeredHere(c);
+        boolean allowDeath=registry.has("allow_death_respawn")&&registry.get("allow_death_respawn").isJsonPrimitive()
+            &&registry.getAsJsonPrimitive("allow_death_respawn").isBoolean()&&registry.get("allow_death_respawn").getAsBoolean();
+        return new TrialGuardPolicy.Owner(registered,activeHere(c),allowDeath,text(registry,"trial_id"),run,
+            text(registry,"world_id"),worldSession,dimension);
+    }
     public static boolean expectedDeath(Minecraft c){return activeHere(c)&&c.player!=null&&c.player.isDeadOrDying();}
     public static String goal(){return "击败末影龙";}
     public static void start(Minecraft c,KitConfig config){
@@ -131,7 +139,11 @@ public final class SingleplayerTrialRuntime {
         if(process==null)return;
         if(!process.isAlive()){dev.twob2tkit.automation.AutomationBridge.stopTrialInputs(c,text(registry,"trial_id"),run);notice="试验后台已停止，进度和经验保留";process=null;run="";restoreModules();return;}
         if(!registeredHere(c)){stop(c,"试验存档已离开，服务器操作保持关闭");return;}
-        if(!cancelled)disabledModules.keySet().forEach(dev.twob2tkit.MeteorModules::disable);
+        if(!cancelled){
+            boolean ownedChop=dev.twob2tkit.automation.AutomationBridge.ownedTrialChop(c);
+            disabledModules.keySet().stream().filter(module->TrialGuardPolicy.disableModule(
+                module.equals(dev.twob2tkit.MeteorModules.FLIGHT),ownedChop)).forEach(dev.twob2tkit.MeteorModules::disable);
+        }
         boolean dead=c.player!=null&&c.player.isDeadOrDying();if(dead&&!wasDead){deaths++;deadAt=System.currentTimeMillis();}wasDead=dead;
         long now=System.currentTimeMillis();if(!advancementPending&&now>=nextAdvancementPoll&&c.player!=null&&!dead){
             nextAdvancementPoll=now+5000;var server=c.getSingleplayerServer();var uuid=c.player.getUUID();String expectedRun=run;advancementPending=true;

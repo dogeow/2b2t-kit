@@ -56,9 +56,48 @@ class FuelPlanTest(unittest.TestCase):
             with self.assertRaises(ValueError):select_fuels(self.catalog,{LOG:100},parts,200,LOG,CHARCOAL)
         with self.assertRaises(ValueError):select_fuels(self.catalog,{COAL:True},[1],200,LOG,CHARCOAL)
 
+    def test_legacy_catalog_does_not_guess_stick_or_leaf_fuel_from_item_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jar=Path(tmp)/'recipe-only.jar'
+            with zipfile.ZipFile(jar,'w') as z:
+                z.writestr('version.json',json.dumps({'id':'26.1.2'}))
+                z.writestr('data/minecraft/recipe/cooked_beef.json',json.dumps({'cookingtime':200}))
+            catalog=FuelCatalog(jar)
+            self.assertEqual({COAL:1600},catalog.durations)
+            self.assertFalse(catalog.evidence['extra_fuels_verified'])
+            for item in ('minecraft:stick','minecraft:leaf_litter'):
+                with self.subTest(item=item),self.assertRaises(ValueError):
+                    policy(catalog,{}, {'fuel_allow_items':[item]})
+
 
 @unittest.skipUnless(JAR.exists(),'Current Minecraft jar not available')
 class ActualFuelFactsTest(unittest.TestCase):
+    def test_stick_and_leaf_litter_have_checked100_ticks_and_remain_explicit_only(self):
+        c=FuelCatalog(JAR)
+        for item,field,offset in (('minecraft:stick','Items.STICK',441),
+                                  ('minecraft:leaf_litter','Blocks.LEAF_LITTER',642)):
+            with self.subTest(item=item):
+                self.assertEqual(100,c.durations[item])
+                fact=c.evidence['explicit_fuel_constants'][item]
+                self.assertEqual(100,fact['burn_ticks'])
+                self.assertEqual(FUEL_CLASS,fact['class_entry'])
+                self.assertEqual(field,fact['field'])
+                self.assertEqual(offset,fact['bytecode_offset'])
+                self.assertNotIn(item,policy(c,{}, {})[1])
+                self.assertEqual([item],policy(c,{}, {'fuel_allow_items':[item]})[1])
+                plan=select_fuels(c,{item:2,'minecraft:beef':1},[1],200,
+                                  'minecraft:beef','minecraft:cooked_beef',allowed=[item])
+                self.assertTrue(plan['ready'])
+                self.assertEqual({item:2},plan['fuel_totals'])
+        self.assertEqual([COAL,CHARCOAL],policy(c,{}, {})[1])
+        self.assertNotIn('minecraft:wooden_pickaxe',c.durations)
+
+    def test_other_declared_fuels_are_still_refused_after_verified_extension(self):
+        c=FuelCatalog(JAR)
+        for item in ('minecraft:oak_leaves','minecraft:wooden_pickaxe','minecraft:phantom_fuel'):
+            with self.subTest(item=item),self.assertRaises(ValueError):
+                policy(c,{}, {'fuel_allow_items':[item]})
+
     def test_blaze_rods_are_checked_native_fuel_but_never_enabled_by_default(self):
         c=FuelCatalog(JAR)
         self.assertEqual(2400,c.durations['minecraft:blaze_rod'])

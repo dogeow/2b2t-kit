@@ -29,14 +29,26 @@ CATALOG = {
                      'walk_path,mine_block', 'cobblestone inventory gain'),
     'craft_stone_tools': ('用已有圆石制作石工具和熔炉', 'make stone tools', 'pickaxe; cobblestone; reachable station or local table materials/footing',
                           'slot_click,interact,walk_path,scan', 'tools/furnace in inventory'),
-    'gather_food': ('获取附近被动动物掉落物并烹饪', 'get cooked food', 'stone axe; animal; furnace; food deficit',
+    'gather_food': ('优先烹饪已有生食，缺生食且燃料备齐才获取动物食物', 'get cooked food', 'verified fuel; carried meat or axe/animal; furnace; food deficit',
                     'attack_passive,slot_click', 'edible inventory gain'),
+    'gather_cooking_fuel': ('采集实际缺少的烹饪煤', 'get cooking coal', 'pickaxe; verified fuel deficit; reachable coal ore',
+                            'scan,walk_path,mine_block', 'coal inventory reaches actual cooking target'),
     'eat_carried_food': ('食用背包已有食物恢复饥饿值', 'eat carried food', 'hunger<16; edible stock',
                          'select_item,use_item', 'hunger increases; food consumed'),
     'gather_shelter_material': ('按本世界庇护方案采集缺少的泥土', 'get shelter dirt', 'camp plan; tools; food; dirt deficit',
                                'walk_path,mine_block', 'dirt inventory gain'),
     'build_shelter': ('按已观察方案建造并复核小庇护所', 'build shelter', 'camp plan; tools; food; dirt stock',
                       'slot_click,interact,scan', 'all planned blocks/door scanned'),
+    'prepare_small_shelter': ('先建带门小屋并进屋关门', 'prepare small shelter', 'alive; carried dirt/wood; bounded safe site search',
+                              'scan,mine_block,slot_click,interact,walk_path', 'enclosure, real entry and closed door verified'),
+    'prepare_sword': ('准备并装备当前可做的剑', 'prepare defensive sword', 'carried sword or actual wood/stone/sticks; station',
+                      'select_item,slot_click,interact', 'actual sword inventory and selected hand'),
+    'upgrade_stone_sword': ('补齐必要圆石升级石剑', 'upgrade stone sword', 'pickaxe; two actual cobblestone; sticks; station',
+                            'mine_block,scan,walk_path,slot_click,select_item', 'stone sword inventory; previous blade preserved'),
+    'enter_small_shelter': ('进入已验证小屋关门', 'enter small shelter','same-world verified enclosure; known door; normal path',
+                            'scan,interact,walk_path','actual entry; closed door'),
+    'leave_small_shelter': ('白天正常出屋继续任务', 'leave small shelter','same-world verified enclosure; known door; safe exit',
+                            'scan,interact,walk_path','actual outside position; closed door'),
     'prepare_iron_equipment': ('采集露天铁矿、熔炼并穿戴铁装备', 'prepare iron gear', 'completed camp; tools; food; iron/ore',
                                'mine_block,slot_click', 'iron tools/armor in inventory/equipment'),
     'explore_nearby': ('沿扫描过的安全步行路线探索附近', 'explore nearby', 'new scanned safe path; bounded route',
@@ -126,12 +138,20 @@ def _cheap_prerequisites(action, state):
         return not pickaxe and (wood >= 4 or planks >= 12)
     if action == 'gather_stone':
         return pickaxe
+    if action == 'prepare_small_shelter':
+        return inv.get('dirt',0) >= 23
+    if action == 'prepare_sword':
+        return any(n.endswith('_sword') and amount for n,amount in inv.items()) or sum(amount for n,amount in inv.items() if n.endswith('_planks'))+4*sum(amount for n,amount in inv.items() if n.endswith('_log'))>=4
+    if action == 'upgrade_stone_sword':
+        return pickaxe or inv.get('cobblestone',0)>=2
+    if action == 'gather_cooking_fuel':
+        return pickaxe
     if action == 'recover_surface_access':
         return pickaxe and state.get('on_ground') is True
     if action == 'craft_stone_tools':
         return pickaxe and inv.get('cobblestone', 0) >= 3
     if action == 'gather_food':
-        return inv.get('stone_axe', 0) > 0
+        return inv.get('stone_axe', 0) > 0 or any(inv.get(item, 0) > 0 for item in ('beef', 'porkchop', 'mutton', 'chicken'))
     if action == 'eat_carried_food':
         food = state.get('food')
         return (type(food) is int and 0 <= food < 16

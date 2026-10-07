@@ -19,7 +19,7 @@ import time
 
 from decisions import DecisionError, choose, status, validated_answer
 from ollama_decision import OllamaDecision, checked_image
-from singleplayer_trial_bridge import (Paused, TrialBridge, TrialDeath, TrialMovementBlocked, validate_registry,
+from singleplayer_trial_bridge import (Paused, TrialBridge, TrialDeath, TrialMovementBlocked, TrialGuardBusy, validate_registry,
                                       validate_scope)
 from survival import Runner, LOGS, FOOD
 from survival_bridge import inventory
@@ -35,7 +35,8 @@ LABELS = {
     'craft_wooden_tools': '实际合成工作台、木镐和所需木棍',
     'gather_stone': '用木镐采集已观察到的石料并核对入包',
     'craft_stone_tools': '实际合成石镐、石斧和熔炉',
-    'gather_food': '正常获取附近食物并使用熔炉烹饪',
+    'gather_food': '先核验燃料，再烹饪已有生食或获取缺少的食物',
+    'gather_cooking_fuel': '用现有镐采集已观察到的煤并核对烹饪燃料入包',
     'eat_carried_food': '正常食用背包内已确认的食物',
     'gather_shelter_material': '采集小庇护所材料，不挖脚底和工作设施',
     'build_shelter': '实际搭建和验证小庇护所',
@@ -43,6 +44,11 @@ LABELS = {
     'explore_nearby': '沿扫描验证的正常步行路线探索附近资源',
     'recover_after_death': '记录已发生死亡后通过原生正常复活继续试验',
     'recover_surface_access': '保留实体台阶，清理必要净空并正常逐级上升',
+    'prepare_small_shelter': '先寻找安全平地，建造小屋并进屋关门',
+    'prepare_sword': '用现货准备并装备近身防御剑',
+    'upgrade_stone_sword': '仅补齐必要圆石，合成并装备石剑',
+    'enter_small_shelter': '返回已验证小屋并关门守夜',
+    'leave_small_shelter': '白天沿已验证门口路线出屋继续任务',
     'wait': '当前没有可信宏动作推进目标；等待新证据或缺失能力',
 }
 CRITERIA = {
@@ -51,9 +57,15 @@ CRITERIA = {
     'craft_wooden_tools': 'Use the carried logs or planks to craft a crafting table and wooden pickaxe now, before looking for more resources.',
     'gather_stone': 'Use the available pickaxe to collect the needed cobblestone from already observed reachable stone.',
     'craft_stone_tools': 'Use carried cobblestone and wood to craft the missing stone tools and furnace now.',
-    'gather_food': 'Get food from observed nearby animals and cook it in the available furnace.',
+    'gather_food': 'Cook already carried raw food with the verified fuel plan. Hunt an observed animal only for the actual raw-food deficit and only after fuel is ready.',
+    'gather_cooking_fuel': 'Collect the actual missing coal from already observed reachable coal ore for the carried raw food. Verify the absolute coal backpack target before cooking.',
     'eat_carried_food': 'Eat already carried food to restore hunger before another macro.',
     'recover_surface_access': 'When no normal scanned exploration route exists, keep existing solid steps, clear only verified headroom and climb at most four levels. Verify actual height gain; do not claim the surface has been reached.',
+    'prepare_small_shelter': 'Prioritize a verified supported small house and closed door before roaming, cooking or the next night. The local executor finds a bounded real site and verifies enclosure and actual entry.',
+    'prepare_sword': 'Prepare and equip a carried-material sword for defense. Use an existing stronger sword instead of downgrading it.',
+    'upgrade_stone_sword': 'Upgrade the carried wooden sword to a stone sword. Gather only enough safe stone for an absolute two-cobblestone target, verify the stone sword in inventory, then equip it.',
+    'enter_small_shelter': 'Enter the already verified small house and confirm its door is closed before nighttime work.',
+    'leave_small_shelter': 'During daylight leave the verified house through its normal door route, confirm the door is closed behind you and continue the preparation goal.',
     'gather_shelter_material': 'Collect the missing dirt from observed reachable ground for the verified shelter plan.',
     'build_shelter': 'Use carried building material to construct and verify the observed shelter plan.',
     'prepare_iron_equipment': 'Use the observed iron materials and normal crafting to obtain and equip iron gear.',
@@ -62,7 +74,7 @@ CRITERIA = {
 }
 
 
-def short_term_goal(state, candidates, pending_log_drops=0):
+def short_term_goal(state, candidates, pending_log_drops=0, cooking=None, safety=None):
     """Derive one immediate milestone from actual stock and prechecked macros."""
     inv = inventory(state)
     if 'collect_log_drops' in candidates:
@@ -71,6 +83,16 @@ def short_term_goal(state, candidates, pending_log_drops=0):
         return 'Follow the scanned normal ground route toward the already observed dropped logs and reobserve the items before pickup. Do not cut another tree or explore away.'
     if 'eat_carried_food' in candidates and state.get('food', 20) < 16:
         return 'Eat carried food now to restore hunger before continuing Survival preparation.'
+    if 'enter_small_shelter' in candidates:
+        return 'Return to the verified shelter, enter and close its door before continuing nighttime preparation.'
+    if 'leave_small_shelter' in candidates:
+        return 'Leave the verified small house by its normal door route during daylight, then resume preparation.'
+    if 'prepare_small_shelter' in candidates:
+        return 'Establish the offered small supported shelter with a real wooden door, enter and close it before further exploration or cooking.'
+    if 'prepare_sword' in candidates:
+        return 'Prepare and equip the available defensive sword before continuing Survival work.'
+    if 'upgrade_stone_sword' in candidates:
+        return 'Obtain only the missing cobblestone and upgrade to a real stone sword for defense; preserve the current sword until the upgrade is verified.'
     starting = not any(inv.get(name) for name in ('wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe'))
     if starting:
         if 'craft_wooden_tools' in candidates:
@@ -83,6 +105,7 @@ def short_term_goal(state, candidates, pending_log_drops=0):
     goals = (
         ('craft_stone_tools', 'Craft the missing stone pickaxe, stone axe and furnace now from carried materials.'),
         ('gather_stone', 'Collect the needed cobblestone from already observed reachable stone for stone tools and a furnace.'),
+        ('gather_cooking_fuel', 'Collect the missing cooking coal from already observed reachable ore, then cook the carried raw food. Do not hunt more animals for an already met raw-food target.'),
         ('gather_food', 'Obtain and cook a reserve of food from the observed nearby food source.'),
         ('gather_starting_wood', 'Replenish logs from the already observed reachable nearby trees for crafting and cooking.'),
         ('build_shelter', 'Build and verify the available shelter plan using the carried construction materials.'),
@@ -94,6 +117,10 @@ def short_term_goal(state, candidates, pending_log_drops=0):
             return goal
     if not inv.get('stone_pickaxe') and not inv.get('iron_pickaxe'):
         return 'Find reachable stone for the next stone tools and furnace along a scanned safe route.'
+    if safety and not safety.get('sheltered') and safety.get('wood_ready') and safety.get('dirt_deficit',0)>0:
+        return 'Find reachable earth along a scanned safe land route for the small shelter before further food hunting or roaming. The local house macro will collect only its actual dirt deficit.'
+    if cooking and cooking.get('coal_requirement', 0) > inv.get('coal', 0):
+        return 'Find reachable exposed coal along a newly scanned safe route for the carried raw food. Do not search for additional meat while its raw-food target is already met.'
     if sum(inv.get(name, 0) for name in FOOD) < 4:
         return 'Find an accessible food source along a newly scanned safe route.'
     if 'explore_nearby' in candidates:
@@ -300,6 +327,20 @@ class TrialSkills(Runner):
         self.pickup_target = None
         self.pickup_clearance_target = None
         self.pickup_strategy = None
+        self.cooking_readiness = None
+        self.small_shelter = None
+        self.safety_readiness = None
+
+    def cooking_plan(self, state):
+        from survival_cooking import cooking_plan
+        from smelting_fuel import recipe_jar_for_client
+        try:
+            self.cooking_readiness = cooking_plan(state, recipe_jar_for_client(self.b))
+        except (OSError, ValueError, KeyError) as error:
+            self.cooking_readiness = {'ready': False, 'fuel_ready': False,
+                                      'coal_requirement': 0, 'raw_needed': 0,
+                                      'reason': str(error)[:256]}
+        return self.cooking_readiness
 
     def scan(self):
         self.check()
@@ -562,6 +603,24 @@ class TrialSkills(Runner):
     def station(self, name):
         # A crafting station needs safe reach and footing. It does not need the
         # 5x5 completely empty footprint required for the later shelter.
+        state = self.station_inventory_available()
+        if name in self.stations:
+            world = self.scan()
+            target = tuple(self.stations[name])
+            parents = world.paths(self.b.state['pos'])
+            if world.name(target) == name and world.approach(parents, target) is not None:
+                return super().station(name)
+        # A carried station belongs at the current verified footing. Its old
+        # coordinates and camp/anchor remain records, not a reason to return
+        # to a distant pit before opening this same ordinary workstation.
+        if inventory(state).get(name) and name in {'crafting_table', 'furnace'}:
+            return self.local_station_fallback(name)
+        if name == 'crafting_table' and name not in self.stations:
+            inv = inventory(state)
+            if any(inv.get(log) for log in LOGS) or any(n.endswith('_planks') and v >= 4 for n,v in inv.items()):
+                return self.local_station_fallback(name)
+        if name == 'furnace' and name not in self.stations:
+            raise Paused('No recorded or carried furnace is available; no phantom station placement')
         if self.camp is not None:
             try:
                 return super().station(name)
@@ -587,18 +646,32 @@ class TrialSkills(Runner):
         finally:
             self.camp = previous
 
-    def local_station_fallback(self, name):
-        """Craft a local table only after the recorded one has no safe route.
-
-        Keep the old table as an owned, protected block. This uses a 2x2
-        inventory recipe (which never calls station), then normal supported
-        placement and an exact post-placement station verification.
-        """
-        if (name != 'crafting_table' or name not in self.stations or self.b.halted
-                or self.b.pending_mutations):
-            raise Paused('Recorded station is unreachable; no supported local station fallback')
+    def station_inventory_available(self):
+        if self.b.halted or self.b.pending_mutations:
+            raise Paused('Unconfirmed native operation preserved; no workstation is opened or placed')
         state = self.b.read()
+        menu = state.get('menu', {})
+        width = {'InventoryMenu': 2, 'CraftingMenu': 3}.get(menu.get('type'))
+        if (menu.get('cursor', {}).get('count', 0)
+                or width and any(row.get('count', 0) for row in menu.get('slots', [])[1:width * width + 1])
+                or menu.get('type') in {'FurnaceMenu', 'BlastFurnaceMenu', 'SmokerMenu'}
+                    and any(row.get('count', 0) for row in menu.get('slots', [])[:3])):
+            raise Paused('Occupied workstation grid, furnace or cursor preserved; no workstation is changed')
+        return state
+
+    def local_station_fallback(self, name):
+        """Place a carried station, or craft a local table when required.
+
+        Keep previous station coordinates protected. Only tables can be made
+        here, using a 2x2 inventory recipe which never calls station. Furnaces
+        must already exist in inventory; no old furnace is excavated.
+        """
+        if name not in {'crafting_table', 'furnace'}:
+            raise Paused('Recorded station is unreachable; no supported local station fallback')
+        state = self.station_inventory_available()
         inv = inventory(state)
+        if name == 'furnace' and not inv.get(name):
+            raise Paused('Recorded furnace retained; no carried furnace is available for local placement')
         if (not inv.get(name) and not any(n.endswith('_planks') and count >= 4 for n, count in inv.items())
                 and not any(inv.get(log, 0) for log in LOGS)):
             raise Paused('Recorded table retained; insufficient carried material for a local crafting table')
@@ -623,7 +696,7 @@ class TrialSkills(Runner):
         if not spots:
             raise Paused('Recorded table retained; no fresh safe local placement position')
         target = min(spots)[2]
-        previous = list(self.stations[name])
+        previous = list(self.stations[name]) if name in self.stations else None
         if not inv.get(name):
             plank = self.planks(4)
             self.craft(name, {(0, 0): plank, (0, 1): plank,
@@ -631,16 +704,18 @@ class TrialSkills(Runner):
         self.place(name, target)
         fresh = self.scan()
         if fresh.name(target) != name:
-            raise Paused('Local crafting table placement is unconfirmed; old station retained')
+            raise Paused('Local station placement is unconfirmed; old station retained')
         self.stations[name] = list(target)
         self.save('running')
         self.event('local_station_placed', station=name, previous=previous, target=list(target),
-                   previous_preserved=self.owned.get(','.join(map(str, previous))) == name,
-                   source='carried_material_normal_inventory_craft_and_supported_placement')
+                   previous_record_retained=bool(previous and self.owned.get(','.join(map(str, previous))) == name),
+                   source='carried_station_normal_supported_placement' if inv.get(name)
+                          else 'carried_material_normal_inventory_craft_and_supported_placement')
         self.go_near(target)
         self.interact(target)
-        if self.b.state['menu']['type'] != 'CraftingMenu':
-            raise Paused('Local crafting table did not open its verified menu')
+        expected_menu = 'CraftingMenu' if name == 'crafting_table' else 'FurnaceMenu'
+        if self.b.state['menu']['type'] != expected_menu:
+            raise Paused('Local station did not open its verified menu')
 
     def craft(self, output, cells, width=3, produces=1):
         """Use the existing SDK's acknowledged clicks, never the stalled macro."""
@@ -735,6 +810,8 @@ class TrialSkills(Runner):
                 client.owned_inventory_crafting = None
             if inventory_counts(result)[spec['output']] < before[spec['output']] + produces:
                 raise Paused('Trial craft has no confirmed inventory output')
+        except TrialGuardBusy:
+            raise
         except (RuntimeError, ValueError) as error:
             # A delayed cursor/grid correction never justifies replaying clicks
             # or closing the container. Native Resume must reobserve its items.
@@ -806,6 +883,38 @@ class TrialSkills(Runner):
         starting = not has('wooden_pickaxe') and not has('stone_pickaxe') and not has('iron_pickaxe')
         station_possible = self.camp is not None or self.station_anchor is not None
         logs = sum(inv.get(name, 0) for name in LOGS)
+        wooden_door = any(name.endswith('_door') and name != 'iron_door' and amount for name,amount in inv.items())
+        wood_budget = sum(v for name,v in inv.items() if name.endswith('_planks')) + 4*logs
+        has_sword = any(has(name) for name in ('wooden_sword','stone_sword','iron_sword','diamond_sword','netherite_sword','golden_sword'))
+        sheltered = bool(self.small_shelter and self.small_shelter.get('verified'))
+        self.safety_readiness={'sheltered':sheltered,'wood_ready':wooden_door or wood_budget>=10,
+                               'dirt_deficit':max(0,23-inv.get('dirt',0)),
+                               'stone_sword_deficit':0 if any(has(n) for n in ('stone_sword','iron_sword','diamond_sword','netherite_sword')) else max(0,2-inv.get('cobblestone',0))}
+        clock=state.get('day_time');night=type(clock) in (int,float) and (clock%24000>=11000 or clock%24000<1000)
+        if sheltered:
+            from trial_safety_preparation import _house_verified, _valid_door
+            if world.known(tuple(self.small_shelter['inside'])) and not _house_verified(world,self.small_shelter,self.small_shelter['door_item']):
+                self.small_shelter['verified']=False;sheltered=False
+        if sheltered:
+            inside=distance(state['pos'],center(tuple(self.small_shelter['inside'])))<.75
+            if night:
+                if not inside or not _valid_door(world,self.small_shelter['door'],self.small_shelter['door_item'],False):
+                    candidates['enter_small_shelter']=LABELS['enter_small_shelter']
+                return candidates
+            if inside:
+                candidates['leave_small_shelter']=LABELS['leave_small_shelter']
+                return candidates
+        house_materials = inv.get('dirt',0)>=23 or world.resource(state['pos'],{'dirt','grass_block'},self.excluded)
+        if not sheltered and world.paths(state['pos']) and house_materials and (wooden_door or wood_budget >= 10):
+            candidates['prepare_small_shelter'] = LABELS['prepare_small_shelter']
+            return candidates
+        if not starting and not has_sword and (wood_budget >= 4 or inv.get('cobblestone',0) >= 2 and has('stick')):
+            candidates['prepare_sword'] = LABELS['prepare_sword']
+            return candidates
+        if has('wooden_sword') and not any(has(name) for name in ('stone_sword','iron_sword','diamond_sword','netherite_sword')):
+            if (has('stick') or wood_budget >= 2) and (inv.get('cobblestone',0) >= 2 or not starting and world.resource(state['pos'],{'stone','cobblestone'},self.excluded)):
+                candidates['upgrade_stone_sword'] = LABELS['upgrade_stone_sword']
+                return candidates
         protected = {tuple(point) for point in self.stations.values()}
         if self.camp:
             cx, cy, cz = self.camp
@@ -822,11 +931,19 @@ class TrialSkills(Runner):
         if not starting and station_possible and stone_needed and inv.get('cobblestone', 0) >= stone_needed:
             candidates['craft_stone_tools'] = LABELS['craft_stone_tools']
         food = sum(inv.get(name, 0) for name in FOOD)
+        cooking = self.cooking_plan(state) if food < 4 else None
         animals = [e for e in state.get('entities', [])
                    if e.get('type') in {'minecraft:cow', 'minecraft:pig', 'minecraft:sheep', 'minecraft:chicken'}
                    and e.get('health', 0) > 0]
-        if has('stone_axe') and station_possible and (has('furnace') or 'furnace' in self.stations) and food < 4 and animals:
-            candidates['gather_food'] = LABELS['gather_food']
+        furnace_available = has('furnace') or 'furnace' in self.stations
+        if cooking and furnace_available:
+            goal = cooking.get('coal_requirement', 0)
+            if (not starting and goal > inv.get('coal', 0)
+                    and world.resource(state['pos'], {'coal_ore', 'deepslate_coal_ore'}, protected | self.excluded)):
+                candidates['gather_cooking_fuel'] = LABELS['gather_cooking_fuel']
+            if (cooking.get('fuel_ready') and (cooking.get('ready')
+                    or cooking.get('raw_needed', 0) > 0 and has('stone_axe') and animals)):
+                candidates['gather_food'] = LABELS['gather_food']
         if self.camp and has('stone_pickaxe') and has('stone_axe') and food >= 4:
             layout, door = shelter(self.camp)
             missing = [p for p in layout if not world.earth(p)]
@@ -887,6 +1004,25 @@ class TrialSkills(Runner):
         elif choice == 'gather_food':
             self.food()
             self.eat_if_needed()
+        elif choice == 'gather_cooking_fuel':
+            plan = self.cooking_plan(self.b.read())
+            goal = plan.get('coal_requirement', 0)
+            if goal <= self.count('coal'):
+                raise Paused('Cooking fuel is already sufficient; reobserve before acquiring more coal')
+            self.gather({'coal_ore', 'deepslate_coal_ore'}, {'coal'}, goal)
+        elif choice == 'prepare_small_shelter':
+            from trial_safety_preparation import prepare_small_shelter
+            if not any(name.endswith('_door') and name != 'iron_door' and amount for name,amount in inventory(self.b.read()).items()):
+                self.station('crafting_table')
+                self.b.close()
+            prepare_small_shelter(self)
+        elif choice in {'prepare_sword','upgrade_stone_sword'}:
+            from trial_safety_preparation import prepare_sword
+            prepare_sword(self, upgrade_stone=choice == 'upgrade_stone_sword')
+        elif choice in {'enter_small_shelter','leave_small_shelter'}:
+            from trial_safety_routing import enter_known_shelter,leave_known_shelter
+            if choice=='enter_small_shelter':enter_known_shelter(self)
+            else:leave_known_shelter(self)
         elif choice == 'eat_carried_food':
             self.eat_if_needed()
         elif choice == 'gather_shelter_material':
@@ -1065,7 +1201,7 @@ class TrialWorker:
         self.skills = TrialSkills(self.bridge, self.output / 'bootstrap')
         if old:
             for name in ('camp', 'stations', 'owned', 'excluded', 'camp_completed', 'explored', 'station_anchor',
-                         'tried_grids', 'rejected_routes', 'log_drops'):
+                         'tried_grids', 'rejected_routes', 'log_drops', 'small_shelter'):
                 setattr(self.skills, name, getattr(old, name))
         else:
             from singleplayer_trial_hot_update import load_checkpoint, restore_checkpoint
@@ -1145,7 +1281,12 @@ class TrialWorker:
                  'capabilities': capability_scene(candidates, before, max_bytes=1800)}
         pending_logs = sum(row['count'] for row in self.skills.log_drops.values())
         scene['pending_log_drops'] = pending_logs
-        immediate_goal = short_term_goal(before, candidates, pending_logs)
+        cooking = getattr(self.skills, 'cooking_readiness', None)
+        safety=getattr(self.skills,'safety_readiness',None)
+        immediate_goal = short_term_goal(before, candidates, pending_logs, cooking, safety)
+        if safety:scene['safety_preparation']=safety
+        if cooking:
+            scene['cooking'] = {key: cooking.get(key) for key in ('ready', 'fuel_ready', 'coal_requirement', 'raw_needed', 'owned_food', 'reason') if key in cooking}
         criteria = {key: CRITERIA.get(key, description) for key, description in candidates.items()}
         if pending_logs and 'explore_nearby' in criteria:
             criteria['explore_nearby'] = 'Follow only the prechecked normal route closer to this save\'s observed pending log drops, then rediscover actual item entities. Do not search for new trees or treat memory as pickup success.'
@@ -1343,6 +1484,9 @@ class TrialWorker:
         self.control()
         passive = validate_scope(self.reader(self.automation), self.registry,
                                  run_id=self.run_id, allow_dead=True)
+        if not dead(passive) and passive.get('screen'):
+            self.publish('waiting_interface', '玩家界面仍打开，关闭后自动重新观察；未关闭或操作该界面', passive)
+            return
         if dead(passive) and self.bridge is not None:
             # Native death handling released the old trial inputs and may
             # advance its revision. This rebind is only for the observed same
@@ -1362,6 +1506,13 @@ class TrialWorker:
         if dead(state):
             self.death_recovery(state)
             return
+        if not state.get('guard_armed') or not state.get('guard_pve_only') or getattr(self,'guard_origin',None) is None or distance(state['pos'],self.guard_origin)>10:
+            state = self.bridge.request('guard',pve_only=True)
+            self.guard_origin = list(state['pos'])
+            self.event('pve_guard_verified', armed=state.get('guard_armed'), pve_only=state.get('guard_pve_only'))
+        if state.get('guard_busy'):
+            self.publish('waiting_guard','Kit防护正在占用动作；等待结束后自动继续',state)
+            return
         if state['dimension'] != 'minecraft:overworld':
             self.publish('waiting_capability', '当前维度缺少已实现的通关宏能力', state)
             return
@@ -1373,6 +1524,10 @@ class TrialWorker:
         candidates = {key: value for key, value in candidates.items()
                       if key == 'wait' or self.failures.get(key, 0) < 3}
         if len(candidates) < 2:
+            clock=before.get('day_time')
+            if getattr(self.skills,'small_shelter',None) and self.skills.small_shelter.get('verified') and type(clock) in (int,float) and (clock%24000>=11000 or clock%24000<1000):
+                self.publish('waiting_daylight','已在小屋关门守夜，保持PvE防护；日出后自动继续',before)
+                return
             reason = ('原木掉落仍待取，当前没有已验证的正常落地拾取路线；尚未入包'
                       if self.skills.log_drops else '附近已验证宏能力无法推进；尚未实现完整下界和打龙流程')
             self.publish('waiting_capability', reason, before)
@@ -1398,6 +1553,10 @@ class TrialWorker:
             after = self.bridge.read()
             self.attempt_record(action, before, after, error.receipt)
             self.publish('replanning', '原生已停止拒绝的步行路线；重新扫描并选择其他目标', after)
+        except TrialGuardBusy as error:
+            after=self.reader(self.automation)
+            self.event('guard_priority_wait',action=action,reason=str(error),native_unresolved=bool(self.bridge.pending_mutations))
+            self.publish('waiting_guard','防护先处理战斗或恢复，随后重新观察当前任务',after)
         except (Paused, OSError, ValueError, DecisionError) as error:
             self.failures[action] = self.failures.get(action, 0) + 1
             self.event('macro_failure', action=action, error_type=type(error).__name__,
@@ -1442,7 +1601,7 @@ class TrialWorker:
                         self.command = 'pause'
                 if self.command == 'cancel' or self.phase == 'complete':
                     break
-                delay = 5 if self.phase in {'waiting_model', 'waiting_capability'} else poll_seconds
+                delay = 5 if self.phase in {'waiting_model', 'waiting_capability', 'waiting_daylight', 'waiting_interface', 'waiting_guard'} else poll_seconds
                 until = time.monotonic() + delay
                 while not self.stopping and time.monotonic() < until:
                     self.sleeper(min(.2, max(0, until - time.monotonic())))

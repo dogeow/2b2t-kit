@@ -24,7 +24,8 @@ ACTIONS = frozenset({
     'observe', 'gather_starting_wood', 'craft_wooden_tools', 'gather_stone',
     'craft_stone_tools', 'gather_food', 'gather_shelter_material',
     'build_shelter', 'explore_nearby', 'recover_after_death',
-    'eat_carried_food', 'prepare_iron_equipment', 'collect_log_drops', 'recover_surface_access',
+    'eat_carried_food', 'prepare_iron_equipment', 'collect_log_drops', 'recover_surface_access', 'gather_cooking_fuel',
+    'prepare_small_shelter','prepare_sword','upgrade_stone_sword','enter_small_shelter','leave_small_shelter',
 })
 RULES = {
     'verify_inventory_after_gathering': {
@@ -186,6 +187,8 @@ def _positive_inventory_outcome(action, before, after):
         relevant = any(item.endswith('_log') for item in gained)
     elif action == 'gather_stone':
         relevant = bool(gained & {'minecraft:cobblestone', 'minecraft:cobbled_deepslate'})
+    elif action == 'gather_cooking_fuel':
+        relevant = 'minecraft:coal' in gained
     elif action == 'gather_food':
         relevant = bool(gained & {'minecraft:apple', 'minecraft:bread', 'minecraft:carrot',
                                   'minecraft:potato', 'minecraft:baked_potato', 'minecraft:beef',
@@ -198,6 +201,8 @@ def _positive_inventory_outcome(action, before, after):
     elif action in ('craft_wooden_tools', 'craft_stone_tools'):
         material = 'wooden' if action == 'craft_wooden_tools' else 'stone'
         return 'tool_progress' if any(item in {f'minecraft:{material}_{tool}' for tool in ('pickaxe', 'axe', 'sword', 'shovel', 'hoe')} for item in gained) else None
+    elif action in ('prepare_sword','upgrade_stone_sword'):
+        return 'tool_progress' if any(item.endswith('_sword') for item in gained) else None
     else:
         relevant = False
     return 'inventory_progress' if relevant else None

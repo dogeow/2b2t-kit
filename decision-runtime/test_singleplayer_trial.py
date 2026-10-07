@@ -37,6 +37,7 @@ def state(reg, **updates):
             'movement_keys': {'forward': False, 'back': False, 'jump': False, 'sneak': False},
             'pos': [.5, 1, .5], 'phase': 'done', 'inventory': [], 'entities': [],
             'bridge_version': 4, 'hand': {'item': 'minecraft:air'},
+            'guard_armed': True, 'guard_pve_only': True,
             'menu': {'id': 0, 'cursor': {'count': 0}, 'slots': []}, **updates}
 
 
@@ -791,11 +792,13 @@ class StationNavigationTests(unittest.TestCase):
                     block = next(value for value in rows if value['pos'] == args['pos'])
                     if 'crafting_table' in block['state']:
                         self.state['menu']['type'] = 'CraftingMenu'
-                    elif self.state['hand']['item'] == 'minecraft:crafting_table':
+                    elif 'furnace' in block['state']:
+                        self.state['menu']['type'] = 'FurnaceMenu'
+                    elif self.state['hand']['item'] in {'minecraft:crafting_table', 'minecraft:furnace'}:
                         direction = {'up': (0, 1, 0), 'down': (0, -1, 0), 'north': (0, 0, -1),
                                      'south': (0, 0, 1), 'east': (1, 0, 0), 'west': (-1, 0, 0)}[args['face']]
                         placed = tuple(a + b for a, b in zip(args['pos'], direction))
-                        rows.append(row(placed, 'crafting_table'))
+                        rows.append(row(placed, self.state['hand']['item'].removeprefix('minecraft:')))
                     return self.state
                 raise AssertionError('Unexpected primitive: ' + op)
         bridge = Bridge()
@@ -868,6 +871,73 @@ class StationNavigationTests(unittest.TestCase):
             self.assertEqual({'18,1,0': 'crafting_table'}, skills.owned)
             self.assertFalse(any(op != 'scan' for op, unused in bridge.calls))
 
+    def test_carried_table_and_furnace_are_normally_placed_locally_without_old_anchor_trip(self):
+        for name, expected in (('crafting_table', 'CraftingMenu'), ('furnace', 'FurnaceMenu')):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as game:
+                rows = [row((x, 0, z), 'stone') for x in range(-2, 3) for z in range(-2, 3)]
+                skills, bridge = self.skills(game, rows, [{'item': 'minecraft:' + name, 'count': 1}])
+                skills.stations = {name: [18, -8, 0]}
+                skills.owned = {'18,-8,0': name}
+                skills.camp = None
+                skills.station_anchor = [18, -8, 0]
+                skills.craft = Mock()
+                skills.station(name)
+                self.assertEqual(expected, bridge.state['menu']['type'])
+                self.assertNotEqual([18, -8, 0], skills.stations[name])
+                self.assertEqual(name, skills.owned['18,-8,0'])
+                self.assertIsNone(skills.camp)
+                self.assertEqual([18, -8, 0], skills.station_anchor)
+                self.assertTrue(all(args['min'][1] == -5 for op, args in bridge.calls if op == 'scan'))
+                self.assertTrue(any(op == 'interact' for op, unused in bridge.calls))
+                self.assertFalse(any(op in {'navigate', 'mine_block'} for op, unused in bridge.calls))
+                skills.craft.assert_not_called()
+
+    def test_reachable_recorded_station_is_preferred_over_consuming_carried_station(self):
+        with tempfile.TemporaryDirectory() as game:
+            rows = [row((x, 0, z), 'stone') for x in range(-2, 3) for z in range(-2, 3)]
+            rows.append(row((2, 1, 0), 'crafting_table'))
+            skills, bridge = self.skills(game, rows,
+                [{'item': 'minecraft:crafting_table', 'count': 1}], table=(2, 1, 0))
+            skills.local_station_fallback = Mock()
+            skills.camp = None
+            skills.station_anchor = None
+            skills.station('crafting_table')
+            skills.local_station_fallback.assert_not_called()
+            self.assertEqual([2, 1, 0], skills.stations['crafting_table'])
+            self.assertEqual(1, sum(op == 'interact' for op, unused in bridge.calls))
+
+    def test_missing_carried_furnace_cannot_be_created_from_unrelated_stock(self):
+        with tempfile.TemporaryDirectory() as game:
+            rows = [row((x, 0, z), 'stone') for x in range(-2, 3) for z in range(-2, 3)]
+            skills, bridge = self.skills(game, rows,
+                [{'item': 'minecraft:cobblestone', 'count': 64}, {'item': 'minecraft:oak_log', 'count': 8}])
+            skills.stations.clear()
+            skills.craft = Mock()
+            with self.assertRaisesRegex(Paused, 'phantom station'):
+                skills.station('furnace')
+            self.assertEqual([], bridge.calls)
+            skills.craft.assert_not_called()
+
+    def test_pending_unknown_cursor_recipe_and_furnace_contents_are_preserved_without_dispatch(self):
+        for failure in ('unknown', 'cursor', 'recipe', 'furnace'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as game:
+                skills, bridge = self.skills(game, terrain(),
+                    [{'item': 'minecraft:crafting_table', 'count': 1}])
+                if failure == 'unknown': bridge.pending_mutations = {'old': {'op': 'mine_block'}}
+                elif failure == 'cursor': bridge.state['menu']['cursor']['count'] = 1
+                elif failure == 'recipe':
+                    bridge.state['menu']['slots'] = [{'count': 0}, {'count': 1}]
+                elif failure == 'furnace':
+                    bridge.state['menu']['type'] = 'FurnaceMenu'
+                    bridge.state['menu']['slots'] = [{'count': 1}, {'count': 0}, {'count': 0}]
+                original = copy.deepcopy(bridge.state)
+                skills.craft = Mock()
+                with self.assertRaises(Paused): skills.station('crafting_table')
+                self.assertEqual(original, bridge.state)
+                self.assertEqual([], bridge.calls)
+                self.assertEqual([18, 1, 0], skills.stations['crafting_table'])
+                skills.craft.assert_not_called()
+
 
 class GoalTests(unittest.TestCase):
     def test_drop_recovery_goal_precedes_new_tree_or_generic_exploration(self):
@@ -935,6 +1005,7 @@ class WorkerTests(unittest.TestCase):
         root.mkdir(parents=True)
         (root / 'registry.json').write_text(json.dumps(reg))
         worker = TrialWorker(game, os.getpid(), reader=lambda _: state(reg))
+        worker.guard_origin = [.5,1,.5]
         return worker, reg, root
 
     def visual_worker(self, game, model, strategy='leaf_access'):

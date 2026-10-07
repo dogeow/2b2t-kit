@@ -968,6 +968,31 @@ public final class AutomationBridge {
     public static boolean guardBusy(){return guardBusy;}
     public static boolean guardArmed(){return guardScope!=null;}
     public static boolean pveOnly(){return guardScope!=null && guardScope.has("pve_only") && guardScope.get("pve_only").getAsBoolean();}
+    private static boolean trialFlag(JsonObject request,String key){
+        return request!=null&&request.has(key)&&request.get(key).isJsonPrimitive()
+            &&request.getAsJsonPrimitive(key).isBoolean()&&request.get(key).getAsBoolean();
+    }
+    private static dev.twob2tkit.trial.TrialGuardPolicy.Scope trialScope(JsonObject request){
+        if(request==null)return null;
+        return new dev.twob2tkit.trial.TrialGuardPolicy.Scope(trialFlag(request,"local_trial"),trialFlag(request,"pve_only"),
+            str(request,"trial_id"),str(request,"run_id"),str(request,"world_id"),str(request,"world_session"),str(request,"dimension"));
+    }
+    private static dev.twob2tkit.trial.TrialGuardPolicy.Owner trialOwner(Minecraft c){
+        if(c.level==null)return null;
+        return dev.twob2tkit.trial.SingleplayerTrialRuntime.currentOwner(c,session(c),c.level.dimension().identifier().toString());
+    }
+    /** Only this exact live trial's native chopper may borrow Flight from its parent. */
+    public static boolean ownedTrialChop(Minecraft c){
+        if(active==null||!op.equals("chop")||!phase.equals("running"))return false;
+        try{return dev.twob2tkit.trial.TrialGuardPolicy.ownedChop(trialOwner(c),trialScope(active),
+            true,KitClient.chopper()!=null&&KitClient.chopper().isActive());}
+        catch(RuntimeException invalid){return false;}
+    }
+    private static boolean trialHealthRecoveryEnabled(Minecraft c,boolean enabled){
+        if(!enabled||!trialFlag(guardScope,"local_trial")||!trialFlag(guardScope,"pve_only"))return enabled;
+        try{return dev.twob2tkit.trial.TrialGuardPolicy.healthRecoveryEnabled(enabled,trialOwner(c),trialScope(guardScope));}
+        catch(RuntimeException invalid){return enabled;}
+    }
     private static boolean projectionScaffoldOwnerCurrent(Minecraft c){
         if(c.player==null||c.level==null||active==null||!op.equals("projection_scaffold_fill")
             ||!currentMaterialRequest(c,active)||!active.has("expected_revision")
@@ -1250,7 +1275,9 @@ public final class AutomationBridge {
             }
         }
         guardBusy=KitClient.borer().tickStandaloneGuard(c,enabled);
-        healthRecoveryHold=healthRecovery.hold(enabled,c.player==null?20:c.player.getHealth(),guardBusy);
+        // The disposable trial may keep working to obtain food after injury.
+        // Actual combat/eating priority remains the native guardBusy result.
+        healthRecoveryHold=healthRecovery.hold(trialHealthRecoveryEnabled(c,enabled),c.player==null?20:c.player.getHealth(),guardBusy);
         if(healthRecoveryHold){
             for(var key:new net.minecraft.client.KeyMapping[]{c.options.keyUp,c.options.keyDown,c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint,c.options.keyAttack})key.setDown(false);
             if(c.gameMode!=null)c.gameMode.stopDestroyBlock();guardBusy=true;
@@ -1315,6 +1342,14 @@ public final class AutomationBridge {
             finishScan(c,"waiting","singleplayer trial observation paused");
         if(active!=null&&active.has("local_trial")&&active.get("local_trial").getAsBoolean()
                 &&str(active,"trial_id").equals(trialId)&&str(active,"run_id").equals(runId)){
+            if(op.equals("chop")&&dev.twob2tkit.trial.TrialGuardPolicy.stopOwnedChop(trialOwner(c),trialScope(active),
+                    trialId,runId,true,KitClient.chopper()!=null&&KitClient.chopper().isActive())){
+                KitClient.chopper().stop(c,"当前单人试验已停止挖树");
+                // Chopper owns movement/mining, while AutoEat/guard retains use.
+                if(c.options!=null)for(var key:new net.minecraft.client.KeyMapping[]{c.options.keyUp,c.options.keyDown,
+                        c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint,c.options.keyAttack})key.setDown(false);
+                if(c.gameMode!=null)c.gameMode.stopDestroyBlock();
+            }
             finish(c,"waiting","singleplayer trial action paused; receipt retained");survivalArmed=false;
         }
         if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))survivalArmed=false;

@@ -36,7 +36,7 @@ def setup(root):
     source.mkdir()
     for file in ('material_jobs_cli.py', 'material_jobs_backend.py', 'singleplayer_trial.py',
                  'singleplayer_trial_bridge.py', 'singleplayer_experience.py', 'singleplayer_trial_cli.py',
-                 'singleplayer_trial_hot_update.py', 'trial_surface_recovery.py'):
+                 'singleplayer_trial_hot_update.py', 'trial_surface_recovery.py', 'survival_cooking.py', 'trial_safety_preparation.py', 'trial_safety_routing.py'):
         (source / file).write_text('VALUE = "new verified worker"\n')
     (source / 'singleplayer_trial_capabilities.py').write_text('VALUE = "only registered macros"\n')
     bundle = root / 'worker.zip'
@@ -124,7 +124,7 @@ class HotUpdateTests(unittest.TestCase):
             self.assertEqual({'crafting_table': [4, 70, 0]}, checkpoint['stations'])
 
     def test_server_health_hold_other_run_or_pressed_keys_never_resume(self):
-        cases = ({'server': 'server.example'}, {'health': 8}, {'safety_hold': {'active': True}},
+        cases = ({'server': 'server.example'}, {'health': 0}, {'safety_hold': {'active': True}},
                  {'trial_identity': {'registered': True, 'process_alive': True, 'trial_id': 'trial-a', 'run_id': 'other', 'world_id': 'ignored'}})
         for changes in cases:
             with self.subTest(changes=changes), tempfile.TemporaryDirectory() as temp:

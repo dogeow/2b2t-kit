@@ -6,7 +6,7 @@ import unittest
 
 from singleplayer_trial import TrialSkills, TrialWorld, short_term_goal
 from singleplayer_trial_capabilities import capability_scene
-from test_singleplayer_trial import registry, state
+from test_singleplayer_trial import registry, state, terrain, row
 import test_singleplayer_trial as trial_tests
 from test_trial_surface_recovery import Skills, one_step
 from test_singleplayer_experience import state as experience_state, receipt
@@ -15,6 +15,43 @@ from singleplayer_trial_bridge import Paused
 
 
 class RecoveryIntegrationTests(unittest.TestCase):
+    def test_owned_meat_and_ready_fuel_can_be_cooked_without_animal_or_axe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            reg = registry(directory)
+            current = state(reg, inventory=[{'item':'minecraft:beef','count':4},
+                                           {'item':'minecraft:coal','count':1},
+                                           {'item':'minecraft:furnace','count':1}])
+            bridge = SimpleNamespace(root=Path(directory), world=reg['world_name'],
+                                     origin=current['pos'], state=current)
+            skill = TrialSkills(bridge, directory)
+            skill.cooking_plan = lambda unused: {'ready':True,'fuel_ready':True,'raw_needed':0,'coal_requirement':0}
+            options = skill.candidates(current, TrialWorld(terrain(),[-10,-6,-10],[10,7,10]))
+            self.assertIn('gather_food', options)
+            self.assertEqual([], current['entities'])
+            self.assertIn('gather_food', {v['id'] for v in capability_scene(options,current)['available']})
+
+    def test_missing_fuel_offers_reachable_coal_without_more_hunting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            reg = registry(directory)
+            current = state(reg, inventory=[{'item':'minecraft:beef','count':3},
+                                           {'item':'minecraft:mutton','count':2},
+                                           {'item':'minecraft:stone_pickaxe','count':1},
+                                           {'item':'minecraft:stone_axe','count':1},
+                                           {'item':'minecraft:furnace','count':1}],
+                            entities=[{'type':'minecraft:cow','health':10,'pos':[3,1,0]}])
+            bridge = SimpleNamespace(root=Path(directory), world=reg['world_name'],
+                                     origin=current['pos'], state=current)
+            skill = TrialSkills(bridge, directory)
+            plan = {'ready':False,'fuel_ready':False,'raw_needed':0,'coal_requirement':1}
+            skill.cooking_plan = lambda unused: plan
+            observed=TrialWorld(terrain()+[row((2,1,0),'coal_ore')],[-10,-6,-10],[10,7,10])
+            options = skill.candidates(current,observed)
+            self.assertNotIn('gather_food',options)
+            self.assertIn('gather_cooking_fuel',options)
+            self.assertIn('cooking coal',short_term_goal(current,options,cooking=plan))
+            search = short_term_goal(current,{'wait':'wait','explore_nearby':'walk'},cooking=plan)
+            self.assertIn('exposed coal',search)
+
     def test_outer_wait_reason_survives_later_pause_status_without_repeated_journal_spam(self):
         with tempfile.TemporaryDirectory() as directory:
             worker, reg, root = trial_tests.WorkerTests().worker(directory)
