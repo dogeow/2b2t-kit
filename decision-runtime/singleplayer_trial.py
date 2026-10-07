@@ -9,6 +9,7 @@ import argparse
 from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
+import hashlib
 import heapq
 import json
 import math
@@ -1230,6 +1231,11 @@ class TrialWorker:
         self.completion_state = None
         self.checkpoint_signature = None
         self.restoring_checkpoint = False
+        self.legacy_pending = []
+        self.legacy_scope = None
+        self.legacy_evidence = None
+        self.legacy_journal = None
+        self.native_start_run = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='trial-clef')
         self.inference = None
         self.experience = None
@@ -1242,13 +1248,157 @@ class TrialWorker:
             pass
 
     def event(self, kind, **data):
-        with (self.output / 'journal.jsonl').open('a') as stream:
+        journal = self.legacy_journal or self.output / 'journal.jsonl'
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        with journal.open('a') as stream:
             stream.write(json.dumps({'time': int(time.time() * 1000), 'event': kind,
                                      'trial_id': self.registry.get('trial_id') if self.registry else None,
                                      'run_id': self.run_id, **data}, ensure_ascii=False, allow_nan=False) + '\n')
 
+    @staticmethod
+    def evidence_digest(path):
+        if path.is_symlink():
+            raise Paused('Legacy trial evidence must not be a symlink')
+        if not path.exists():
+            return None
+        digest = hashlib.sha256()
+        with path.open('rb') as stream:
+            for part in iter(lambda: stream.read(131072), b''):
+                digest.update(part)
+        return digest.hexdigest()
+
+    def protect_legacy_evidence(self):
+        """Freeze old records before even the new Start control event is written."""
+        if self.legacy_evidence is not None:
+            return
+        checkpoint = self.output / 'checkpoint.json'
+        mailbox = self.automation / 'request.json'
+        candidate = False
+        if checkpoint.is_file():
+            if checkpoint.is_symlink() or checkpoint.stat().st_size > 2_000_000:
+                raise Paused('Invalid trial checkpoint file; preserve it')
+            value = json.loads(checkpoint.read_text())
+            candidate = bool(value.get('unresolved_native'))
+        if mailbox.is_file():
+            from singleplayer_trial_bridge import MUTATING_OPS
+            if mailbox.is_symlink() or mailbox.stat().st_size > 131072:
+                raise Paused('Invalid native mailbox; preserve it')
+            value = json.loads(mailbox.read_text())
+            candidate = candidate or (value.get('local_trial') is True
+                and value.get('op') in MUTATING_OPS and value.get('run_id') != self.run_id)
+        if candidate:
+            if (not isinstance(self.run_id, str) or not self.run_id
+                    or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in self.run_id)):
+                raise Paused('A native run identity is required before preserving legacy evidence')
+            self.legacy_evidence = {path: self.evidence_digest(path) for path in
+                (checkpoint, self.output / 'journal.jsonl', self.output / 'bootstrap/status.json')}
+            self.legacy_journal = self.output / 'material-review-runs' / self.run_id / 'journal.jsonl'
+
+    def check_legacy_evidence(self):
+        if self.legacy_evidence is not None and any(self.evidence_digest(path) != digest
+                for path, digest in self.legacy_evidence.items()):
+            self.command = 'pause'
+            raise Paused('Legacy material evidence changed; physical review is required before another mode')
+
+    def old_material_intent(self, row):
+        from singleplayer_trial_bridge import MUTATING_OPS, canonical_save
+        try:
+            return (isinstance(row, dict) and isinstance(row.get('run_id'), str)
+                and bool(row['run_id'].strip()) and row['run_id'] != self.run_id
+                and canonical_save(row.get('world_id')) == self.registry['world_id']
+                and row.get('trial_id') == self.registry['trial_id']
+                and row.get('op') in MUTATING_OPS - {'guard'}
+                and all(isinstance(row.get(key), str) and bool(row[key].strip())
+                        for key in ('world_session', 'dimension')))
+        except (Paused, OSError, ValueError):
+            return False
+
+    def archive_legacy_mailbox(self):
+        """Preserve the full real old envelope before our new guard replaces it."""
+        mailbox = self.automation / 'request.json'
+        if not mailbox.is_file():
+            return
+        if mailbox.is_symlink() or mailbox.stat().st_size > 131072:
+            raise Paused('Legacy native envelope is invalid; no new guardian is dispatched')
+        content = mailbox.read_bytes()
+        request = json.loads(content)
+        matching = next((row for row in self.legacy_pending if row['id'] == request.get('id')), None)
+        if matching is None:
+            return
+        if any(request.get(key) != matching.get(key) for key in
+               ('op', 'world_id', 'trial_id', 'run_id', 'world_session', 'dimension')):
+            raise Paused('Legacy envelope identity differs from its pending record; preserve both')
+        folder = self.output / 'legacy-material-intents'
+        if any(path.is_symlink() for path in (folder, *folder.parents)):
+            raise Paused('Legacy envelope archive must not contain symlinks')
+        folder.mkdir(parents=True, exist_ok=True)
+        archive = folder / (matching['id'] + '.request.json')
+        if archive.exists() or archive.is_symlink():
+            if archive.is_symlink() or archive.read_bytes() != content:
+                raise Paused('Different archived legacy envelope exists; never overwrite it')
+        else:
+            temporary = archive.with_suffix('.tmp')
+            if temporary.exists() or temporary.is_symlink():
+                raise Paused('Legacy envelope archival is unresolved; no new guardian is dispatched')
+            temporary.write_bytes(content)
+            temporary.replace(archive)
+        self.legacy_evidence[archive] = self.evidence_digest(archive)
+        self.event('legacy_material_envelope_archived', request_id=matching['id'],
+                   path=str(archive), sha256=hashlib.sha256(content).hexdigest(),
+                   source='exact_original_native_request_bytes')
+
+    def legacy_state(self, state):
+        """New native Start grants defense only; old material intents remain unknown."""
+        self.check_legacy_evidence()
+        from singleplayer_trial_hot_update import _receipt_safe
+        from trial_native_chop import known_chop_receipt
+        for row in self.legacy_pending:
+            receipt = self.automation / ('reply-' + row['id'] + '.json')
+            resolved = (receipt.is_file() and not receipt.is_symlink()
+                and receipt.stat().st_size <= 2_000_000
+                and _receipt_safe(json.loads(receipt.read_text()), row))
+            if resolved or row['op'] == 'chop' and known_chop_receipt(self.game, self.registry, row) is not None:
+                self.command = 'pause'
+                raise Paused('Legacy material confirmation changed; physical review must select the next mode')
+        validate_scope(state, self.registry, run_id=self.run_id, allow_dead=True)
+        if self.bridge and (self.bridge.halted or self.bridge.pending_mutations):
+            self.command = 'pause'
+            raise Paused('This run has an unknown native operation; legacy isolation cannot resume it')
+        scope = self.legacy_scope
+        if scope and any(state.get(key) != scope[key] for key in
+                         ('world_id', 'world_name', 'world_session', 'dimension')):
+            self.command = 'pause'
+            raise Paused('Legacy-review world or session changed; no automatic ordinary-mode rebind')
+        if (scope and self.run_id != scope['run_id']
+                or self.native_start_run != self.run_id
+                or state.get('trial_identity', {}).get('process_alive') is not True
+                or any(state.get(key) is not False for key in ('chopping', 'navigating', 'borer_active', 'printing'))
+                or state.get('phase') == 'running'
+                or state.get('safety_hold', {}).get('active') is not False
+                or state.get('safety_hold', {}).get('escaping') is not False
+                or type(state.get('time')) is not int
+                or not 0 <= time.time() - state['time'] / 1000 <= 3):
+            self.command = 'pause'
+            raise Paused('New trial defense lacks fresh stopped-child ownership; keep old material intents')
+        return state
+
+    def arm_legacy_guard(self, state):
+        self.legacy_state(state)
+        if dead(state):
+            return state
+        # New Start/Resume must bind the guard to this run rather than trusting
+        # a previous guardian's two boolean status flags.
+        state = self.bridge.request('guard', pve_only=True)
+        if state.get('guard_armed') is not True or state.get('guard_pve_only') is not True:
+            self.command = 'pause'
+            raise Paused('Native PvE guardian was not confirmed for legacy material review')
+        self.guard_origin = list(state['pos'])
+        self.event('legacy_review_guard_verified', pending=self.legacy_pending,
+                   native_receipt=self.bridge.last_receipt)
+        return state
+
     def actionable_candidates(self, candidates, state, world):
-        if self.bridge.halted or self.bridge.pending_mutations:
+        if self.legacy_pending or self.bridge.halted or self.bridge.pending_mutations:
             return {'wait': LABELS['wait']}
         context = local_failure_context(self.skills, state, world)
         for key in set(candidates) | {'explore_nearby'}:
@@ -1293,6 +1443,9 @@ class TrialWorker:
                  'implemented': sorted(LABELS.keys() - {'wait', 'recover_after_death'}),
                  'missing_capabilities': GAPS,
                  'dragon_defeated': bool(state and state.get('dragon_defeated') is True)}
+        if self.legacy_pending:
+            value.update(legacy_material_review=True, legacy_pending=self.legacy_pending,
+                         material_macros_enabled=False, journal_path=str(self.legacy_journal))
         if state:
             value.update({key: state.get(key) for key in ('world_session', 'health', 'food', 'pos', 'control_revision')})
         if self.skills:
@@ -1300,7 +1453,8 @@ class TrialWorker:
                          camp_completed=self.skills.camp_completed,
                          pending_log_drops=sum(row['count'] for row in self.skills.log_drops.values()))
         atomic_json(self.output / 'status.json', value)
-        if state and self.skills and self.registry and not self.restoring_checkpoint:
+        if (state and self.skills and self.registry and not self.restoring_checkpoint
+                and self.legacy_evidence is None):
             from singleplayer_trial_hot_update import checkpoint_from_skills
             checkpoint = checkpoint_from_skills(self.registry, state, self.skills,
                                                getattr(self.bridge, 'pending_mutations', {}))
@@ -1338,6 +1492,12 @@ class TrialWorker:
                 if self.command in {'start', 'resume'}:
                     if not isinstance(registry.get('run_id'), str) or not registry['run_id']:
                         raise Paused('Native Start must create a run identity')
+                    if self.legacy_scope and registry['run_id'] != self.legacy_scope['run_id']:
+                        self.command = 'pause'
+                        raise Paused('Legacy material isolation cannot switch runs without physical review')
+                    if self.legacy_pending and self.bridge and (self.bridge.halted or self.bridge.pending_mutations):
+                        self.command = 'pause'
+                        raise Paused('Current-run unknown work cannot be rebound through legacy isolation')
                     if self.command == 'start' or self.run_id != registry['run_id']:
                         self.bridge = None
                         self.skills = None
@@ -1347,6 +1507,9 @@ class TrialWorker:
                         # but do not re-send any old native request envelope.
                         self.bridge = None
                     self.run_id = registry['run_id']
+                    if self.command == 'start':
+                        self.native_start_run = self.run_id
+                    self.protect_legacy_evidence()
                 self.event('control', command=self.command, control_id=self.control_id)
         if self.command not in {'start', 'resume'}:
             raise Paused('Kit trial ' + self.command)
@@ -1355,24 +1518,68 @@ class TrialWorker:
 
     def bind(self):
         old = self.skills
-        self.bridge = self.bridge_factory(self.automation, self.registry, self.run_id,
-                      check_control=self.control, heartbeat=self.heartbeat,
-                      events=self.event, reader=self.reader, sleeper=self.sleeper)
-        self.skills = TrialSkills(self.bridge, self.output / 'bootstrap')
-        if old:
-            for name in ('camp', 'stations', 'owned', 'excluded', 'camp_completed', 'explored', 'station_anchor',
-                         'tried_grids', 'rejected_routes', 'log_drops', 'small_shelter'):
-                setattr(self.skills, name, getattr(old, name))
-        else:
-            from singleplayer_trial_hot_update import load_checkpoint, restore_checkpoint
-            checkpoint = load_checkpoint(self.game, self.registry, self.bridge.state)
+        self.restoring_checkpoint = True
+        try:
+            self.protect_legacy_evidence()
+            self.bridge = self.bridge_factory(self.automation, self.registry, self.run_id,
+                          check_control=self.control, heartbeat=self.heartbeat,
+                          events=self.event, reader=self.reader, sleeper=self.sleeper)
+            current = self.bridge.state
+            if self.legacy_pending:
+                self.legacy_state(current)
+                self.archive_legacy_mailbox()
+                self.skills = TrialSkills(self.bridge, self.legacy_journal.parent / 'bootstrap')
+                self.arm_legacy_guard(current)
+                return
+            from singleplayer_trial_hot_update import load_checkpoint, restore_checkpoint, unresolved_mutations
+            checkpoint = load_checkpoint(self.game, self.registry, current) if old is None else None
+            pending = (unresolved_mutations(self.game, self.registry, current, checkpoint)
+                       if checkpoint is not None or self.legacy_evidence is not None else [])
             if checkpoint:
-                self.restoring_checkpoint = True
-                try:
-                    result = restore_checkpoint(self.skills, checkpoint, self.registry, self.bridge.state)
-                    self.event('checkpoint_revalidated', **result)
-                finally:
-                    self.restoring_checkpoint = False
+                original = {row.get('id'): row for row in checkpoint.get('unresolved_native', [])
+                            if isinstance(row, dict)}
+                # The helper can rediscover an id from the latest mailbox and
+                # replace its arguments with a compact mining-only summary.
+                # Isolation retains the entire original checkpoint record.
+                pending = [original.get(row['id'], row) for row in pending]
+            # The historical reply scan can take several seconds. Re-observe
+            # through this same bridge, retaining its session, revision and
+            # request cursor, before classifying or admitting any new guard.
+            current = self.bridge.read(allow_dead=True)
+            if pending:
+                if (self.native_start_run != self.run_id or self.command != 'start'
+                        or any(not self.old_material_intent(row) for row in pending)):
+                    self.command = 'pause'
+                    raise Paused('Unknown current-run or unscoped material work requires review; no guard replay')
+                if self.legacy_evidence is None:
+                    self.legacy_evidence = {path: self.evidence_digest(path) for path in
+                        (self.output / 'checkpoint.json', self.output / 'journal.jsonl',
+                         self.output / 'bootstrap/status.json')}
+                    self.legacy_journal = self.output / 'material-review-runs' / self.run_id / 'journal.jsonl'
+                self.legacy_pending = json.loads(json.dumps(pending))
+                self.legacy_scope = {key: current[key] for key in
+                                     ('world_id', 'world_name', 'world_session', 'dimension')}
+                self.legacy_scope['run_id'] = self.run_id
+                self.legacy_state(current)
+                self.archive_legacy_mailbox()
+                self.skills = TrialSkills(self.bridge, self.legacy_journal.parent / 'bootstrap')
+                self.arm_legacy_guard(current)
+                self.event('legacy_material_review_entered', pending=self.legacy_pending,
+                           checkpoint_restored=False, material_macros_enabled=False)
+                return
+            if self.legacy_evidence is not None:
+                self.command = 'pause'
+                raise Paused('Legacy material evidence now differs or is resolved; require physical review before changing mode')
+            self.skills = TrialSkills(self.bridge, self.output / 'bootstrap')
+            if old:
+                for name in ('camp', 'stations', 'owned', 'excluded', 'camp_completed', 'explored', 'station_anchor',
+                             'tried_grids', 'rejected_routes', 'log_drops', 'small_shelter'):
+                    setattr(self.skills, name, getattr(old, name))
+            elif checkpoint:
+                result = restore_checkpoint(self.skills, checkpoint, self.registry, self.bridge.state)
+                self.event('checkpoint_revalidated', **result)
+        finally:
+            self.restoring_checkpoint = False
 
     def model_config(self):
         settings = self.game / 'config/twob2tkit/decision-advisor'
@@ -1635,6 +1842,18 @@ class TrialWorker:
         after = self.bridge.request('trial_respawn', death_epoch=epoch, seconds=15)
         if dead(after):
             raise Paused('Native respawn result still reports death')
+        if self.legacy_pending:
+            # Only this run's acknowledged normal respawn may change the
+            # current defense session. Historical intent scopes stay untouched.
+            validate_scope(after, self.registry, self.bridge.session, self.run_id)
+            self.legacy_scope.update(world_session=after['world_session'], dimension=after['dimension'])
+            self.legacy_state(after)
+            self.event('legacy_review_respawn_verified', death_epoch=epoch,
+                       native_receipt=self.bridge.last_receipt, pending=self.legacy_pending)
+            self.skills = TrialSkills(self.bridge, self.legacy_journal.parent / 'bootstrap')
+            self.guard_origin = None
+            self.publish('waiting_material_review', '正常复活已确认；旧材料动作仍待实物核查，防护继续', after)
+            return
         self.attempt_record('recover_after_death', before, after, self.bridge.last_receipt)
         self.skills = TrialSkills(self.bridge, self.output / 'bootstrap')
         self.failures = {}
@@ -1644,6 +1863,8 @@ class TrialWorker:
         self.control()
         passive = validate_scope(self.reader(self.automation), self.registry,
                                  run_id=self.run_id, allow_dead=True)
+        if self.legacy_pending:
+            self.legacy_state(passive)
         if not dead(passive) and passive.get('screen'):
             self.publish('waiting_interface', '玩家界面仍打开，关闭后自动重新观察；未关闭或操作该界面', passive)
             return
@@ -1659,6 +1880,19 @@ class TrialWorker:
         if self.bridge is None:
             self.bind()
         state = self.bridge.read(allow_dead=True)
+        if self.legacy_pending:
+            self.legacy_state(state)
+            if dead(state):
+                self.death_recovery(state)
+                return
+            if (not state.get('guard_armed') or not state.get('guard_pve_only')
+                    or getattr(self, 'guard_origin', None) is None
+                    or distance(state['pos'], self.guard_origin) > 10):
+                state = self.arm_legacy_guard(state)
+            self.publish('waiting_material_review',
+                '旧 run 有 %d 个材料动作缺少完整确认；仅维持本 run PvE 防护与正常复活，等待实物核查%s'
+                % (len(self.legacy_pending), '；防护正在处理战斗' if state.get('guard_busy') else ''), state)
+            return
         if state.get('dragon_defeated') is True:
             self.completion_state = state
             self.publish('complete', '原生确认已击败末影龙', state)
@@ -1762,7 +1996,7 @@ class TrialWorker:
                         self.command = 'pause'
                 if self.command == 'cancel' or self.phase == 'complete':
                     break
-                delay = 5 if self.phase in {'waiting_model', 'waiting_capability', 'waiting_daylight', 'waiting_interface', 'waiting_guard'} else poll_seconds
+                delay = 5 if self.phase in {'waiting_model', 'waiting_capability', 'waiting_daylight', 'waiting_interface', 'waiting_guard', 'waiting_material_review'} else poll_seconds
                 until = time.monotonic() + delay
                 while not self.stopping and time.monotonic() < until:
                     self.sleeper(min(.2, max(0, until - time.monotonic())))

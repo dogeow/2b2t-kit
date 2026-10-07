@@ -56,4 +56,32 @@ class TrialGuardWiringTest {
         assertEquals(Set.of("keyUp","keyDown","keyLeft","keyRight","keyJump","keyShift","keySprint","keyAttack"),keys);
         assertFalse(keys.contains("keyUse"),"Guard/AutoEat use input is not the chopper's lease");
     }
+    @Test void trialCombatHostPortUsesOnlyTheActualLiveGuardOwnership()throws Exception{
+        var authority=calls(method("automation/AutomationBridge","ownedTrialCombat"));
+        assertTrue(authority.containsAll(List.of("isPaused","active","getHealth","isDeadOrDying","isFinite",
+            "trialOwner","trialScope","guardArmed","manualMovementDown","ownsGuardCombat")));
+        assertFalse(authority.contains("ownedTrialChop"),"An idle guardian must be able to begin combat");
+        assertFalse(authority.contains("guardBusy"),"First combat admission cannot depend on the old busy result");
+        assertFalse(authority.contains("acknowledge"));assertFalse(authority.contains("safeLogout"));
+        assertFalse(authority.contains("setDown"));assertFalse(authority.contains("enable"));
+        var port=calls(method("borer/TunnelBorer$HostBridge","allowTrialCreeperMelee"));
+        assertEquals(List.of("ownedTrialCombat"),port);
+    }
+    @Test void oldHostsDefaultToNoTrialMeleeAuthority()throws Exception{
+        var port=method("runtime/api/BorerHost","allowTrialCreeperMelee");
+        assertFalse((port.access&Opcodes.ACC_ABSTRACT)!=0);
+        assertTrue(calls(port).isEmpty());
+        assertTrue(java.util.stream.StreamSupport.stream(port.instructions.spliterator(),false)
+            .anyMatch(i->i.getOpcode()==Opcodes.ICONST_0));
+    }
+    @Test void trialTickPreservesOnlyBusyAlreadyActiveCombatFlight()throws Exception{
+        var tick=calls(method("trial/SingleplayerTrialRuntime","tick"));
+        assertTrue(tick.containsAll(List.of("ownedTrialChop","ownedTrialCombat","guardBusy","isActive","preserveGuardFlight")));
+        assertTrue(tick.indexOf("ownedTrialCombat")<tick.indexOf("preserveGuardFlight"));
+        assertTrue(tick.indexOf("guardBusy")<tick.indexOf("preserveGuardFlight"));
+        var runtime=clazz("trial/SingleplayerTrialRuntime");
+        assertTrue(runtime.methods.stream().filter(m->m.name.startsWith("lambda$tick$"))
+            .flatMap(m->java.util.stream.StreamSupport.stream(m.instructions.spliterator(),false))
+            .anyMatch(i->i instanceof MethodInsnNode call&&call.name.equals("disableModule")&&call.desc.equals("(ZZZ)Z")));
+    }
 }

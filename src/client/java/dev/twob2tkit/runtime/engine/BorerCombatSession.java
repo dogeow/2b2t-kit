@@ -14,6 +14,7 @@ final class BorerCombatSession<T> {
 		long progressAt;
 		boolean attackable;
 		int repositionAttempts;
+		boolean trialMeleeRetry;
 		Entry(T entity, float health, long now) {
 			this.entity = entity; lowestHealth = health; progressAt = now;
 		}
@@ -60,6 +61,20 @@ final class BorerCombatSession<T> {
 		var e=unresolved.get(id);
 		if(e==null||!e.attackable||e.repositionAttempts>=2)return false;
 		e.repositionAttempts++;e.progressAt=now;return true;
+	}
+	/** A newly available trial-only melee capability gets one budget retry; never erase the threat. */
+	boolean retryTrialMelee(UUID id, boolean capabilityVerified) {
+		var e = unresolved.get(id);
+		if (!capabilityVerified || pausedAt != Long.MIN_VALUE || e == null || !e.attackable
+				|| e.trialMeleeRetry || now - e.progressAt < NO_PROGRESS_TICKS) return false;
+		e.trialMeleeRetry = true;
+		e.progressAt = now;
+		return true;
+	}
+	boolean canRetryTrialMelee(UUID id) {
+		var e = unresolved.get(id);
+		return pausedAt == Long.MIN_VALUE && e != null && e.attackable && !e.trialMeleeRetry
+			&& now - e.progressAt >= NO_PROGRESS_TICKS;
 	}
 	void pause(long tick) { if (pausedAt == Long.MIN_VALUE) pausedAt = tick; }
 	void clear() { unresolved.clear(); pausedAt = Long.MIN_VALUE; }

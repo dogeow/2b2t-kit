@@ -73,4 +73,44 @@ class TrialGuardPolicyTest {
         assertTrue(TrialGuardPolicy.disableModule(false,true));
         assertTrue(TrialGuardPolicy.disableModule(false,false));
     }
+    @Test void exactIdlePveGuardianCanBeginTrialCombatWithoutAnActiveChopper(){
+        assertFalse(TrialGuardPolicy.ownedChop(owner(true,true,true),request(),false,false));
+        assertTrue(TrialGuardPolicy.ownsGuardCombat(owner(true,true,true),request(),true,true,false));
+        // Ownership admits the first combat tick; busy/Flight are separate lease decisions.
+        assertFalse(TrialGuardPolicy.preserveGuardFlight(true,false,false));
+        assertFalse(TrialGuardPolicy.preserveGuardFlight(true,false,true));
+    }
+    @Test void combatRequiresEveryLiveNativeIdentityAndOptInFlag(){
+        var wrong=new TrialGuardPolicy.Scope[]{
+            scope(false,true,"trial","run","/saves/trial","session","minecraft:overworld"),
+            scope(true,false,"trial","run","/saves/trial","session","minecraft:overworld"),
+            scope(true,true,"other","run","/saves/trial","session","minecraft:overworld"),
+            scope(true,true,"trial","old","/saves/trial","session","minecraft:overworld"),
+            scope(true,true,"trial","run","/saves/other","session","minecraft:overworld"),
+            scope(true,true,"trial","run","/saves/trial","old-session","minecraft:overworld"),
+            scope(true,true,"trial","run","/saves/trial","session","minecraft:the_nether"),
+            scope(true,true,"trial","","/saves/trial","session","minecraft:overworld")};
+        for(var guarded:wrong)assertFalse(TrialGuardPolicy.ownsGuardCombat(owner(true,true,true),guarded,true,true,false));
+        assertFalse(TrialGuardPolicy.ownsGuardCombat(owner(false,true,true),request(),true,true,false));
+        assertFalse(TrialGuardPolicy.ownsGuardCombat(owner(true,false,true),request(),true,true,false));
+        assertFalse(TrialGuardPolicy.ownsGuardCombat(owner(true,true,false),request(),true,true,false));
+        assertFalse(TrialGuardPolicy.ownsGuardCombat(null,request(),true,true,false));
+        assertFalse(TrialGuardPolicy.ownsGuardCombat(owner(true,true,true),null,true,true,false));
+        assertFalse(TrialGuardPolicy.ownsGuardCombat(owner(true,true,true),request(),false,true,false));
+        assertFalse(TrialGuardPolicy.ownsGuardCombat(owner(true,true,true),request(),true,false,false));
+        assertFalse(TrialGuardPolicy.ownsGuardCombat(owner(true,true,true),request(),true,true,true));
+    }
+    @Test void onlyAnActiveBusyCombatLeasePreservesFlightAndNeverOtherDisabledModules(){
+        for(boolean owns:new boolean[]{false,true})for(boolean busy:new boolean[]{false,true})
+            for(boolean flying:new boolean[]{false,true}){
+                boolean preserve=TrialGuardPolicy.preserveGuardFlight(owns,busy,flying);
+                assertEquals(owns&&busy&&flying,preserve);
+                assertEquals(!preserve,TrialGuardPolicy.disableModule(true,false,preserve));
+                assertTrue(TrialGuardPolicy.disableModule(false,false,preserve));
+                assertTrue(TrialGuardPolicy.disableModule(false,true,preserve));
+            }
+        assertFalse(TrialGuardPolicy.disableModule(true,true,false),"Existing native chopper lease stays supported");
+        boolean deadOwner=TrialGuardPolicy.ownsGuardCombat(owner(true,true,true),request(),true,false,false);
+        assertFalse(TrialGuardPolicy.preserveGuardFlight(deadOwner,true,true));
+    }
 }

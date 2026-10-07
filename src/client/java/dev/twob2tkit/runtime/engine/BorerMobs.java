@@ -48,6 +48,9 @@ final class BorerMobs {
 
 	/** 面朝威胁按后退拉开距离：盾牌只挡正面，转身跑反而挡不住爆炸。 */
 	boolean retreatFrom(Minecraft client, LocalPlayer player, Entity threat) {
+		return retreatFrom(client,player,threat,false);
+	}
+	private boolean retreatFrom(Minecraft client,LocalPlayer player,Entity threat,boolean trial){
 		double dx = threat.getX() - player.getX();
 		double dz = threat.getZ() - player.getZ();
 		if (dx * dx + dz * dz < 1.0E-4) return false;
@@ -55,6 +58,7 @@ final class BorerMobs {
 		for (float offset : new float[]{0.0F, -35.0F, 35.0F}) {
 			float yaw = toward + offset;
 			if (!safeRetreatYaw(client, player, yaw + 180.0F)) continue;
+			if (trial && !safeTrialRetreatYaw(client,player,yaw+180.0F)) continue;
 			player.setYRot(yaw);
 			player.setYHeadRot(yaw);
 			player.setXRot(12.0F);
@@ -65,6 +69,45 @@ final class BorerMobs {
 			return true;
 		}
 		return false;
+	}
+
+	/** Read-only preflight for the same face-threat retreat used by normal combat. */
+	boolean safeRetreatFrom(Minecraft client, LocalPlayer player, Entity threat) {
+		double dx = threat.getX() - player.getX(), dz = threat.getZ() - player.getZ();
+		if (dx * dx + dz * dz < 1.0E-4) return false;
+		float toward = (float)Math.toDegrees(Math.atan2(dz, dx)) - 90.0F;
+		for (float offset : new float[]{0.0F, -35.0F, 35.0F})
+			if (safeRetreatYaw(client, player, toward + offset + 180.0F)
+					&&safeTrialRetreatYaw(client,player,toward+offset+180.0F)) return true;
+		return false;
+	}
+	boolean trialRetreatFrom(Minecraft client,LocalPlayer player,Entity threat){
+		return retreatFrom(client,player,threat,true);
+	}
+	private boolean safeTrialRetreatYaw(Minecraft c,LocalPlayer p,float yaw){
+		double rad=Math.toRadians(yaw),length=Math.max(1.1,p.getDeltaMovement().horizontalDistance()+1.1);
+		Vec3 delta=new Vec3(-Math.sin(rad)*length,0,Math.cos(rad)*length);
+		return safeTrialStep(c,p,delta);
+	}
+	boolean safeTrialApproach(Minecraft c,LocalPlayer p,Entity threat){
+		if(!safeCombatApproach(c,p,threat))return false;
+		Vec3 direction=new Vec3(threat.getX()-p.getX(),0,threat.getZ()-p.getZ());
+		return direction.lengthSqr()>=.01&&safeTrialStep(c,p,direction.normalize()
+			.scale(Math.max(1.1,p.getDeltaMovement().horizontalDistance()+1.1)));
+	}
+	private boolean safeTrialStep(Minecraft c,LocalPlayer p,Vec3 delta){
+		var swept=p.getBoundingBox().expandTowards(delta).inflate(.02);
+		if(!c.level.noCollision(p,swept))return false;
+		for(var q:BlockPos.betweenClosed(BlockPos.containing(swept.minX,swept.minY,swept.minZ),
+			BlockPos.containing(swept.maxX-1e-7,swept.maxY-1e-7,swept.maxZ-1e-7))){
+			if(!c.level.hasChunkAt(q))return false;var state=c.level.getBlockState(q);
+			if(!state.getFluidState().isEmpty()||state.is(net.minecraft.world.level.block.Blocks.FIRE)
+				||state.is(net.minecraft.world.level.block.Blocks.SOUL_FIRE)||state.is(net.minecraft.world.level.block.Blocks.COBWEB)
+				||state.is(net.minecraft.world.level.block.Blocks.POWDER_SNOW))return false;
+		}
+		var dest=BlockPos.containing(p.position().add(delta));
+		for(int drop=0;drop<=4;drop++)if(!c.level.hasChunkAt(dest.below(drop)))return false;
+		int fall=BorerHazards.safeFallDepth(c,dest);return fall>=0&&fall<=3;
 	}
 
 	/** 该后退偏航是否安全。 */
@@ -363,7 +406,7 @@ final class BorerMobs {
     }
 
     /** A combat approach never mines through a wall or steps onto lava/a dangerous drop. */
-    private boolean safeCombatApproach(Minecraft client, LocalPlayer player, Entity threat) {
+    boolean safeCombatApproach(Minecraft client, LocalPlayer player, Entity threat) {
         Vec3 horizontal = new Vec3(threat.getX() - player.getX(), 0, threat.getZ() - player.getZ());
         if (horizontal.lengthSqr() < .01) return false;
         Vec3 step = horizontal.normalize().scale(Math.max(.45, player.getDeltaMovement().horizontalDistance() + .45));

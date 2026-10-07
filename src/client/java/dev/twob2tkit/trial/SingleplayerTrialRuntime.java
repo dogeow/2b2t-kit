@@ -141,8 +141,12 @@ public final class SingleplayerTrialRuntime {
         if(!registeredHere(c)){stop(c,"试验存档已离开，服务器操作保持关闭");return;}
         if(!cancelled){
             boolean ownedChop=dev.twob2tkit.automation.AutomationBridge.ownedTrialChop(c);
+            boolean ownedGuardFlight=TrialGuardPolicy.preserveGuardFlight(
+                dev.twob2tkit.automation.AutomationBridge.ownedTrialCombat(c),
+                dev.twob2tkit.automation.AutomationBridge.guardBusy(),
+                dev.twob2tkit.MeteorModules.isActive(dev.twob2tkit.MeteorModules.FLIGHT));
             disabledModules.keySet().stream().filter(module->TrialGuardPolicy.disableModule(
-                module.equals(dev.twob2tkit.MeteorModules.FLIGHT),ownedChop)).forEach(dev.twob2tkit.MeteorModules::disable);
+                module.equals(dev.twob2tkit.MeteorModules.FLIGHT),ownedChop,ownedGuardFlight)).forEach(dev.twob2tkit.MeteorModules::disable);
         }
         boolean dead=c.player!=null&&c.player.isDeadOrDying();if(dead&&!wasDead){deaths++;deadAt=System.currentTimeMillis();}wasDead=dead;
         long now=System.currentTimeMillis();if(!advancementPending&&now>=nextAdvancementPoll&&c.player!=null&&!dead){

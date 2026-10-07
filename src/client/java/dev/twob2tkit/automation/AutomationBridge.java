@@ -988,6 +988,16 @@ public final class AutomationBridge {
             true,KitClient.chopper()!=null&&KitClient.chopper().isActive());}
         catch(RuntimeException invalid){return false;}
     }
+    /** Only the actual live trial's exact PvE guardian may use trial combat. */
+    public static boolean ownedTrialCombat(Minecraft c){
+        if(c==null||c.player==null||c.level==null||c.screen!=null||c.isPaused()
+                ||dev.twob2tkit.combat.EmergencyExit.active())return false;
+        float health=c.player.getHealth();
+        boolean alive=!c.player.isDeadOrDying()&&Float.isFinite(health)&&health>0;
+        try{return dev.twob2tkit.trial.TrialGuardPolicy.ownsGuardCombat(trialOwner(c),trialScope(guardScope),
+            guardArmed(),alive,KitKeys.manualMovementDown(c));}
+        catch(RuntimeException invalid){return false;}
+    }
     private static boolean trialHealthRecoveryEnabled(Minecraft c,boolean enabled){
         if(!enabled||!trialFlag(guardScope,"local_trial")||!trialFlag(guardScope,"pve_only"))return enabled;
         try{return dev.twob2tkit.trial.TrialGuardPolicy.healthRecoveryEnabled(enabled,trialOwner(c),trialScope(guardScope));}

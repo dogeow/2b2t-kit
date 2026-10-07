@@ -26,6 +26,16 @@ public final class TrialGuardPolicy {
     public static boolean ownedChop(Owner owner, Scope scope, boolean activeChopRequest, boolean chopperActive) {
         return activeChopRequest && chopperActive && exactOwner(owner, scope) && owner.activeRun();
     }
+    /** The current opted-in PvE guardian may begin combat even without a child task. */
+    public static boolean ownsGuardCombat(Owner owner, Scope scope, boolean guardArmed,
+                                         boolean playerAlive, boolean manualInput) {
+        return guardArmed && playerAlive && !manualInput && exactOwner(owner, scope)
+            && owner.activeRun() && owner.allowDeathRespawn() && scope.pveOnly();
+    }
+    /** Preserve an already acquired combat Flight lease, never enable one while idle. */
+    public static boolean preserveGuardFlight(boolean ownsCombat, boolean combatBusy, boolean flightActive) {
+        return ownsCombat && combatBusy && flightActive;
+    }
     public static boolean stopOwnedChop(Owner owner, Scope scope, String trialId, String runId,
                                        boolean activeChopRequest, boolean chopperActive) {
         // A crashed/cancelled worker must still release its own live child.
@@ -34,6 +44,9 @@ public final class TrialGuardPolicy {
             && SingleplayerTrialPolicy.owner(trialId, runId, owner.trialId(), owner.runId());
     }
     public static boolean disableModule(boolean flightModule, boolean ownedChop) {
-        return !flightModule || !ownedChop;
+        return disableModule(flightModule,ownedChop,false);
+    }
+    public static boolean disableModule(boolean flightModule, boolean ownedChop, boolean ownedGuardFlight) {
+        return !flightModule || !(ownedChop || ownedGuardFlight);
     }
 }

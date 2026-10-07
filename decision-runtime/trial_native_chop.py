@@ -5,10 +5,13 @@ The current host chooses its nearest natural tree of the surveyed species.
 Worker receipts preserve the actual native status frame outside its mailbox.
 """
 import json
+import hashlib
 import math
 import re
 import uuid
 from pathlib import Path
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from survival_bridge import Paused, inventory
 from survival_world import cell
@@ -16,9 +19,10 @@ from survival_world import cell
 LOG_IDS = frozenset('minecraft:' + name + '_log' for name in
                    ('oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak',
                     'mangrove', 'cherry', 'pale_oak'))
-SUPPORTED_HOSTS = frozenset({'2026.10.7.6'})
+SUPPORTED_HOSTS = frozenset({'2026.10.7.6', '2026.10.7.7'})
 RECEIPT_SCHEMA = 1
 RECEIPT_SOURCE = 'matched_native_status_snapshot'
+INTERRUPTION_SOURCE = 'matched_native_pause_and_complete_chopper_log'
 NATIVE_TREE_REACH_XZ = 32 + 79 + 8  # search + <=80 connected logs + crown bounds
 _SAFE_ID = re.compile(r'trial-[A-Za-z0-9_-]{1,74}\Z')
 
@@ -240,6 +244,199 @@ def known_chop_receipt(game, registry, unresolved, state=None):
             or type(state.get('control_revision')) is not int
             or state['control_revision'] < value['native_result']['control_revision']):
         return None
+    return value
+
+
+def _complete_counts(frame):
+    rows=frame.get('inventory')
+    if (not isinstance(rows,list) or len(rows)!=36
+            or {row.get('slot') for row in rows if isinstance(row,dict)} != set(range(36))):
+        return None
+    return _counts(frame)
+
+
+def _pause_terminal_data_valid(frame,request):
+    keys=frame.get('movement_keys',{})
+    return (_same_scope(frame,request) and supports_native_chop(frame)
+        and frame.get('id')==request['id'] and frame.get('last_request')==request['id']
+        and frame.get('op')=='chop' and frame.get('phase')=='waiting'
+        and frame.get('detail')=='singleplayer trial action paused; receipt retained'
+        and frame.get('chopping') is False and frame.get('on_ground') is True
+        and frame.get('chopper_remaining')==0 and type(frame.get('chopper_remaining')) is int
+        and frame.get('chopper_platforms')==0 and type(frame.get('chopper_platforms')) is int
+        and frame.get('chopper_verified_trees')==0 and type(frame.get('chopper_verified_trees')) is int
+        and frame.get('outcome_pending') is not True and frame.get('health',0)>0
+        and frame.get('screen','')=='' and frame.get('under_water') is not True
+        and frame.get('trial_identity',{}).get('process_alive') is True
+        and isinstance(keys,dict) and {'forward','back','jump','sneak'}<=keys.keys()
+        and all(value is False for value in keys.values()))
+
+
+def _pause_terminal(frame,request):
+    try:
+        return _pause_terminal_data_valid(frame,request)
+    except (KeyError,TypeError,ValueError,AttributeError):
+        return False
+
+
+def _zero_counter_window(text,timezone,request,before,after):
+    """Match the single complete native start/stop window, without date guessing."""
+    if not isinstance(text,str) or not text.endswith('\n') or len(text.encode())>1_000_000:
+        return None
+    try:
+        zone=ZoneInfo(timezone)
+        day=datetime.fromtimestamp(request['expires_at']/1000,zone).date()
+    except (KeyError,TypeError,ValueError):
+        return None
+    rows=[]
+    for line in text.splitlines():
+        match=re.fullmatch(r'(\d{2}:\d{2}:\d{2}) ([0-9.]+) (.+)',line)
+        if not match:
+            return None
+        rows.append(match.groups())
+    candidates=[]
+    for index,(clock,version,message) in enumerate(rows):
+        if version!='1.9.51' or not message.startswith('start player='):
+            continue
+        try:
+            stamp=datetime.fromisoformat(str(day)+'T'+clock).replace(tzinfo=zone)
+        except ValueError:
+            return None
+        for shift in (-1,0,1):
+            started=int((stamp+timedelta(days=shift)).timestamp()*1000)
+            if request['expires_at']-10_000<=started+999 and started<=request['expires_at']:
+                candidates.append((index,started))
+    if len(candidates)!=1:
+        return None
+    index,started=candidates[0]
+    window=[];last=started
+    for offset,(clock,version,message) in enumerate(rows[index:]):
+        if version!='1.9.51' or offset and message.startswith('start player='):
+            return None
+        stamp=datetime.fromtimestamp(last/1000,zone)
+        try:
+            current=datetime.fromisoformat(str(stamp.date())+'T'+clock).replace(tzinfo=zone)
+        except ValueError:
+            return None
+        at=int(current.timestamp()*1000)
+        if at<last:
+            at=int((current+timedelta(days=1)).timestamp()*1000)
+        if at-started>7_200_000:
+            return None
+        last=at;window.append((message,at))
+        if message.startswith('stop '):
+            break
+    if (len(window)!=4 or not window[-1][0].startswith('stop ')
+            or not before['time']<=window[-1][1]+999 or not window[-1][1]<=after['time']
+            or window[-1][0]!='stop reason=当前单人试验已停止挖树 chopped=0 trees=0 loot=0'):
+        return None
+    first=re.fullmatch(r'start player=(-?\d+\.\d{3}),(-?\d+\.\d{3}),(-?\d+\.\d{3}) range=32 walk=true leaves=false pickup=true',window[0][0])
+    site=request.get('site')
+    if (not first or not isinstance(site,list) or len(site)!=3
+            or any(type(n) not in (int,float) or not math.isfinite(n) for n in site)
+            or any(abs(float(value)-expected)>.001 for value,expected in zip(first.groups(),site))):
+        return None
+    lock=re.fullmatch(r'lock-tree logs=(\d+) base=-?\d+,-?\d+,-?\d+ player=-?\d+\.\d{3},-?\d+\.\d{3},-?\d+\.\d{3}',window[1][0])
+    plan=re.fullmatch(r'air-work-plan cell=BlockPos\{x=-?\d+, y=-?\d+, z=-?\d+\} floating=false coverage=(\d+) remaining=(\d+) nodes=(\d+)',window[2][0])
+    if (not lock or not plan or not 1<=int(lock[1])<=80
+            or any(int(value)!=int(lock[1]) for value in plan.groups())
+            or before.get('chopper_remaining')!=int(lock[1])):
+        return None
+    return {'start_time':started,'stop_time':window[-1][1],'locked_logs':int(lock[1]),
+            'chopped_logs':0,'finished_trees':0,'picked_loot':0}
+
+
+def _interruption_audit_data_valid(value):
+    if (not isinstance(value,dict) or value.get('schema')!=1 or value.get('source')!=INTERRUPTION_SOURCE
+            or value.get('outcome')!='audited_native_chop_interruption'
+            or value.get('native_completed') is not False or value.get('zero_blocks_verified') is not False):
+        return False
+    request,before,after,pause,receipt,log=(value.get(name) for name in
+        ('request','native_before','native_after','pause_request','pause_receipt','native_log'))
+    if not all(isinstance(part,dict) for part in (request,before,after,pause,receipt,log)):
+        return False
+    rid=request.get('id');identity=receipt.get('trial_identity',{})
+    if (not isinstance(rid,str) or not _SAFE_ID.fullmatch(rid)
+            or request.get('op')!='chop' or request.get('local_trial') is not True
+            or request.get('local_survival') is not True or request.get('item') not in LOG_IDS
+            or request.get('server')!='singleplayer'
+            or type(request.get('target_count')) is not int or not 1<=request['target_count']<=512
+            or type(request.get('tree_limit')) is not int or request['tree_limit']!=1
+            or type(request.get('seconds')) is not int or not 30<=request['seconds']<=300
+            or type(request.get('expected_revision')) is not int
+            or type(request.get('expires_at')) is not int
+            or not _same_scope(before,request) or not supports_native_chop(before)
+            or before.get('id')!=rid or before.get('last_request')!=rid
+            or before.get('op')!='chop' or before.get('phase')!='running' or before.get('chopping') is not True
+            or before.get('chopper_platforms')!=0 or type(before.get('chopper_platforms')) is not int
+            or before.get('chopper_verified_trees')!=0 or type(before.get('chopper_verified_trees')) is not int
+            or before.get('trial_identity',{}).get('process_alive') is not True
+            or not _pause_terminal(after,request)
+            or before.get('control_revision')!=request['expected_revision']+1
+            or after.get('control_revision')!=before['control_revision']
+            or after['time']<=before['time']
+            or pause.get('protocol')!=1 or pause.get('command')!='pause'
+            or pause.get('world_id')!=request.get('world_id')
+            or pause.get('world_session')!=request.get('world_session')
+            or pause.get('expected_revision')!=before['control_revision']
+            or type(pause.get('expires_at')) is not int
+            or not before['time']<=pause['expires_at']<=after['time']+15_000
+            or receipt.get('protocol')!=1 or receipt.get('phase')!='done'
+            or receipt.get('id')!=pause.get('id')
+            or identity.get('registered') is not True
+            or any(identity.get(key)!=request.get(key) for key in ('world_id','trial_id','run_id'))):
+        return False
+    first,last=_complete_counts(before),_complete_counts(after)
+    if first is None or last is None or first!=last:
+        return False
+    text=log.get('text')
+    if not isinstance(text,str) or log.get('sha256')!=hashlib.sha256(text.encode()).hexdigest():
+        return False
+    observed=_zero_counter_window(text,log.get('timezone'),request,before,after)
+    return observed is not None and value.get('native_counters')==observed
+
+
+def _valid_interruption_audit(value):
+    try:
+        return _interruption_audit_data_valid(value)
+    except (KeyError,TypeError,ValueError,OverflowError,AttributeError):
+        return False
+
+
+def record_interrupted_chop_audit(automation,request,before,after,pause_request,pause_receipt,
+                                native_log,*,timezone='Asia/Taipei',current=None):
+    """Preserve a scoped interruption audit, never infer zero block mutations.
+
+    .6 logs cached removed-log counters, not destroy dispatches or ACKs. A
+    zero counter can coexist with unconfirmed leaf/grass/block destruction.
+    This audit therefore does not clear a pending intent or authorize replay.
+    """
+    try:
+        counters=_zero_counter_window(native_log,timezone,request,before,after)
+        log_hash=hashlib.sha256(native_log.encode()).hexdigest()
+    except (KeyError,TypeError,ValueError,OverflowError,AttributeError):
+        raise Paused('Native chop audit input is malformed; preserve its unknown intent') from None
+    value={'schema':1,'source':INTERRUPTION_SOURCE,'outcome':'audited_native_chop_interruption',
+           'native_completed':False,'zero_blocks_verified':False,'request':request,
+           'native_before':before,'native_after':after,'pause_request':pause_request,
+           'pause_receipt':pause_receipt,'native_log':{'text':native_log,'timezone':timezone,
+               'sha256':log_hash},'native_counters':counters}
+    if not _valid_interruption_audit(value):
+        raise Paused('Native chop interruption evidence is incomplete or changed; preserve its unknown intent')
+    if (current is None or not _pause_terminal(current,request)
+            or current['time']<after['time'] or current.get('control_revision')!=after['control_revision']
+            or _complete_counts(current)!=_complete_counts(after)):
+        raise Paused('Current control no longer matches the audited pause; preserve its unknown intent')
+    root=_receipt_root(automation).parent/'native-chop-interruptions'
+    if any(parent.is_symlink() for parent in (root,*root.parents)):
+        raise Paused('Native interruption audit directory must not contain symlinks')
+    root.mkdir(parents=True,exist_ok=True);path=root/(request['id']+'.json')
+    if path.exists():
+        if path.is_symlink() or json.loads(path.read_text())!=value:
+            raise Paused('A different interruption audit exists; preserve it')
+        return value
+    temp=root/(request['id']+'.'+uuid.uuid4().hex[:8]+'.tmp')
+    temp.write_text(json.dumps(value,allow_nan=False,ensure_ascii=False)+'\n');temp.replace(path)
     return value
 
 

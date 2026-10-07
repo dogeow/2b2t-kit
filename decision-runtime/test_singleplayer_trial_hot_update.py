@@ -38,7 +38,7 @@ def setup(root):
     for file in ('material_jobs_cli.py', 'material_jobs_backend.py', 'singleplayer_trial.py',
                  'singleplayer_trial_bridge.py', 'singleplayer_experience.py', 'singleplayer_trial_cli.py',
                  'singleplayer_trial_hot_update.py', 'trial_surface_recovery.py', 'survival_cooking.py',
-                 'trial_safety_preparation.py', 'trial_safety_routing.py', 'trial_native_chop.py'):
+                 'trial_safety_preparation.py', 'trial_safety_routing.py', 'trial_native_chop.py', 'trial_selection_receipts.py'):
         (source / file).write_text('VALUE = "new verified worker"\n')
     (source / 'singleplayer_trial_capabilities.py').write_text('VALUE = "only registered macros"\n')
     bundle = root / 'worker.zip'
@@ -104,6 +104,60 @@ def verified_chop(game, reg, state):
     return sent,path
 
 
+def isolated_legacy_setup(root):
+    game,reg,state,bundle,commands,native=setup(root)
+    state.update(kit_version='2026.10.7.7',dimension='minecraft:overworld',
+                 chopping=False,printing=False,navigating=False,borer_active=False)
+    output=game/'config/twob2tkit/singleplayer-trial/worker'
+    output.mkdir(parents=True)
+    row={'id':'trial-old-unknown','op':'chop','world_id':reg['world_id'],'trial_id':reg['trial_id'],
+         'run_id':'legacy-run','world_session':'old-session','dimension':state['dimension'],
+         'arguments':{'item':'minecraft:oak_log','target_count':3,'tree_limit':1,'seconds':240}}
+    checkpoint={'schema':1,'world_id':reg['world_id'],'world_name':reg['world_name'],
+        'trial_id':reg['trial_id'],'source_run_id':row['run_id'],'world_session':row['world_session'],
+        'game_version':state['game_version'],'unresolved_native':[row]}
+    (output/'checkpoint.json').write_text(json.dumps(checkpoint))
+    (output/'journal.jsonl').write_text(json.dumps({'event':'worker_wait','run_id':row['run_id'],
+        'trial_id':reg['trial_id'],'active_request':row['id'],'bridge_halted':True})+'\n')
+    (output/'bootstrap').mkdir()
+    (output/'bootstrap/status.json').write_text(json.dumps({'world_id':reg['world_id'],'phase':'running'}))
+    (output/'bootstrap/physical-history.jsonl').write_text('old physical evidence\n')
+    archive=output/'legacy-material-intents'/('trial-old-unknown.request.json')
+    archive.parent.mkdir()
+    envelope={**{k:v for k,v in row.items() if k!='arguments'},**row['arguments'],
+              'server':'singleplayer','local_trial':True,'local_survival':True,
+              'expected_revision':1,'expires_at':state['time']-1000}
+    archive.write_text(json.dumps(envelope))
+    def publish(run,pid,phase):
+        journal=output/'material-review-runs'/run/'journal.jsonl'
+        journal.parent.mkdir(parents=True,exist_ok=True)
+        if not journal.exists():
+            journal.write_text(json.dumps({'time':state['time']-1000,'event':'control',
+                'trial_id':reg['trial_id'],'run_id':run,'command':'start'})+'\n')
+        with journal.open('a') as stream:
+            stream.write(json.dumps({'time':state['time'],'event':'worker_wait','trial_id':reg['trial_id'],
+                'run_id':run,'bridge_halted':False,'active_request':None})+'\n')
+        value={'protocol':1,'time':state['time'],'pid':pid,'run_id':run,'trial_id':reg['trial_id'],
+            'world_id':reg['world_id'],'world_session':state['world_session'],'phase':phase,
+            'legacy_material_review':True,'material_macros_enabled':False,'legacy_pending':[row],
+            'journal_path':str(journal)}
+        (output/'status.json').write_text(json.dumps(value))
+    publish(reg['run_id'],701,'paused')
+    def lifecycle(unused,command):
+        result=native(unused,command)
+        if command=='pause': publish(reg['run_id'],701,'paused')
+        elif command=='cancel': publish(reg['run_id'],701,'cancelled')
+        elif command=='start':
+            state.update(guard_armed=True,guard_pve_only=True)
+            publish('run-new',702,'waiting_material_review')
+        return result
+    checks={'reader':lambda _:dict(state),'native':lifecycle,'import_checker':Mock(),
+            'worker_checker':lambda:False,'preserve_legacy_review':True,
+            'worker_identity_checker':lambda pid,game:pid in {701,702},
+            'wall_time':lambda:(state['time']+100)/1000,'sleeper':lambda _:None}
+    return game,reg,state,bundle,commands,lifecycle,checks,output,row,archive
+
+
 def mining_reply(reg, **changes):
     return {'id': 'trial-mine', 'op': 'mine_block', 'world_id': reg['world_id'],
             'world_session': 'world-a', 'server': 'singleplayer', 'phase': 'waiting',
@@ -117,6 +171,197 @@ def mining_reply(reg, **changes):
 
 
 class HotUpdateTests(unittest.TestCase):
+    def test_explicit_legacy_isolation_source_swap_keeps_every_unknown_and_original_byte(self):
+        with tempfile.TemporaryDirectory() as temp:
+            game,reg,state,bundle,commands,native,checks,output,row,archive=isolated_legacy_setup(Path(temp))
+            frozen={path:path.read_bytes() for path in (output/'checkpoint.json',output/'journal.jsonl',
+                output/'bootstrap/status.json',output/'bootstrap/physical-history.jsonl',archive)}
+            proof=install_and_restart(game,bundle,**checks)
+            self.assertEqual(['pause','cancel','start'],commands)
+            self.assertTrue(proof['legacy_material_review_preserved'])
+            self.assertFalse(proof['material_macros_enabled'])
+            self.assertFalse(proof['legacy_outcomes_confirmed'])
+            self.assertEqual([row['id']],proof['legacy_unknown_ids'])
+            self.assertEqual('waiting_material_review',proof['legacy_new_worker_phase'])
+            self.assertEqual(702,proof['legacy_new_worker_pid'])
+            for path,data in frozen.items(): self.assertEqual(data,path.read_bytes())
+            checkpoint=json.loads((output/'checkpoint.json').read_text())
+            self.assertEqual([row],checkpoint['unresolved_native'])
+            self.assertEqual(row['run_id'],checkpoint['source_run_id'])
+            self.assertFalse(proof['native_actions_replayed'])
+            self.assertFalse(proof['native_completion_claimed'])
+            self.assertFalse(proof['minecraft_restarted'])
+
+    def test_legacy_source_isolation_requires_explicit_flag(self):
+        with tempfile.TemporaryDirectory() as temp:
+            game,reg,state,bundle,commands,native,checks,output,row,archive=isolated_legacy_setup(Path(temp))
+            checks['preserve_legacy_review']=False
+            with self.assertRaisesRegex(RuntimeError,'Unconfirmed'):
+                install_and_restart(game,bundle,**checks)
+            self.assertEqual([],commands)
+
+    def test_legacy_source_swap_preserves_existing_historical_hold_across_cancel(self):
+        with tempfile.TemporaryDirectory() as temp:
+            game,reg,state,bundle,commands,native,checks,output,row,archive=isolated_legacy_setup(Path(temp))
+            hold_path,hold=historical_hold(game,state)
+            state['kit_version']='2026.10.7.7'
+            original=hold_path.read_bytes()
+            def lifecycle(unused,command):
+                result=native(unused,command)
+                if command=='cancel': state['safety_hold']={**state['safety_hold'],'active':True}
+                elif command=='start': state['safety_hold']={**state['safety_hold'],'active':False}
+                return result
+            checks['native']=lifecycle
+            proof=install_and_restart(game,bundle,**checks)
+            self.assertTrue(proof['historical_hold_preserved'])
+            self.assertTrue(proof['legacy_material_review_preserved'])
+            self.assertEqual(original,hold_path.read_bytes())
+            self.assertEqual(['pause','cancel','start'],commands)
+
+    def test_long_legacy_receipt_audit_rereads_native_before_pause(self):
+        with tempfile.TemporaryDirectory() as temp:
+            game,reg,state,bundle,commands,native,checks,output,row,archive=isolated_legacy_setup(Path(temp))
+            real=unresolved_mutations
+            def slow_audit(*args,**kwargs):
+                result=real(*args,**kwargs)
+                state['time']+=8000
+                state['manual_movement']=True
+                return result
+            with patch('singleplayer_trial_hot_update.unresolved_mutations',side_effect=slow_audit):
+                with self.assertRaises(RuntimeError): install_and_restart(game,bundle,**checks)
+            self.assertEqual([],commands)
+
+    def test_fake_review_flags_bad_pid_scope_journal_or_archive_reject_before_pause(self):
+        for change in ('flag','macros','phase','pid','stale','worker_run','worker_trial','worker_world',
+                       'missing_journal','journal_scope','journal_unknown','journal_material','journal_duplicate_start',
+                       'missing_archive','archive_scope','archive_arguments','archive_server',
+                       'archive_revision','archive_expiry','archive_symlink',
+                       'checkpoint_current','checkpoint_guard','checkpoint_unscoped','checkpoint_session',
+                       'bootstrap_world','old_journal_scope','active_child','pressed_keys','manual'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                game,reg,state,bundle,commands,native,checks,output,row,archive=isolated_legacy_setup(Path(temp))
+                worker=json.loads((output/'status.json').read_text())
+                journal=Path(worker['journal_path'])
+                if change=='flag': worker['legacy_material_review']=False
+                elif change=='macros': worker['material_macros_enabled']=True
+                elif change=='phase': worker['phase']='running'
+                elif change=='pid': worker['pid']=900
+                elif change=='stale': worker['time']-=10000
+                elif change=='worker_run': worker['run_id']='foreign'
+                elif change=='worker_trial': worker['trial_id']='foreign'
+                elif change=='worker_world': worker['world_id']+='-other'
+                elif change=='missing_journal': journal.unlink()
+                elif change in {'journal_scope','journal_unknown','journal_material','journal_duplicate_start'}:
+                    event={'time':state['time'],'event':'worker_wait','run_id':reg['run_id'],
+                           'trial_id':reg['trial_id'],'bridge_halted':False,'active_request':None}
+                    if change=='journal_scope': event['run_id']='foreign'
+                    elif change=='journal_unknown': event.update(bridge_halted=True,active_request='trial-new')
+                    elif change=='journal_material': event.update(event='native_request',op='mine_block',id='trial-new')
+                    elif change=='journal_duplicate_start': event.update(event='control',command='start')
+                    with journal.open('a') as stream:stream.write(json.dumps(event)+'\n')
+                elif change=='missing_archive': archive.unlink()
+                elif change in {'archive_scope','archive_arguments','archive_server','archive_revision','archive_expiry'}:
+                    value=json.loads(archive.read_text())
+                    if change=='archive_scope': value['run_id']='foreign'
+                    elif change=='archive_arguments': value['target_count']=99
+                    elif change=='archive_server': value['server']='server.example'
+                    elif change=='archive_revision': value['expected_revision']=True
+                    elif change=='archive_expiry': value['expires_at']=0
+                    archive.write_text(json.dumps(value))
+                elif change=='archive_symlink':
+                    saved=archive.with_suffix('.saved');archive.rename(saved);archive.symlink_to(saved)
+                elif change.startswith('checkpoint_'):
+                    value=json.loads((output/'checkpoint.json').read_text())
+                    entry=value['unresolved_native'][0]
+                    if change=='checkpoint_current': entry['run_id']=reg['run_id']
+                    elif change=='checkpoint_guard': entry['op']='guard'
+                    elif change=='checkpoint_unscoped': entry.pop('run_id')
+                    elif change=='checkpoint_session': entry['world_session']='foreign'
+                    (output/'checkpoint.json').write_text(json.dumps(value))
+                elif change=='bootstrap_world': (output/'bootstrap/status.json').write_text(json.dumps({'world_id':'/other/save'}))
+                elif change=='old_journal_scope': (output/'journal.jsonl').write_text(json.dumps({'run_id':'foreign','active_request':row['id']})+'\n')
+                elif change=='active_child': state['chopping']=True
+                elif change=='pressed_keys': state['movement_keys']['forward']=True
+                elif change=='manual': state['manual_movement']=True
+                (output/'status.json').write_text(json.dumps(worker))
+                with self.assertRaises(RuntimeError): install_and_restart(game,bundle,**checks)
+                self.assertEqual([],commands)
+
+    def test_current_run_unknown_is_never_hidden_by_old_legacy_isolation(self):
+        for origin in ('mailbox','older_current_receipt'):
+            with self.subTest(origin=origin),tempfile.TemporaryDirectory() as temp:
+                game,reg,state,bundle,commands,native,checks,output,row,archive=isolated_legacy_setup(Path(temp))
+                automation=game/'config/twob2tkit/automation'
+                request={'id':'trial-current-unknown','op':'slot_click','local_trial':True,
+                    'world_id':reg['world_id'],'trial_id':reg['trial_id'],'run_id':reg['run_id'],
+                    'world_session':state['world_session'],'dimension':state['dimension']}
+                if origin=='mailbox': (automation/'request.json').write_text(json.dumps(request))
+                else:
+                    receipt={**state,'id':request['id'],'op':request['op'],'phase':'waiting','outcome_pending':True}
+                    (automation/'reply-trial-current-unknown.json').write_text(json.dumps(receipt))
+                with self.assertRaisesRegex(RuntimeError,'Current-run'):
+                    install_and_restart(game,bundle,**checks)
+                self.assertEqual([],commands)
+
+    def test_completed_current_sdk_receipt_can_coexist_with_frozen_old_unknown(self):
+        with tempfile.TemporaryDirectory() as temp:
+            game,reg,state,bundle,commands,native,checks,output,row,archive=isolated_legacy_setup(Path(temp))
+            automation=game/'config/twob2tkit/automation'
+            request={'id':'trial-current-known','op':'slot_click','local_trial':True,
+                'world_id':reg['world_id'],'trial_id':reg['trial_id'],'run_id':reg['run_id'],
+                'world_session':state['world_session'],'dimension':state['dimension']}
+            (automation/'request.json').write_text(json.dumps(request))
+            (automation/'reply-trial-current-known.json').write_text(json.dumps({**state,**request,'phase':'done'}))
+            proof=install_and_restart(game,bundle,**checks)
+            self.assertTrue(proof['legacy_material_review_preserved'])
+            self.assertEqual(['pause','cancel','start'],commands)
+
+    def test_changed_frozen_legacy_files_stop_before_cancel_or_new_start(self):
+        for stage in ('pause','install'):
+            for name in ('checkpoint.json','journal.jsonl','bootstrap/status.json','bootstrap/physical-history.jsonl','archive'):
+                with self.subTest(stage=stage,name=name),tempfile.TemporaryDirectory() as temp:
+                    game,reg,state,bundle,commands,native,checks,output,row,archive=isolated_legacy_setup(Path(temp))
+                    target=archive if name=='archive' else output/name
+                    def changed_native(unused,command):
+                        result=native(unused,command)
+                        if stage=='pause' and command=='pause': target.write_bytes(target.read_bytes()+b' ')
+                        return result
+                    def changed_install(*args,**kwargs):
+                        target.write_bytes(target.read_bytes()+b' ')
+                        return {'installed':'source'}
+                    checks['native']=changed_native
+                    if stage=='install': checks['installer']=changed_install
+                    with self.assertRaises(RuntimeError): install_and_restart(game,bundle,**checks)
+                    self.assertEqual(['pause'] if stage=='pause' else ['pause','cancel'],commands)
+
+    def test_new_worker_must_stay_in_review_with_same_unknowns_and_confirmed_guard(self):
+        for change in ('ordinary_phase','macros_enabled','legacy_removed','pending_cleared','new_pid_fake',
+                       'new_session','guard_missing','new_unknown_journal'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                game,reg,state,bundle,commands,native,checks,output,row,archive=isolated_legacy_setup(Path(temp))
+                def changed_native(unused,command):
+                    result=native(unused,command)
+                    if command=='start':
+                        worker=json.loads((output/'status.json').read_text())
+                        if change=='ordinary_phase': worker['phase']='running'
+                        elif change=='macros_enabled': worker['material_macros_enabled']=True
+                        elif change=='legacy_removed': worker['legacy_material_review']=False
+                        elif change=='pending_cleared': worker['legacy_pending']=[]
+                        elif change=='new_pid_fake': worker['pid']=999
+                        elif change=='new_session': worker['world_session']='foreign'
+                        elif change=='guard_missing': state['guard_armed']=False
+                        elif change=='new_unknown_journal':
+                            with Path(worker['journal_path']).open('a') as stream:
+                                stream.write(json.dumps({'event':'worker_wait','time':state['time'],
+                                    'trial_id':reg['trial_id'],'run_id':'run-new','bridge_halted':True,
+                                    'active_request':'trial-unknown-new'})+'\n')
+                        (output/'status.json').write_text(json.dumps(worker))
+                    return result
+                checks.update(native=changed_native,timeout=0)
+                with self.assertRaises(RuntimeError): install_and_restart(game,bundle,**checks)
+                self.assertEqual(['pause','cancel','start'],commands)
+                self.assertEqual([row],json.loads((output/'checkpoint.json').read_text())['unresolved_native'])
+
     def test_native_chop_ledger_confirms_exact_terminal_without_fabricating_host_reply(self):
         with tempfile.TemporaryDirectory() as temp:
             game,reg,state,bundle,commands,native=setup(Path(temp))

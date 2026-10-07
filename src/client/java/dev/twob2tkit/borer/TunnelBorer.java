@@ -624,8 +624,11 @@ public final class TunnelBorer {
 			"meteordevelopment.meteorclient.systems.modules.combat.BowAimbot",
 			"meteordevelopment.meteorclient.systems.modules.combat.BowSpam"
 		};
-		@Override public boolean requestEmergencyExit(Minecraft client,String reason){if(client.player==null||client.player.getHealth()>=14)return false;dev.twob2tkit.combat.EmergencyExit.begin(client,reason);return true;}
+		@Override public boolean requestEmergencyExit(Minecraft client,String reason){if(client.player==null||client.player.getHealth()>=14||dev.twob2tkit.automation.AutomationBridge.ownedTrialCombat(client))return false;dev.twob2tkit.combat.EmergencyExit.begin(client,reason);return true;}
         @Override public void enablePveMelee(){dev.twob2tkit.MeteorModules.enablePveAura();}
+		@Override public boolean allowTrialCreeperMelee(Minecraft client) {
+			return dev.twob2tkit.automation.AutomationBridge.ownedTrialCombat(client);
+		}
 		@Override public boolean prepareMeleeTarget(net.minecraft.world.entity.EntityType<?> type) { return dev.twob2tkit.MeteorModules.prepareMeleeTarget(type); }
 		@Override public void releaseMeleeTarget() { dev.twob2tkit.MeteorModules.releaseMeleeTarget(); }
 		@Override public boolean borerAutoDefend() { return config.borerAutoDefend; }

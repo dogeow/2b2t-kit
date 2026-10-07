@@ -18,6 +18,14 @@ final class BorerRangedCombat {
 	private final BorerCombatPeek peek;
 	private final BorerCombatContinuation continuation=new BorerCombatContinuation();
     private final BorerCombatSeparation separation=new BorerCombatSeparation();
+    private final TrialCreeperMeleePolicy trialCreeperMelee = new TrialCreeperMeleePolicy();
+    private String trialCreeperEvidence = "";
+    private final TrialCreeperFlightPolicy trialCreeperFlight = new TrialCreeperFlightPolicy();
+    private java.util.List<net.minecraft.core.BlockPos> trialCreeperRoute = java.util.List.of();
+    private net.minecraft.core.BlockPos trialCreeperRouteGoal;
+    private java.util.UUID trialCreeperRouteTarget;
+    private int trialCreeperRouteIndex;
+    private String trialCreeperFlightEvidence = "";
     private final GuardWeaponPolicy.SafetyRise safetyRise=new GuardWeaponPolicy.SafetyRise();
     private int evidenceLogTick=Integer.MIN_VALUE;
     private String evidenceLogKey="";
@@ -89,6 +97,14 @@ final class BorerRangedCombat {
             }
         }
 		continuation.save(c,session);
+        if(trialCreeperHorizontalDeferred(c,nearby,missingRestored)){
+            safetyRise.cancel();releaseControls(c);session.pause(p.tickCount);
+            if(!holdReason.equals("safe-deferred-trial-creeper-horizontal"))
+                engine.fileLog(c,"area-defense-safe-deferred-trial-creeper-horizontal unresolved="+session.targets().size()+" confirmed_deaths=0");
+            holdReason="safe-deferred-trial-creeper-horizontal";
+            engine.status="单人试验：当前地面已远离苦力怕，保留敌人记录并允许准备防御物资";
+            return false;
+        }
         // Retain every unresolved UUID. Only a continuously verified safe height
         // permits other work; returning into reach/LOS makes this gate false immediately.
         boolean previouslyYielding=separation.yielding();
@@ -146,6 +162,10 @@ final class BorerRangedCombat {
             c.options.keySprint.setDown(false);
         } else if (engine.standaloneGuard || escaping && flightDefenseScope()) engine.pauseGuardMovement(c);
 		else engine.areaRunner.suspendForCombat(c);
+		// The host authorizes only its exact opted-in disposable trial. An old host keeps the existing path.
+		// Run before both emergency-distance evasion and the expired ranged-attack budget.
+		if (engine.standaloneGuard && trialCreeperFlight(c, missingRestored)) return true;
+		if (engine.standaloneGuard && trialCreeperMelee(c, missingRestored)) return true;
 		// An urgent creeper can require evasion even behind a corner or after the attack budget expires.
 		if (flightDefenseScope()) {
 			var emergency = session.targets().stream().filter(e -> e instanceof Creeper && c.level.getEntity(e.getId()) == e && e.isAlive())
@@ -294,6 +314,297 @@ final class BorerRangedCombat {
 		}
 		return true;
 	}
+    private boolean trialCreeperHorizontalDeferred(Minecraft c,java.util.List<LivingEntity> nearby,boolean missingRestored){
+        if(c.player==null||c.level==null||!engine.standaloneGuard||missingRestored)return false;
+        boolean authorized;try{authorized=engine.host.allowTrialCreeperMelee(c);}catch(LinkageError oldHost){return false;}
+        var p=c.player;
+        boolean grounded=p.onGround()&&!p.isInWater()&&!p.isInLava()&&!p.isOnFire()
+            &&GuardWeaponPolicy.finiteVector(p.position())&&GuardWeaponPolicy.finiteBox(p.getBoundingBox())
+            &&c.level.noCollision(p,p.getBoundingBox())&&currentServerChunk(c,p.blockPosition());
+        var threats=session.targets().stream().map(e->{
+            boolean current=e.level()==c.level&&c.level.getEntity(e.getId())==e;
+            boolean finite=GuardWeaponPolicy.finiteVector(e.position())&&GuardWeaponPolicy.finiteBox(e.getBoundingBox())
+                &&Float.isFinite(e.getHealth());
+            boolean ordinary=e instanceof Creeper;
+            var creeper=ordinary?(Creeper)e:null;
+            double bodySquared=finite?GuardWeaponPolicy.boxDistanceSquared(p.getBoundingBox(),e.getBoundingBox()):Double.NaN;
+            return new TrialCreeperHorizontalPolicy.Threat(current,e.isAlive()&&e.getHealth()>0,ordinary,
+                ordinary&&creeper.isPowered(),ordinary&&creeper.isIgnited(),ordinary&&swelling(creeper),
+                finite&&currentServerChunk(c,e.blockPosition()),p.distanceTo(e),Math.sqrt(bodySquared));
+        }).toList();
+        boolean nearbyHostile=nearby.stream().anyMatch(e->e.isAlive()&&(
+            !GuardWeaponPolicy.finiteVector(e.position())||!GuardWeaponPolicy.finiteBox(e.getBoundingBox())
+            ||p.distanceTo(e)<=TrialCreeperHorizontalPolicy.SAFE_DISTANCE));
+        return TrialCreeperHorizontalPolicy.safe(authorized,engine.standaloneGuard,missingRestored,grounded,nearbyHostile,threats);
+    }
+    private boolean trialCreeperFlight(Minecraft c, boolean missingRestored) {
+        if(missingRestored||c.player==null||c.level==null||c.gameMode==null||c.screen!=null)return false;
+        boolean authorized;
+        try{authorized=engine.host.allowTrialCreeperMelee(c);}catch(LinkageError oldHost){return false;}
+        if(!authorized||hasUsableBow(c)||c.player.hasEffect(net.minecraft.world.effect.MobEffects.WEAKNESS))return false;
+        var p=c.player;
+        var creeper=session.targets().stream().filter(e->e instanceof Creeper).map(e->(Creeper)e)
+            .filter(e->TrialCreeperMeleePolicy.eligible(authorized,e.level()==c.level&&c.level.getEntity(e.getId())==e
+                    &&currentServerChunk(c,e.blockPosition()),e.isAlive(),p.hasLineOfSight(e),e.isPowered(),e.isIgnited(),false,
+                    trialCreeperFlight.activeTarget(e.getUUID())&&p.distanceTo(e)<=16?Math.min(12,p.distanceTo(e)):p.distanceTo(e)))
+            .min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
+        if(creeper==null)return false;
+        if(p.containerMenu!=p.inventoryMenu||!p.containerMenu.getCarried().isEmpty()){
+            trialFlightUnavailable(c,creeper,"inventory_not_settled");return false;
+        }
+        if(!selectTrialSword(c,creeper.getHealth())){
+            trialFlightUnavailable(c,creeper,"insufficient_sword_reserve");return false;
+        }
+        double highY=creeper.getY()+7.75;
+        double strikeY=Math.max(creeper.getY()+3.05,creeper.getBoundingBox().maxY
+            +p.getAttackRangeWith(p.getMainHandItem()).effectiveMaxRange(p)-p.getEyeHeight()-.15);
+        var high=new Vec3(creeper.getX(),highY,creeper.getZ());
+        boolean aligned=Math.hypot(p.getX()-creeper.getX(),p.getZ()-creeper.getZ())<=.25;
+        var strike=new Vec3(aligned?p.getX():creeper.getX(),strikeY,aligned?p.getZ():creeper.getZ());
+        var columnHigh=new Vec3(strike.x,highY,strike.z);
+        boolean column=trialFlightColumn(c,strike,columnHigh,creeper);
+        boolean inRange=p.isWithinAttackRange(p.getMainHandItem(),creeper.getBoundingBox(),.15);
+        if(!session.canAttack(creeper.getUUID())){
+            if(!session.canRetryTrialMelee(creeper.getUUID()))return false;
+            // Verify an actual usable strike column and reachable high approach before the single capability retry.
+            boolean viable=column&&!swelling(creeper)&&(aligned||!trialFlightPlan(c,creeper,high).isEmpty());
+            if(session.retryTrialMelee(creeper.getUUID(),viable))
+                engine.fileLog(c,"guard-trial-creeper-budget-retry uuid="+creeper.getUUID()+" reason=verified_flying_sword_capability");
+            if(!session.canAttack(creeper.getUUID()))return false;
+        }
+        var step=trialCreeperFlight.step(creeper.getUUID(),p.tickCount,p.getX(),p.getZ(),creeper.getHealth(),
+            p.distanceTo(creeper),p.getY(),creeper.getY(),aligned,swelling(creeper),inRange,
+            p.getAttackStrengthScale(0)>=.95F,column);
+        logTrialFlight(c,creeper,step);
+        if(step.decision()==TrialCreeperFlightPolicy.Decision.UNAVAILABLE)return false;
+        peek.close(c);releaseZombieMelee();releaseMiningMelee();cancelDraw(c);rangedMode(true);
+        safetyRise.cancel();engine.pauseGuardMovement(c);target=creeper;
+        try{
+            escapeFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/guard-hover-flight.bak"));
+            if(escapeFlight.acquire(p)!=null){trialFlightUnavailable(c,creeper,"flight_unavailable");return false;}
+            escaping=true;hoverMelee=false;
+            switch(step.decision()){
+                case HIGH_APPROACH -> {
+                    Vec3 destination=trialFlightHighWaypoint(c,creeper,high);
+                    if(destination==null){trialFlightUnavailable(c,creeper,"no_safe_high_approach");return false;}
+                    if(!trialFlightMove(c,creeper,destination,true)){trialFlightUnavailable(c,creeper,"high_approach_step_blocked");return false;}
+                    engine.status="单人试验：飞到苦力怕上方，升至真实距离超过7.5格并等蓄爆归零";
+                }
+                case DESCEND -> {
+                    // Never descend past the planned strike height just to force a hit.
+                    if(p.getY()<=strikeY+.07){trialFlightUnavailable(c,creeper,"sword_unreachable_from_safe_height");return false;}
+                    if(!column||!trialFlightMove(c,creeper,new Vec3(p.getX(),strikeY,p.getZ()))){
+                        trialFlightUnavailable(c,creeper,"descent_column_changed");return false;
+                    }
+                    engine.status="单人试验：复核整段升降通道后下降至真实剑程";
+                }
+                case ATTACK -> {
+                    escapeFlight.hover();
+                    look=RotationAim.lookAt(p,creeper.getEyePosition());lookTick=p.tickCount;RotationAim.apply(p,look);
+                    if(c.level.getEntity(creeper.getId())!=creeper||!creeper.isAlive()||swelling(creeper)
+                        ||!p.hasLineOfSight(creeper)||!p.isWithinAttackRange(p.getMainHandItem(),creeper.getBoundingBox(),.15)
+                        ||!trialFlightColumn(c,strike,columnHigh,creeper))return evadeCreeper(c,creeper);
+                    engine.mobs.lowerShield(c);if(p.isUsingItem()&&p.getUseItem().is(Items.SHIELD))p.stopUsingItem();
+                    c.gameMode.attack(p,creeper);p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+                    trialCreeperFlight.attacked();
+                    // Start the verified ascent immediately, without treating the swing as confirmed damage.
+                    if(!trialFlightMove(c,creeper,new Vec3(p.getX(),highY,p.getZ())))
+                        return evadeCreeper(c,creeper);
+                    engine.fileLog(c,"guard-trial-creeper-flight-sword-intent uuid="+creeper.getUUID()
+                        +" mob_health="+creeper.getHealth()+" remaining="+BorerItems.remainingDurability(p.getMainHandItem()));
+                    engine.status="单人试验：上方挥剑一次，立即升高，等待实际伤害确认";
+                }
+                case WAIT -> {
+                    escapeFlight.hover();look=RotationAim.lookAt(p,creeper.getEyePosition());lookTick=p.tickCount;RotationAim.apply(p,look);
+                    engine.status="单人试验：安全悬停剑程，等待攻击冷却";
+                }
+                default -> {return false;}
+            }
+            return true;
+        }catch(IllegalStateException unavailable){trialFlightUnavailable(c,creeper,"flight_lease_changed");return false;}
+    }
+    private void logTrialFlight(Minecraft c,Creeper creeper,TrialCreeperFlightPolicy.Step step){
+        String key=creeper.getUUID()+":"+step.decision()+":"+step.reason();
+        if(key.equals(trialCreeperFlightEvidence))return;trialCreeperFlightEvidence=key;
+        engine.fileLog(c,"guard-trial-creeper-flight-"+(step.decision()==TrialCreeperFlightPolicy.Decision.UNAVAILABLE?"unavailable":"step")
+            +" uuid="+creeper.getUUID()+" decision="+step.decision()+" reason="+step.reason()
+            +" distance="+c.player.distanceTo(creeper)+" player="+c.player.position()+" mob="+creeper.position()+" mob_health="+creeper.getHealth());
+    }
+    private void trialFlightUnavailable(Minecraft c,Creeper creeper,String reason){
+        logTrialFlight(c,creeper,trialCreeperFlight.fail(reason));
+        trialCreeperRoute=java.util.List.of();releaseEscape(c);
+    }
+    private java.util.List<net.minecraft.core.BlockPos> trialFlightPlan(Minecraft c,Creeper creeper,Vec3 high){
+        var start=c.player.blockPosition();
+        var goal=net.minecraft.core.BlockPos.containing(high.x,Math.ceil(high.y),high.z);
+        return BorerFlyPath.findExact(q->trialFlightBody(c,BorerFlyPath.waypoint(q),creeper,true),start,goal,12,1600).nodes();
+    }
+    private Vec3 trialFlightHighWaypoint(Minecraft c,Creeper creeper,Vec3 high){
+        var p=c.player;var goal=net.minecraft.core.BlockPos.containing(high.x,Math.ceil(high.y),high.z);
+        // A directly swept, loaded route avoids unnecessary replanning in open air.
+        if(trialFlightSweep(c,p.position(),high,creeper,true))return high;
+        if(!creeper.getUUID().equals(trialCreeperRouteTarget)||!goal.equals(trialCreeperRouteGoal)||trialCreeperRoute.isEmpty()){
+            trialCreeperRoute=trialFlightPlan(c,creeper,high);trialCreeperRouteIndex=0;
+            trialCreeperRouteGoal=goal;trialCreeperRouteTarget=creeper.getUUID();
+            if(trialCreeperRoute.isEmpty())return null;
+            engine.fileLog(c,"guard-trial-creeper-flight-route uuid="+creeper.getUUID()+" nodes="+trialCreeperRoute.size());
+        }
+        while(trialCreeperRouteIndex<trialCreeperRoute.size()
+            &&p.position().distanceToSqr(BorerFlyPath.waypoint(trialCreeperRoute.get(trialCreeperRouteIndex)))<.025)trialCreeperRouteIndex++;
+        return trialCreeperRouteIndex>=trialCreeperRoute.size()?high:BorerFlyPath.waypoint(trialCreeperRoute.get(trialCreeperRouteIndex));
+    }
+    private boolean trialFlightMove(Minecraft c,Creeper creeper,Vec3 destination){
+        return trialFlightMove(c,creeper,destination,false);
+    }
+    private boolean trialFlightMove(Minecraft c,Creeper creeper,Vec3 destination,boolean approach){
+        var p=c.player;var input=BorerFlyPath.input(p.position(),destination,p.getYRot());
+        if(!trialFlightSweep(c,p.position(),p.position().add(input.delta()),creeper,approach))return false;
+        escapeFlight.speed(GuardZombieApproach.sprintSafeSpeed(input.speed()));
+        look=input.forward()?new RotationAim.Look(input.yaw(),0):RotationAim.lookAt(p,creeper.getEyePosition());
+        lookTick=p.tickCount;RotationAim.apply(p,look);p.stopUsingItem();c.options.keyUse.setDown(false);
+        c.options.keyUp.setDown(input.forward());c.options.keyJump.setDown(input.up());c.options.keyShift.setDown(input.down());
+        return true;
+    }
+    private boolean trialFlightColumn(Minecraft c,Vec3 strike,Vec3 high,Creeper creeper){
+        return strike.y>=creeper.getY()+3.05&&high.y-strike.y<=12&&trialFlightSweep(c,strike,high,creeper,false);
+    }
+    private boolean trialFlightBody(Minecraft c,Vec3 feet,Creeper creeper,boolean approach){
+        if(!GuardWeaponPolicy.finiteVector(feet)||feet.y>=316)return false;
+        var p=c.player;var body=p.getBoundingBox().move(feet.subtract(p.position())).inflate(.02);
+        if(!c.level.noCollision(p,body))return false;
+        for(var q:net.minecraft.core.BlockPos.betweenClosed(net.minecraft.core.BlockPos.containing(body.minX,body.minY,body.minZ),
+            net.minecraft.core.BlockPos.containing(body.maxX-1e-7,body.maxY-1e-7,body.maxZ-1e-7)))if(!safeAir(c,q))return false;
+        if(approach&&feet.y<creeper.getY()+3.05&&feet.distanceTo(creeper.position())<6)return false;
+        for(var e:c.level.getEntities(p,body.inflate(12)))if(e instanceof Enemy&&e instanceof LivingEntity living&&e.isAlive()){
+            if(e==creeper)continue;
+            if(!currentServerChunk(c,e.blockPosition())||!GuardWeaponPolicy.finiteBox(e.getBoundingBox()))return false;
+            double radius=e instanceof Creeper other?(other.isPowered()?12:6):BorerThreats.isRangedCombatThreat(living,p)?12:4;
+            if(GuardWeaponPolicy.boxDistanceSquared(body,e.getBoundingBox())<radius*radius)return false;
+        }
+        return true;
+    }
+    private boolean trialFlightSweep(Minecraft c,Vec3 from,Vec3 to,Creeper creeper,boolean approach){
+        if(!GuardWeaponPolicy.finiteVector(from)||!GuardWeaponPolicy.finiteVector(to)||from.distanceTo(to)>16)return false;
+        var body=c.player.getBoundingBox().move(from.subtract(c.player.position())).expandTowards(to.subtract(from)).inflate(.02);
+        if(!c.level.noCollision(c.player,body))return false;
+        for(var q:net.minecraft.core.BlockPos.betweenClosed(net.minecraft.core.BlockPos.containing(body.minX,body.minY,body.minZ),
+            net.minecraft.core.BlockPos.containing(body.maxX-1e-7,body.maxY-1e-7,body.maxZ-1e-7)))if(!safeAir(c,q))return false;
+        int samples=Math.max(1,(int)Math.ceil(from.distanceTo(to)/.25));
+        for(int i=0;i<=samples;i++)if(!trialFlightBody(c,from.lerp(to,(double)i/samples),creeper,approach))return false;
+        return true;
+    }
+    private boolean trialCreeperMelee(Minecraft c, boolean missingRestored) {
+        if (missingRestored || c.player == null || c.level == null || c.gameMode == null || c.screen != null)
+            return false;
+        boolean authorized;
+        try { authorized = engine.host.allowTrialCreeperMelee(c); }
+        catch (LinkageError oldHost) { return false; }
+        if (!authorized || hasUsableBow(c) || c.player.hasEffect(net.minecraft.world.effect.MobEffects.WEAKNESS))
+            return false;
+        var p = c.player;
+        var creeper = session.targets().stream().filter(e -> e instanceof Creeper)
+            .map(e -> (Creeper)e).filter(e -> TrialCreeperMeleePolicy.eligible(authorized,
+                e.level() == c.level && c.level.getEntity(e.getId()) == e && currentServerChunk(c,e.blockPosition()),
+                e.isAlive(),p.hasLineOfSight(e),e.isPowered(),e.isIgnited(),false,p.distanceTo(e)))
+            .min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
+        if (creeper == null) return false;
+        if (!selectTrialSword(c,creeper.getHealth())) return false;
+        boolean inRange = p.isWithinAttackRange(p.getMainHandItem(),creeper.getBoundingBox(),.15);
+        boolean approachClear = inRange || engine.mobs.safeTrialApproach(c,p,creeper);
+        boolean retreatClear = engine.mobs.safeRetreatFrom(c,p,creeper);
+        if (!session.canAttack(creeper.getUUID())) {
+            boolean retry = session.retryTrialMelee(creeper.getUUID(),approachClear && retreatClear && !swelling(creeper));
+            if (retry) engine.fileLog(c,"guard-trial-creeper-budget-retry uuid="+creeper.getUUID()+" reason=verified_melee_capability");
+            if (!session.canAttack(creeper.getUUID())) return false;
+        }
+        var step = trialCreeperMelee.step(creeper.getUUID(),p.tickCount,p.getX(),p.getZ(),p.distanceTo(creeper),
+            creeper.getHealth(),swelling(creeper),inRange,p.getAttackStrengthScale(0)>=.95F,approachClear,retreatClear);
+        String key = creeper.getUUID()+":"+step.decision()+":"+step.reason();
+        if (!key.equals(trialCreeperEvidence)) {
+            trialCreeperEvidence = key;
+            engine.fileLog(c,"guard-trial-creeper-"+(step.decision()==TrialCreeperMeleePolicy.Decision.UNAVAILABLE?"unavailable":"step")
+                +" uuid="+creeper.getUUID()+" decision="+step.decision()+" reason="+step.reason()
+                +" distance="+p.distanceTo(creeper)+" mob_health="+creeper.getHealth());
+        }
+        if (step.decision() == TrialCreeperMeleePolicy.Decision.UNAVAILABLE) return false;
+        peek.close(c); releaseZombieMelee(); releaseMiningMelee();
+        safetyRise.cancel(); releaseEscape(c); cancelDraw(c); rangedMode(true);
+        engine.pauseGuardMovement(c);
+        p.setSprinting(false);
+        target = creeper;
+        look = RotationAim.lookAt(p,creeper.getEyePosition());lookTick=p.tickCount;RotationAim.apply(p,look);
+        switch (step.decision()) {
+            case RETREAT -> {
+                engine.mobs.raiseShield(c,p);
+                if (!engine.mobs.trialRetreatFrom(c,p,creeper)) return evadeCreeper(c,creeper);
+                look = new RotationAim.Look(p.getYRot(),p.getXRot());
+                engine.status="单人试验：面向苦力怕后撤，等蓄爆归零再接近";
+            }
+            case APPROACH -> {
+                engine.mobs.lowerShield(c);
+                c.options.keyUp.setDown(true);
+                engine.status="单人试验：沿安全通道接近苦力怕，剑战清除";
+            }
+            case ATTACK -> {
+                // Recheck live identity, fuse, sight and actual reach after slot/flight ownership changes.
+                if (c.level.getEntity(creeper.getId()) != creeper || !creeper.isAlive() || swelling(creeper)
+                    || !p.hasLineOfSight(creeper) || !p.isWithinAttackRange(p.getMainHandItem(),creeper.getBoundingBox(),.15))
+                    return evadeCreeper(c,creeper);
+                engine.mobs.lowerShield(c);
+                if (p.isUsingItem() && p.getUseItem().is(Items.SHIELD)) p.stopUsingItem();
+                c.gameMode.attack(p,creeper);p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+                trialCreeperMelee.attacked();
+                // Movement can start this tick; damage confirmation comes only from next live observations.
+                engine.mobs.trialRetreatFrom(c,p,creeper);
+                look = new RotationAim.Look(p.getYRot(),p.getXRot());
+                engine.fileLog(c,"guard-trial-creeper-sword-intent uuid="+creeper.getUUID()+" mob_health="+creeper.getHealth()
+                    +" remaining="+BorerItems.remainingDurability(p.getMainHandItem()));
+                engine.status="单人试验：挥剑后撤，等待实际伤害确认";
+            }
+            case WAIT -> engine.status="单人试验：保持剑程，等攻击冷却";
+            default -> { return false; }
+        }
+        return true;
+    }
+    private boolean hasUsableBow(Minecraft c) {
+        var p = c.player;
+        for (int slot=0;slot<36;slot++) {
+            var stack=p.getInventory().getItem(slot);
+            if (usableBow(stack) && !p.getProjectile(stack).isEmpty()) return true;
+        }
+        return false;
+    }
+    /** Unlike the server's 32 reserve, a starter sword needs the forecast swings plus a small margin. */
+    private boolean selectTrialSword(Minecraft c,float health) {
+        var p=c.player;var inv=p.getInventory();
+        if(p.containerMenu!=p.inventoryMenu||!p.containerMenu.getCarried().isEmpty())return false;
+        int best=-1;double bestDamage=0;
+        for (int slot=0;slot<36;slot++) {
+            var stack=inv.getItem(slot);
+            if (stack.isEmpty() || !stack.is(net.minecraft.tags.ItemTags.SWORDS)) continue;
+            double damage=stack.getOrDefault(net.minecraft.core.component.DataComponents.ATTRIBUTE_MODIFIERS,
+                net.minecraft.world.item.component.ItemAttributeModifiers.EMPTY).compute(
+                    net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE,1,
+                    net.minecraft.world.entity.EquipmentSlot.MAINHAND);
+            if (BorerItems.remainingDurability(stack)<TrialCreeperMeleePolicy.swordReserve(health,damage)) continue;
+            if (damage>bestDamage) { best=slot;bestDamage=damage; }
+        }
+        if (best<0) return false;
+        if (best<9) inv.setSelectedSlot(best);
+        else {
+            int dest=-1;
+            for (int slot=0;slot<9;slot++) if (inv.getItem(slot).isEmpty()) { dest=slot;break; }
+            if (dest<0) return false; // Preserve a full hotbar instead of overwriting the paused task's tool.
+            c.gameMode.handleContainerInput(p.containerMenu.containerId,best,dest,ContainerInput.SWAP,p);
+            inv.setSelectedSlot(dest);
+        }
+        var selected=p.getMainHandItem();
+        double damage=selected.getOrDefault(net.minecraft.core.component.DataComponents.ATTRIBUTE_MODIFIERS,
+            net.minecraft.world.item.component.ItemAttributeModifiers.EMPTY).compute(
+                net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE,1,net.minecraft.world.entity.EquipmentSlot.MAINHAND);
+        return selected.is(net.minecraft.tags.ItemTags.SWORDS)
+            &&BorerItems.remainingDurability(selected)>=TrialCreeperMeleePolicy.swordReserve(health,damage);
+    }
     private boolean safeVerticalSeparation(Minecraft c,java.util.List<LivingEntity> nearby){
         var p=c.player;
         // Account for half a second of downward momentum before accepting the blast margin.
@@ -750,6 +1061,8 @@ final class BorerRangedCombat {
 	/** Keep the aura lease until eating finishes; do not restore a tool over Meteor's food. */
 	void pauseForEating(Minecraft c) {
         safetyRise.cancel();
+		if (c.player != null) trialCreeperMelee.pause(c.player.tickCount);
+		if (c.player != null) trialCreeperFlight.pause(c.player.tickCount);
 		if (c.player != null) session.pause(c.player.tickCount);
 		if (c.player != null && c.player.isUsingItem() && c.player.getUseItem().is(Items.BOW)) {
 			c.player.stopUsingItem();
@@ -758,6 +1071,8 @@ final class BorerRangedCombat {
 		drawing = false; releasePending = false; look = null; viewGate.reset(); viewWaitTicks = 0;
 	}
 	void end(Minecraft c) {
+		trialCreeperMelee.reset();trialCreeperEvidence="";
+		trialCreeperFlight.reset();trialCreeperFlightEvidence="";trialCreeperRoute=java.util.List.of();trialCreeperRouteGoal=null;trialCreeperRouteTarget=null;
         safetyRise.clear();evidenceLogKey="";evidenceLogTick=Integer.MIN_VALUE;
         riseRetryAfter = safetyRiseRetryAfter = 0; lastRiseFailure = "";
 		session.clear(); continuation.clear(); separation.clear(); combatWorld=null; holdReason = "";
@@ -767,6 +1082,8 @@ final class BorerRangedCombat {
 	/** A menu suspends input, not our knowledge of the unfinished fight. */
 	void pause(Minecraft c) {
         safetyRise.cancel();
+		if (c.player != null) trialCreeperMelee.pause(c.player.tickCount);
+		if (c.player != null) trialCreeperFlight.pause(c.player.tickCount);
 		if (c.player != null) session.pause(c.player.tickCount);
 		releaseControls(c);
 	}

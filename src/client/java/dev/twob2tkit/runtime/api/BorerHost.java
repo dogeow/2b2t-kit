@@ -8,6 +8,8 @@ import net.minecraft.client.Minecraft;
  */
 public interface BorerHost {
 	default boolean requestEmergencyExit(Minecraft client,String reason){return false;}
+	/** Explicit disposable-trial opt-in. Older hosts and server tasks retain their existing defense. */
+	default boolean allowTrialCreeperMelee(Minecraft client) { return false; }
     default void enablePveMelee(){}
 	/** Add the detected melee threat to Meteor for this combat. False means use normal attack fallback. */
 	default boolean prepareMeleeTarget(net.minecraft.world.entity.EntityType<?> type) { return false; }
