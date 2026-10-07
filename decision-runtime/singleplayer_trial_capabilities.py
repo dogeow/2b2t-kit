@@ -21,8 +21,9 @@ CATALOG = {
     'collect_log_drops': ('沿扫描验证的路线正常步行拾取可见原木掉落物', 'pick up visible logs',
                          'visible log; path<=32; normal descent<=2 with dry floor/headroom/AABB checks',
                          'walk_path,walk,scan', 'log inventory gain'),
-    'gather_starting_wood': ('等待原生自动砍树与试验控制协调接入', 'get logs', 'native AutoChopper trial coordination required',
-                             'chop', 'log inventory gain'),
+    'gather_starting_wood': ('调用 Kit 原生自动砍树完成单棵树、拾取和平台收尾', 'get logs',
+                             'verified host; observed local species; natural-tree survey; support dirt; one native tree',
+                             'scan_trees,chop', 'native cleanup and actual log inventory gain'),
     'craft_wooden_tools': ('用背包木材制作工作台和木镐', 'make wood tools', 'wood; safe local station stance; no pickaxe',
                            'slot_click,interact,scan', 'crafted items in inventory'),
     'gather_stone': ('用现有镐采集附近石料', 'get cobblestone', 'pickaxe; stone deficit; reachable stone',
@@ -39,7 +40,7 @@ CATALOG = {
                                'walk_path,mine_block', 'dirt inventory gain'),
     'build_shelter': ('按已观察方案建造并复核小庇护所', 'build shelter', 'camp plan; tools; food; dirt stock',
                       'slot_click,interact,scan', 'all planned blocks/door scanned'),
-    'prepare_small_shelter': ('先建带门小屋并进屋关门', 'prepare small shelter', 'alive; carried dirt/wood; bounded safe site search',
+    'prepare_small_shelter': ('先建带门小屋并进屋关门', 'prepare small shelter', 'alive; door materials; carried or reachable soil; bounded safe site search',
                               'scan,mine_block,slot_click,interact,walk_path', 'enclosure, real entry and closed door verified'),
     'prepare_sword': ('准备并装备当前可做的剑', 'prepare defensive sword', 'carried sword or actual wood/stone/sticks; station',
                       'select_item,slot_click,interact', 'actual sword inventory and selected hand'),
@@ -66,7 +67,7 @@ PROGRESSION_GAPS = (
     'nether_portal_construction', 'blaze_rod_collection', 'ender_pearl_collection',
     'stronghold_location_and_portal', 'end_crystal_and_dragon_combat',
 )
-UNAVAILABLE_MACROS = {'gather_starting_wood': 'native_chopper_trial_flight_and_stop_coordination_pending'}
+UNAVAILABLE_MACROS = {}
 MENUS = frozenset({'', 'InventoryScreen', 'CraftingScreen', 'FurnaceScreen',
                    'BlastFurnaceScreen', 'SmokerScreen'})
 FOOD = frozenset({'cooked_beef', 'cooked_porkchop', 'cooked_mutton',
@@ -118,6 +119,11 @@ def _cheap_prerequisites(action, state):
     if _is_dead(state) or state.get('dimension') != 'minecraft:overworld':
         return False
     inv = _inventory(state)
+    if action == 'gather_starting_wood':
+        from trial_native_chop import supports_native_chop
+        return (supports_native_chop(state) and state.get('on_ground') is True
+                and state.get('under_water') is not True and not state.get('screen', '')
+                and not any(state.get(key) for key in ('chopping', 'navigating', 'borer_active', 'printing')))
     pickaxe = any(inv.get(item, 0) > 0 for item in ('wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe'))
     if action == 'collect_log_drops':
         entities = state.get('entities')
@@ -139,7 +145,13 @@ def _cheap_prerequisites(action, state):
     if action == 'gather_stone':
         return pickaxe
     if action == 'prepare_small_shelter':
-        return inv.get('dirt',0) >= 23
+        # candidates() already checked actual carried/reachable soil and the
+        # fresh table requirement. Gathering that known soil is this macro's
+        # first step, so requiring all 23 dirt in advance would hide it forever.
+        door = any(name.endswith('_door') and name != 'iron_door' and count for name,count in inv.items())
+        wood = max((inv.get(log + '_planks',0) + 4*inv.get(log + '_log',0)
+                    for log in ('oak','spruce','birch','jungle','acacia','dark_oak','mangrove','cherry','pale_oak')), default=0)
+        return bool(door or wood >= 6)
     if action == 'prepare_sword':
         return any(n.endswith('_sword') and amount for n,amount in inv.items()) or sum(amount for n,amount in inv.items() if n.endswith('_planks'))+4*sum(amount for n,amount in inv.items() if n.endswith('_log'))>=4
     if action == 'upgrade_stone_sword':
@@ -182,8 +194,11 @@ def capability_scene(candidates, state, *, max_bytes=DEFAULT_MAX_BYTES, max_avai
     if type(max_available) is not int or not 1 <= max_available <= MAX_AVAILABLE:
         raise ValueError('Available capability limit must be 1..10')
     allowed = eligible_candidates(candidates, state)
+    from trial_native_chop import supports_native_chop
+    host_blocked = {} if supports_native_chop(state) else {
+        'gather_starting_wood': 'native_chopper_trial_flight_and_stop_coordination_pending'}
     result = {'protocol': PROTOCOL, 'scope': 'registered_trial_macros_only',
-              'available': [], 'blocked': {**{name: 'unsupported' for name in PROGRESSION_GAPS}, **UNAVAILABLE_MACROS},
+              'available': [], 'blocked': {**{name: 'unsupported' for name in PROGRESSION_GAPS}, **UNAVAILABLE_MACROS, **host_blocked},
               'checked_by': 'native_candidate_builder; skills recheck live',
               'omitted': len(allowed)}
     rejected = (len(candidates) - len(allowed)) if isinstance(candidates, (dict, list, tuple)) else 0

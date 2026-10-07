@@ -20,12 +20,70 @@ from singleplayer_trial_cli import call
 from singleplayer_trial_bridge import (MUTATING_OPS, confirmed_mining_not_sent,
                                       canonical_save, validate_registry, validate_scope)
 from survival_world import World, block_id, distance, shelter
+from trial_native_chop import known_chop_receipt
 
 SCHEMA = 1
 REQUIRED = {'singleplayer_trial.py', 'singleplayer_trial_bridge.py',
             'singleplayer_experience.py', 'singleplayer_trial_cli.py',
             'singleplayer_trial_capabilities.py', 'singleplayer_trial_hot_update.py',
-            'trial_surface_recovery.py', 'survival_cooking.py', 'trial_safety_preparation.py', 'trial_safety_routing.py'}
+            'trial_surface_recovery.py', 'survival_cooking.py', 'trial_safety_preparation.py', 'trial_safety_routing.py',
+            'trial_native_chop.py'}
+HOLD_METADATA = ('reason', 'time', 'health', 'escape_result', 'rise')
+
+
+def _hold_metadata(state):
+    value = state.get('safety_hold', {})
+    if not isinstance(value, dict):
+        raise RuntimeError('Invalid native safety hold observation')
+    return {key: value[key] for key in HOLD_METADATA if key in value}
+
+
+def _historical_trial_hold(game, state):
+    """Capture a hold already exempted by this exact native .6 trial.
+
+    The exception is only for the pause/cancel/install/start lifecycle below.
+    It never clears the durable hold or grants any gameplay operation.
+    """
+    observed = state.get('safety_hold', {})
+    if (state.get('kit_version') != '2026.10.7.6'
+            or observed.get('active') is not False or observed.get('escaping') is not False
+            or not state.get('dimension') or not state.get('player_uuid')):
+        return None
+    path = Path(game) / 'config/twob2tkit/automation/safety-hold.json'
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > 2_000_000:
+        return None
+    try:
+        content = path.read_bytes()
+        stored = json.loads(content)
+    except (OSError, ValueError):
+        return None
+    metadata = _hold_metadata(state)
+    if (not isinstance(stored, dict) or stored.get('active') is not True
+            or set(metadata) != set(HOLD_METADATA)
+            or any(stored.get(key) != metadata[key] for key in HOLD_METADATA)
+            or stored.get('server') != 'singleplayer'
+            or stored.get('dimension') != state['dimension']
+            or stored.get('player') != state['player_uuid']
+            or type(stored.get('time')) is not int
+            or not 0 < stored['time'] < state.get('time', 0)):
+        return None
+    return {'sha256': hashlib.sha256(content).hexdigest(), 'metadata': metadata,
+            'dimension': state['dimension'], 'player_uuid': state['player_uuid']}
+
+
+def _historical_hold_unchanged(game, state, captured):
+    if (state.get('kit_version') != '2026.10.7.6'
+            or state.get('dimension') != captured['dimension']
+            or state.get('player_uuid') != captured['player_uuid']
+            or _hold_metadata(state) != captured['metadata']
+            or state.get('safety_hold', {}).get('escaping') is not False):
+        return False
+    path = Path(game) / 'config/twob2tkit/automation/safety-hold.json'
+    try:
+        return (path.is_file() and not path.is_symlink() and path.stat().st_size <= 2_000_000
+                and hashlib.sha256(path.read_bytes()).hexdigest() == captured['sha256'])
+    except OSError:
+        return False
 
 
 def atomic_json(path, value):
@@ -120,6 +178,8 @@ def unresolved_mutations(game, registry, state, checkpoint=None):
                 and request.get('trial_id') == registry['trial_id'] and request.get('op') in MUTATING_OPS):
             pending[request['id']] = {'id': request['id'], 'op': request['op'],
                 'world_session': request.get('world_session'),
+                'world_id': request.get('world_id'), 'trial_id': request.get('trial_id'),
+                'run_id': request.get('run_id'), 'dimension': request.get('dimension'),
                 'arguments': {'pos': request.get('pos')}}
     # Terminal native replies retain trial/run identity. A later read-only scan
     # must not hide an earlier unconfirmed mutation in the same run.
@@ -132,12 +192,21 @@ def unresolved_mutations(game, registry, state, checkpoint=None):
                 and same_save(reply.get('world_id'), registry['world_id']) and reply.get('op') in MUTATING_OPS):
             pending[reply['id']] = {'id': reply['id'], 'op': reply['op'],
                 'world_session': reply.get('world_session'),
+                'world_id': reply.get('world_id'), 'trial_id': identity.get('trial_id'),
+                'run_id': identity.get('run_id'), 'dimension': reply.get('dimension'),
                 'arguments': {'pos': reply.get('mining_target')}}
     result = []
     for request_id, request in pending.items():
         if not isinstance(request_id, str) or not request_id or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in request_id):
             raise RuntimeError('Invalid unresolved native request identity')
         reply = automation / ('reply-' + request_id + '.json')
+        # Ordinary native chop finishes in status.json rather than a host
+        # reply file. Its worker ledger is a copy of the matched native frame,
+        # validated against the original request and current trial scope. No
+        # missing reply, elapsed timer or unchecked inventory implies success.
+        if (request.get('op') == 'chop' and not reply.exists() and not reply.is_symlink()
+                and known_chop_receipt(game, registry, request, state) is not None):
+            continue
         if not reply.is_file() or reply.is_symlink() or not _receipt_safe(json.loads(reply.read_text()), request):
             result.append(request)
     return result
@@ -243,11 +312,27 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
     first = reader(automation)
     run = registry.get('run_id')
     validate_scope(first, registry, run_id=run)
-    if first.get('singleplayer_trial_api_protocol') != 1 or first.get('trial_identity', {}).get('process_alive') is not True:
+    if (first.get('singleplayer_trial_api_protocol') != 1
+            or first.get('trial_identity', {}).get('process_alive') is not True
+            or not isinstance(run, str) or not run):
         raise RuntimeError('An existing native-owned trial worker is required')
     session = first['world_session']
+    original_hold_metadata = _hold_metadata(first)
+    historical_hold = _historical_trial_hold(game, first)
+    cancelled = False
     def safe(state, *, old_run=True, released=False):
         validate_scope(state, registry, session, run if old_run else None)
+        if (state.get('kit_version') != first.get('kit_version')
+                or state.get('dimension') != first.get('dimension')):
+            raise RuntimeError('Trial host or dimension changed during source replacement')
+        if (_hold_metadata(state) != original_hold_metadata
+                or historical_hold and not _historical_hold_unchanged(game, state, historical_hold)):
+            raise RuntimeError('A safety hold record changed; preserve it and do not resume')
+        identity = state.get('trial_identity', {})
+        if (cancelled and released
+                and (identity.get('run_id') not in ('', run)
+                     or type(identity.get('process_alive')) is not bool)):
+            raise RuntimeError('Cancelled trial ownership changed; do not install or resume')
         keys = state.get('movement_keys', {})
         # In this exact host the recovery window returns recovering &&
         # !actualStandaloneGuardBusy, then forces guard_busy. Only source
@@ -259,8 +344,18 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
             and state.get('phase') != 'running'
             and {'forward','back','jump','sneak'}.issubset(keys)
             and all(value is False for value in keys.values()))
+        # Native cancel ends activeHere immediately, while the old Python
+        # process can take two seconds to exit. The unchanged historical hold
+        # therefore becomes active again. Only this exact cancelled lifecycle
+        # may observe that state; installation/Start separately require exit.
+        historical_transition = (cancelled and not old_run and released and historical_hold
+            and identity.get('run_id') in ('', run)
+            and type(identity.get('process_alive')) is bool
+            and state.get('safety_hold', {}).get('active') is True
+            and state.get('time', 0) > first.get('time', 0))
         if (state.get('health', 0) <= 0 or state.get('food', 0) < 8
-                or state.get('safety_hold', {}).get('active') is True
+                or state.get('safety_hold', {}).get('active') is True and not historical_transition
+                or state.get('safety_hold', {}).get('escaping') is True
                 or state.get('under_water') is True or state.get('screen')
                 or any(state.get(k) for k in ('printing', 'chopping', 'navigating', 'borer_active'))
                 or state.get('guard_busy') and not recovery_only):
@@ -306,7 +401,14 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
             checkpoint['unresolved_native'] = []  # Cleared solely by exact native receipts above.
             atomic_json(root / 'worker/checkpoint.json', checkpoint)
         proof['pause_confirmed'] = True
-        native(game, 'cancel')
+        cancelled_reply = native(game, 'cancel')
+        cancelled_identity = cancelled_reply.get('trial_identity', {})
+        if (cancelled_reply.get('phase') != 'done'
+                or cancelled_identity.get('trial_id') != registry['trial_id']
+                or cancelled_identity.get('run_id') != run
+                or not same_save(cancelled_identity.get('world_id'), registry['world_id'])):
+            raise RuntimeError('Native cancel receipt differs; do not install or resume')
+        cancelled = True
         until = time.monotonic() + timeout
         while True:
             current = safe(reader(automation), old_run=False, released=True)
@@ -323,15 +425,33 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
         proof['installation'] = installer(bundle, game, python=python, running=running)
         if hashlib.sha256(bundle.read_bytes()).hexdigest() != bundle_hash:
             raise RuntimeError('Worker artifact changed during installation; do not start it')
-        safe(reader(automation), old_run=False, released=True)
+        before_start = safe(reader(automation), old_run=False, released=True)
+        if before_start.get('trial_identity', {}).get('process_alive') is not False or worker_checker():
+            raise RuntimeError('An old worker is still alive; do not start another controller')
         started = native(game, 'start')
-        new_run = started.get('trial_identity', {}).get('run_id')
-        if not isinstance(new_run, str) or not new_run or new_run == run:
+        started_identity = started.get('trial_identity', {})
+        new_run = started_identity.get('run_id')
+        if (started.get('phase') != 'done'
+                or started_identity.get('trial_id') != registry['trial_id']
+                or not same_save(started_identity.get('world_id'), registry['world_id'])
+                or not isinstance(new_run, str) or not new_run or new_run == run):
             raise RuntimeError('New native worker run was not confirmed; do not replay Start')
+        start_received_at = int(time.time() * 1000)
+        proof.update(start_receipt_confirmed=True, after_run_id=new_run)
         until = time.monotonic() + timeout
         while True:
-            current = safe(reader(automation), old_run=False)
+            current = reader(automation)
             identity = current.get('trial_identity', {})
+            # The lifecycle receipt precedes the next periodic status write.
+            # Observe only the already exited cancellation state from before
+            # that receipt; never replay Start to make the status catch up.
+            cancel_observation = (identity.get('run_id') in ('', run)
+                and identity.get('process_alive') is False
+                and type(current.get('time')) is int
+                and before_start.get('time', 0) <= current['time'] <= start_received_at)
+            current = safe(current, old_run=False, released=cancel_observation)
+            if not cancel_observation and identity.get('run_id') != new_run:
+                raise RuntimeError('Native trial ownership changed after Start; do not replay it')
             if identity.get('run_id') == new_run and identity.get('process_alive') is True:
                 break
             if time.monotonic() >= until:
@@ -340,6 +460,10 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
         proof.update(after_run_id=new_run, new_worker_native_confirmed=True,
                      checkpoint_preserved=checkpoint is not None,
                      experience_and_journals_replaced=False, native_completion_claimed=False)
+        if historical_hold:
+            proof.update(historical_hold_preserved=True,
+                         historical_hold_sha256=historical_hold['sha256'],
+                         historical_hold_time=historical_hold['metadata']['time'])
         atomic_json(root / 'hot-update-proof.json', proof)
         return proof
     except Exception:

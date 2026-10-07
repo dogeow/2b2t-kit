@@ -128,6 +128,45 @@ def short_term_goal(state, candidates, pending_log_drops=0, cooking=None, safety
     return 'Wait for new observations or a supported macro that advances the next Survival milestone.'
 
 
+def local_failure_context(skills, state, world=None):
+    """Stable local prerequisites, excluding clock and controller revisions."""
+    stations = []
+    for name, point in sorted(getattr(skills, 'stations', {}).items()):
+        if not isinstance(point, (list, tuple)) or len(point) != 3:
+            continue
+        point = tuple(point)
+        observed = world.name(point) if isinstance(world, World) else None
+        reachable = None
+        if isinstance(world, World) and observed == name:
+            parents = world.paths(state['pos'])
+            stance = world.approach(parents, point)
+            reachable = stance is not None and len(world.route(parents, stance)) <= 32
+        stations.append((name, point, observed, reachable))
+    return (cell(state['pos']), tuple(sorted((item, count) for item,count in inventory(state).items()
+                                            if item != 'air' and count)), tuple(stations))
+
+
+def local_wait_reason(skills, state, failures=None):
+    if getattr(skills.b, 'halted', False) or getattr(skills.b, 'pending_mutations', {}):
+        return '仍有未确认的原生动作，保留现场和请求；不会重复施工或重新砍树'
+    readiness = getattr(skills, 'safety_readiness', None) or {}
+    inv = inventory(state)
+    if not readiness.get('sheltered') and readiness.get('wood_deficit', 0) > 0:
+        return ('当前小屋材料还缺 ' + str(readiness['wood_deficit'])
+                + ' 块同树种木板；当前局部没有可执行的原生砍树或安全探索方案')
+    if not readiness.get('sheltered') and readiness.get('dirt_deficit', 0) > 0:
+        return ('当前小屋还缺 ' + str(readiness['dirt_deficit'])
+                + ' 块泥土；当前扫描内没有能继续采集或建屋的已验证方案')
+    if inv.get('wooden_sword') and readiness.get('stone_sword_deficit', 0) > 0:
+        return ('石剑还缺 ' + str(readiness['stone_sword_deficit'])
+                + ' 块圆石；当前扫描内没有能推进的安全采集方案')
+    if any(count >= 3 for count in (failures or {}).values()):
+        return '相同位置、材料和站点的方案已连续被拒绝；当前没有能获得新条件的安全路线'
+    food = sum(inv.get(item, 0) for item in FOOD)
+    return ('当前仍在地表生存准备，已有原木 ' + str(sum(inv.get(item,0) for item in LOGS))
+            + '、可食食物 ' + str(food) + '；当前扫描内没有可执行的后续方案')
+
+
 def atomic_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -304,9 +343,38 @@ class _TrialCraftClient:
         self.root = bridge.root
         self.out = Path(output)
         self.owned_inventory_crafting = None
+        initial = bridge.read()
+        self.registry = dict(bridge.registry)
+        self.run_id = bridge.run_id
+        self.session = initial['world_session']
+        self.dimension = initial['dimension']
+        self.authorize_inventory(initial)
+
+    def authorize_inventory(self, state):
+        """Use live native trial ownership, without unlocking another mode."""
+        registry = self.bridge.registry
+        if (registry.get('protocol') != 1 or registry.get('enabled') is not True
+                or registry.get('allow_death_respawn') is not True
+                or registry.get('goal') != 'defeat_ender_dragon'
+                or any(registry.get(key) != self.registry.get(key)
+                       for key in ('trial_id', 'world_id', 'world_name'))
+                or not self.run_id or self.bridge.run_id != self.run_id):
+            raise Paused('Trial SDK controller registration changed; preserve the inventory')
+        validate_scope(state, self.registry, self.session, self.run_id)
+        stamp = state.get('time')
+        if (type(stamp) not in (int, float) or not math.isfinite(stamp)
+                or not 0 <= time.time() - stamp / 1000 <= 3):
+            raise Paused('Trial SDK requires a fresh native observation; no inventory action sent')
+        if (state.get('dimension') != self.dimension
+                or state.get('trial_identity', {}).get('process_alive') is not True
+                or state.get('safety_hold', {}).get('active') is not False
+                or state.get('health_recovery_hold') is not False):
+            raise Paused('Trial SDK native ownership or safety scope changed; preserve the inventory')
 
     def status(self):
-        return self.bridge.read()
+        state = self.bridge.read()
+        self.authorize_inventory(state)
+        return state
 
     def checked(self, op, **arguments):
         if op != 'slot_click':
@@ -330,6 +398,43 @@ class TrialSkills(Runner):
         self.cooking_readiness = None
         self.small_shelter = None
         self.safety_readiness = None
+        self.wood_target_logs = None
+
+    def worktable_available_here(self, state, world):
+        if inventory(state).get('crafting_table', 0):
+            return True
+        point = self.stations.get('crafting_table')
+        if (not isinstance(point, (list, tuple)) or len(point) != 3
+                or any(type(n) is not int for n in point)):
+            return False
+        point = tuple(point)
+        if world.name(point) != 'crafting_table':
+            return False
+        parents = world.paths(state['pos'])
+        stance = world.approach(parents, point)
+        if stance is None:
+            return False
+        route = world.route(parents, stance)
+        return len(route) <= 32 and tuple(route) not in self.rejected_routes
+
+    def planks(self, amount):
+        """Choose a carried species which can actually supply this recipe."""
+        inv = inventory(self.b.read())
+        choices = []
+        for log in sorted(LOGS):
+            plank = log.removesuffix('_log') + '_planks'
+            deficit = max(0, amount - inv.get(plank, 0))
+            required_logs = math.ceil(deficit / 4)
+            if inv.get(log, 0) >= required_logs:
+                choices.append((required_logs, plank, log))
+        if not choices:
+            raise Paused('没有同一树种的足量木板或原木；保留现有合成材料')
+        _, plank, log = min(choices)
+        while self.count(plank) < amount:
+            if not self.count(log):
+                raise Paused('已选树种的原木改变；不重放合成')
+            self.craft(plank, {(0, 0): log}, width=2, produces=4)
+        return plank
 
     def cooking_plan(self, state):
         from survival_cooking import cooking_plan
@@ -766,7 +871,8 @@ class TrialSkills(Runner):
         self.craft_client = client  # Retain ownership evidence if an SDK acknowledgement fails.
         try:
             if width == 2:
-                result = _inventory_execute(client, spec, before[spec['output']] + produces)
+                result = _inventory_execute(client, spec, before[spec['output']] + produces,
+                                            authorize=client.authorize_inventory)
             else:
                 # Reuse the SDK's one-round source selection. Its stack-output
                 # capacity is narrowed below for tools and other single items.
@@ -885,9 +991,15 @@ class TrialSkills(Runner):
         logs = sum(inv.get(name, 0) for name in LOGS)
         wooden_door = any(name.endswith('_door') and name != 'iron_door' and amount for name,amount in inv.items())
         wood_budget = sum(v for name,v in inv.items() if name.endswith('_planks')) + 4*logs
+        door_wood_budget = max((inv.get(log.removesuffix('_log') + '_planks', 0) + 4*inv.get(log, 0)
+                               for log in LOGS), default=0)
+        table_ready = self.worktable_available_here(state, world)
+        door_board_requirement = 6 if table_ready else 10
         has_sword = any(has(name) for name in ('wooden_sword','stone_sword','iron_sword','diamond_sword','netherite_sword','golden_sword'))
         sheltered = bool(self.small_shelter and self.small_shelter.get('verified'))
-        self.safety_readiness={'sheltered':sheltered,'wood_ready':wooden_door or wood_budget>=10,
+        self.safety_readiness={'sheltered':sheltered,'wood_ready':bool(wooden_door or door_wood_budget>=door_board_requirement),
+                               'table_ready':table_ready,'door_planks_required':0 if wooden_door else door_board_requirement,
+                               'wood_deficit':0 if wooden_door else max(0,door_board_requirement-door_wood_budget),
                                'dirt_deficit':max(0,23-inv.get('dirt',0)),
                                'stone_sword_deficit':0 if any(has(n) for n in ('stone_sword','iron_sword','diamond_sword','netherite_sword')) else max(0,2-inv.get('cobblestone',0))}
         clock=state.get('day_time');night=type(clock) in (int,float) and (clock%24000>=11000 or clock%24000<1000)
@@ -905,9 +1017,24 @@ class TrialSkills(Runner):
                 candidates['leave_small_shelter']=LABELS['leave_small_shelter']
                 return candidates
         house_materials = inv.get('dirt',0)>=23 or world.resource(state['pos'],{'dirt','grass_block'},self.excluded)
-        if not sheltered and world.paths(state['pos']) and house_materials and (wooden_door or wood_budget >= 10):
+        if not sheltered and world.paths(state['pos']) and house_materials and (wooden_door or door_wood_budget >= door_board_requirement):
             candidates['prepare_small_shelter'] = LABELS['prepare_small_shelter']
             return candidates
+        # Only the actual next recipe deficit can request another whole tree.
+        # Native AutoChopper owns movement, crown verification, loot and cleanup.
+        # Known dropped logs above still take priority over a new harvest.
+        wood_deficit = (max(0,door_board_requirement-door_wood_budget)
+                        if not sheltered and not wooden_door else
+                        max(0,12-door_wood_budget) if starting else
+                        max(0,4-door_wood_budget) if not has_sword else 0)
+        self.wood_target_logs = None
+        if wood_deficit:
+            from trial_native_chop import observed_chop_plan
+            target_logs = logs + math.ceil(wood_deficit/4)
+            if observed_chop_plan(self, state, world, target_logs) is not None:
+                self.wood_target_logs = target_logs
+                candidates['gather_starting_wood'] = LABELS['gather_starting_wood']
+                return candidates
         if not starting and not has_sword and (wood_budget >= 4 or inv.get('cobblestone',0) >= 2 and has('stick')):
             candidates['prepare_sword'] = LABELS['prepare_sword']
             return candidates
@@ -919,9 +1046,6 @@ class TrialSkills(Runner):
         if self.camp:
             cx, cy, cz = self.camp
             protected.update(p for p in world.blocks if abs(p[0] - cx) <= 3 and abs(p[2] - cz) <= 3)
-        # Natural-tree work must use Kit's complete chopper lifecycle. The old
-        # per-block log routine is deliberately unavailable until that adapter
-        # is connected; dropped logs remain a separate verified pickup skill.
         if starting and station_possible and (logs >= 4 or sum(v for k, v in inv.items() if k.endswith('_planks')) >= 12):
             candidates['craft_wooden_tools'] = LABELS['craft_wooden_tools']
         stone_needed = (0 if has('stone_pickaxe') or has('iron_pickaxe') else 3)
@@ -972,13 +1096,16 @@ class TrialSkills(Runner):
         return candidates
 
     def execute(self, choice):
-        if choice == 'gather_starting_wood':
-            raise Paused('Trial natural-tree chopping adapter is not connected; no per-block fallback')
         self.reset_budget()
         self.stage = choice
         self.planned(choice, LABELS[choice], {})
         if choice == 'collect_log_drops':
             self.collect_log_drops()
+        elif choice == 'gather_starting_wood':
+            from trial_native_chop import gather_native_wood
+            if self.wood_target_logs is None:
+                raise Paused('No current recipe deficit authorizes another native tree')
+            gather_native_wood(self, self.wood_target_logs)
         elif choice == 'craft_wooden_tools':
             plank = self.planks(12)
             if not self.count('crafting_table') and 'crafting_table' not in self.stations:
@@ -1097,6 +1224,7 @@ class TrialWorker:
         self.seen_death_epoch = None
         self.death_seen_at = 0
         self.failures = {}
+        self.failure_contexts = {}
         self.phase = 'paused'
         self.reason = '从 Kit 单人试验页面开始'
         self.completion_state = None
@@ -1119,6 +1247,38 @@ class TrialWorker:
                                      'trial_id': self.registry.get('trial_id') if self.registry else None,
                                      'run_id': self.run_id, **data}, ensure_ascii=False, allow_nan=False) + '\n')
 
+    def actionable_candidates(self, candidates, state, world):
+        if self.bridge.halted or self.bridge.pending_mutations:
+            return {'wait': LABELS['wait']}
+        context = local_failure_context(self.skills, state, world)
+        for key in set(candidates) | {'explore_nearby'}:
+            if self.failures.get(key, 0) and key in self.failure_contexts and self.failure_contexts[key] != context:
+                self.failures[key] = 0
+                self.failure_contexts.pop(key, None)
+                self.event('macro_failure_scope_changed', action=key, position=state['pos'])
+        result = {key: value for key,value in candidates.items()
+                  if key == 'wait' or self.failures.get(key, 0) < 3}
+        # A priority builder can return only one macro. If that known plan is
+        # exhausted here, a normal freshly scanned route can change its local
+        # conditions instead of leaving the worker permanently in wait.
+        priority = {'prepare_small_shelter', 'gather_starting_wood', 'prepare_sword', 'upgrade_stone_sword'}
+        if (len(result) < 2 and priority.intersection(candidates) - result.keys()
+                and isinstance(world, World) and self.failures.get('explore_nearby',0) < 3):
+            route = self.skills.exploration(world)
+            if route is not None:
+                self.skills.explore_target = route
+                result['explore_nearby'] = '沿已扫描安全路线改变当前失败的局部前置条件，再复核原任务'
+        return result
+
+    def record_known_failure(self, action, state, world=None):
+        if self.bridge.halted or self.bridge.pending_mutations:
+            return False
+        context = local_failure_context(self.skills, state, self.skills.world if world is None else world)
+        self.failures[action] = (self.failures.get(action, 0) + 1
+                                 if self.failure_contexts.get(action) in (None, context) else 1)
+        self.failure_contexts[action] = context
+        return True
+
     def publish(self, phase=None, reason=None, state=None):
         if phase is not None:
             self.phase = phase
@@ -1130,7 +1290,7 @@ class TrialWorker:
                  'trial_id': self.registry.get('trial_id') if self.registry else None,
                  'world_id': self.registry.get('world_id') if self.registry else None,
                  'model_calls': self.model_calls, 'steps': self.steps, 'deaths': self.deaths,
-                 'implemented': sorted(LABELS.keys() - {'wait', 'recover_after_death', 'gather_starting_wood'}),
+                 'implemented': sorted(LABELS.keys() - {'wait', 'recover_after_death'}),
                  'missing_capabilities': GAPS,
                  'dragon_defeated': bool(state and state.get('dragon_defeated') is True)}
         if state:
@@ -1521,15 +1681,14 @@ class TrialWorker:
         world = self.skills.observe()
         before = self.bridge.read()
         candidates = self.skills.candidates(before, world)
-        candidates = {key: value for key, value in candidates.items()
-                      if key == 'wait' or self.failures.get(key, 0) < 3}
+        candidates = self.actionable_candidates(candidates, before, world)
         if len(candidates) < 2:
             clock=before.get('day_time')
             if getattr(self.skills,'small_shelter',None) and self.skills.small_shelter.get('verified') and type(clock) in (int,float) and (clock%24000>=11000 or clock%24000<1000):
                 self.publish('waiting_daylight','已在小屋关门守夜，保持PvE防护；日出后自动继续',before)
                 return
             reason = ('原木掉落仍待取，当前没有已验证的正常落地拾取路线；尚未入包'
-                      if self.skills.log_drops else '附近已验证宏能力无法推进；尚未实现完整下界和打龙流程')
+                      if self.skills.log_drops else local_wait_reason(self.skills, before, self.failures))
             self.publish('waiting_capability', reason, before)
             return
         decision = self.decide(candidates, before)
@@ -1543,6 +1702,7 @@ class TrialWorker:
             after = self.skills.execute(action)
             self.steps += 1
             self.failures[action] = 0
+            self.failure_contexts.pop(action, None)
             self.attempt_record(action, before, after, self.bridge.last_receipt)
             self.publish('running', '宏步骤通过当前游戏状态核对：' + LABELS[action], after)
         except TrialDeath:
@@ -1551,6 +1711,7 @@ class TrialWorker:
             self.publish('death_wait', '试验过程中已死亡，下一轮正常复活', after)
         except TrialMovementBlocked as error:
             after = self.bridge.read()
+            self.record_known_failure(action, after)
             self.attempt_record(action, before, after, error.receipt)
             self.publish('replanning', '原生已停止拒绝的步行路线；重新扫描并选择其他目标', after)
         except TrialGuardBusy as error:
@@ -1558,12 +1719,12 @@ class TrialWorker:
             self.event('guard_priority_wait',action=action,reason=str(error),native_unresolved=bool(self.bridge.pending_mutations))
             self.publish('waiting_guard','防护先处理战斗或恢复，随后重新观察当前任务',after)
         except (Paused, OSError, ValueError, DecisionError) as error:
-            self.failures[action] = self.failures.get(action, 0) + 1
+            after = self.reader(self.automation)
+            self.record_known_failure(action, after)
             self.event('macro_failure', action=action, error_type=type(error).__name__,
                        reason=str(error)[:512],
                        native_dispatch_seen=len(self.bridge.receipts) > receipt_start,
                        native_unresolved=bool(self.bridge.pending_mutations))
-            after = self.reader(self.automation)
             receipt = self.bridge.last_receipt if len(self.bridge.receipts) > receipt_start else None
             self.attempt_record(action, before, after, receipt)
             self.publish('waiting_capability' if not self.bridge.halted else 'paused', str(error), after)

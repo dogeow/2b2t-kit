@@ -1542,7 +1542,10 @@ class TrialSdkCraftTests(unittest.TestCase):
             self.width, self.recipe, self.output, self.produces = width, recipe, output, produces
             self.calls, self.closed, self.fail_after_pickup = [], 0, False
             self.snapshot = state(reg, inventory_cursor_precondition_protocol=1,
-                                  inventory_isolation={'supported': True, 'active': True})
+                                  inventory_isolation={'supported': True, 'active': True},
+                                  time=int(time.time() * 1000) - 1000,
+                                  safety_hold={'active': False}, health_recovery_hold=False)
+            self.snapshot['trial_identity']['process_alive'] = True
             size = 45 if width == 2 else 46
             self.snapshot['screen'] = '' if width == 2 else 'CraftingScreen'
             self.snapshot['menu'] = {'id': 0 if width == 2 else 7,
@@ -1570,7 +1573,7 @@ class TrialSdkCraftTests(unittest.TestCase):
                     max_stack=1 if self.output.endswith('_pickaxe') else 64)
             else:
                 menu['slots'][0] = self.empty(0)
-            self.snapshot['time'] += 200
+            self.snapshot['time'] += 1
 
         def read(self):
             if self.halted:
@@ -1701,7 +1704,7 @@ class TrialSdkCraftTests(unittest.TestCase):
             world = TrialWorld(terrain() + [row((3, 1, 0), 'oak_log')], [-10, -5, -10], [10, 7, 10])
             self.assertNotIn('gather_starting_wood', skills.candidates(current, world))
             skills.gather = Mock()
-            with self.assertRaisesRegex(Paused, 'no per-block fallback'):
+            with self.assertRaisesRegex(Paused, 'No current recipe deficit'):
                 skills.execute('gather_starting_wood')
             skills.gather.assert_not_called()
 

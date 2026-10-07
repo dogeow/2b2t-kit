@@ -104,8 +104,13 @@ def _inventory_batch(state, spec, target_total, max_rounds=64):
     raise craft_recipe.InventoryCapacity('Inventory recipe batch has no verified input layout and output space')
 
 
-def _inventory_execute(client, spec, target_total):
-    """Craft through owned menu-0 cells without opening or closing any UI."""
+def _inventory_execute(client, spec, target_total, *, authorize=None):
+    """Craft through owned menu-0 cells under the caller's existing controller.
+
+    Material callers retain the disk-backed unattended safety interlock. A
+    separately bound native controller may supply its own exact-scope check;
+    menu isolation, acknowledgements and inventory conservation stay shared.
+    """
     from kit_runtime.inventory import InventorySession
     if spec.get('width') != 2:
         raise RuntimeError('Inventory manufacturing requires a 2x2 recipe')
@@ -116,7 +121,10 @@ def _inventory_execute(client, spec, target_total):
     class OwnedInventory:
         def status(self):
             state=client.status()
-            require_unlocked(client.root,state)
+            if authorize is None:
+                require_unlocked(client.root,state)
+            else:
+                authorize(state)
             return _inventory_state(state)
 
         def checked(self, op, **params):

@@ -17,11 +17,11 @@ MENUS = {'', 'InventoryScreen', 'CraftingScreen', 'FurnaceScreen',
 OPS = frozenset({'snapshot', 'scan', 'walk', 'walk_path', 'mine_block',
                  'select_item', 'slot_click', 'close_menu', 'craft_recipe',
                  'interact', 'attack_passive', 'use_item', 'decision_screenshot',
-                 'trial_respawn', 'trial_stop', 'guard'})
+                 'trial_respawn', 'trial_stop', 'guard', 'scan_trees', 'chop'})
 MUTATING_OPS = frozenset({'mine_block', 'craft_recipe', 'interact', 'slot_click',
-                        'select_item', 'use_item', 'attack_passive', 'guard'})
+                        'select_item', 'use_item', 'attack_passive', 'guard', 'chop'})
 GUARD_BLOCKED_OPS = frozenset({'walk', 'walk_path', 'mine_block', 'select_item',
-                             'slot_click', 'close_menu', 'craft_recipe', 'interact', 'attack_passive'})
+                             'slot_click', 'close_menu', 'craft_recipe', 'interact', 'attack_passive', 'chop'})
 GUARD_BUSY_DETAIL = 'Construction guard is defending or eating; wait before changing items or starting work'
 
 
@@ -264,8 +264,17 @@ class TrialBridge:
     def request(self, op, **args):
         if op not in OPS:
             raise Paused('Trial primitive is not explicitly supported: ' + str(op))
+        chop_origin = args.pop('_chop_origin', None)
+        if chop_origin is not None and (op != 'chop' or not isinstance(chop_origin, (list, tuple))
+                or len(chop_origin) != 3 or any(type(n) is not int for n in chop_origin)):
+            raise Paused('Invalid local native-chop observation origin; no action sent')
         deadline = time.monotonic() + max(12, min(600, args.get('seconds', 20)) + 15)
         state = self.read(allow_dead=op in {'trial_respawn', 'trial_stop'}, deadline=deadline)
+        if op == 'chop':
+            from trial_native_chop import validate_chop_arguments
+            validate_chop_arguments(state, args)
+            if chop_origin is None:
+                chop_origin = tuple(math.floor(n) for n in state['pos'])
         guard_waited = False
         while (op in GUARD_BLOCKED_OPS and state.get('guard_armed') is True
                and state.get('guard_busy') is True):
@@ -281,6 +290,12 @@ class TrialBridge:
             if guard_waited:
                 raise TrialGuardBusy(op, args)
             raise Paused('Trial request observation budget expired before dispatch; no action sent')
+        if op == 'chop':
+            # Native defense may have changed inventory while this request
+            # waited; scope and bounded batch prerequisites are checked again.
+            validate_chop_arguments(state, args)
+            if tuple(math.floor(n) for n in state['pos']) != tuple(chop_origin):
+                raise Paused('Native chop observation origin changed before dispatch; reobserve without replay')
         signature = walking_signature(op, args)
         if signature in self.rejected_paths:
             raise TrialMovementBlocked(op, args, self.rejected_paths[signature])
@@ -314,6 +329,9 @@ class TrialBridge:
         if op in MUTATING_OPS:
             self.pending_mutations[request_id] = {'id': request_id, 'op': op,
                 'world_session': self.session, 'arguments': args}
+            if op == 'chop':
+                self.pending_mutations[request_id].update({key: envelope[key]
+                    for key in ('world_id', 'trial_id', 'run_id', 'dimension')})
         while time.monotonic() < deadline:
             self.check_control()
             current = self.observe(deadline=deadline)
@@ -325,13 +343,24 @@ class TrialBridge:
             matched = result.get('id') == request_id and (path.exists() or current.get('last_request') == request_id)
             # Scan status can inherit a preceding action's phase; the exact
             # payload itself still needs the full native scan contract below.
-            terminal = matched and ('blocks' in result if op == 'scan' else result.get('phase') in {'done', 'waiting', 'error', 'stopped'})
+            if op == 'scan':
+                completed = 'blocks' in result
+            elif op == 'scan_trees':
+                completed = 'tree_survey' in result or result.get('phase') == 'error'
+            else:
+                completed = result.get('phase') in {'done', 'waiting', 'error', 'stopped'}
+            terminal = matched and completed
             if terminal:
                 validate_scope(result, self.registry, None if op == 'trial_respawn' else self.session, self.run_id,
                                allow_dead=op in {'trial_respawn', 'trial_stop'})
                 if current.get('last_request') not in {self.last, request_id}:
                     self.halted = True
                     raise Paused('Another native controller took over before the result')
+                if op == 'chop' and (result.get('phase') == 'done' and
+                        (result['control_revision'] != envelope['expected_revision'] + 1
+                         or current['control_revision'] != result['control_revision'])):
+                    self.halted = True
+                    raise Paused('Native chopper revision changed outside its single admitted handoff')
                 self.last = request_id
                 if op == 'trial_respawn' and result.get('phase') == 'done':
                     self.session = result['world_session']
@@ -347,7 +376,15 @@ class TrialBridge:
                 if op == 'scan' and not complete_scan(result, args, envelope['expected_revision']):
                     self.halted = True
                     raise Paused('Native scan volume or revision is incomplete; no terrain actions permitted')
-                if op != 'scan' and result.get('phase') != 'done':
+                if op == 'scan_trees':
+                    from trial_native_chop import complete_tree_survey
+                    if (not complete_tree_survey(result, args, envelope['expected_revision'], envelope['site'])
+                            or current['control_revision'] != envelope['expected_revision']):
+                        self.halted = True
+                        raise Paused('Native tree survey payload or revision is incomplete; no chopping permitted')
+                    self.last_receipt = {**self.last_receipt, 'receipt_class': 'native_tree_survey'}
+                    self.receipts[-1] = self.last_receipt
+                if op not in {'scan', 'scan_trees'} and result.get('phase') != 'done':
                     if (current['control_revision'] == envelope['expected_revision']
                             and guard_pre_dispatch_refusal(op, result, envelope['expected_revision'])):
                         self.pending_mutations.pop(request_id, None)
@@ -374,10 +411,20 @@ class TrialBridge:
                         raise TrialMovementBlocked(op, args, self.last_receipt)
                     self.halted = True
                     raise Paused('Native operation did not complete: ' + result.get('detail', 'unknown outcome'))
+                if op == 'chop':
+                    from trial_native_chop import record_chop_receipt
+                    try:
+                        record_chop_receipt(self.root, envelope, state, result)
+                    except (OSError, ValueError, Paused):
+                        self.halted = True
+                        raise
                 if result.get('phase') == 'done' and result.get('outcome_pending') is not True:
                     self.pending_mutations.pop(request_id, None)
                 return result
             if current.get('last_request') == request_id:
+                if op == 'chop' and current['control_revision'] not in {envelope['expected_revision'], envelope['expected_revision'] + 1}:
+                    self.halted = True
+                    raise Paused('Another revision interrupted the native chopper; preserve its intent')
                 self.revision = current['control_revision']
             elif current.get('last_request') != self.last or current['control_revision'] != self.revision:
                 self.halted = True
