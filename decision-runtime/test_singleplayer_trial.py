@@ -284,6 +284,143 @@ class BridgeTests(unittest.TestCase):
 
 
 class SkillsTests(unittest.TestCase):
+    def test_pickup_uses_conservative_vanilla_box_instead_of_point_radius(self):
+        # A log one block along Z already intersects vanilla's expanded player
+        # box; radial .8 rejected this valid pickup waypoint on the live tree.
+        self.assertTrue(TrialWorld.pickup_reach([-65.5, 71, -26.5], [-65.875, 71, -27.601807]))
+        self.assertFalse(TrialWorld.pickup_reach([-64.5, 72, -27.5], [-65.875, 71, -27.601807]))
+        self.assertFalse(TrialWorld.pickup_reach([.5, 1, .5], [1.8, 1, .5]))
+
+    @staticmethod
+    def leaf_pickup_terrain():
+        # Cropped native geometry: player on a leaf canopy, a log beyond a
+        # two-column gap, and a normal raised route obstructed by three leaves.
+        return [row((-63, 70, -28), 'oak_leaves'), row((-63, 71, -27), 'birch_leaves'),
+                row((-64, 71, -27), 'birch_leaves'), row((-64, 73, -27), 'dark_oak_leaves'),
+                row((-65, 70, -27), 'birch_leaves'), row((-65, 71, -27), 'birch_leaves'),
+                row((-65, 73, -27), 'dark_oak_leaves'), row((-66, 70, -27), 'birch_leaves'),
+                row((-66, 73, -27), 'dark_oak_leaves')]
+
+    def test_leaf_access_is_bounded_hypothesis_and_does_not_remove_nonleaves_or_support(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            item = {'uuid': 'canopy-log', 'type': 'minecraft:item', 'visible': True,
+                    'pos': [-65.875, 71, -27.601807], 'stack': {'item': 'minecraft:dark_oak_log', 'count': 1}}
+            current = state(reg, pos=[-62.493175, 71, -27.329538], entities=[item], on_ground=True)
+            skills = TrialSkills(TrialBridge(game, reg, 'run-a', reader=lambda _: current), game)
+            rows = self.leaf_pickup_terrain()
+            world = TrialWorld(rows, [-68, 65, -31], [-60, 77, -24])
+            found = skills.remember_log_drops(current)
+            self.assertIsNone(skills.pickup_plan(world, current, found))
+            plan = skills.pickup_clearance_plan(world, current, found)
+            self.assertIsNotNone(plan)
+            self.assertEqual('canopy-log', plan[0])
+            self.assertEqual((-64, 73, -27), plan[1])
+            choices = skills.candidates(current, world)
+            self.assertIn('collect_log_drops', choices)
+            self.assertNotIn('gather_starting_wood', choices)
+            self.assertFalse((Path(game) / 'request.json').exists())
+            for replacement in ('stone', 'water', 'chest'):
+                changed = [row(r['pos'], replacement) if r['pos'] == [-64, 73, -27] else r for r in rows]
+                with self.subTest(replacement=replacement):
+                    self.assertIsNone(skills.pickup_clearance_plan(
+                        TrialWorld(changed, world.low, world.high), current, found))
+            protected = next(r for r in rows if r['pos'] == [-64, 73, -27])
+            protected['block_entity'] = True
+            self.assertIsNone(skills.pickup_clearance_plan(TrialWorld(rows, world.low, world.high), current, found))
+
+    def test_real_leaf_clearance_then_walk_only_counts_inventory_gain(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            rows = self.leaf_pickup_terrain()
+            current = state(reg, pos=[-62.493175, 71, -27.329538], on_ground=True,
+                entities=[{'uuid': 'canopy-log', 'type': 'minecraft:item', 'visible': True,
+                    'pos': [-65.875, 71, -27.601807], 'stack': {'item': 'minecraft:dark_oak_log', 'count': 1}}])
+            class Bridge:
+                world = reg['world_name']
+                calls = []
+                def __init__(self): self.state = current
+                def read(self): return self.state
+                def request(self, op, **args):
+                    self.calls.append((op, args))
+                    if op == 'mine_block':
+                        target = next(r for r in rows if r['pos'] == args['pos'])
+                        self_assert.assertEqual(target['state'], args['expected_state'])
+                        self_assert.assertTrue('leaves' in target['state'])
+                        rows.remove(target)
+                        return {**self.state, 'server_confirmed': True, 'outcome_pending': False}
+                    self_assert.assertEqual('walk_path', op)
+                    self.state['pos'] = args['path'][-1]
+                    return self.state
+                def wait(self, unused):
+                    if TrialWorld.pickup_reach(self.state['pos'], [-65.875, 71, -27.601807]):
+                        self.state['inventory'] = [{'item': 'minecraft:dark_oak_log', 'count': 1}]
+                        self.state['entities'] = []
+            self_assert = self
+            bridge = Bridge()
+            skills = TrialSkills(bridge, game)
+            skills.scan = lambda: TrialWorld(rows, [-68, 65, -31], [-60, 77, -24])
+            after = skills.collect_log_drops()
+            self.assertEqual(1, after['inventory'][0]['count'])
+            self.assertEqual({}, skills.log_drops)
+            mines = [args['pos'] for op, args in bridge.calls if op == 'mine_block']
+            self.assertEqual(3, len(mines))
+            self.assertNotIn([-63, 70, -28], mines)
+            self.assertTrue(any(op == 'walk_path' for op, args in bridge.calls))
+            self.assertTrue(all(op in {'mine_block', 'walk_path'} for op, args in bridge.calls))
+
+    def test_leaf_clearance_never_replays_unknown_mining_or_removes_current_floor(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            item = {'uuid': 'log', 'type': 'minecraft:item', 'visible': True,
+                    'pos': [1, 1, .5], 'stack': {'item': 'minecraft:oak_log', 'count': 1}}
+            current = state(reg, on_ground=True, entities=[item])
+            bridge = TrialBridge(game, reg, 'run-a', reader=lambda _: current)
+            skills = TrialSkills(bridge, game)
+            skills.walk_pickup_route = Mock()
+            skills.scan = lambda: TrialWorld([row((0, 0, 0), 'oak_leaves'), row((1, 2, 0), 'oak_leaves')],
+                                            [-2, -1, -2], [3, 4, 2])
+            bridge.request = Mock(return_value={**current, 'server_confirmed': False, 'outcome_pending': True})
+            with self.assertRaisesRegex(Paused, 'current footing'):
+                skills.clear_pickup_leaf('log', (0, 0, 0), [])
+            bridge.request.assert_not_called()
+            with self.assertRaisesRegex(Paused, 'not server-confirmed'):
+                skills.clear_pickup_leaf('log', (1, 2, 0), [])
+            self.assertEqual(1, bridge.request.call_count)
+
+    def test_inventory_pickup_during_leaf_approach_is_reobserved_before_another_mine(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            current = state(reg, entities=[{'uuid': 'log', 'type': 'minecraft:item', 'visible': True,
+                'pos': [2.5, 1, .5], 'stack': {'item': 'minecraft:oak_log', 'count': 1}}])
+            bridge = TrialBridge(game, reg, 'run-a', reader=lambda _: current)
+            skills = TrialSkills(bridge, game)
+            skills.scan = lambda: TrialWorld(terrain(), [-10, -5, -10], [10, 7, 10])
+            skills.pickup_plan = Mock(return_value=None)
+            skills.pickup_clearance_plan = Mock(return_value=('log', (1, 2, 0), []))
+            def clear(*unused):
+                current['inventory'] = [{'item': 'minecraft:oak_log', 'count': 1}]
+                current['entities'] = []
+            skills.clear_pickup_leaf = Mock(side_effect=clear)
+            self.assertEqual(1, skills.collect_log_drops()['inventory'][0]['count'])
+            skills.clear_pickup_leaf.assert_called_once()
+            self.assertEqual({}, skills.log_drops)
+
+    def test_visual_direct_pickup_choice_cannot_fall_through_to_leaf_mining(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            current = state(reg, entities=[{'uuid': 'log', 'type': 'minecraft:item', 'visible': True,
+                'pos': [2.5, 1, .5], 'stack': {'item': 'minecraft:oak_log', 'count': 1}}])
+            skills = TrialSkills(TrialBridge(game, reg, 'run-a', reader=lambda _: current), game)
+            skills.scan = lambda: TrialWorld(terrain(), [-10, -5, -10], [10, 7, 10])
+            skills.pickup_strategy = 'direct_pickup'
+            skills.pickup_plan = Mock(return_value=None)
+            skills.pickup_clearance_plan = Mock()
+            with self.assertRaisesRegex(Paused, 'no inventory gain'):
+                skills.collect_log_drops()
+            skills.pickup_clearance_plan.assert_not_called()
+            self.assertFalse((Path(game) / 'request.json').exists())
+
     def test_confirmed_log_drops_take_priority_and_unknown_pickup_never_counts_as_wood(self):
         with tempfile.TemporaryDirectory() as game:
             reg = registry(game)
@@ -304,6 +441,8 @@ class SkillsTests(unittest.TestCase):
                 skills.collect_log_drops()
             self.assertEqual(0, sum(row['count'] for row in current['inventory']))
             self.assertEqual(3, sum(row['count'] for row in skills.log_drops.values()))
+            self.assertEqual(set(), skills.rejected_routes)
+            self.assertIn('collect_log_drops', skills.candidates(current, world))
             self.assertFalse((Path(game) / 'request.json').exists())
 
     def test_normal_collision_pickup_only_succeeds_on_actual_inventory_gain(self):
@@ -561,6 +700,136 @@ class WorkerTests(unittest.TestCase):
         (root / 'registry.json').write_text(json.dumps(reg))
         worker = TrialWorker(game, os.getpid(), reader=lambda _: state(reg))
         return worker, reg, root
+
+    def visual_worker(self, game, model, strategy='leaf_access'):
+        worker, reg, root = self.worker(game)
+        settings = Path(game) / 'config/twob2tkit/decision-advisor'
+        settings.mkdir(parents=True)
+        (settings / 'settings.json').write_text(json.dumps({'provider': 'ollama', 'enabled': True,
+            'local_model': 'clef-flash', 'keep_loaded': True, 'vision_mode': 'auto',
+            'context_length': 4096, 'timeout_seconds': 2}))
+        current = state(reg, entities=[{'uuid': 'log', 'type': 'minecraft:item', 'visible': True,
+            'pos': [2.6, 1, .5], 'stack': {'item': 'minecraft:dark_oak_log', 'count': 1}}], yaw=-90, pitch=12)
+        worker.reader = lambda _: current
+        worker.registry = reg
+        worker.run_id = reg['run_id']
+        worker.command = 'start'
+        worker.control = lambda: None
+        worker.model_factory = model
+        worker.bind()
+        if strategy == 'direct_pickup':
+            worker.skills.pickup_target = ('log', (2, 1, 0), [(1, 1, 0), (2, 1, 0)])
+        else:
+            worker.skills.pickup_clearance_target = ('log', (1, 2, 0), [])
+        worker.bridge.request = Mock(return_value={**current, 'decision_image': {'source': 'kit_framebuffer'}})
+        return worker, current, root
+
+    def test_auto_pickup_vision_uses_small_prompt_and_only_prechecked_model_strategy(self):
+        for strategy in ('leaf_access', 'direct_pickup', 'wait'):
+            with self.subTest(strategy=strategy), tempfile.TemporaryDirectory() as game:
+                images, scenes, questions_seen = [], [], []
+                class Model:
+                    def __init__(self, settings, config, image=None): images.append(image)
+                    def close(self): pass
+                    def predict(self, scene, questions):
+                        scenes.append(scene)
+                        questions_seen.append(questions)
+                        choices = questions['action']['criteria']
+                        return {'model': 'kit-clef-flash', 'answers': {'action': {'type': 'choice',
+                            'choice': strategy, 'confidence': .8,
+                            'probabilities': {key: float(key == strategy) for key in choices}}}}
+                worker, current, root = self.visual_worker(game, Model,
+                    'direct_pickup' if strategy == 'direct_pickup' else 'leaf_access')
+                try:
+                    with patch('singleplayer_trial.checked_image', return_value='native-frame'), \
+                         patch('singleplayer_trial.capability_scene', return_value={'large_catalog': 'x' * 8000}):
+                        result = worker.decide({'collect_log_drops': 'Pickup', 'explore_nearby': 'Approach', 'wait': 'Wait'}, current)
+                    self.assertEqual('wait' if strategy == 'wait' else 'collect_log_drops', result['choice'])
+                    self.assertEqual(strategy, result['pickup_strategy'])
+                    self.assertEqual([None if strategy == 'wait' else strategy], [worker.skills.pickup_strategy])
+                    self.assertEqual(['native-frame'], images)
+                    scene = scenes[0]['scene']
+                    self.assertEqual('pickup_route_strategy_v1', scene['scene_tag'])
+                    self.assertNotIn('capabilities', scene)
+                    self.assertNotIn('experience', scene)
+                    self.assertEqual(1, scene['visible_log']['count'])
+                    options = questions_seen[0]['action']['criteria']
+                    self.assertEqual({'wait', 'direct_pickup' if strategy == 'direct_pickup' else 'leaf_access'}, set(options))
+                    payload = {'model': 'kit-clef-flash', 'state': scenes[0], 'questions': questions_seen[0], 'keep_alive': -1}
+                    self.assertLessEqual(len(json.dumps(payload, ensure_ascii=False).encode()), 2304)
+                    worker.bridge.request.assert_called_once_with('decision_screenshot')
+                    journal = [json.loads(line) for line in (root / 'worker/journal.jsonl').read_text().splitlines()]
+                    visual = next(row for row in journal if row['event'] == 'pickup_visual_strategy')
+                    self.assertTrue(visual['image_used'])
+                    self.assertEqual('pickup_route_strategy_v1', visual['scene_tag'])
+                    self.assertEqual(result['choice'], visual['selected_macro'])
+                    self.assertFalse(any(row['event'] == 'vision_skipped_budget' for row in journal))
+                finally:
+                    worker.pool.shutdown(wait=True)
+                    if worker.experience: worker.experience.close()
+
+    def test_visual_pickup_discards_drop_despawn_and_pose_change_before_inference(self):
+        for change in ({'entities': []}, {'pos': [1.2, 1, .5]}):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as game:
+                model = Mock()
+                worker, current, root = self.visual_worker(game, model)
+                def capture(op):
+                    receipt = {**current, 'decision_image': {'source': 'kit_framebuffer'}}
+                    current.update(change)
+                    return receipt
+                worker.bridge.request = Mock(side_effect=capture)
+                try:
+                    with patch('singleplayer_trial.checked_image', return_value='native-frame'):
+                        with self.assertRaisesRegex(Paused, 'changed during image capture'):
+                            worker.decide({'collect_log_drops': 'Pickup', 'wait': 'Wait'}, current)
+                    model.assert_not_called()
+                    self.assertEqual([], current['inventory'])
+                    worker.bridge.request.assert_called_once_with('decision_screenshot')
+                finally:
+                    worker.pool.shutdown(wait=True)
+                    if worker.experience: worker.experience.close()
+
+    def test_visual_pickup_discards_same_scope_drop_despawn_during_inference(self):
+        with tempfile.TemporaryDirectory() as game:
+            current_ref = []
+            class Model:
+                def __init__(self, settings, config, image=None): pass
+                def close(self): pass
+                def predict(self, scene, questions):
+                    current_ref[0]['entities'] = []
+                    choices = questions['action']['criteria']
+                    return {'model': 'kit-clef-flash', 'answers': {'action': {'type': 'choice',
+                        'choice': 'leaf_access', 'confidence': .8,
+                        'probabilities': {key: float(key == 'leaf_access') for key in choices}}}}
+            worker, current, root = self.visual_worker(game, Model)
+            current_ref.append(current)
+            try:
+                with patch('singleplayer_trial.checked_image', return_value='native-frame'):
+                    with self.assertRaisesRegex(Paused, 'changed during model inference'):
+                        worker.decide({'collect_log_drops': 'Pickup', 'wait': 'Wait'}, current)
+                self.assertIsNone(worker.skills.pickup_strategy)
+                self.assertEqual([], current['inventory'])
+                worker.bridge.request.assert_called_once_with('decision_screenshot')
+            finally:
+                worker.pool.shutdown(wait=True)
+                if worker.experience: worker.experience.close()
+
+    def test_both_prechecked_pickup_visual_options_fit_4096_image_budget(self):
+        from decisions import question
+        with tempfile.TemporaryDirectory() as game:
+            worker, current, root = self.visual_worker(game, Mock())
+            try:
+                worker.skills.pickup_target = ('log', (2, 1, 0), [(1, 1, 0), (2, 1, 0)])
+                goal, criteria, scene, identities = worker.pickup_visual_options(current)
+                self.assertEqual({'wait', 'direct_pickup', 'leaf_access'}, set(criteria))
+                payload = {'model': 'kit-clef-flash', 'state': {'goal': goal, 'scene': scene},
+                           'questions': question(criteria), 'keep_alive': -1}
+                self.assertLessEqual(len(json.dumps(payload, ensure_ascii=False).encode()), 2304)
+                self.assertEqual({'log'}, identities)
+                self.assertFalse((worker.automation / 'request.json').exists())
+            finally:
+                worker.pool.shutdown(wait=True)
+                if worker.experience: worker.experience.close()
 
     def test_native_start_run_and_control_not_foreign_command(self):
         with tempfile.TemporaryDirectory() as game:

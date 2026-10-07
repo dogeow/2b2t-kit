@@ -9,6 +9,7 @@ import argparse
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
+import heapq
 import json
 import math
 import os
@@ -119,6 +120,77 @@ def dead(state):
 
 
 class TrialWorld(World):
+    @staticmethod
+    def pickup_reach(feet, item):
+        # Vanilla checks the player AABB expanded by (1, .5, 1), not a
+        # horizontal radius. Reserve .2 for normal-walk arrival error; the
+        # real inventory change remains the sole collection confirmation.
+        return (abs(feet[0] - item[0]) <= 1.2 and abs(feet[2] - item[2]) <= 1.2
+                and feet[1] - .3 <= item[1] <= feet[1] + 2.1)
+
+    def leaf_access_paths(self, start, limit=2500, max_leaves=3):
+        """Hypotheses for a short normal route needing only leaf clearance.
+
+        These paths cannot be walked until each obstructing leaf has actually
+        been mined and a fresh scan supplies a normal pickup path. Supports,
+        liquids, containers, unknown cells and non-leaf obstacles stay intact.
+        """
+        ordinary = self.pickup_paths(start, limit)
+        if not ordinary:
+            return {}, {}
+        parents = Paths(ordinary)
+        parents.centering = getattr(ordinary, 'centering', None)
+        clearances = {point: frozenset() for point in ordinary}
+        costs = {point: (0, len(self.route(ordinary, point))) for point in ordinary}
+        queue = [(0, length, point) for point, (_, length) in costs.items()]
+        heapq.heapify(queue)
+
+        def needed(point, removed):
+            if point in removed or self.open(point):
+                return frozenset()
+            if (self.safe(point) and self.name(point).endswith('_leaves')
+                    and not self.row(point).get('block_entity')):
+                return frozenset({point})
+            return None
+
+        while queue and len(parents) < limit:
+            count, length, source = heapq.heappop(queue)
+            if costs[source] != (count, length):
+                continue
+            x, y, z = source
+            removed = clearances[source]
+            for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                for dy in (0, 1, -1):
+                    target = (x + dx, y + dy, z + dz)
+                    support = (target[0], target[1] - 1, target[2])
+                    if not self.full(support) or support in removed:
+                        continue
+                    sweep = [target, (target[0], target[1] + 1, target[2])]
+                    if dy == 1:
+                        sweep.append((x, y + 2, z))
+                    elif dy == -1:
+                        sweep.append((target[0], y + 1, target[2]))
+                    additions = [needed(point, removed) for point in sweep]
+                    if any(value is None for value in additions):
+                        continue
+                    clearance = removed.union(*additions)
+                    if len(clearance) > max_leaves:
+                        continue
+                    # Do not remove any footing used by the hypothetical
+                    # approach, including earlier waypoints in this route.
+                    footing = {(p[0], p[1] - 1, p[2]) for p in self.route(parents, source)}
+                    footing.add((x, y - 1, z))
+                    if clearance & footing:
+                        continue
+                    cost = (len(clearance), length + 1)
+                    if cost >= costs.get(target, (max_leaves + 1, limit + 1)):
+                        continue
+                    parents[target] = source
+                    clearances[target] = clearance
+                    costs[target] = cost
+                    heapq.heappush(queue, (*cost, target))
+        return parents, clearances
+
     def safe_two_block_descent(self, source, target, actual=None):
         if (source[1] - target[1] != 2 or abs(source[0] - target[0]) + abs(source[2] - target[2]) != 1
                 or not self.stand(source) or not self.stand(target)
@@ -204,6 +276,8 @@ class TrialSkills(Runner):
         self.rejected_routes = set()
         self.log_drops = {}
         self.pickup_target = None
+        self.pickup_clearance_target = None
+        self.pickup_strategy = None
 
     def scan(self):
         self.check()
@@ -257,13 +331,73 @@ class TrialSkills(Runner):
                 continue
             for stance in parents:
                 pos = center(stance)
-                if (math.hypot(pos[0] - row['pos'][0], pos[2] - row['pos'][2]) > .8
-                        or not pos[1] - .35 <= row['pos'][1] <= pos[1] + 1.9):
+                if not world.pickup_reach(pos, row['pos']):
                     continue
                 route = world.route(parents, stance)
                 if len(route) <= 32 and tuple(route) not in self.rejected_routes:
                     choices.append((len(route), row['uuid'], stance, route))
         return min(choices)[1:] if choices else None
+
+    def pickup_clearance_plan(self, world, state, rows):
+        if not any(row.get('visible') is True for row in rows.values()):
+            return None
+        parents, clearances = world.leaf_access_paths(state['pos'])
+        choices = []
+        ordinary = world.pickup_paths(state['pos'])
+        for row in rows.values():
+            if row.get('visible') is not True:
+                continue
+            for stance, leaves in clearances.items():
+                if not leaves or not world.pickup_reach(center(stance), row['pos']):
+                    continue
+                route = world.route(parents, stance)
+                if len(route) > 32:
+                    continue
+                # Recheck the whole hypothetical route after all removals.
+                # Its only purpose is choosing the next currently reachable
+                # leaf. No hypothetical air is used to execute movement.
+                virtual = TrialWorld([value for point, value in world.blocks.items() if point not in leaves],
+                                     world.low, world.high)
+                if stance not in virtual.pickup_paths(state['pos']):
+                    continue
+                protected = {tuple(p) for p in self.stations.values()}
+                protected.update(tuple(map(int, key.split(','))) for key in self.owned
+                                 if len(key.split(',')) == 3 and all(v.lstrip('-').isdigit() for v in key.split(',')))
+                if leaves & protected:
+                    continue
+                for leaf in leaves:
+                    if leaf in self.excluded:
+                        continue
+                    approach = world.approach(ordinary, leaf)
+                    if approach is None:
+                        continue
+                    approach_route = world.route(ordinary, approach)
+                    if tuple(approach_route) in self.rejected_routes:
+                        continue
+                    choices.append((len(leaves), len(approach_route), len(route), row['uuid'],
+                                    leaf, approach_route))
+        return min(choices)[3:] if choices else None
+
+    def clear_pickup_leaf(self, identity, leaf, route):
+        self.walk_pickup_route(route)
+        fresh = self.scan()
+        state = self.b.read()
+        # Reobserve the current item and exact leaf immediately before mining.
+        if identity not in self.remember_log_drops(state):
+            return
+        under_player = (math.floor(state['pos'][0]), math.floor(state['pos'][1]) - 1,
+                        math.floor(state['pos'][2]))
+        if (leaf == under_player or not fresh.name(leaf).endswith('_leaves')
+                or not fresh.safe(leaf) or fresh.row(leaf).get('block_entity')):
+            raise Paused('Pickup leaf clearance changed or would remove current footing')
+        receipt = self.b.request('mine_block', pos=list(leaf), expected_state=fresh.row(leaf)['state'], seconds=18)
+        if receipt.get('server_confirmed') is not True or receipt.get('outcome_pending') is True:
+            raise Paused('Pickup leaf mining outcome is not server-confirmed; preserve request')
+        after = self.scan()
+        if not after.open(leaf):
+            raise Paused('Pickup leaf clearance has no fresh open-cell confirmation')
+        self.event('pickup_leaf_cleared', target=list(leaf), item_uuid=identity,
+                   pickup_confirmed=False)
 
     def walk_pickup_route(self, route):
         batch = []
@@ -290,18 +424,31 @@ class TrialSkills(Runner):
 
     def collect_log_drops(self):
         before = sum(inventory(self.b.read()).get(name, 0) for name in LOGS)
-        for unused in range(8):
+        attempted = set()
+        for unused in range(12):
             state = self.b.read()
             found = self.remember_log_drops(state)
+            if sum(inventory(state).get(name, 0) for name in LOGS) > before:
+                return state
             world = self.scan()
             plan = self.pickup_plan(world, self.b.read(), found)
             if not plan:
+                if self.pickup_strategy == 'direct_pickup':
+                    break
+                clearance = self.pickup_clearance_plan(world, self.b.read(), found)
+                if clearance:
+                    self.clear_pickup_leaf(*clearance)
+                    continue
                 break
             identity, stance, route = plan
             # The stored location never substitutes for the current item.
             current = self.remember_log_drops(self.b.read()).get(identity)
             if current is None:
                 continue
+            attempt = (identity, stance, tuple(route))
+            if attempt in attempted:
+                break
+            attempted.add(attempt)
             try:
                 self.walk_pickup_route(route)
             except TrialMovementBlocked:
@@ -312,7 +459,9 @@ class TrialSkills(Runner):
             self.remember_log_drops(after)
             if sum(inventory(after).get(name, 0) for name in LOGS) > before:
                 return after
-            self.rejected_routes.add(tuple(route))
+            # No inventory gain does not prove a route was blocked. Do not
+            # persist it as a terrain refusal across hot updates or move it
+            # into the bridge's no-replay set. Next cycle gets a fresh entity.
         self.event('log_drops_pending', observed_count=sum(row['count'] for row in self.log_drops.values()),
                    inventory_before=before, pickup_confirmed=False)
         raise Paused('Observed log drops are still pending; no inventory gain or reachable pickup route was verified')
@@ -380,7 +529,9 @@ class TrialSkills(Runner):
             return candidates
         found = self.remember_log_drops(state)
         self.pickup_target = self.pickup_plan(world, state, found)
-        if self.pickup_target:
+        self.pickup_clearance_target = (None if self.pickup_target
+                                       else self.pickup_clearance_plan(world, state, found))
+        if self.pickup_target or self.pickup_clearance_target:
             candidates['collect_log_drops'] = LABELS['collect_log_drops']
         if self.log_drops:
             # A server-confirmed broken log is still pending until it enters
@@ -668,14 +819,51 @@ class TrialWorker:
             raise Paused('本试验需要 Kit 本地 Clef Flash 已启用并保持常驻')
         return settings, config
 
+    def pickup_visual_options(self, before):
+        """A small visual question containing only prechecked pickup options."""
+        found = self.skills.remember_log_drops(before)
+        direct, access = self.skills.pickup_target, self.skills.pickup_clearance_target
+        criteria = {'wait': 'Wait if the image conflicts with the facts or neither offered pickup plan is suitable. Do not invent a route.'}
+        plans = {}
+        identities = []
+        if direct and direct[0] in found and found[direct[0]].get('visible'):
+            identity, stance, route = direct
+            criteria['direct_pickup'] = 'Use the checked normal walking route to the log pickup box, then confirm an actual inventory gain.'
+            plans['direct_pickup'] = {'steps': len(route), 'end': center(stance)}
+            identities.append(identity)
+        if access and access[0] in found and found[access[0]].get('visible'):
+            identity, leaf, route = access
+            criteria['leaf_access'] = 'Use the checked approach; clear up to 3 observed non-support leaves with confirmed mining, rescan and walk to collect the log. Confirm inventory gain.'
+            plans['leaf_access'] = {'approach_steps': len(route), 'next_leaf': list(leaf), 'max_leaves': 3}
+            identities.append(identity)
+        if len(criteria) < 2:
+            return None
+        item = found[min(identities, key=lambda identity: distance(found[identity]['pos'], before['pos']))]
+        scene = {'scene_tag': 'pickup_route_strategy_v1', 'singleplayer_trial': True,
+                 'health': before['health'], 'food': before['food'],
+                 'logs_in_inventory': sum(inventory(before).get(name, 0) for name in LOGS),
+                 'camera': {'yaw': before.get('yaw'), 'pitch': before.get('pitch')},
+                 'visible_log': {'item': item['item'], 'count': item['count'],
+                                 'relative_pos': [round(b - a, 3) for a, b in zip(before['pos'], item['pos'])]},
+                 'prechecked_plans': plans,
+                 'execution': 'Only these native plans; image cannot authorize unknown terrain, commands or pickup success.'}
+        goal = 'Use the game image and fresh log observation to choose an offered pickup strategy. Collect this existing drop before chopping more trees.'
+        return goal, criteria, scene, set(identities)
+
     def decide(self, candidates, before):
         self.control()
+        before = {**before, 'pos': list(before['pos'])}
         if self.inference is not None and not self.inference.done():
             raise Paused('Previous model request is still in flight; do not overlap it')
         settings, config = self.model_config()
         image = None
+        pickup_visual = (self.pickup_visual_options(before)
+                         if 'collect_log_drops' in candidates
+                         and config.get('vision_mode') in {'auto', 'always'} else None)
         visual = config.get('vision_mode') == 'always' or (
             config.get('vision_mode') == 'auto' and 'explore_nearby' in candidates and len(candidates) <= 3)
+        if pickup_visual:
+            visual = True
         rules = self.experience.reusable_rules(before, limit=4) if self.experience else []
         rules = [{key: row[key] for key in ('rule', 'observed_attempts', 'advisory_only')} for row in rules]
         # Keep full snapshots in the journal, and a small factual decision
@@ -694,12 +882,17 @@ class TrialWorker:
         criteria = {key: CRITERIA.get(key, description) for key, description in candidates.items()}
         if pending_logs and 'explore_nearby' in criteria:
             criteria['explore_nearby'] = 'Follow only the prechecked normal route closer to this save\'s observed pending log drops, then rediscover actual item entities. Do not search for new trees or treat memory as pickup success.'
+        if pickup_visual:
+            # This dedicated route question is complete for its narrower
+            # purpose. A full Survival capability catalogue would crowd out
+            # the image without providing another executable pickup option.
+            immediate_goal, criteria, scene, observed_identities = pickup_visual
         from decisions import question
         payload = {'model': 'kit-clef-flash', 'state': {'goal': immediate_goal, 'scene': scene},
                    'questions': question(criteria), 'keep_alive': -1}
         payload_bytes = len(json.dumps(payload, ensure_ascii=False, allow_nan=False).encode('utf8'))
         if visual and payload_bytes > config['context_length'] - 1792:
-            if config.get('vision_mode') == 'always':
+            if pickup_visual or config.get('vision_mode') == 'always':
                 raise Paused('完整能力和状态超过图像上下文预算，未裁剪事实；等待增加上下文或改用文字')
             self.event('vision_skipped_budget', text_bytes=payload_bytes,
                        image_text_budget=config['context_length'] - 1792,
@@ -708,9 +901,20 @@ class TrialWorker:
         if payload_bytes > config['context_length'] - 256:
             raise Paused('完整能力和状态超过文字上下文预算，未裁剪事实')
         if visual:
+            capture_origin = before
             capture = self.bridge.request('decision_screenshot')
             image = checked_image(capture.get('decision_image'), self.automation, capture)
-            before = self.bridge.read()
+            current = self.bridge.read()
+            before = {**current, 'pos': list(current['pos'])}
+            if (before['world_session'] != capture_origin['world_session']
+                    or before['control_revision'] != capture_origin['control_revision']
+                    or distance(before['pos'], capture_origin['pos']) > .5):
+                raise Paused('Game pose or trial scope changed during image capture; discard visual question')
+            if pickup_visual:
+                current = self.pickup_visual_options(before)
+                if current is None or current[3] != observed_identities or set(current[1]) != set(criteria):
+                    raise Paused('Visible log pickup plans changed during image capture; discard visual question')
+                immediate_goal, criteria, scene, observed_identities = current
         def inference():
             model = self.model_factory(settings, config, image=image)
             try:
@@ -735,7 +939,24 @@ class TrialWorker:
                 or after['control_revision'] != before['control_revision']
                 or distance(after['pos'], before['pos']) > .5):
             raise Paused('Model choice belongs to a changed trial observation')
+        if pickup_visual:
+            fresh = self.pickup_visual_options(after)
+            if fresh is None or fresh[3] != observed_identities or set(fresh[1]) != set(criteria):
+                raise Paused('Visible log pickup plans changed during model inference; discard choice')
+            strategy = result['choice']
+            self.skills.pickup_strategy = strategy if strategy != 'wait' else None
+            selected_macro = 'collect_log_drops' if strategy != 'wait' else 'wait'
+            self.event('pickup_visual_strategy', result=result, selected_macro=selected_macro,
+                       scene_tag=scene['scene_tag'], image_used=image is not None,
+                       image_text_bytes=payload_bytes, available_strategies=list(criteria))
+            result = {**result, 'choice': selected_macro, 'pickup_strategy': strategy,
+                      'probabilities': {'collect_log_drops': sum(value for key, value in result['probabilities'].items()
+                                                                  if key != 'wait'),
+                                        'wait': result['probabilities']['wait']}}
+        else:
+            self.skills.pickup_strategy = None
         self.event('decision', candidates=list(candidates), result=result, short_term_goal=immediate_goal,
+                   scene_tag=scene.get('scene_tag', 'survival_macro'), image_used=image is not None,
                    uncertainty={'low_confidence': result['confidence'] < .55,
                                 'execution_gate': 'typed_choice_and_native_trial_validation',
                                 'confidence_is_observation_only': True},
