@@ -28,6 +28,34 @@ def state(**changes):
 
 
 class TrialCapabilitiesTest(unittest.TestCase):
+    def test_log_pickup_is_current_visible_item_evidence_and_normal_walking_only(self):
+        drop = {'type': 'minecraft:item', 'visible': True,
+                'stack': {'item': 'minecraft:oak_log', 'count': 2},
+                'pos': [12345, 64, 67890], 'uuid': 'private-drop-id'}
+        observed = state(entities=[drop])
+        result = capability_scene({'collect_log_drops': 'Pick up current reachable log'}, observed)
+        self.assertEqual(len(result['available']), 1)
+        row = result['available'][0]
+        self.assertEqual(row['id'], 'collect_log_drops')
+        self.assertEqual(set(row['via'].split(',')), {'walk_path', 'walk', 'scan'})
+        self.assertEqual(row['verify'], 'log inventory gain')
+        self.assertIn('path<=32', row['checked'])
+        self.assertIn('descent<=2', row['checked'])
+        self.assertIn('dry floor/headroom/AABB', row['checked'])
+        self.assertNotIn('collect_item', json.dumps(result))
+        self.assertNotIn('private-drop-id', json.dumps(result))
+
+    def test_remembered_missing_invisible_empty_or_nonlog_drop_does_not_offer_pickup(self):
+        drop = {'type': 'minecraft:item', 'visible': True,
+                'stack': {'item': 'minecraft:oak_log', 'count': 2}}
+        for entities in ([], [{**drop, 'visible': False}], [{**drop, 'visible': None}],
+                         [{**drop, 'type': 'minecraft:armor_stand'}],
+                         [{**drop, 'stack': {'item': 'minecraft:oak_log', 'count': 0}}],
+                         [{**drop, 'stack': {'item': 'minecraft:oak_planks', 'count': 2}}]):
+            with self.subTest(entities=entities):
+                current = state(entities=entities, remembered_log_drops=[drop])
+                self.assertEqual(eligible_candidates(['collect_log_drops'], current), {})
+
     def test_current_known_candidates_are_described_with_actual_primitives_and_proof(self):
         result = capability_scene({'gather_stone': 'Current reachable stone', 'explore_nearby': 'Safe path'}, state())
         self.assertEqual({row['id'] for row in result['available']}, {'gather_stone', 'explore_nearby'})

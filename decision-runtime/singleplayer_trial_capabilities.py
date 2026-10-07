@@ -18,6 +18,9 @@ DEFAULT_MAX_BYTES = 1800
 # Preconditions here describe only checks actually made by candidates(), not a
 # claim that every later interaction will succeed. Each primitive rechecks live.
 CATALOG = {
+    'collect_log_drops': ('沿扫描验证的路线正常步行拾取可见原木掉落物', 'pick up visible logs',
+                         'visible log; path<=32; normal descent<=2 with dry floor/headroom/AABB checks',
+                         'walk_path,walk,scan', 'log inventory gain'),
     'gather_starting_wood': ('采集附近已观察到的原木', 'get logs', 'wood deficit; reachable tree',
                              'walk_path,mine_block', 'log inventory gain'),
     'craft_wooden_tools': ('用背包木材制作工作台和木镐', 'make wood tools', 'wood; safe work stance; no pickaxe',
@@ -98,6 +101,19 @@ def _cheap_prerequisites(action, state):
         return False
     inv = _inventory(state)
     pickaxe = any(inv.get(item, 0) > 0 for item in ('wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe'))
+    if action == 'collect_log_drops':
+        entities = state.get('entities')
+        if not isinstance(entities, list) or len(entities) > 4096:
+            return False
+        for entity in entities:
+            if (not isinstance(entity, dict) or entity.get('type') != 'minecraft:item'
+                    or entity.get('visible') is not True or not isinstance(entity.get('stack'), dict)):
+                continue
+            item, count = entity['stack'].get('item'), entity['stack'].get('count')
+            if (isinstance(item, str) and item.startswith('minecraft:') and item.endswith('_log')
+                    and type(count) is int and 0 < count <= 999):
+                return True
+        return False  # Remembered locations are guidance, not fresh pickup evidence.
     if action == 'craft_wooden_tools':
         wood = sum(n for name, n in inv.items() if name.endswith('_log'))
         planks = sum(n for name, n in inv.items() if name.endswith('_planks'))

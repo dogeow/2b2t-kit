@@ -60,6 +60,7 @@ def checkpoint_from_skills(registry, state, skills, pending=None):
             'tried_grids': [list(p) for p in sorted(skills.tried_grids)],
             'station_anchor': skills.station_anchor,
             'rejected_routes': [[list(p) for p in route] for route in sorted(skills.rejected_routes)],
+            'log_drops': skills.log_drops,
             'unresolved_native': list((pending or {}).values())}
 
 
@@ -191,6 +192,16 @@ def restore_checkpoint(skills, checkpoint, registry, state):
     skills.rejected_routes = {tuple(tuple(p) for p in route)
                               for route in checkpoint.get('rejected_routes', [])[:256]
                               if isinstance(route, list) and len(route) <= 32 and all(point(p) for p in route)}
+    drops = checkpoint.get('log_drops', {})
+    if isinstance(drops, dict) and len(drops) <= 128:
+        skills.log_drops = {identity: row for identity, row in drops.items()
+                           if isinstance(identity, str) and isinstance(row, dict)
+                           and isinstance(row.get('pos'), list) and len(row['pos']) == 3
+                           and all(type(n) in (int, float) and math.isfinite(n) and abs(n) <= 30_000_000 for n in row['pos'])
+                           and type(row.get('count')) is int and row['count'] > 0
+                           and isinstance(row.get('item'), str) and row['item'].endswith('_log')
+                           and type(row.get('observed_at')) is int
+                           and 0 <= state.get('time', 0) - row['observed_at'] <= 240_000}
     return {'restored': True, 'stations_native_checked': sorted(restored),
             'camp_native_checked': skills.camp is not None,
             'camp_completed_native_checked': skills.camp_completed,

@@ -24,7 +24,7 @@ ACTIONS = frozenset({
     'observe', 'gather_starting_wood', 'craft_wooden_tools', 'gather_stone',
     'craft_stone_tools', 'gather_food', 'gather_shelter_material',
     'build_shelter', 'explore_nearby', 'recover_after_death',
-    'eat_carried_food', 'prepare_iron_equipment',
+    'eat_carried_food', 'prepare_iron_equipment', 'collect_log_drops',
 })
 RULES = {
     'verify_inventory_after_gathering': {
@@ -177,6 +177,8 @@ def _positive_inventory_outcome(action, before, after):
     gained = {item for item, count in new.items() if count > old.get(item, 0)}
     if action == 'gather_starting_wood':
         relevant = any(item.endswith(('_log', '_stem')) for item in gained)
+    elif action == 'collect_log_drops':
+        relevant = any(item.endswith('_log') for item in gained)
     elif action == 'gather_stone':
         relevant = bool(gained & {'minecraft:cobblestone', 'minecraft:cobbled_deepslate'})
     elif action == 'gather_food':

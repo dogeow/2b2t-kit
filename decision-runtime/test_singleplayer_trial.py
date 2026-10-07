@@ -284,6 +284,103 @@ class BridgeTests(unittest.TestCase):
 
 
 class SkillsTests(unittest.TestCase):
+    def test_confirmed_log_drops_take_priority_and_unknown_pickup_never_counts_as_wood(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            entity = {'uuid': 'log-drop-a', 'id': 4, 'type': 'minecraft:item', 'visible': True,
+                      'pos': [2.6, 1, .5], 'stack': {'item': 'minecraft:dark_oak_log', 'count': 3}}
+            current = state(reg, entities=[entity], on_ground=True)
+            bridge = TrialBridge(game, reg, 'run-a', reader=lambda _: current)
+            skills = TrialSkills(bridge, game)
+            world = TrialWorld(terrain() + [row((5, 1, 0), 'oak_log')], [-10, -5, -10], [10, 7, 10])
+            choices = skills.candidates(current, world)
+            self.assertIn('collect_log_drops', choices)
+            self.assertNotIn('gather_starting_wood', choices)
+            self.assertIn('dropped logs', short_term_goal(current, choices))
+            skills.scan = lambda: world
+            skills.walk_pickup_route = Mock()
+            bridge.wait = lambda _: None
+            with self.assertRaisesRegex(Paused, 'no inventory gain'):
+                skills.collect_log_drops()
+            self.assertEqual(0, sum(row['count'] for row in current['inventory']))
+            self.assertEqual(3, sum(row['count'] for row in skills.log_drops.values()))
+            self.assertFalse((Path(game) / 'request.json').exists())
+
+    def test_normal_collision_pickup_only_succeeds_on_actual_inventory_gain(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            current = state(reg, on_ground=True, entities=[{'uuid': 'item-a', 'type': 'minecraft:item',
+                'visible': True, 'pos': [2.6, 1, .5], 'stack': {'item': 'minecraft:dark_oak_log', 'count': 3}}])
+            bridge = TrialBridge(game, reg, 'run-a', reader=lambda _: current)
+            skills = TrialSkills(bridge, game)
+            world = TrialWorld(terrain(), [-10, -5, -10], [10, 7, 10])
+            skills.scan = lambda: world
+            skills.walk_pickup_route = Mock()
+            def collision_wait(unused):
+                current['inventory'] = [{'item': 'minecraft:dark_oak_log', 'count': 3}]
+                current['entities'] = []
+                current['time'] += 100
+            bridge.wait = collision_wait
+            after = skills.collect_log_drops()
+            self.assertEqual(3, after['inventory'][0]['count'])
+            self.assertEqual({}, skills.log_drops)
+            self.assertLessEqual(len(skills.walk_pickup_route.call_args.args[0]), 32)
+            self.assertFalse((Path(game) / 'request.json').exists())
+
+    def test_disconnected_canopy_drops_are_preserved_without_more_mining_or_far_exploration(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            entity = {'uuid': 'ground-log', 'type': 'minecraft:item', 'visible': True,
+                      'pos': [1.5, 1, .5], 'stack': {'item': 'minecraft:oak_log', 'count': 9}}
+            current = state(reg, pos=[.5, 4, .5], on_ground=True, entities=[entity])
+            bridge = TrialBridge(game, reg, 'run-a', reader=lambda _: current)
+            skills = TrialSkills(bridge, game)
+            world = TrialWorld([row((0, 3, 0), 'oak_leaves'), row((1, 0, 0), 'stone'),
+                                row((2, 4, 0), 'oak_log')], [-3, 0, -3], [3, 7, 3])
+            choices = skills.candidates(current, world)
+            self.assertNotIn('collect_log_drops', choices)
+            self.assertNotIn('gather_starting_wood', choices)
+            self.assertNotIn('explore_nearby', choices)
+            self.assertEqual(9, sum(row['count'] for row in skills.log_drops.values()))
+            self.assertEqual(0, len(current['inventory']))
+
+    def test_pickup_graph_allows_only_verified_adjacent_dry_two_block_descent(self):
+        rows = [row((0, 2, 0), 'oak_leaves'), row((1, 0, 0), 'stone')]
+        world = TrialWorld(rows, [-2, 0, -2], [2, 5, 2])
+        source, target = (0, 3, 0), (1, 1, 0)
+        self.assertTrue(world.safe_two_block_descent(source, target, [.5, 3, .5]))
+        self.assertNotIn(target, world.paths([.5, 3, .5]))
+        self.assertIn(target, world.pickup_paths([.5, 3, .5]))
+        self.assertFalse(world.safe_two_block_descent(source, (1, 0, 0)))
+        self.assertFalse(world.safe_two_block_descent(source, target, [.85, 3, .5]))
+        blocked = TrialWorld(rows + [row((1, 4, 0), 'stone')], [-2, 0, -2], [2, 5, 2])
+        self.assertFalse(blocked.safe_two_block_descent(source, target))
+        wet = row((1, 0, 0), 'water'); wet.update(fluid=True, solid=False, passable=True)
+        self.assertFalse(TrialWorld([rows[0], wet], [-2, 0, -2], [2, 5, 2]).safe_two_block_descent(source, target))
+
+    def test_two_block_descent_uses_only_normal_walk_and_checks_real_arrival_health(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            current = state(reg, pos=[.5, 3, .5], on_ground=True)
+            class Bridge:
+                world = reg['world_name']
+                calls = []
+                def __init__(self): self.state = current
+                def read(self): return self.state
+                def request(self, op, **args):
+                    self.calls.append((op, args))
+                    self.state = {**self.state, 'pos': args['target']}
+                    return self.state
+            bridge = Bridge()
+            skills = TrialSkills(bridge, game)
+            skills.scan = lambda: TrialWorld([row((0, 2, 0), 'oak_leaves'), row((1, 0, 0), 'stone')],
+                                             [-2, 0, -2], [2, 5, 2])
+            skills.walk_pickup_route([(1, 1, 0)])
+            self.assertEqual(['walk'], [op for op, args in bridge.calls])
+            self.assertEqual([1.5, 1, .5], bridge.calls[0][1]['target'])
+            self.assertFalse(bridge.calls[0][1]['restore_flight'])
+            self.assertTrue(all(op not in {'mine_block', 'interact', 'navigate', 'collect_item'} for op, args in bridge.calls))
+
     def test_walkable_soft_plant_is_outline_obstacle_for_log_mining_stance(self):
         from survival_world import World
         grass = row((2, 1, 0), 'short_grass')
@@ -398,6 +495,14 @@ class SkillsTests(unittest.TestCase):
 
 
 class GoalTests(unittest.TestCase):
+    def test_drop_recovery_goal_precedes_new_tree_or_generic_exploration(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            goal = short_term_goal(state(reg), {'collect_log_drops': 'Pickup', 'gather_starting_wood': 'Wood', 'wait': 'Wait'}, 9)
+            self.assertIn('Pick up the already observed', goal)
+            goal = short_term_goal(state(reg), {'explore_nearby': 'Approach items', 'wait': 'Wait'}, 9)
+            self.assertIn('toward the already observed dropped logs', goal)
+            self.assertIn('Do not cut another tree', goal)
     def test_reachable_starting_tree_makes_the_current_goal_wood_not_dragon_or_exploration(self):
         with tempfile.TemporaryDirectory() as game:
             reg = registry(game)

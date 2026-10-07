@@ -57,6 +57,26 @@ class SingleplayerExperienceTest(unittest.TestCase):
         self.assertFalse(proposal['supported_by_observation'])
         self.assertEqual(proposal['status'], 'proposal_only')
 
+    def test_log_drop_pickup_needs_real_inventory_delta_and_does_not_promote_skill(self):
+        for index in range(3):
+            result = self.store.record_attempt('trial-one', 'collect_log_drops', state(),
+                state(time=2000, inventory=[{'item': 'minecraft:oak_log', 'count': 2}]),
+                receipt('pickup-' + str(index), op='walk_path'))
+            self.assertEqual(result['outcome'], 'inventory_progress')
+            self.assertFalse(result['skill_verified'])
+        rules = self.store.reusable_rules(state(world_session='world-b', world_id='/game/saves/Second'))
+        self.assertEqual([row['rule'] for row in rules], ['verify_inventory_after_gathering'])
+        self.assertFalse(rules[0]['replay_allowed'])
+
+    def test_log_pickup_timer_or_visible_entity_alone_cannot_be_success(self):
+        drop = {'type': 'minecraft:item', 'visible': True,
+                'stack': {'item': 'minecraft:oak_log', 'count': 2}}
+        result = self.store.record_attempt('trial-one', 'collect_log_drops',
+            state(entities=[drop]), state(time=2000, entities=[drop]),
+            receipt(op='walk_path', result_macro='confirmed'))
+        self.assertEqual(result['outcome'], 'no_verified_effect')
+        self.assertEqual(self.store.reusable_rules(state()), [])
+
     def test_three_distinct_native_observations_export_fixed_rule_for_new_world(self):
         for index in range(3):
             self.assertEqual(self.record_logs('request-' + str(index))['outcome'], 'inventory_progress')

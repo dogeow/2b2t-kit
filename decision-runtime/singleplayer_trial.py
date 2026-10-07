@@ -6,6 +6,7 @@ All world inputs are existing verified native skills; model output is a typed
 choice among locally constructed macros and never executable code.
 """
 import argparse
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import json
@@ -21,13 +22,14 @@ from singleplayer_trial_bridge import (Paused, TrialBridge, TrialDeath, TrialMov
                                       validate_scope)
 from survival import Runner, LOGS, FOOD
 from survival_bridge import inventory
-from survival_world import World, cell, center, distance, shelter
+from survival_world import World, Paths, cell, center, distance, shelter
 from singleplayer_trial_capabilities import capability_scene
 
 GOAL = 'Defeat the Ender Dragon in this registered disposable Survival trial using normal game interactions.'
 GAPS = ['nether_portal_construction', 'blaze_rod_collection', 'ender_pearl_collection',
         'stronghold_location_and_portal', 'end_crystal_and_dragon_combat']
 LABELS = {
+    'collect_log_drops': '先拾取本世界当前已确认的原木掉落并核对入包',
     'gather_starting_wood': '采集已观察到的开局木材并核对入包',
     'craft_wooden_tools': '实际合成工作台、木镐和所需木棍',
     'gather_stone': '用木镐采集已观察到的石料并核对入包',
@@ -42,6 +44,7 @@ LABELS = {
     'wait': '当前没有可信宏动作推进目标；等待新证据或缺失能力',
 }
 CRITERIA = {
+    'collect_log_drops': 'Collect currently observed log item drops first using the checked normal walking route. Verify actual logs gained in inventory; item existence or a mining ACK is not pickup success.',
     'gather_starting_wood': 'Collect the needed logs from trees already observed as reachable nearby. Prefer using this available wood over exploring for other wood.',
     'craft_wooden_tools': 'Use the carried logs or planks to craft a crafting table and wooden pickaxe now, before looking for more resources.',
     'gather_stone': 'Use the available pickaxe to collect the needed cobblestone from already observed reachable stone.',
@@ -56,9 +59,13 @@ CRITERIA = {
 }
 
 
-def short_term_goal(state, candidates):
+def short_term_goal(state, candidates, pending_log_drops=0):
     """Derive one immediate milestone from actual stock and prechecked macros."""
     inv = inventory(state)
+    if 'collect_log_drops' in candidates:
+        return 'Pick up the already observed reachable dropped logs and verify actual inventory gain before chopping another tree or exploring elsewhere.'
+    if pending_log_drops and 'explore_nearby' in candidates:
+        return 'Follow the scanned normal ground route toward the already observed dropped logs and reobserve the items before pickup. Do not cut another tree or explore away.'
     if 'eat_carried_food' in candidates and state.get('food', 20) < 16:
         return 'Eat carried food now to restore hunger before continuing Survival preparation.'
     starting = not any(inv.get(name) for name in ('wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe'))
@@ -112,6 +119,42 @@ def dead(state):
 
 
 class TrialWorld(World):
+    def safe_two_block_descent(self, source, target, actual=None):
+        if (source[1] - target[1] != 2 or abs(source[0] - target[0]) + abs(source[2] - target[2]) != 1
+                or not self.stand(source) or not self.stand(target)
+                or self.row((target[0], target[1] - 1, target[2])).get('block_entity')):
+            return False
+        if actual is not None and (math.hypot(actual[0] - source[0] - .5, actual[2] - source[2] - .5) > .2
+                                   or abs(actual[1] - source[1]) > .2):
+            return False
+        # At centred waypoints the 0.6-wide body fits inside each column. The
+        # landing column's entire falling body/head sweep must remain known,
+        # dry and open; vanilla collision still owns the actual movement.
+        return all(self.open((target[0], height, target[2]))
+                   for height in range(target[1], source[1] + 2))
+
+    def pickup_paths(self, start, limit=2500):
+        parents = self.paths(start, limit)
+        queue = deque(parents)
+        while queue and len(parents) < limit:
+            source = queue.popleft()
+            x, y, z = source
+            for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                for dy in (0, 1, -1, -2):
+                    target = (x + dx, y + dy, z + dz)
+                    if target in parents or not self.stand(target):
+                        continue
+                    if dy == -2 and not self.safe_two_block_descent(source, target):
+                        continue
+                    if dy == 1 and not self.open((x, y + 2, z)):
+                        continue
+                    if dy == -1 and not self.open((x + dx, y + 1, z + dz)):
+                        continue
+                    parents[target] = source
+                    queue.append(target)
+                    break
+        return parents
+
     def sight(self, feet, target):
         # These plants allow walking but their OUTLINE shapes can intercept a
         # vanilla dig ray. Choose a clear stance instead of treating them as
@@ -159,6 +202,8 @@ class TrialSkills(Runner):
         self.station_anchor = None
         self.tried_grids = set()
         self.rejected_routes = set()
+        self.log_drops = {}
+        self.pickup_target = None
 
     def scan(self):
         self.check()
@@ -183,6 +228,102 @@ class TrialSkills(Runner):
                 self.station_anchor = list(anchor)
         return world
 
+    def remember_log_drops(self, state):
+        now = state.get('time', 0)
+        found = {}
+        for entity in state.get('entities', []):
+            stack = entity.get('stack', {})
+            name = stack.get('item', '').removeprefix('minecraft:')
+            pos, identity = entity.get('pos'), entity.get('uuid')
+            if (entity.get('type') != 'minecraft:item' or name not in LOGS or not isinstance(identity, str)
+                    or type(stack.get('count')) is not int or stack['count'] <= 0
+                    or not isinstance(pos, list) or len(pos) != 3
+                    or not all(type(n) in (int, float) and math.isfinite(n) for n in pos)):
+                continue
+            found[identity] = {'uuid': identity, 'item': name, 'count': stack['count'],
+                               'pos': list(pos), 'observed_at': now, 'visible': entity.get('visible') is True}
+        self.log_drops = {identity: row for identity, row in self.log_drops.items()
+                          if 0 <= now - row.get('observed_at', 0) <= 240_000
+                          and (identity in found or distance(row['pos'], state['pos']) > 13)}
+        self.log_drops.update(found)
+        return found
+
+    def pickup_plan(self, world, state, rows=None):
+        rows = rows if rows is not None else self.remember_log_drops(state)
+        parents = world.pickup_paths(state['pos'])
+        choices = []
+        for row in rows.values():
+            if row.get('visible') is not True:
+                continue
+            for stance in parents:
+                pos = center(stance)
+                if (math.hypot(pos[0] - row['pos'][0], pos[2] - row['pos'][2]) > .8
+                        or not pos[1] - .35 <= row['pos'][1] <= pos[1] + 1.9):
+                    continue
+                route = world.route(parents, stance)
+                if len(route) <= 32 and tuple(route) not in self.rejected_routes:
+                    choices.append((len(route), row['uuid'], stance, route))
+        return min(choices)[1:] if choices else None
+
+    def walk_pickup_route(self, route):
+        batch = []
+        previous = cell(self.b.read()['pos'])
+        for target in route:
+            if previous[1] - target[1] == 2:
+                if batch:
+                    super().walk(batch)
+                    batch = []
+                fresh = self.scan()
+                current = self.b.read()
+                if not current.get('on_ground', False) or not fresh.safe_two_block_descent(previous, target, current['pos']):
+                    raise Paused('Fresh dry two-block landing/body clearance is not verified')
+                result = self.b.request('walk', target=center(target), arrival=.18, seconds=8, restore_flight=False)
+                if distance(result['pos'], center(target)) > .7 or result.get('health', 0) <= 0:
+                    raise Paused('Normal two-block descent arrival/alive result is not verified')
+                self.event('normal_two_block_descent', health_before=current['health'], health_after=result['health'],
+                           verified_position=result['pos'], flight_used=False)
+            else:
+                batch.append(target)
+            previous = target
+        if batch:
+            super().walk(batch)
+
+    def collect_log_drops(self):
+        before = sum(inventory(self.b.read()).get(name, 0) for name in LOGS)
+        for unused in range(8):
+            state = self.b.read()
+            found = self.remember_log_drops(state)
+            world = self.scan()
+            plan = self.pickup_plan(world, self.b.read(), found)
+            if not plan:
+                break
+            identity, stance, route = plan
+            # The stored location never substitutes for the current item.
+            current = self.remember_log_drops(self.b.read()).get(identity)
+            if current is None:
+                continue
+            try:
+                self.walk_pickup_route(route)
+            except TrialMovementBlocked:
+                self.rejected_routes.add(tuple(route))
+                raise
+            self.b.wait(.8)
+            after = self.b.read()
+            self.remember_log_drops(after)
+            if sum(inventory(after).get(name, 0) for name in LOGS) > before:
+                return after
+            self.rejected_routes.add(tuple(route))
+        self.event('log_drops_pending', observed_count=sum(row['count'] for row in self.log_drops.values()),
+                   inventory_before=before, pickup_confirmed=False)
+        raise Paused('Observed log drops are still pending; no inventory gain or reachable pickup route was verified')
+
+    def collect(self, wanted):
+        if set(wanted).issubset(LOGS):
+            if self.remember_log_drops(self.b.read()):
+                self.collect_log_drops()
+            return
+        return super().collect(wanted)
+
     def station(self, name):
         # A crafting station needs safe reach and footing. It does not need the
         # 5x5 completely empty footprint required for the later shelter.
@@ -200,17 +341,24 @@ class TrialSkills(Runner):
             self.camp = previous
 
     def exploration(self, world):
-        paths = world.paths(self.b.state['pos'])
+        paths = world.pickup_paths(self.b.state['pos']) if self.log_drops else world.paths(self.b.state['pos'])
         start = self.b.state['pos']
         choices = []
         for point in paths:
             key = (math.floor(point[0] / 8), math.floor(point[2] / 8))
-            if (key in self.explored or key in self.tried_grids or distance(start, center(point)) < 7
+            if (not self.log_drops and (key in self.explored or key in self.tried_grids or distance(start, center(point)) < 7)
                     or any(self.stations.get(name) == list(point) for name in self.stations)):
                 continue
             route = world.route(paths, point)
             if route and len(route) <= 32 and tuple(route) not in self.rejected_routes:
-                choices.append((-distance(start, center(point)), len(route), point, route))
+                if self.log_drops:
+                    old = min(distance(start, row['pos']) for row in self.log_drops.values())
+                    new = min(distance(center(point), row['pos']) for row in self.log_drops.values())
+                    if new > old - .5:
+                        continue
+                    choices.append((new, len(route), point, route))
+                else:
+                    choices.append((-distance(start, center(point)), len(route), point, route))
         if not choices:
             return None
         _, _, point, route = min(choices)
@@ -229,6 +377,19 @@ class TrialSkills(Runner):
         has = lambda name: inv.get(name, 0) > 0
         candidates = {'wait': LABELS['wait']}
         if state.get('dimension') != 'minecraft:overworld':
+            return candidates
+        found = self.remember_log_drops(state)
+        self.pickup_target = self.pickup_plan(world, state, found)
+        if self.pickup_target:
+            candidates['collect_log_drops'] = LABELS['collect_log_drops']
+        if self.log_drops:
+            # A server-confirmed broken log is still pending until it enters
+            # inventory. Never abandon known drops to cut additional trees.
+            if state.get('food', 20) < 16 and any(inv.get(name) for name in FOOD):
+                candidates['eat_carried_food'] = LABELS['eat_carried_food']
+            self.explore_target = self.exploration(world)
+            if self.explore_target:
+                candidates['explore_nearby'] = '只沿已扫描正常路线接近本世界待取原木；不去新的树区'
             return candidates
         # Long macro workflows only appear when their locally checked inputs
         # can actually be used. The typed model cannot manufacture resources.
@@ -284,7 +445,9 @@ class TrialSkills(Runner):
         self.reset_budget()
         self.stage = choice
         self.planned(choice, LABELS[choice], {})
-        if choice == 'gather_starting_wood':
+        if choice == 'collect_log_drops':
+            self.collect_log_drops()
+        elif choice == 'gather_starting_wood':
             inv = inventory(self.b.read())
             initial = not any(inv.get(n) for n in ('wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe'))
             self.gather(LOGS, LOGS, 12 if initial else 6)
@@ -334,7 +497,10 @@ class TrialSkills(Runner):
                 raise Paused('No scanned safe route available')
             point, route = self.explore_target
             try:
-                self.walk(route)
+                if self.log_drops:
+                    self.walk_pickup_route(route)
+                else:
+                    self.walk(route)
             except TrialMovementBlocked:
                 self.reject_exploration()
                 raise
@@ -417,7 +583,8 @@ class TrialWorker:
             value.update({key: state.get(key) for key in ('world_session', 'health', 'food', 'pos', 'control_revision')})
         if self.skills:
             value.update(stage=self.skills.stage, camp=self.skills.camp,
-                         camp_completed=self.skills.camp_completed)
+                         camp_completed=self.skills.camp_completed,
+                         pending_log_drops=sum(row['count'] for row in self.skills.log_drops.values()))
         atomic_json(self.output / 'status.json', value)
         if state and self.skills and self.registry and not self.restoring_checkpoint:
             from singleplayer_trial_hot_update import checkpoint_from_skills
@@ -480,7 +647,7 @@ class TrialWorker:
         self.skills = TrialSkills(self.bridge, self.output / 'bootstrap')
         if old:
             for name in ('camp', 'stations', 'owned', 'camp_completed', 'explored', 'station_anchor',
-                         'tried_grids', 'rejected_routes'):
+                         'tried_grids', 'rejected_routes', 'log_drops'):
                 setattr(self.skills, name, getattr(old, name))
         else:
             from singleplayer_trial_hot_update import load_checkpoint, restore_checkpoint
@@ -521,8 +688,12 @@ class TrialWorker:
                  'long_term_goal': 'defeat_ender_dragon',
                  'scope': {'only_offered_macros_are_executable': True}, 'experience': rules,
                  'capabilities': capability_scene(candidates, before, max_bytes=1800)}
-        immediate_goal = short_term_goal(before, candidates)
+        pending_logs = sum(row['count'] for row in self.skills.log_drops.values())
+        scene['pending_log_drops'] = pending_logs
+        immediate_goal = short_term_goal(before, candidates, pending_logs)
         criteria = {key: CRITERIA.get(key, description) for key, description in candidates.items()}
+        if pending_logs and 'explore_nearby' in criteria:
+            criteria['explore_nearby'] = 'Follow only the prechecked normal route closer to this save\'s observed pending log drops, then rediscover actual item entities. Do not search for new trees or treat memory as pickup success.'
         from decisions import question
         payload = {'model': 'kit-clef-flash', 'state': {'goal': immediate_goal, 'scene': scene},
                    'questions': question(criteria), 'keep_alive': -1}
@@ -714,7 +885,9 @@ class TrialWorker:
         candidates = {key: value for key, value in candidates.items()
                       if key == 'wait' or self.failures.get(key, 0) < 3}
         if len(candidates) < 2:
-            self.publish('waiting_capability', '附近已验证宏能力无法推进；尚未实现完整下界和打龙流程', before)
+            reason = ('原木掉落仍待取，当前没有已验证的正常落地拾取路线；尚未入包'
+                      if self.skills.log_drops else '附近已验证宏能力无法推进；尚未实现完整下界和打龙流程')
+            self.publish('waiting_capability', reason, before)
             return
         decision = self.decide(candidates, before)
         action = decision['choice']
