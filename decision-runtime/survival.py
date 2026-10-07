@@ -235,10 +235,10 @@ class Runner:
             else:raise Paused('未确认食物目标已结束，停止追逐。')
             self.collect(set(RAW)|{'leather','feather','white_wool','black_wool','gray_wool'})
         if amount(FOOD)>=4:return
-        fuel=self.planks(6)
         for raw,cooked in RAW.items():
             n=self.count(raw)
             if not n:continue
+            fuel=self.planks(math.ceil(n/1.5))
             self.station('furnace');s=self.b.read()
             if any(s['menu']['slots'][i]['count'] for i in (0,1,2)):raise Paused('熔炉已有物品，保留原内容。')
             for item,target in ((raw,0),(fuel,1)):

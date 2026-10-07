@@ -42,6 +42,44 @@ class Slots:
         return self.read()
 
 class CraftingTests(unittest.TestCase):
+    def test_cooking_four_raw_food_uses_three_owned_planks_without_extra_logs(self):
+        class Furnace:
+            root='test';world='Trial';origin=[0,1,0]
+            def __init__(self):
+                self.items={'beef':4,'oak_planks':3}
+                self.slots=[stack() for _ in range(39)]
+                self.slots[3]=stack('beef',4);self.slots[4]=stack('oak_planks',3)
+                self.cursor=stack();self.read()
+            def read(self):
+                self.state={'inventory':[stack(k,n) for k,n in self.items.items() if n],
+                            'menu':{'id':1,'type':'FurnaceMenu','cursor':self.cursor.copy(),
+                                    'slots':[dict(s,slot=i) for i,s in enumerate(self.slots)]}}
+                return self.state
+            def click(self,slot,kind='pickup'):
+                if kind=='quick_move' and slot==2:
+                    self.items['cooked_beef']=4;self.slots[2]=stack()
+                elif slot>=3:
+                    self.cursor=self.slots[slot];self.slots[slot]=stack()
+                    self.items[self.cursor['item'].removeprefix('minecraft:')]=0
+                else:
+                    self.slots[slot]=self.cursor;self.cursor=stack()
+                    if slot==1:self.slots[0]=stack();self.slots[1]=stack();self.slots[2]=stack('cooked_beef',4)
+                return self.read()
+            def close(self):pass
+        class CookingRunner(Runner):
+            def planks(self,n):
+                if self.count('oak_planks')<n:raise Paused('No spare logs for excess fuel')
+                return 'oak_planks'
+            def station(self,name):self.asserted_station=name
+            def check(self):self.b.read()
+        with tempfile.TemporaryDirectory() as tmp:
+            b=Furnace();runner=CookingRunner(b,None,tmp)
+            runner.food()
+            self.assertEqual(runner.count('cooked_beef'),4)
+            self.assertEqual(runner.count('beef'),0)
+            self.assertEqual(runner.asserted_station,'furnace')
+            self.assertEqual(b.cursor['count'],0)
+
     def test_logs_become_table_without_losing_remainder_or_cursor_stack(self):
         with tempfile.TemporaryDirectory() as tmp:
             b=Slots({'oak_log':3});r=Runner(b,None,tmp)

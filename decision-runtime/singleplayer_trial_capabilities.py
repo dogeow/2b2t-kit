@@ -21,14 +21,14 @@ CATALOG = {
     'collect_log_drops': ('沿扫描验证的路线正常步行拾取可见原木掉落物', 'pick up visible logs',
                          'visible log; path<=32; normal descent<=2 with dry floor/headroom/AABB checks',
                          'walk_path,walk,scan', 'log inventory gain'),
-    'gather_starting_wood': ('采集附近已观察到的原木', 'get logs', 'wood deficit; reachable tree',
-                             'walk_path,mine_block', 'log inventory gain'),
+    'gather_starting_wood': ('等待原生自动砍树与试验控制协调接入', 'get logs', 'native AutoChopper trial coordination required',
+                             'chop', 'log inventory gain'),
     'craft_wooden_tools': ('用背包木材制作工作台和木镐', 'make wood tools', 'wood; safe work stance; no pickaxe',
-                           'craft_recipe,interact', 'crafted items in inventory'),
+                           'slot_click,interact', 'crafted items in inventory'),
     'gather_stone': ('用现有镐采集附近石料', 'get cobblestone', 'pickaxe; stone deficit; reachable stone',
                      'walk_path,mine_block', 'cobblestone inventory gain'),
     'craft_stone_tools': ('用已有圆石制作石工具和熔炉', 'make stone tools', 'pickaxe; enough cobblestone; safe station',
-                          'craft_recipe,interact', 'tools/furnace in inventory'),
+                          'slot_click,interact', 'tools/furnace in inventory'),
     'gather_food': ('获取附近被动动物掉落物并烹饪', 'get cooked food', 'stone axe; animal; furnace; food deficit',
                     'attack_passive,slot_click', 'edible inventory gain'),
     'eat_carried_food': ('食用背包已有食物恢复饥饿值', 'eat carried food', 'hunger<16; edible stock',
@@ -36,9 +36,9 @@ CATALOG = {
     'gather_shelter_material': ('按本世界庇护方案采集缺少的泥土', 'get shelter dirt', 'camp plan; tools; food; dirt deficit',
                                'walk_path,mine_block', 'dirt inventory gain'),
     'build_shelter': ('按已观察方案建造并复核小庇护所', 'build shelter', 'camp plan; tools; food; dirt stock',
-                      'craft_recipe,interact,scan', 'all planned blocks/door scanned'),
+                      'slot_click,interact,scan', 'all planned blocks/door scanned'),
     'prepare_iron_equipment': ('采集露天铁矿、熔炼并穿戴铁装备', 'prepare iron gear', 'completed camp; tools; food; iron/ore',
-                               'mine_block,slot_click,craft_recipe', 'iron tools/armor in inventory/equipment'),
+                               'mine_block,slot_click', 'iron tools/armor in inventory/equipment'),
     'explore_nearby': ('沿扫描过的安全步行路线探索附近', 'explore nearby', 'new scanned safe path; bounded route',
                        'walk_path,scan', 'current position near route end'),
     'recover_after_death': ('通过游戏正常重生并重新观察环境', 'normal respawn', 'native player death; registered trial',
@@ -51,6 +51,7 @@ PROGRESSION_GAPS = (
     'nether_portal_construction', 'blaze_rod_collection', 'ender_pearl_collection',
     'stronghold_location_and_portal', 'end_crystal_and_dragon_combat',
 )
+UNAVAILABLE_MACROS = {'gather_starting_wood': 'native_chopper_trial_flight_and_stop_coordination_pending'}
 MENUS = frozenset({'', 'InventoryScreen', 'CraftingScreen', 'FurnaceScreen',
                    'BlastFurnaceScreen', 'SmokerScreen'})
 FOOD = frozenset({'cooked_beef', 'cooked_porkchop', 'cooked_mutton',
@@ -93,6 +94,8 @@ def _native_gate(state):
 
 
 def _cheap_prerequisites(action, state):
+    if action in UNAVAILABLE_MACROS:
+        return False
     if action == 'wait':
         return True
     if action == 'recover_after_death':
@@ -155,7 +158,7 @@ def capability_scene(candidates, state, *, max_bytes=DEFAULT_MAX_BYTES, max_avai
         raise ValueError('Available capability limit must be 1..10')
     allowed = eligible_candidates(candidates, state)
     result = {'protocol': PROTOCOL, 'scope': 'registered_trial_macros_only',
-              'available': [], 'blocked': {name: 'unsupported' for name in PROGRESSION_GAPS},
+              'available': [], 'blocked': {**{name: 'unsupported' for name in PROGRESSION_GAPS}, **UNAVAILABLE_MACROS},
               'checked_by': 'native_candidate_builder; skills recheck live',
               'omitted': len(allowed)}
     rejected = (len(candidates) - len(allowed)) if isinstance(candidates, (dict, list, tuple)) else 0
@@ -177,5 +180,6 @@ def capability_catalog():
     return [{
         'id': action, 'description': values[0], 'checked_preconditions': values[2],
         'native_primitives': values[3].split(','), 'completion_evidence': values[4],
+        'availability': 'blocked' if action in UNAVAILABLE_MACROS else 'requires_current_prerequisites',
         'parameters_from': 'current_native_skill_not_model',
     } for action, values in CATALOG.items()]

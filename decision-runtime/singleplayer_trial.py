@@ -6,7 +6,7 @@ All world inputs are existing verified native skills; model output is a typed
 choice among locally constructed macros and never executable code.
 """
 import argparse
-from collections import deque
+from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import heapq
@@ -266,6 +266,24 @@ class TrialWorld(World):
         return min(choices, default=(None, None, None))[1:] if choices else None
 
 
+class _TrialCraftClient:
+    """Adapt SDK inventory transactions to the already bound trial controller."""
+    def __init__(self, bridge, output):
+        self.bridge = bridge
+        self.root = bridge.root
+        self.out = Path(output)
+        self.owned_inventory_crafting = None
+
+    def status(self):
+        return self.bridge.read()
+
+    def checked(self, op, **arguments):
+        if op != 'slot_click':
+            raise Paused('Trial SDK crafting only permits ordinary scoped slot clicks')
+        self.status()
+        return self.bridge.request(op, **arguments)
+
+
 class TrialSkills(Runner):
     def __init__(self, bridge, output):
         super().__init__(bridge, None, output, max_minutes=15, max_calls=0)
@@ -489,6 +507,110 @@ class TrialSkills(Runner):
         finally:
             self.camp = previous
 
+    def craft(self, output, cells, width=3, produces=1):
+        """Use the existing SDK's acknowledged clicks, never the stalled macro."""
+        from kit_runtime.inventory import InventorySession
+        from material_manufacture import _inventory_execute, _inventory_output_room
+        from material_plan import inventory_counts
+        import stack_recipe
+
+        if (width not in (2, 3) or type(produces) is not int or not 1 <= produces <= 64
+                or not isinstance(output, str) or not output or not cells):
+            raise Paused('Invalid explicit trial recipe')
+        ingredients = {}
+        for point, item in sorted(cells.items()):
+            if (not isinstance(point, tuple) or len(point) != 2
+                    or any(type(n) is not int or not 0 <= n < width for n in point)
+                    or not isinstance(item, str) or not item or ':' in item):
+                raise Paused('Invalid explicit trial ingredient cell')
+            ingredients.setdefault('minecraft:' + item, []).append(1 + point[0] * width + point[1])
+        spec = {'recipe_id': 'trial:' + output, 'output': 'minecraft:' + output,
+                'width': width, 'produces': produces, 'ingredients': ingredients,
+                'missing_for_one': {}}
+        # An unresolved earlier click/mining result never gains a fresh recipe.
+        if getattr(self.b, 'halted', False) or getattr(self.b, 'pending_mutations', {}):
+            raise Paused('Unconfirmed native mutation preserved; no trial craft is started')
+        initial = self.b.read()
+        if initial['menu']['cursor']['count']:
+            raise Paused('Cursor already holds an item; preserve the current trial inventory')
+        previous_menu = initial['menu']
+        previous_width = {'InventoryMenu': 2, 'CraftingMenu': 3}.get(previous_menu.get('type'))
+        if previous_width and any(row['count'] for row in previous_menu['slots'][1:previous_width * previous_width + 1]):
+            raise Paused('Crafting grid already holds items; preserve it before opening another station')
+        if width == 3:
+            self.station('crafting_table')
+        else:
+            self.b.close()
+        state = self.b.read()
+        menu = state['menu']
+        expected_menu = 'InventoryMenu' if width == 2 else 'CraftingMenu'
+        grid = list(range(1, width * width + 1))
+        if (menu.get('type') != expected_menu or len(menu.get('slots', [])) < (46 if width == 3 else 45)
+                or menu['cursor']['count'] or any(menu['slots'][cell]['count'] for cell in grid)):
+            raise Paused('Expected a clear real recipe menu; existing grid and cursor are preserved')
+        needed = Counter({item: len(positions) for item, positions in ingredients.items()})
+        before = inventory_counts(state)
+        if any(before[item] < amount for item, amount in needed.items()):
+            raise Paused('Missing actual trial ingredients: ' + output)
+        client = _TrialCraftClient(self.b, self.output)
+        self.craft_client = client  # Retain ownership evidence if an SDK acknowledgement fails.
+        try:
+            if width == 2:
+                result = _inventory_execute(client, spec, before[spec['output']] + produces)
+            else:
+                # Reuse the SDK's one-round source selection. Its stack-output
+                # capacity is narrowed below for tools and other single items.
+                batch = stack_recipe.plan_batch(state, spec, max_rounds=1)
+                remaining = {row['slot']: dict(row) for row in menu['slots'][-36:]}
+                for action in batch['actions']:
+                    row = remaining[action['source']]
+                    row['count'] -= action['count']
+                    if not row['count']:
+                        row['item'] = 'minecraft:air'
+                if _inventory_output_room(list(remaining.values()), spec) < produces:
+                    raise Paused('No verified trial output space; no ingredient was moved')
+                client.owned_inventory_crafting = {'menu_id': menu['id'],
+                    'world_session': state.get('world_session'), 'trial_id': self.b.registry['trial_id'],
+                    'run_id': self.b.run_id}
+                session = InventorySession(client)
+                for action in batch['actions']:
+                    source = state['menu']['slots'][action['source']]
+                    if source['item'] != action['item'] or source['count'] < action['source_count']:
+                        raise Paused('Planned trial ingredient changed; no duplicate craft')
+                    state = session.place_cell(state, source, action['cell'], action['count'])
+                    state = session.wait_grid(state, menu['id'], action['item'], [action['cell']], action['count'])
+                state = session.wait_recipe(state, spec['output'])
+                if state['menu']['slots'][0]['count'] != produces:
+                    raise Paused('Actual trial recipe output quantity differs; ingredients preserved')
+                pre_output = inventory_counts(state)
+                totals = {item: pre_output[item] + sum(state['menu']['slots'][cell]['count'] for cell in positions)
+                          for item, positions in ingredients.items()}
+                if _inventory_output_room(state['menu']['slots'][-36:], spec) < produces:
+                    raise Paused('Trial output space changed; owned recipe grid preserved')
+                state = session.click(state, 0, 'quick_move')
+                result = session._wait(state, menu['id'],
+                    lambda current: not current['cursor']['count']
+                        and not any(current['slots'][cell]['count'] for cell in grid)
+                        and sum(row['count'] for row in current['slots'][-36:] if row['item'] == spec['output'])
+                            == pre_output[spec['output']] + produces,
+                    'trial_workbench_output', confirmations=2, interval=.1, fresh=True)
+                final = inventory_counts(result)
+                if any(totals[item] - final[item] != amount for item, amount in needed.items()):
+                    raise Paused('Trial recipe material balance differs; no further craft')
+                client.owned_inventory_crafting = None
+            if inventory_counts(result)[spec['output']] < before[spec['output']] + produces:
+                raise Paused('Trial craft has no confirmed inventory output')
+        except (RuntimeError, ValueError) as error:
+            # A delayed cursor/grid correction never justifies replaying clicks
+            # or closing the container. Native Resume must reobserve its items.
+            self.b.halted = True
+            if isinstance(error, Paused):
+                raise
+            raise Paused('Trial SDK crafting stopped without replay: ' + str(error)) from error
+        self.b.close()
+        self.event('crafted', item=output, count=produces, engine='kit_inventory_sdk')
+        return result
+
     def exploration(self, world):
         paths = world.pickup_paths(self.b.state['pos']) if self.log_drops else world.paths(self.b.state['pos'])
         start = self.b.state['pos']
@@ -553,8 +675,9 @@ class TrialSkills(Runner):
         if self.camp:
             cx, cy, cz = self.camp
             protected.update(p for p in world.blocks if abs(p[0] - cx) <= 3 and abs(p[2] - cz) <= 3)
-        if ((starting and logs < 12) or (not starting and logs < 4)) and world.resource(state['pos'], LOGS, protected):
-            candidates['gather_starting_wood'] = LABELS['gather_starting_wood']
+        # Natural-tree work must use Kit's complete chopper lifecycle. The old
+        # per-block log routine is deliberately unavailable until that adapter
+        # is connected; dropped logs remain a separate verified pickup skill.
         if starting and station_possible and (logs >= 4 or sum(v for k, v in inv.items() if k.endswith('_planks')) >= 12):
             candidates['craft_wooden_tools'] = LABELS['craft_wooden_tools']
         stone_needed = (0 if has('stone_pickaxe') or has('iron_pickaxe') else 3)
@@ -593,15 +716,13 @@ class TrialSkills(Runner):
         return candidates
 
     def execute(self, choice):
+        if choice == 'gather_starting_wood':
+            raise Paused('Trial natural-tree chopping adapter is not connected; no per-block fallback')
         self.reset_budget()
         self.stage = choice
         self.planned(choice, LABELS[choice], {})
         if choice == 'collect_log_drops':
             self.collect_log_drops()
-        elif choice == 'gather_starting_wood':
-            inv = inventory(self.b.read())
-            initial = not any(inv.get(n) for n in ('wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe'))
-            self.gather(LOGS, LOGS, 12 if initial else 6)
         elif choice == 'craft_wooden_tools':
             plank = self.planks(12)
             if not self.count('crafting_table') and 'crafting_table' not in self.stations:
@@ -727,7 +848,7 @@ class TrialWorker:
                  'trial_id': self.registry.get('trial_id') if self.registry else None,
                  'world_id': self.registry.get('world_id') if self.registry else None,
                  'model_calls': self.model_calls, 'steps': self.steps, 'deaths': self.deaths,
-                 'implemented': sorted(LABELS.keys() - {'wait', 'recover_after_death'}),
+                 'implemented': sorted(LABELS.keys() - {'wait', 'recover_after_death', 'gather_starting_wood'}),
                  'missing_capabilities': GAPS,
                  'dragon_defeated': bool(state and state.get('dragon_defeated') is True)}
         if state:

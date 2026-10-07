@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import os
@@ -1095,7 +1096,7 @@ class WorkerTests(unittest.TestCase):
                 for scene, questions in scenes:
                     self.assertIn('Collect starting logs', scene['goal'])
                     self.assertEqual('defeat_ender_dragon', scene['scene']['long_term_goal'])
-                    self.assertEqual(set(GAPS), set(scene['scene']['capabilities']['blocked']))
+                    self.assertEqual(set(GAPS) | {'gather_starting_wood'}, set(scene['scene']['capabilities']['blocked']))
                     self.assertNotIn('missing_capabilities', scene['scene'])
                     self.assertIn('trees already observed as reachable nearby', questions['action']['criteria']['gather_starting_wood'])
                     self.assertIn('when no carried-material or reachable-resource macro', questions['action']['criteria']['explore_nearby'])
@@ -1160,11 +1161,9 @@ class WorkerTests(unittest.TestCase):
                 self.assertEqual('gather_starting_wood', result['choice'])
                 self.assertEqual([None], images)
                 caps = scenes[0]['scene']['capabilities']
-                self.assertEqual({'gather_starting_wood', 'explore_nearby', 'wait'}, {row['id'] for row in caps['available']})
-                wood = next(row for row in caps['available'] if row['id'] == 'gather_starting_wood')
-                self.assertIn('mine_block', wood['via'])
-                self.assertNotIn('navigate', wood['via'])
-                self.assertIn('log inventory', wood['verify'])
+                self.assertEqual({'explore_nearby', 'wait'}, {row['id'] for row in caps['available']})
+                self.assertEqual('native_chopper_trial_flight_and_stop_coordination_pending',
+                                 caps['blocked']['gather_starting_wood'])
                 self.assertEqual(0, caps['omitted'])
                 journal = [json.loads(line) for line in (root / 'worker/journal.jsonl').read_text().splitlines()]
                 skipped = next(row for row in journal if row['event'] == 'vision_skipped_budget')
@@ -1198,6 +1197,179 @@ class WorkerTests(unittest.TestCase):
             finally:
                 worker.pool.shutdown(wait=True)
                 if worker.experience: worker.experience.close()
+
+
+class TrialSdkCraftTests(unittest.TestCase):
+    """Exercise real SDK click ordering and balances through the trial adapter."""
+    class Bridge:
+        def __init__(self, root, reg, width, stock, recipe, output, produces=1):
+            self.root, self.registry, self.run_id = Path(root), reg, reg['run_id']
+            self.world, self.halted, self.pending_mutations = reg['world_name'], False, {}
+            self.width, self.recipe, self.output, self.produces = width, recipe, output, produces
+            self.calls, self.closed, self.fail_after_pickup = [], 0, False
+            self.snapshot = state(reg, inventory_cursor_precondition_protocol=1,
+                                  inventory_isolation={'supported': True, 'active': True})
+            size = 45 if width == 2 else 46
+            self.snapshot['screen'] = '' if width == 2 else 'CraftingScreen'
+            self.snapshot['menu'] = {'id': 0 if width == 2 else 7,
+                'type': 'InventoryMenu' if width == 2 else 'CraftingMenu',
+                'cursor': {'item': 'minecraft:air', 'count': 0, 'max_stack': 1},
+                'slots': [self.empty(slot) for slot in range(size)]}
+            first = 9 if width == 2 else 10
+            for offset, (item, amount) in enumerate(stock.items()):
+                self.snapshot['menu']['slots'][first + offset].update(item=item, count=amount, max_stack=64)
+            self.sync()
+
+        @staticmethod
+        def empty(slot):
+            return {'slot': slot, 'item': 'minecraft:air', 'count': 0, 'max_stack': 1}
+
+        def sync(self):
+            menu = self.snapshot['menu']
+            first = 9 if self.width == 2 else 10
+            self.snapshot['inventory'] = [dict(row, slot=index)
+                                         for index, row in enumerate(menu['slots'][first:first + 36])]
+            cells = range(1, self.width * self.width + 1)
+            actual = {slot: menu['slots'][slot]['item'] for slot in cells if menu['slots'][slot]['count']}
+            if actual == self.recipe:
+                menu['slots'][0].update(item=self.output, count=self.produces,
+                    max_stack=1 if self.output.endswith('_pickaxe') else 64)
+            else:
+                menu['slots'][0] = self.empty(0)
+            self.snapshot['time'] += 200
+
+        def read(self):
+            if self.halted:
+                raise Paused('Unknown native result; no replay')
+            self.sync()
+            return copy.deepcopy(self.snapshot)
+
+        def request(self, op, **arguments):
+            self.calls.append((op, arguments))
+            assert op == 'slot_click', 'SDK must not use native craft_recipe or distribute'
+            menu = self.snapshot['menu']
+            slot, cursor = menu['slots'][arguments['slot']], menu['cursor']
+            assert menu['id'] == arguments['menu_id']
+            assert (slot['item'], slot['count']) == (arguments['expected_item'], arguments['expected_count'])
+            assert (cursor['item'], cursor['count']) == (arguments['expected_cursor'], arguments['expected_cursor_count'])
+            if arguments['kind'] == 'quick_move':
+                assert arguments['slot'] == 0
+                first = 9 if self.width == 2 else 10
+                target = next(row for row in menu['slots'][first:first + 36]
+                              if not row['count'] or row['item'] == slot['item'] and row['count'] < row.get('max_stack', 64))
+                target.update(item=slot['item'], count=target['count'] + slot['count'], max_stack=slot['max_stack'])
+                for cell in self.recipe:
+                    menu['slots'][cell]['count'] -= 1
+                    if not menu['slots'][cell]['count']:
+                        menu['slots'][cell] = self.empty(cell)
+            elif cursor['count']:
+                placed = 1 if arguments['button'] else cursor['count']
+                slot.update(item=cursor['item'], count=slot['count'] + placed, max_stack=cursor['max_stack'])
+                cursor['count'] -= placed
+                if not cursor['count']:
+                    cursor.update(item='minecraft:air', count=0, max_stack=1)
+            else:
+                picked = math.ceil(slot['count'] / 2) if arguments['button'] else slot['count']
+                cursor.update(item=slot['item'], count=picked, max_stack=slot['max_stack'])
+                slot['count'] -= picked
+                if not slot['count']:
+                    slot.update(item='minecraft:air', count=0, max_stack=1)
+                if self.fail_after_pickup:
+                    self.pending_mutations['unknown-click'] = {'op': 'slot_click'}
+                    self.halted = True
+                    raise Paused('Native operation has an unknown outcome')
+            self.sync()
+            return copy.deepcopy(self.snapshot)
+
+        def close(self):
+            assert not self.snapshot['menu']['cursor']['count']
+            self.closed += 1
+
+    def skills(self, game, width, stock, recipe, output, produces=1):
+        reg = registry(game)
+        bridge = self.Bridge(Path(game) / 'automation', reg, width, stock, recipe, output, produces)
+        skills = TrialSkills(bridge, Path(game) / 'craft-output')
+        skills.station = Mock()
+        return skills, bridge
+
+    def test_two_by_two_reuses_sdk_and_preserves_log_remainder(self):
+        with tempfile.TemporaryDirectory() as game, patch('kit_runtime.inventory.time.sleep'):
+            skills, bridge = self.skills(game, 2, {'minecraft:oak_log': 3},
+                                        {1: 'minecraft:oak_log'}, 'minecraft:oak_planks', 4)
+            result = skills.craft('oak_planks', {(0, 0): 'oak_log'}, 2, 4)
+            stock = {row['item']: row['count'] for row in result['inventory'] if row['count']}
+            self.assertEqual({'minecraft:oak_log': 2, 'minecraft:oak_planks': 4}, stock)
+            self.assertEqual(1, sum(args['kind'] == 'quick_move' for _, args in bridge.calls))
+            self.assertTrue(all(op == 'slot_click' for op, _ in bridge.calls))
+            self.assertFalse(bridge.snapshot['menu']['cursor']['count'])
+            self.assertIsNone(skills.craft_client.owned_inventory_crafting)
+
+    def test_real_three_by_three_sdk_crafts_tool_and_verifies_input_balance(self):
+        with tempfile.TemporaryDirectory() as game, patch('kit_runtime.inventory.time.sleep'):
+            recipe = {1: 'minecraft:cobblestone', 2: 'minecraft:cobblestone', 3: 'minecraft:cobblestone',
+                      5: 'minecraft:stick', 8: 'minecraft:stick'}
+            skills, bridge = self.skills(game, 3, {'minecraft:cobblestone': 14, 'minecraft:stick': 4},
+                                        recipe, 'minecraft:stone_pickaxe')
+            result = skills.craft('stone_pickaxe', {(0, 0): 'cobblestone', (0, 1): 'cobblestone',
+                (0, 2): 'cobblestone', (1, 1): 'stick', (2, 1): 'stick'})
+            skills.station.assert_called_once_with('crafting_table')
+            stock = {row['item']: row['count'] for row in result['inventory'] if row['count']}
+            self.assertEqual({'minecraft:cobblestone': 11, 'minecraft:stick': 2, 'minecraft:stone_pickaxe': 1}, stock)
+            self.assertTrue(all(op == 'slot_click' and args['menu_id'] == 7 for op, args in bridge.calls))
+            self.assertEqual(1, sum(args['kind'] == 'quick_move' for _, args in bridge.calls))
+
+    def test_preexisting_cursor_or_grid_and_unresolved_mutation_are_never_changed(self):
+        for held in ('cursor', 'grid', 'unresolved'):
+            with self.subTest(held=held), tempfile.TemporaryDirectory() as game:
+                skills, bridge = self.skills(game, 2, {'minecraft:oak_log': 1},
+                                            {1: 'minecraft:oak_log'}, 'minecraft:oak_planks', 4)
+                if held == 'cursor':
+                    bridge.snapshot['menu']['cursor'].update(item='minecraft:diamond', count=1)
+                elif held == 'grid':
+                    bridge.snapshot['menu']['slots'][2].update(item='minecraft:diamond', count=1)
+                else:
+                    bridge.pending_mutations['old-unknown'] = {'op': 'craft_recipe'}
+                original = copy.deepcopy(bridge.snapshot['menu'])
+                with self.assertRaises(Paused):
+                    skills.craft('oak_planks', {(0, 0): 'oak_log'}, 2, 4)
+                self.assertEqual([], bridge.calls)
+                self.assertEqual(original, bridge.snapshot['menu'])
+
+    def test_unknown_pickup_preserves_cursor_and_never_replays_or_closes(self):
+        with tempfile.TemporaryDirectory() as game, patch('kit_runtime.inventory.time.sleep'):
+            skills, bridge = self.skills(game, 2, {'minecraft:oak_log': 3},
+                                        {1: 'minecraft:oak_log'}, 'minecraft:oak_planks', 4)
+            bridge.fail_after_pickup = True
+            with self.assertRaisesRegex(Paused, 'unknown outcome'):
+                skills.craft('oak_planks', {(0, 0): 'oak_log'}, 2, 4)
+            self.assertEqual(1, len(bridge.calls))
+            self.assertTrue(bridge.halted)
+            self.assertTrue(bridge.pending_mutations)
+            self.assertEqual('minecraft:oak_log', bridge.snapshot['menu']['cursor']['item'])
+            self.assertEqual(1, bridge.closed)  # Only the empty initial InventoryMenu close check.
+            self.assertIsNotNone(skills.craft_client.owned_inventory_crafting)
+
+    def test_plain_sdk_acknowledgement_error_is_paused_without_retry(self):
+        with tempfile.TemporaryDirectory() as game:
+            skills, bridge = self.skills(game, 2, {'minecraft:oak_log': 1},
+                                        {1: 'minecraft:oak_log'}, 'minecraft:oak_planks', 4)
+            with patch('material_manufacture._inventory_execute', side_effect=RuntimeError('Inventory acknowledgement missing')):
+                with self.assertRaisesRegex(Paused, 'stopped without replay'):
+                    skills.craft('oak_planks', {(0, 0): 'oak_log'}, 2, 4)
+            self.assertEqual([], bridge.calls)
+            self.assertTrue(bridge.halted)
+
+    def test_old_per_block_tree_macro_is_absent_and_cannot_execute(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            current = state(reg)
+            skills = TrialSkills(TrialBridge(game, reg, 'run-a', reader=lambda _: current), game)
+            world = TrialWorld(terrain() + [row((3, 1, 0), 'oak_log')], [-10, -5, -10], [10, 7, 10])
+            self.assertNotIn('gather_starting_wood', skills.candidates(current, world))
+            skills.gather = Mock()
+            with self.assertRaisesRegex(Paused, 'no per-block fallback'):
+                skills.execute('gather_starting_wood')
+            skills.gather.assert_not_called()
 
 
 if __name__ == '__main__':

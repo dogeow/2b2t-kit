@@ -28,6 +28,14 @@ def state(**changes):
 
 
 class TrialCapabilitiesTest(unittest.TestCase):
+    def test_uncoordinated_native_chopper_is_blocked_even_with_observed_logs(self):
+        current = state(inventory=[{'item': 'minecraft:oak_log', 'count': 1}])
+        candidates = {'gather_starting_wood': 'wood', 'explore_nearby': 'path'}
+        self.assertEqual(set(eligible_candidates(candidates, current)), {'explore_nearby'})
+        scene = capability_scene(candidates, current)
+        self.assertIn('gather_starting_wood', scene['blocked'])
+        self.assertNotIn('mine_block', CATALOG['gather_starting_wood'][3])
+
     def test_log_pickup_is_current_visible_item_evidence_and_normal_walking_only(self):
         drop = {'type': 'minecraft:item', 'visible': True,
                 'stack': {'item': 'minecraft:oak_log', 'count': 2},
@@ -77,8 +85,8 @@ class TrialCapabilitiesTest(unittest.TestCase):
         self.assertEqual(set(eligible_candidates(offered, state())), {'wait'})
         result = capability_scene(offered, state())
         self.assertEqual([row['id'] for row in result['available']], ['wait'])
-        self.assertEqual(set(result['blocked']), set(PROGRESSION_GAPS))
-        self.assertEqual(set(result['blocked'].values()), {'unsupported'})
+        self.assertTrue(set(PROGRESSION_GAPS).issubset(result['blocked']))
+        self.assertEqual({result['blocked'][key] for key in PROGRESSION_GAPS}, {'unsupported'})
 
     def test_missing_tool_or_stock_excludes_an_offered_macro(self):
         empty = state(inventory=[])
@@ -165,7 +173,8 @@ class TrialCapabilitiesTest(unittest.TestCase):
         raw = ast.literal_eval(survival['RAW'])
         actual_food = set(raw.values()) | ast.literal_eval(survival['FOOD'].right)
         self.assertEqual(FOOD, actual_food)
-        used = {primitive for row in capability_catalog() for primitive in row['native_primitives'] if primitive != 'none'}
+        used = {primitive for row in capability_catalog() if row['availability'] != 'blocked'
+                for primitive in row['native_primitives'] if primitive != 'none'}
         self.assertTrue(used <= ops, used - ops)
 
 
