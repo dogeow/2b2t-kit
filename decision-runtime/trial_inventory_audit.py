@@ -8,11 +8,48 @@ import json
 import os
 from pathlib import Path
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from singleplayer_trial_bridge import Paused
 
 SCOPE=('world_id','trial_id','run_id','world_session','dimension')
 SHA=re.compile(r'[0-9a-f]{64}\Z')
+
+
+def verified_retirement(exit_state,quit_reply,disconnected,original,old_jvm_pid):
+    """Accept observed normal exit, or saved native quit plus actual process stop.
+
+    The second contract deliberately retains an unobserved exit code. Neither
+    contract proves the historical inventory click was applied or rejected.
+    """
+    if type(exit_state.get('exit_code')) is int and exit_state['exit_code']==0 and exit_state.get('exit_type')=='NORMAL':
+        return True
+    if (exit_state.get('source')!='verified_native_saved_quit_and_terminated_process'
+            or 'exit_code' not in exit_state or exit_state['exit_code'] is not None
+            or exit_state.get('exit_type')!='unobserved'):
+        return False
+    request=record(exit_state.get('quit_request'),131072)
+    stopped=record(exit_state.get('launcher_stopped'),131072)
+    ref=stopped.get('log_excerpt',{})
+    if file_hash(ref.get('path',''))!=ref.get('sha256'):return False
+    text=Path(ref['path']).read_text()
+    if (request.get('protocol')!=1 or request.get('command')!='quit_game'
+            or request.get('id')!=quit_reply.get('id') or quit_reply.get('protocol')!=1
+            or quit_reply.get('phase')!='done' or type(request.get('expires_at')) is not int
+            or stopped.get('source')!='hmcl_process_stopped_event_excerpt'
+            or stopped.get('event')!='ProcessStoppedEvent' or 'ProcessStoppedEvent' not in text
+            or stopped.get('old_jvm_pid')!=old_jvm_pid
+            or any(stopped.get(key)!=original.get(key) for key in ('world_id','world_session','run_id'))
+            or type(stopped.get('stopped_at')) is not int or type(disconnected.get('time')) is not int
+            or not disconnected['time']<=request['expires_at']
+            # HMCL disk stamps have second precision, so their represented
+            # second may contain the later millisecond-native quit receipt.
+            or not max(disconnected['time'],request['expires_at']-15000)<=stopped['stopped_at']+999
+            or not stopped['stopped_at']<=request['expires_at']+30000):
+        return False
+    clock=datetime.fromtimestamp(stopped['stopped_at']/1000,ZoneInfo('Asia/Taipei')).strftime('%H:%M:%S')
+    return clock in text
 
 
 def file_hash(path):
@@ -201,7 +238,7 @@ def _validate_inventory_review(worker,reference,state,pid_alive):
             or disconnected.get('trial_identity',{}).get('world_id')!=original['world_id']
             or quit_reply.get('trial_identity',{}).get('world_id')!=original['world_id']
             or saved.get('trial_identity',{}).get('trial_id')!=original['trial_id']
-            or exit_state.get('exit_code')!=0 or exit_state.get('exit_type')!='NORMAL'
+            or not verified_retirement(exit_state,quit_reply,disconnected,original,review.get('old_jvm_pid'))
             or exit_state.get('old_jvm_alive_now') is not False
             or type(review.get('old_worker_pid')) is not int or type(review.get('old_jvm_pid')) is not int
             or review['old_worker_pid']<=1 or review['old_jvm_pid']<=1

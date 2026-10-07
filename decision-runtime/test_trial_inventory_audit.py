@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import unittest
 import time
 from unittest.mock import patch
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from singleplayer_trial_bridge import Paused
 from trial_inventory_audit import (archive_failed_pickup,file_hash,historical_pending,
@@ -74,6 +76,48 @@ def fixture(root):
 
 
 class InventoryAuditTests(unittest.TestCase):
+    def test_saved_native_quit_and_hmcl_stop_allow_replan_without_inventing_exit_code(self):
+        for change in (None,'missing_save','quit_command','quit_id','quit_expiry','no_stop','stop_pid','stop_scope',
+                       'stop_time','stop_hash','old_alive','new_probe_missing'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                root=Path(temp);worker,state,reference,review,output,original,frozen=fixture(root)
+                def artifact(name,value):
+                    path=(root/(name+'.json')).resolve();path.write_text(json.dumps(value));return {'path':str(path),'sha256':file_hash(path)}
+                quit_ref=review['artifacts']['normal_quit'];quit_path=Path(quit_ref['path'])
+                quit_reply=json.loads(quit_path.read_text());quit_reply.update(protocol=1,id='trial-api-retire')
+                quit_path.write_text(json.dumps(quit_reply));quit_ref['sha256']=file_hash(quit_path)
+                request={'protocol':1,'command':'quit_game','id':quit_reply['id'],'expires_at':17000}
+                clock=datetime.fromtimestamp(2.5,ZoneInfo('Asia/Taipei')).strftime('%H:%M:%S')
+                log=(root/'hmcl-stop.txt').resolve();log.write_text(f'[{clock}] ProcessStoppedEvent\n')
+                stopped={'source':'hmcl_process_stopped_event_excerpt','event':'ProcessStoppedEvent','old_jvm_pid':402,
+                    'world_id':original['world_id'],'world_session':original['world_session'],'run_id':original['run_id'],
+                    'stopped_at':2500,'log_excerpt':{'path':str(log),'sha256':file_hash(log)}}
+                exit_ref=review['artifacts']['normal_exit'];exit_path=Path(exit_ref['path']);exit_state=json.loads(exit_path.read_text())
+                exit_state.update(source='verified_native_saved_quit_and_terminated_process',exit_code=None,exit_type='unobserved')
+                alive=lambda _:False
+                if change=='quit_command':request['command']='open_world'
+                elif change=='quit_id':request['id']='other'
+                elif change=='quit_expiry':request['expires_at']=1000
+                elif change=='no_stop':log.write_text('launcher still running\n');stopped['log_excerpt']['sha256']=file_hash(log)
+                elif change=='stop_pid':stopped['old_jvm_pid']=777
+                elif change=='stop_scope':stopped['world_session']='other'
+                elif change=='stop_time':stopped['stopped_at']=1000
+                elif change=='stop_hash':stopped['log_excerpt']['sha256']='0'*64
+                elif change=='old_alive':alive=lambda pid:pid==402
+                elif change=='new_probe_missing':worker.inventory_review_probe=None
+                elif change=='missing_save':
+                    save=Path(exit_state['save_log']['path']);save.write_text('Saving players only\n');exit_state['save_log']['sha256']=file_hash(save)
+                exit_state.update(quit_request=artifact('quit-request',request),launcher_stopped=artifact('stopped',stopped))
+                exit_path.write_text(json.dumps(exit_state));exit_ref['sha256']=file_hash(exit_path)
+                path=Path(reference['path']);path.write_text(json.dumps(review));reference['sha256']=file_hash(path)
+                if change:
+                    with self.assertRaises(Paused):validate_inventory_review(worker,reference,state,alive)
+                else:
+                    value=validate_inventory_review(worker,reference,state,alive)
+                    self.assertTrue(value['historical_effects_unresolved'])
+                    self.assertIsNone(json.loads(exit_path.read_text())['exit_code'])
+                    self.assertFalse(value['old_action_completed'])
+
     def test_real_new_start_discovers_mailbox_pickup_manifest_and_old_chop_without_replay(self):
         from test_trial_legacy_material_review import LegacyMaterialReviewTests
         from trial_material_rebaseline import submit_review
