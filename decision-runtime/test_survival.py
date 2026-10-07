@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from survival_bridge import Bridge,Paused,valid
-from survival_world import World,shelter
+from survival_world import World,shelter,support_footprint
 from survival import Runner
 
 def row(p,name,solid=True,passable=False):
@@ -46,6 +46,28 @@ class WorldTests(unittest.TestCase):
         w=World(rows,[-6,0,-6],[6,4,6]);found=w.resource([.5,1,.5],{'oak_log'},{(2,1,0)})
         self.assertEqual(found[0],(-2,1,0))
         self.assertIsNone(w.resource([.5,1,.5],{'oak_log'},{(2,1,0),(-2,1,0)}))
+    def test_real_body_straddling_two_blocks_protects_both_supports(self):
+        rows=[r for r in terrain() if r['pos']!=[1,0,0]]+[row((1,0,0),'iron_ore')]
+        w=World(rows,[-6,-1,-6],[6,4,6])
+        self.assertEqual(support_footprint([.98,1,.5]),{(0,0,0),(1,0,0)})
+        self.assertEqual(support_footprint([.98,1,.02]),
+                         {(0,0,-1),(0,0,0),(1,0,-1),(1,0,0)})
+        self.assertIsNone(w.resource([.98,1,.5],{'iron_ore'}))
+    def test_resource_cannot_choose_the_only_stance_on_top_of_its_target(self):
+        target=(2,1,0);stance=(2,2,0)
+        w=World(terrain()+[row(target,'iron_ore')],[-6,-1,-6],[6,4,6])
+        # A ledge can expose only its top, reached from a rising route. Even
+        # though the ore is visible, standing on it is not a mining stance.
+        parents={(0,1,0):None,(1,1,0):(0,1,0),stance:(1,1,0)}
+        with patch.object(w,'paths',return_value=parents),patch.object(
+                w,'sight',side_effect=lambda feet,block:feet==stance):
+            self.assertIsNone(w.resource([.5,1,.5],{'iron_ore'}))
+    def test_normal_side_wall_stone_is_still_a_resource(self):
+        base=[row(tuple(r['pos']),'dirt') for r in terrain()]
+        w=World(base+[row((2,1,0),'stone')],[-6,-1,-6],[6,4,6])
+        target,path=w.resource([.5,1,.5],{'stone'})
+        self.assertEqual(target,(2,1,0))
+        self.assertFalse(any(target in support_footprint([p[0]+.5,p[1],p[2]+.5]) for p in path))
     def test_hut_has_full_roof_and_only_door_opening(self):
         blocks,door=shelter([0,1,0]);self.assertEqual(len(set(blocks)),55)
         self.assertNotIn(door,blocks);self.assertNotIn((0,2,2),blocks)
@@ -131,5 +153,78 @@ class OwnershipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp,patch('survival_bridge.status',return_value=state()):
             path=Path(tmp)/'old.json';path.write_text(json.dumps({'world_name':'Other'}))
             with self.assertRaises(Paused):Runner(Bridge(Path(tmp),'Trial'),None,tmp,resume=path)
+
+
+class MiningBridge:
+    """Normal native receipts with controllable arrival drift; no live game."""
+    def __init__(self,root,rows):
+        self.root=Path(root);self.world='Trial';self.origin=[.5,1,.5]
+        self.state={**state(),'bridge_version':3,'world_id':'/saves/Trial',
+                    'inventory':[{'item':'minecraft:wooden_pickaxe','count':1}]}
+        self.rows=list(rows);self.requests=[];self.select_position=None
+    def read(self):return self.state
+    def close(self):pass
+    def wait(self,seconds):pass
+    def select(self,item):
+        if self.select_position is not None:self.state['pos']=list(self.select_position)
+    def request(self,op,**args):
+        self.requests.append((op,args))
+        if op=='scan':return {**self.state,'blocks':self.rows}
+        if op in {'walk','walk_path'}:
+            self.state['pos']=list(args['path'][-1] if op=='walk_path' else args['target'])
+        if op=='mine_block':
+            self.rows=[r for r in self.rows if r['pos']!=args['pos']]
+            self.state['inventory'].append({'item':'minecraft:cobblestone','count':1})
+        return self.state
+
+
+class MiningFootingTests(unittest.TestCase):
+    def test_walk_preserves_only_confirmed_route_supports_for_later_gathers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=MiningBridge(tmp,terrain());runner=Runner(bridge,None,tmp)
+            runner.walk([(1,1,0),(2,2,0)])
+            self.assertTrue({(0,0,0),(1,0,0),(2,1,0)}<=runner.excluded)
+            self.assertNotIn((4,0,0),runner.excluded)
+            # A separate save/run gets its own support set, not old coordinates.
+            other=MiningBridge(tmp,terrain());other.world='Other';other.state['world_id']='/saves/Other'
+            self.assertFalse(Runner(other,None,tmp).excluded)
+    def test_confirmed_return_supports_resume_only_in_the_same_save(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=MiningBridge(tmp,terrain());runner=Runner(bridge,None,tmp)
+            runner.walk([(1,1,0)]);runner.save('running')
+            saved=Path(tmp)/'status.json'
+            resumed=Runner(MiningBridge(tmp,terrain()),None,tmp,resume=saved)
+            self.assertTrue({(0,0,0),(1,0,0)}<=resumed.excluded)
+            other=MiningBridge(tmp,terrain());other.state['world_id']='/saves/Other'
+            with self.assertRaises(Paused):Runner(other,None,tmp,resume=saved)
+    def test_unconfirmed_route_does_not_protect_unvisited_planned_floor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=MiningBridge(tmp,terrain());runner=Runner(bridge,None,tmp)
+            with patch.object(bridge,'request',return_value={**bridge.state,'pos':[.5,1,.5]}):
+                with self.assertRaises(Paused):runner.walk([(3,1,0)])
+            self.assertNotIn((3,0,0),runner.excluded)
+    def test_gather_does_not_mine_after_walking_on_top_of_selected_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=MiningBridge(tmp,terrain());runner=Runner(bridge,None,tmp)
+            with patch.object(World,'resource',side_effect=[((1,0,0),[(1,1,0)]),None]):
+                with self.assertRaises(Paused):runner.gather({'stone'},{'cobblestone'},1)
+            self.assertFalse(any(op=='mine_block' for op,args in bridge.requests))
+            self.assertIn((1,0,0),runner.excluded)
+    def test_gather_fresh_guard_rejects_support_under_drifted_body_edge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=MiningBridge(tmp,terrain());bridge.select_position=[.98,1,.5]
+            runner=Runner(bridge,None,tmp)
+            with patch.object(World,'resource',side_effect=[((1,0,0),[]),None]):
+                with self.assertRaises(Paused):runner.gather({'stone'},{'cobblestone'},1)
+            self.assertFalse(any(op=='mine_block' for op,args in bridge.requests))
+            self.assertTrue({(0,0,0),(1,0,0)}<=runner.excluded)
+    def test_side_wall_mining_still_sends_one_normal_dig_and_confirms_inventory(self):
+        base=[row(tuple(r['pos']),'dirt') for r in terrain()]
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge=MiningBridge(tmp,base+[row((2,1,0),'stone')]);runner=Runner(bridge,None,tmp)
+            runner.gather({'stone'},{'cobblestone'},1)
+            digs=[args for op,args in bridge.requests if op=='mine_block']
+            self.assertEqual([args['pos'] for args in digs],[[2,1,0]])
+            self.assertNotIn((2,1,0),runner.excluded)
 
 if __name__=='__main__':unittest.main()

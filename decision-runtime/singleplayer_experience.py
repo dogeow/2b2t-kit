@@ -24,7 +24,7 @@ ACTIONS = frozenset({
     'observe', 'gather_starting_wood', 'craft_wooden_tools', 'gather_stone',
     'craft_stone_tools', 'gather_food', 'gather_shelter_material',
     'build_shelter', 'explore_nearby', 'recover_after_death',
-    'eat_carried_food', 'prepare_iron_equipment', 'collect_log_drops',
+    'eat_carried_food', 'prepare_iron_equipment', 'collect_log_drops', 'recover_surface_access',
 })
 RULES = {
     'verify_inventory_after_gathering': {
@@ -41,6 +41,11 @@ RULES = {
         'category': 'navigation',
         'text': '移动结束后重新观察位置和附近环境；不能把导航计时结束当作到位。',
         'outcome': 'movement_observed',
+    },
+    'verify_upward_access_position': {
+        'category': 'navigation',
+        'text': '清理台阶净空后重新观察实际高度和脚下支撑；上升几层只算通道进展，仍需验证是否到达地面。',
+        'outcome': 'upward_movement_observed',
     },
     'verify_respawn_before_recovery': {
         'category': 'recovery',
@@ -217,6 +222,9 @@ def _outcome(action, before, after, receipt):
     if positive is not None:
         return positive
     old, new = _position(before), _position(after)
+    if action == 'recover_surface_access' and old and new and before.get('dimension') == after.get('dimension'):
+        if .75 <= new[1] - old[1] <= 4.25:
+            return 'upward_movement_observed'
     if action == 'explore_nearby' and old and new and before.get('dimension') == after.get('dimension'):
         distance_squared = sum((a-b)**2 for a, b in zip(old, new))
         if 4 <= distance_squared <= 512**2:

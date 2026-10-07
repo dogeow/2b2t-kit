@@ -49,6 +49,15 @@ def terrain():
     return [row((x, 0, z), 'stone') for x in range(-10, 11) for z in range(-10, 11)]
 
 
+def native_scan_fields(request, revision, blocks=None, **changes):
+    volume = math.prod(high - low + 1 for low, high in zip(request['min'], request['max']))
+    return {'id': request['id'], 'last_request': request['id'], 'phase': 'done',
+            'control_revision': revision, 'blocks': terrain() if blocks is None else blocks,
+            'scan_cells_read': volume, 'scan_total_cells': volume,
+            'scan_start_revision': revision, 'scan_end_revision': revision,
+            'scan_coherent': False, **changes}
+
+
 class ScopeTests(unittest.TestCase):
     def test_only_explicit_direct_save_is_registered(self):
         with tempfile.TemporaryDirectory() as game:
@@ -117,7 +126,7 @@ class BridgeTests(unittest.TestCase):
                             'confirmation_scope': 'none',
                             'requested_confirmation_scope': 'single_target_server_block_update_and_native_sequence_ack',
                             'mining_target': [3, 1, 0], **changes}
-                        if req['op'] == 'scan': result.update(phase='done', blocks=terrain())
+                        if req['op'] == 'scan': result.update(native_scan_fields(req, result['control_revision']))
                         return state(reg, **result)
                     bridge = TrialBridge(root, reg, 'run-a', reader=read)
                     with self.assertRaises(Paused) as error:
@@ -237,8 +246,7 @@ class BridgeTests(unittest.TestCase):
                 req = json.loads(path.read_text())
                 if not sent or sent[-1] != req['id']: sent.append(req['id'])
                 if req['op'] == 'scan':
-                    return state(reg, id=req['id'], op='scan', last_request=req['id'],
-                                 control_revision=6, phase='done', blocks=terrain())
+                    return state(reg, op='scan', **native_scan_fields(req, 6))
                 return state(reg, id=req['id'], op='walk_path', last_request=req['id'],
                              control_revision=6, phase='waiting', pos=[1.2, 1, .5],
                              detail='unsafe drop ahead; choose another walking waypoint')
@@ -282,6 +290,125 @@ class BridgeTests(unittest.TestCase):
                     with self.assertRaises(Paused) as error: bridge.request(op)
                     self.assertNotIsInstance(error.exception, TrialMovementBlocked)
                     self.assertTrue(bridge.halted)
+
+    def test_stale_scan_observation_waits_for_one_owned_request_and_accepts_exact_reply(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg, root = registry(game), Path(game)
+            stale_reads, clock, events = [0], [0.0], []
+            def read(unused):
+                path = root / 'request.json'
+                if not path.exists():
+                    return state(reg)
+                request = json.loads(path.read_text())
+                if not stale_reads[0]:
+                    stale_reads[0] += 1
+                    raise DecisionError('Game observation is stale')
+                reply = state(reg, **native_scan_fields(request, 4, blocks=[]))
+                (root / ('reply-' + request['id'] + '.json')).write_text(json.dumps(reply))
+                # Read-only scan status retains the prior action id/phase; its
+                # last_request still proves our exact currently consumed scan.
+                return state(reg, id='prior-close-menu', last_request=request['id'], op='settle')
+            def sleep(unused): clock[0] += 7
+            with patch('singleplayer_trial_bridge.time.monotonic', side_effect=lambda: clock[0]):
+                bridge = TrialBridge(root, reg, 'run-a', reader=read, sleeper=sleep,
+                                     events=lambda event, **data: events.append((event, data)))
+                result = bridge.request('scan', min=[0, 1, 0], max=[1, 1, 0])
+                self.assertEqual(result['id'], bridge.read()['last_request'])
+            requests = [data for event, data in events if event == 'native_request']
+            self.assertEqual(1, len(requests))
+            self.assertEqual(requests[0]['id'], result['id'])
+            self.assertEqual(2, result['scan_cells_read'])
+            self.assertFalse(result['scan_coherent'])
+            self.assertFalse(bridge.halted)
+            self.assertIsNone(bridge.active)
+            self.assertEqual(7, clock[0])  # Shared request budget, rather than ordinary six seconds.
+
+    def test_control_pause_during_stale_owned_scan_stops_without_a_second_request(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg, root, stale, sent = registry(game), Path(game), [False], []
+            def read(unused):
+                if (root / 'request.json').exists():
+                    stale[0] = True
+                    raise DecisionError('Game observation is stale')
+                return state(reg)
+            def control():
+                if stale[0]:
+                    raise Paused('Kit trial pause')
+            bridge = TrialBridge(root, reg, 'run-a', reader=read, check_control=control,
+                events=lambda event, **data: sent.append(data['id']) if event == 'native_request' else None,
+                sleeper=Mock())
+            with self.assertRaisesRegex(Paused, 'Kit trial pause'):
+                bridge.request('scan', min=[0, 1, 0], max=[1, 1, 0])
+            original = (root / 'request.json').read_bytes()
+            with self.assertRaisesRegex(Paused, 'Kit trial pause'):
+                bridge.request('scan', min=[0, 1, 0], max=[1, 1, 0])
+            self.assertEqual(1, len(sent))
+            self.assertEqual(original, (root / 'request.json').read_bytes())
+            bridge.sleeper.assert_not_called()
+
+    def test_stale_retry_does_not_accept_foreign_cursor_or_read_only_revision_change(self):
+        for changed in ('foreign', 'revision'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as game:
+                reg, root, stale = registry(game), Path(game), [False]
+                def read(unused):
+                    path = root / 'request.json'
+                    if not path.exists(): return state(reg)
+                    request = json.loads(path.read_text())
+                    if not stale[0]:
+                        stale[0] = True
+                        raise DecisionError('Game observation is stale')
+                    revision = 5 if changed == 'revision' else 4
+                    reply = state(reg, **native_scan_fields(request, revision, blocks=[]))
+                    (root / ('reply-' + request['id'] + '.json')).write_text(json.dumps(reply))
+                    return state(reg, id=request['id'],
+                        last_request='foreign-controller' if changed == 'foreign' else request['id'],
+                        control_revision=revision)
+                bridge = TrialBridge(root, reg, 'run-a', reader=read, sleeper=lambda _: None)
+                with self.assertRaises(Paused):
+                    bridge.request('scan', min=[0, 1, 0], max=[1, 1, 0])
+                self.assertTrue(bridge.halted)
+
+    def test_only_exact_stale_error_is_waited_and_ordinary_read_still_has_six_second_budget(self):
+        with tempfile.TemporaryDirectory() as game:
+            reg = registry(game)
+            bridge = TrialBridge(game, reg, 'run-a', reader=lambda _: state(reg), sleeper=Mock())
+            bridge.reader = Mock(side_effect=DecisionError('Game observation is stale: invalid timestamp'))
+            with self.assertRaisesRegex(DecisionError, 'invalid timestamp'):
+                bridge.read()
+            bridge.sleeper.assert_not_called()
+            clock = [0.0]
+            bridge.reader = Mock(side_effect=DecisionError('Game observation is stale'))
+            bridge.sleeper = lambda _: clock.__setitem__(0, clock[0] + 6.1)
+            with patch('singleplayer_trial_bridge.time.monotonic', side_effect=lambda: clock[0]):
+                with self.assertRaisesRegex(Paused, 'before its deadline'):
+                    bridge.read()
+            self.assertEqual(2, bridge.reader.call_count)
+            self.assertFalse((Path(game) / 'request.json').exists())
+
+    def test_partial_missing_metadata_or_changed_scan_revision_never_becomes_world_geometry(self):
+        cases = [({'phase': 'waiting'}, None), ({'scan_cells_read': 1}, None),
+                 ({'scan_cells_read': 3, 'scan_total_cells': 3}, None),
+                 ({'scan_start_revision': 3}, None), ({'scan_end_revision': 5}, None),
+                 ({'scan_cells_read': True}, None), ({}, 'scan_total_cells')]
+        for changes, missing in cases:
+            with self.subTest(changes=changes, missing=missing), tempfile.TemporaryDirectory() as game:
+                reg, root = registry(game), Path(game)
+                def read(unused):
+                    path = root / 'request.json'
+                    if not path.exists(): return state(reg)
+                    request = json.loads(path.read_text())
+                    fields = native_scan_fields(request, 4, blocks=[], **changes)
+                    if missing:
+                        fields.pop(missing)
+                    return state(reg, **fields)
+                bridge = TrialBridge(root, reg, 'run-a', reader=read)
+                with self.assertRaisesRegex(Paused, 'scan volume or revision is incomplete'):
+                    bridge.request('scan', min=[0, 1, 0], max=[1, 1, 0])
+                original = (root / 'request.json').read_bytes()
+                self.assertTrue(bridge.halted)
+                with self.assertRaises(Paused):
+                    bridge.request('walk', target=[1.5, 1, .5])
+                self.assertEqual(original, (root / 'request.json').read_bytes())
 
 
 class SkillsTests(unittest.TestCase):
@@ -632,6 +759,114 @@ class SkillsTests(unittest.TestCase):
             point2, route2 = skills.exploration(world)
             self.assertNotEqual(old_grid, (math.floor(point2[0] / 8), math.floor(point2[2] / 8)))
             self.assertNotEqual(route, route2)
+
+
+class StationNavigationTests(unittest.TestCase):
+    def skills(self, game, rows, inventory_rows=(), table=(18, 1, 0)):
+        reg = registry(game)
+        class Bridge:
+            world = reg['world_name']
+            state = globals()['state'](reg, inventory=list(inventory_rows),
+                                       menu={'id': 0, 'type': 'InventoryMenu', 'cursor': {'count': 0}, 'slots': []})
+            origin = list(state['pos'])
+            halted = False
+            pending_mutations = {}
+            calls = []
+            incomplete = False
+            def read(self): return self.state
+            def close(self): self.state['menu']['type'] = 'InventoryMenu'
+            def select(self, item): self.state['hand'] = {'item': 'minecraft:' + item}
+            def request(self, op, **args):
+                self.calls.append((op, args))
+                if op == 'scan':
+                    low, high = args['min'], args['max']
+                    volume = math.prod(b - a + 1 for a, b in zip(low, high))
+                    found = [value for value in rows if all(a <= n <= b for a, n, b in zip(low, value['pos'], high))]
+                    return {**self.state, 'blocks': found, 'scan_cells_read': volume - int(self.incomplete),
+                            'scan_total_cells': volume, 'scan_coherent': False}
+                if op == 'walk_path':
+                    self.state['pos'] = list(args['path'][-1])
+                    return self.state
+                if op == 'interact':
+                    block = next(value for value in rows if value['pos'] == args['pos'])
+                    if 'crafting_table' in block['state']:
+                        self.state['menu']['type'] = 'CraftingMenu'
+                    elif self.state['hand']['item'] == 'minecraft:crafting_table':
+                        direction = {'up': (0, 1, 0), 'down': (0, -1, 0), 'north': (0, 0, -1),
+                                     'south': (0, 0, 1), 'east': (1, 0, 0), 'west': (-1, 0, 0)}[args['face']]
+                        placed = tuple(a + b for a, b in zip(args['pos'], direction))
+                        rows.append(row(placed, 'crafting_table'))
+                    return self.state
+                raise AssertionError('Unexpected primitive: ' + op)
+        bridge = Bridge()
+        skills = TrialSkills(bridge, Path(game) / 'out')
+        skills.stations = {'crafting_table': list(table)}
+        skills.owned = {','.join(map(str, table)): 'crafting_table'}
+        skills.camp = [1, 1, 1]
+        skills.save = Mock()
+        return skills, bridge
+
+    def test_recorded_table_outside_local_scan_uses_real_corridor_and_normal_walk(self):
+        with tempfile.TemporaryDirectory() as game:
+            rows = [row((x, 0, 0), 'stone') for x in range(19)] + [row((18, 1, 0), 'crafting_table')]
+            skills, bridge = self.skills(game, rows)
+            skills.craft = Mock()
+            skills.go_near([18, 1, 0])
+            self.assertTrue(any(op == 'walk_path' for op, unused in bridge.calls))
+            self.assertTrue(any(args['max'][0] >= 18 for op, args in bridge.calls if op == 'scan'))
+            self.assertFalse(any(op in {'navigate', 'mine_block', 'interact'} for op, unused in bridge.calls))
+            self.assertTrue(all(args.get('restore_flight') is False for op, args in bridge.calls if op == 'walk_path'))
+            self.assertEqual([18, 1, 0], skills.stations['crafting_table'])
+            skills.craft.assert_not_called()
+
+    def test_incomplete_dangerous_or_excessive_corridor_never_walks(self):
+        for failure in ('incomplete', 'lava', 'volume'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as game:
+                table = (500, 1, 500) if failure == 'volume' else (18, 1, 0)
+                rows = [row((x, 0, 0), 'lava' if failure == 'lava' and x == 10 else 'stone')
+                        for x in range(19)] + [row(table, 'crafting_table')]
+                skills, bridge = self.skills(game, rows, table=table)
+                bridge.incomplete = failure == 'incomplete'
+                with self.assertRaises(Paused): skills.go_near(table)
+                self.assertFalse(any(op != 'scan' for op, unused in bridge.calls))
+                if failure == 'volume': self.assertEqual(1, len(bridge.calls))
+
+    def test_unreachable_recorded_table_can_be_crafted_and_normally_placed_locally(self):
+        with tempfile.TemporaryDirectory() as game:
+            rows = [row((x, 0, z), 'stone') for x in range(-2, 3) for z in range(-2, 3)]
+            rows += [row((18, 0, 0), 'stone'), row((18, 1, 0), 'crafting_table')]
+            skills, bridge = self.skills(game, rows,
+                [{'item': 'minecraft:dark_oak_planks', 'count': 3}, {'item': 'minecraft:dark_oak_log', 'count': 1}])
+            crafted = []
+            def craft(output, cells, width=3, produces=1):
+                crafted.append((output, width))
+                self.assertEqual(2, width)  # Never recurse through a 3x3 station.
+                counts = {value['item']: value['count'] for value in bridge.state['inventory']}
+                for item in cells.values(): counts['minecraft:' + item] -= 1
+                counts['minecraft:' + output] = counts.get('minecraft:' + output, 0) + produces
+                bridge.state['inventory'] = [{'item': item, 'count': count} for item, count in counts.items() if count]
+            skills.craft = Mock(side_effect=craft)
+            skills.station('crafting_table')
+            self.assertEqual([('dark_oak_planks', 2), ('crafting_table', 2)], crafted)
+            self.assertNotEqual([18, 1, 0], skills.stations['crafting_table'])
+            self.assertEqual('crafting_table', skills.owned['18,1,0'])
+            self.assertEqual('crafting_table', skills.owned[','.join(map(str, skills.stations['crafting_table']))])
+            self.assertEqual('CraftingMenu', bridge.state['menu']['type'])
+            self.assertTrue(any(op == 'interact' for op, unused in bridge.calls))
+            self.assertFalse(any(op in {'navigate', 'mine_block'} for op, unused in bridge.calls))
+
+    def test_insufficient_local_material_preserves_old_table_without_crafting_or_placement(self):
+        with tempfile.TemporaryDirectory() as game:
+            rows = [row((x, 0, z), 'stone') for x in range(-2, 3) for z in range(-2, 3)]
+            rows += [row((18, 0, 0), 'stone'), row((18, 1, 0), 'crafting_table')]
+            skills, bridge = self.skills(game, rows, [{'item': 'minecraft:dark_oak_planks', 'count': 3}])
+            skills.craft = Mock()
+            with self.assertRaisesRegex(Paused, 'insufficient carried material'):
+                skills.station('crafting_table')
+            skills.craft.assert_not_called()
+            self.assertEqual([18, 1, 0], skills.stations['crafting_table'])
+            self.assertEqual({'18,1,0': 'crafting_table'}, skills.owned)
+            self.assertFalse(any(op != 'scan' for op, unused in bridge.calls))
 
 
 class GoalTests(unittest.TestCase):
@@ -1053,6 +1288,34 @@ class WorkerTests(unittest.TestCase):
                 self.assertEqual(0, worker.steps)
                 self.assertFalse(worker.bridge.halted)
                 self.assertEqual(receipt, worker.attempt_record.call_args.args[-1])
+            finally:
+                worker.pool.shutdown(wait=True)
+                if worker.experience: worker.experience.close()
+
+    def test_macro_failure_journals_real_reason_without_changing_attempt_schema(self):
+        with tempfile.TemporaryDirectory() as game:
+            worker, reg, root = self.worker(game)
+            try:
+                worker.registry = reg
+                worker.run_id = reg['run_id']
+                worker.command = 'start'
+                worker.control = lambda: None
+                worker.bind()
+                worker.skills.observe = Mock(return_value=None)
+                worker.skills.candidates = Mock(return_value={'craft_stone_tools': 'Craft', 'wait': 'Wait'})
+                worker.skills.execute = Mock(side_effect=Paused('Recorded station has no fresh supported walking route'))
+                worker.decide = Mock(return_value={'choice': 'craft_stone_tools'})
+                worker.attempt_record = Mock()
+                worker.cycle()
+                events = [json.loads(line) for line in (root / 'worker/journal.jsonl').read_text().splitlines()]
+                failure = next(value for value in events if value['event'] == 'macro_failure')
+                self.assertEqual('Paused', failure['error_type'])
+                self.assertEqual('craft_stone_tools', failure['action'])
+                self.assertEqual('Recorded station has no fresh supported walking route', failure['reason'])
+                self.assertFalse(failure['native_dispatch_seen'])
+                self.assertFalse(failure['native_unresolved'])
+                self.assertIsNone(worker.attempt_record.call_args.args[-1])
+                self.assertEqual(1, worker.failures['craft_stone_tools'])
             finally:
                 worker.pool.shutdown(wait=True)
                 if worker.experience: worker.experience.close()

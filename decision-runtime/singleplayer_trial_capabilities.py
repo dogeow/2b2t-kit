@@ -23,12 +23,12 @@ CATALOG = {
                          'walk_path,walk,scan', 'log inventory gain'),
     'gather_starting_wood': ('等待原生自动砍树与试验控制协调接入', 'get logs', 'native AutoChopper trial coordination required',
                              'chop', 'log inventory gain'),
-    'craft_wooden_tools': ('用背包木材制作工作台和木镐', 'make wood tools', 'wood; safe work stance; no pickaxe',
-                           'slot_click,interact', 'crafted items in inventory'),
+    'craft_wooden_tools': ('用背包木材制作工作台和木镐', 'make wood tools', 'wood; safe local station stance; no pickaxe',
+                           'slot_click,interact,scan', 'crafted items in inventory'),
     'gather_stone': ('用现有镐采集附近石料', 'get cobblestone', 'pickaxe; stone deficit; reachable stone',
                      'walk_path,mine_block', 'cobblestone inventory gain'),
-    'craft_stone_tools': ('用已有圆石制作石工具和熔炉', 'make stone tools', 'pickaxe; enough cobblestone; safe station',
-                          'slot_click,interact', 'tools/furnace in inventory'),
+    'craft_stone_tools': ('用已有圆石制作石工具和熔炉', 'make stone tools', 'pickaxe; cobblestone; reachable station or local table materials/footing',
+                          'slot_click,interact,walk_path,scan', 'tools/furnace in inventory'),
     'gather_food': ('获取附近被动动物掉落物并烹饪', 'get cooked food', 'stone axe; animal; furnace; food deficit',
                     'attack_passive,slot_click', 'edible inventory gain'),
     'eat_carried_food': ('食用背包已有食物恢复饥饿值', 'eat carried food', 'hunger<16; edible stock',
@@ -43,6 +43,9 @@ CATALOG = {
                        'walk_path,scan', 'current position near route end'),
     'recover_after_death': ('通过游戏正常重生并重新观察环境', 'normal respawn', 'native player death; registered trial',
                             'trial_respawn', 'alive native state; fresh observation'),
+    'recover_surface_access': ('保留实体台阶并用有限清障恢复向上通道', 'recover upward access',
+                               'pickaxe; grounded; verified step/headroom; no normal exploration route',
+                               'scan,mine_block,walk_path', 'native position height gain; surface remains unverified'),
     'wait': ('等待新证据或补齐原生能力', 'wait', 'no action required',
              'none', 'no gameplay action dispatched'),
 }
@@ -123,6 +126,8 @@ def _cheap_prerequisites(action, state):
         return not pickaxe and (wood >= 4 or planks >= 12)
     if action == 'gather_stone':
         return pickaxe
+    if action == 'recover_surface_access':
+        return pickaxe and state.get('on_ground') is True
     if action == 'craft_stone_tools':
         return pickaxe and inv.get('cobblestone', 0) >= 3
     if action == 'gather_food':

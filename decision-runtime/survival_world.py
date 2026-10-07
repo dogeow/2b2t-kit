@@ -14,6 +14,17 @@ def distance(a,b): return math.dist(a,b)
 def center(p): return [p[0]+.5,p[1],p[2]+.5]
 def cell(p): return tuple(math.floor(v) for v in p)
 
+def support_footprint(feet):
+    """Full-block supports under the normal player's 0.6-wide body.
+
+    Cell-centred waypoints cover one floor cell, while a real position near a
+    block edge can cover two or four. Touching an exact boundary is not overlap.
+    """
+    x,y,z=feet;epsilon=1e-7
+    xs=range(math.floor(x-.3+epsilon),math.floor(x+.3-epsilon)+1)
+    zs=range(math.floor(z-.3+epsilon),math.floor(z+.3-epsilon)+1)
+    return {(bx,math.floor(y)-1,bz) for bx in xs for bz in zs}
+
 class Paths(dict):
     centering=None
 
@@ -68,21 +79,25 @@ class World:
             if p==tuple(target):return True
             if not self.open(p):return False
         return True
-    def approach(self,parent,target,reach=3.6):
-        choices=[p for p in parent if distance([p[0]+.5,p[1]+1.62,p[2]+.5],[v+.5 for v in target])<=reach and self.sight(p,target)]
+    def approach(self,parent,target,reach=3.6,avoid_support=False):
+        choices=[p for p in parent if (not avoid_support or tuple(target) not in support_footprint(center(p)))
+                 and distance([p[0]+.5,p[1]+1.62,p[2]+.5],[v+.5 for v in target])<=reach and self.sight(p,target)]
         return min(choices,key=lambda p:len(self.route(parent,p)),default=None)
     def resource(self,feet,names,excluded=()):
-        parent=self.paths(feet);found=[]
+        parent=self.paths(feet);found=[];current_support=support_footprint(feet)
         candidates=[(p,r) for p,r in self.blocks.items() if self.name(p) in names and p not in excluded]
         candidates.sort(key=lambda pair:distance(feet,center(pair[0])))
         for p,r in candidates[:128]:
             if p in excluded or self.name(p) not in names or r.get('block_entity'):continue
             # Remove the exposed top of a column first, leaving steps rather than an overhang.
             if self.name((p[0],p[1]+1,p[2])) in names:continue
-            if p==tuple([math.floor(feet[0]),math.floor(feet[1])-1,math.floor(feet[2])]):continue
+            if p in current_support:continue
             if any(not self.safe((p[0]+dx,p[1]+dy,p[2]+dz)) for dx,dy,dz in ((1,0,0),(-1,0,0),(0,1,0),(0,-1,0),(0,0,1),(0,0,-1))):continue
-            stance=self.approach(parent,p)
-            if stance is not None:found.append((len(self.route(parent,stance))+distance(feet,center(p))*.1,p,stance))
+            stance=self.approach(parent,p,avoid_support=True)
+            if stance is not None:
+                route=self.route(parent,stance)
+                if any(p in support_footprint(center(step)) for step in route):continue
+                found.append((len(route)+distance(feet,center(p))*.1,p,stance))
         if not found:return None
         _,p,stance=min(found);return p,self.route(parent,stance)
     def camp(self,feet):

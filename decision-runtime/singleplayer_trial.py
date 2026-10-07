@@ -42,6 +42,7 @@ LABELS = {
     'prepare_iron_equipment': '采集露天铁矿、熔炼、合成和穿戴铁装备',
     'explore_nearby': '沿扫描验证的正常步行路线探索附近资源',
     'recover_after_death': '记录已发生死亡后通过原生正常复活继续试验',
+    'recover_surface_access': '保留实体台阶，清理必要净空并正常逐级上升',
     'wait': '当前没有可信宏动作推进目标；等待新证据或缺失能力',
 }
 CRITERIA = {
@@ -52,6 +53,7 @@ CRITERIA = {
     'craft_stone_tools': 'Use carried cobblestone and wood to craft the missing stone tools and furnace now.',
     'gather_food': 'Get food from observed nearby animals and cook it in the available furnace.',
     'eat_carried_food': 'Eat already carried food to restore hunger before another macro.',
+    'recover_surface_access': 'When no normal scanned exploration route exists, keep existing solid steps, clear only verified headroom and climb at most four levels. Verify actual height gain; do not claim the surface has been reached.',
     'gather_shelter_material': 'Collect the missing dirt from observed reachable ground for the verified shelter plan.',
     'build_shelter': 'Use carried building material to construct and verify the observed shelter plan.',
     'prepare_iron_equipment': 'Use the observed iron materials and normal crafting to obtain and equip iron gear.',
@@ -76,6 +78,8 @@ def short_term_goal(state, candidates, pending_log_drops=0):
         if 'gather_starting_wood' in candidates:
             return 'Collect starting logs from the already observed reachable nearby trees and verify the inventory gain. Prioritize gathering this wood over exploration.'
         return 'Find reachable starting wood along a newly scanned safe walking route.'
+    if 'recover_surface_access' in candidates:
+        return 'Restore upward access from the confined mining area using the offered verified intact steps and bounded headroom clearing. Confirm actual height gain before seeking surface resources.'
     goals = (
         ('craft_stone_tools', 'Craft the missing stone pickaxe, stone axe and furnace now from carried materials.'),
         ('gather_stone', 'Collect the needed cobblestone from already observed reachable stone for stone tools and a furnace.'),
@@ -305,6 +309,70 @@ class TrialSkills(Runner):
         self.world = TrialWorld(result['blocks'], lo, hi)
         return self.world
 
+    def go_near(self, target, reach=3.6):
+        """Return to this save's recorded station using fresh, bounded terrain.
+
+        Ordinary resource approaches retain their small local scan. A station
+        can lie outside that scan after mining, so consider two bounded scans
+        containing both endpoints; no remembered route or unscanned air is
+        used as movement evidence.
+        """
+        target = tuple(target)
+        station_name = next((name for name, point in self.stations.items()
+                             if tuple(point) == target), None)
+        world = self.scan()
+        parents = world.paths(self.b.state['pos'])
+        stance = world.approach(parents, target, reach)
+        if station_name is not None and world.known(target) and world.name(target) != station_name:
+            raise Paused('Recorded station changed; preserve its location and carried materials')
+        if stance is None and station_name is not None:
+            start = cell(self.b.read()['pos'])
+            for padding in (4, 8):
+                low = [min(a, b) - padding for a, b in zip(start, target)]
+                high = [max(a, b) + padding for a, b in zip(start, target)]
+                low[1], high[1] = max(-64, low[1]), min(319, high[1])
+                volume = math.prod(b - a + 1 for a, b in zip(low, high))
+                if volume <= 0 or volume > 30_000:
+                    break
+                self.check()
+                before = self.b.read()
+                result = self.b.request('scan', min=low, max=high, details=True)
+                if (result.get('scan_cells_read') != volume or result.get('scan_total_cells') != volume
+                        or result.get('world_session') != before.get('world_session')
+                        or result.get('control_revision') != before.get('control_revision')
+                        or distance(result['pos'], before['pos']) > .3):
+                    raise Paused('Station corridor scan is incomplete or changed; no route is executed')
+                world = TrialWorld(result['blocks'], low, high)
+                self.world = world
+                if world.name(target) != station_name:
+                    raise Paused('Recorded station changed; preserve its location and carried materials')
+                parents = world.paths(self.b.state['pos'], limit=min(10_000, volume))
+                stance = world.approach(parents, target, reach)
+                self.event('station_corridor_observed', station=station_name, target=list(target),
+                           bounds={'min': low, 'max': high}, cells=volume,
+                           reachable=stance is not None)
+                if stance is not None:
+                    break
+        if stance is None:
+            raise Paused('Recorded station has no fresh supported walking route' if station_name
+                         else '当前扫描范围内没有安全可达的操作位置。')
+        route = world.route(parents, stance)
+        if len(route) > 128:
+            raise Paused('Recorded station route exceeds the bounded walking budget')
+        # Runner.walk sends only normal walk_path batches and verifies arrival;
+        # it does not acquire Flight or construct a route from model output.
+        self.walk(route)
+        if station_name is not None:
+            fresh = self.scan()
+            actual = self.b.read()['pos']
+            eye = [actual[0], actual[1] + 1.62, actual[2]]
+            if (fresh.name(target) != station_name
+                    or distance(eye, [v + .5 for v in target]) > reach + .25
+                    or not fresh.sight(cell(actual), target)):
+                raise Paused('Recorded station identity, reach or visibility changed after walking')
+            self.event('station_approach_verified', station=station_name, target=list(target),
+                       position=list(actual), route_steps=len(route), flight_used=False)
+
     def reset_budget(self):
         self.start = time.monotonic()
         self.deadline = self.start + 15 * 60
@@ -495,7 +563,13 @@ class TrialSkills(Runner):
         # A crafting station needs safe reach and footing. It does not need the
         # 5x5 completely empty footprint required for the later shelter.
         if self.camp is not None:
-            return super().station(name)
+            try:
+                return super().station(name)
+            except Paused as error:
+                if str(error) not in {'Recorded station has no fresh supported walking route',
+                                      'Recorded station route exceeds the bounded walking budget'}:
+                    raise
+                return self.local_station_fallback(name)
         if self.station_anchor is None:
             self.observe()
         if self.station_anchor is None:
@@ -503,9 +577,70 @@ class TrialSkills(Runner):
         previous = self.camp
         self.camp = list(self.station_anchor)
         try:
-            return super().station(name)
+            try:
+                return super().station(name)
+            except Paused as error:
+                if str(error) not in {'Recorded station has no fresh supported walking route',
+                                      'Recorded station route exceeds the bounded walking budget'}:
+                    raise
+                return self.local_station_fallback(name)
         finally:
             self.camp = previous
+
+    def local_station_fallback(self, name):
+        """Craft a local table only after the recorded one has no safe route.
+
+        Keep the old table as an owned, protected block. This uses a 2x2
+        inventory recipe (which never calls station), then normal supported
+        placement and an exact post-placement station verification.
+        """
+        if (name != 'crafting_table' or name not in self.stations or self.b.halted
+                or self.b.pending_mutations):
+            raise Paused('Recorded station is unreachable; no supported local station fallback')
+        state = self.b.read()
+        inv = inventory(state)
+        if (not inv.get(name) and not any(n.endswith('_planks') and count >= 4 for n, count in inv.items())
+                and not any(inv.get(log, 0) for log in LOGS)):
+            raise Paused('Recorded table retained; insufficient carried material for a local crafting table')
+        world = self.scan()
+        parents = world.paths(self.b.state['pos'])
+        protected = {tuple(point) for point in self.stations.values()}
+        protected.update(tuple(map(int, key.split(','))) for key in self.owned
+                         if len(key.split(',')) == 3 and all(v.lstrip('-').isdigit() for v in key.split(',')))
+        actual = self.b.read()['pos']
+        spots = []
+        for point in parents:
+            route = world.route(parents, point)
+            x, y, z = point
+            body_overlap = (x < actual[0] + .31 and x + 1 > actual[0] - .31
+                            and z < actual[2] + .31 and z + 1 > actual[2] - .31
+                            and y < actual[1] + 1.8 and y + 1 > actual[1])
+            if (point in protected or body_overlap or world.name(point) != 'air'
+                    or not world.full((x, y - 1, z)) or world.row((x, y - 1, z)).get('block_entity')
+                    or len(route) > 8 or distance(center(point), actual) > 2.5):
+                continue
+            spots.append((len(route), distance(center(point), actual), point))
+        if not spots:
+            raise Paused('Recorded table retained; no fresh safe local placement position')
+        target = min(spots)[2]
+        previous = list(self.stations[name])
+        if not inv.get(name):
+            plank = self.planks(4)
+            self.craft(name, {(0, 0): plank, (0, 1): plank,
+                              (1, 0): plank, (1, 1): plank}, width=2)
+        self.place(name, target)
+        fresh = self.scan()
+        if fresh.name(target) != name:
+            raise Paused('Local crafting table placement is unconfirmed; old station retained')
+        self.stations[name] = list(target)
+        self.save('running')
+        self.event('local_station_placed', station=name, previous=previous, target=list(target),
+                   previous_preserved=self.owned.get(','.join(map(str, previous))) == name,
+                   source='carried_material_normal_inventory_craft_and_supported_placement')
+        self.go_near(target)
+        self.interact(target)
+        if self.b.state['menu']['type'] != 'CraftingMenu':
+            raise Paused('Local crafting table did not open its verified menu')
 
     def craft(self, output, cells, width=3, produces=1):
         """Use the existing SDK's acknowledged clicks, never the stalled macro."""
@@ -713,6 +848,10 @@ class TrialSkills(Runner):
         self.explore_target = self.exploration(world)
         if self.explore_target and len(self.explored | self.tried_grids) < 64:
             candidates['explore_nearby'] = LABELS['explore_nearby']
+        elif not self.explore_target and (has('stone_pickaxe') or has('iron_pickaxe')):
+            from trial_surface_recovery import plan_upward, protected_cells
+            if plan_upward(world, state, protected_cells(self)) is not None:
+                candidates['recover_surface_access'] = LABELS['recover_surface_access']
         return candidates
 
     def execute(self, choice):
@@ -738,6 +877,13 @@ class TrialSkills(Runner):
             self.tool('stone_axe', 'cobblestone')
             if not self.count('furnace') and 'furnace' not in self.stations:
                 self.craft('furnace', {(r, c): 'cobblestone' for r in range(3) for c in range(3) if (r, c) != (1, 1)})
+        elif choice == 'recover_surface_access':
+            from trial_surface_recovery import recover_upward
+            self.equip_tool('stone')
+            result = recover_upward(self)
+            self.event('surface_recovery_batch', **result)
+            if result['phase'] != 'progress' or result['actual_rise'] < .75:
+                raise Paused(result['reason'])
         elif choice == 'gather_food':
             self.food()
             self.eat_if_needed()
@@ -918,7 +1064,7 @@ class TrialWorker:
                       events=self.event, reader=self.reader, sleeper=self.sleeper)
         self.skills = TrialSkills(self.bridge, self.output / 'bootstrap')
         if old:
-            for name in ('camp', 'stations', 'owned', 'camp_completed', 'explored', 'station_anchor',
+            for name in ('camp', 'stations', 'owned', 'excluded', 'camp_completed', 'explored', 'station_anchor',
                          'tried_grids', 'rejected_routes', 'log_drops'):
                 setattr(self.skills, name, getattr(old, name))
         else:
@@ -1254,6 +1400,10 @@ class TrialWorker:
             self.publish('replanning', '原生已停止拒绝的步行路线；重新扫描并选择其他目标', after)
         except (Paused, OSError, ValueError, DecisionError) as error:
             self.failures[action] = self.failures.get(action, 0) + 1
+            self.event('macro_failure', action=action, error_type=type(error).__name__,
+                       reason=str(error)[:512],
+                       native_dispatch_seen=len(self.bridge.receipts) > receipt_start,
+                       native_unresolved=bool(self.bridge.pending_mutations))
             after = self.reader(self.automation)
             receipt = self.bridge.last_receipt if len(self.bridge.receipts) > receipt_start else None
             self.attempt_record(action, before, after, receipt)
@@ -1276,6 +1426,15 @@ class TrialWorker:
                 except TrialDeath:
                     self.publish('death_wait', '已死亡，等待正常复活检查')
                 except (Paused, OSError, ValueError, DecisionError) as error:
+                    signature = (type(error).__name__, str(error), self.command,
+                                 bool(self.bridge and self.bridge.halted))
+                    if signature != getattr(self, 'last_wait_signature', None):
+                        self.event('worker_wait', error_type=type(error).__name__, reason=str(error)[:512],
+                                   bridge_halted=signature[-1],
+                                   active_request=getattr(self.bridge, 'active', None),
+                                   expected_last_request=getattr(self.bridge, 'last', None),
+                                   expected_revision=getattr(self.bridge, 'revision', None))
+                        self.last_wait_signature = signature
                     self.publish('cancelled' if self.command == 'cancel' else 'paused', str(error))
                     # Service warming is a passive wait. A revoked native
                     # revision/manual takeover never autonomously rebinds.

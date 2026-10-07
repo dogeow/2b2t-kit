@@ -36,7 +36,7 @@ def setup(root):
     source.mkdir()
     for file in ('material_jobs_cli.py', 'material_jobs_backend.py', 'singleplayer_trial.py',
                  'singleplayer_trial_bridge.py', 'singleplayer_experience.py', 'singleplayer_trial_cli.py',
-                 'singleplayer_trial_hot_update.py'):
+                 'singleplayer_trial_hot_update.py', 'trial_surface_recovery.py'):
         (source / file).write_text('VALUE = "new verified worker"\n')
     (source / 'singleplayer_trial_capabilities.py').write_text('VALUE = "only registered macros"\n')
     bundle = root / 'worker.zip'
@@ -73,6 +73,16 @@ def mining_reply(reg, **changes):
 
 
 class HotUpdateTests(unittest.TestCase):
+    def test_missing_recovery_module_is_rejected_before_pause(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);game,reg,state,bundle,commands,native=setup(root)
+            (root/'source/trial_surface_recovery.py').unlink()
+            build(root/'source',bundle)
+            with self.assertRaisesRegex(RuntimeError,'lifecycle modules'):
+                install_and_restart(game,bundle,reader=lambda _:dict(state),native=native,
+                                    import_checker=lambda *args:None,worker_checker=lambda:False)
+            self.assertEqual([],commands)
+
     def test_missing_dynamic_checkpoint_dependency_is_rejected_before_pause(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);game,reg,state,bundle,commands,native=setup(root)

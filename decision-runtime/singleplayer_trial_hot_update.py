@@ -24,7 +24,8 @@ from survival_world import World, block_id, distance, shelter
 SCHEMA = 1
 REQUIRED = {'singleplayer_trial.py', 'singleplayer_trial_bridge.py',
             'singleplayer_experience.py', 'singleplayer_trial_cli.py',
-            'singleplayer_trial_capabilities.py', 'singleplayer_trial_hot_update.py'}
+            'singleplayer_trial_capabilities.py', 'singleplayer_trial_hot_update.py',
+            'trial_surface_recovery.py'}
 
 
 def atomic_json(path, value):

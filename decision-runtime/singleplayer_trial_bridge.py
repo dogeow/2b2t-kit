@@ -83,6 +83,24 @@ def walking_signature(op, arguments):
     return op, tuple(tuple(point) for point in points)
 
 
+def complete_scan(result, arguments, expected_revision):
+    """Only a complete same-revision volume can make omitted cells mean air."""
+    low, high = arguments.get('min'), arguments.get('max')
+    if (not isinstance(low, (list, tuple)) or not isinstance(high, (list, tuple))
+            or len(low) != 3 or len(high) != 3
+            or any(type(value) is not int for value in (*low, *high))
+            or any(start > end for start, end in zip(low, high))):
+        return False
+    volume = math.prod(end - start + 1 for start, end in zip(low, high))
+    revision = result.get('control_revision')
+    return (result.get('phase') == 'done' and isinstance(result.get('blocks'), list)
+            and type(revision) is int and revision == expected_revision
+            and all(type(result.get(key)) is int and result[key] == volume
+                    for key in ('scan_cells_read', 'scan_total_cells'))
+            and all(type(result.get(key)) is int and result[key] == revision
+                    for key in ('scan_start_revision', 'scan_end_revision')))
+
+
 def canonical_save(value):
     if not isinstance(value, str) or not value or not Path(value).is_absolute():
         raise Paused('Trial requires an absolute registered save identity')
@@ -169,15 +187,23 @@ class TrialBridge:
         self.rejected_paths = {}
         self.pending_mutations = {}
 
-    def observe(self):
-        deadline = time.monotonic() + 6
+    def observe(self, deadline=None):
+        deadline = time.monotonic() + 6 if deadline is None else deadline
         while True:
-            state = self.reader(self.root)
-            if state.get('time', 0) >= self.minimum_time:
+            try:
+                state = self.reader(self.root)
+            except DecisionError as error:
+                # A slow native scan/status writer may temporarily exceed the
+                # ordinary status age. Wait for this same request, never send a
+                # second request or reinterpret other observation failures.
+                if str(error) != 'Game observation is stale':
+                    raise
+                state = None
+            if state is not None and state.get('time', 0) >= self.minimum_time:
                 return state
             self.check_control()
             if time.monotonic() >= deadline:
-                raise Paused('Latest native result has not reached the snapshot; do not replay')
+                raise Paused('Fresh native observation was not confirmed before its deadline; do not replay')
             self.sleeper(.05)
 
     def read(self, allow_dead=False):
@@ -234,15 +260,15 @@ class TrialBridge:
         deadline = time.monotonic() + max(12, min(600, args.get('seconds', 20)) + 15)
         while time.monotonic() < deadline:
             self.check_control()
-            current = self.observe()
+            current = self.observe(deadline=deadline)
             validate_scope(current, self.registry, None if op == 'trial_respawn' else self.session, self.run_id,
                            allow_dead=op in {'trial_respawn', 'trial_stop'})
             self.heartbeat(current)
             path = self.root / ('reply-' + request_id + '.json')
             result = json.loads(path.read_text()) if path.exists() else current
             matched = result.get('id') == request_id and (path.exists() or current.get('last_request') == request_id)
-            # Scan's payload is a real result; its phase is sometimes inherited
-            # from the preceding action. No geometry comes from model text.
+            # Scan status can inherit a preceding action's phase; the exact
+            # payload itself still needs the full native scan contract below.
             terminal = matched and ('blocks' in result if op == 'scan' else result.get('phase') in {'done', 'waiting', 'error', 'stopped'})
             if terminal:
                 validate_scope(result, self.registry, None if op == 'trial_respawn' else self.session, self.run_id,
@@ -262,6 +288,9 @@ class TrialBridge:
                 self.receipts = self.receipts[-128:]
                 self.events('native_result', id=request_id, op=op,
                             phase=result.get('phase'), position=result.get('pos'))
+                if op == 'scan' and not complete_scan(result, args, envelope['expected_revision']):
+                    self.halted = True
+                    raise Paused('Native scan volume or revision is incomplete; no terrain actions permitted')
                 if op != 'scan' and result.get('phase') != 'done':
                     if confirmed_mining_not_sent(op, result, args):
                         self.pending_mutations.pop(request_id, None)

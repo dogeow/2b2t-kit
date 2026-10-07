@@ -11,7 +11,7 @@ import time
 
 from decisions import PRIVATE,DecisionError,Jev,choose
 from survival_bridge import Bridge,Paused,inventory,valid
-from survival_world import World,block_id,cell,center,distance,shelter
+from survival_world import World,block_id,cell,center,distance,shelter,support_footprint
 
 ROOT=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation')
 LOGS={s+'_log' for s in ('oak','birch','spruce','acacia','dark_oak','jungle','mangrove','cherry','pale_oak')}
@@ -40,6 +40,8 @@ class Runner:
             if saved['world_name']!=self.b.world or saved['automation']!=str(self.b.root) or saved.get('world_id')!=self.b.state.get('world_id') or math.hypot(saved['origin'][0]-self.b.origin[0],saved['origin'][2]-self.b.origin[2])>24:raise Paused('续跑记录与当前存档或位置不匹配。')
             self.b.origin=saved['origin']
             self.camp=saved['camp'];self.stations=saved['stations'];self.owned=saved.get('owned',{})
+            self.excluded={tuple(p) for p in saved.get('excluded',[]) if isinstance(p,(list,tuple))
+                           and len(p)==3 and all(type(value) is int for value in p)}
         self.b.events=self.event
     def event(self,kind,**data):
         with (self.output/'events.jsonl').open('a') as stream:stream.write(json.dumps({'time':time.time(),'event':kind,**data},ensure_ascii=False)+'\n')
@@ -47,7 +49,8 @@ class Runner:
         state={'phase':phase,'stage':self.stage,'reason':reason,'world_name':self.b.world,'automation':str(self.b.root),
                'origin':self.b.origin,'world_id':self.b.state.get('world_id'),'camp':self.camp,'stations':self.stations,'owned':self.owned,'model_calls':self.calls,
                'inventory':inventory(self.b.state),'elapsed_seconds':round(time.monotonic()-self.start,1),
-               'target':'iron' if self.iron_target else 'camp','camp_completed':self.camp_completed,'progress':self.progress}
+               'target':'iron' if self.iron_target else 'camp','camp_completed':self.camp_completed,'progress':self.progress,
+               'excluded':[list(p) for p in sorted(self.excluded)]}
         temp=self.output/'status.tmp';temp.write_text(json.dumps(state,ensure_ascii=False,indent=2));temp.replace(self.output/'status.json')
     def check(self):
         if time.monotonic()>self.deadline:raise Paused('本轮时间预算用完，已保存进度。')
@@ -77,16 +80,23 @@ class Runner:
         self.progress=progress;self.event('progress',**progress);self.save('running')
         if done==total or done%5==0:print(f'{item}：{done}/{total}',flush=True)
     def walk(self,path):
+        # Keep only supports of this same-world character's observed/confirmed
+        # walk, not every possible cell in the scanned path graph.
+        self.excluded.update(support_footprint(self.b.read()['pos']))
         if path and self.b.state.get('bridge_version',0)>=3:
             for offset in range(0,len(path),24):
                 batch=path[offset:offset+24];self.check()
                 result=self.b.request('walk_path',path=[center(p) for p in batch],arrival=.18,seconds=max(10,len(batch)*3),restore_flight=False)
                 if distance(result['pos'],center(batch[-1]))>.7:raise Paused('Kit 路径技能没有到达已检查的终点。')
+                for point in batch:self.excluded.update(support_footprint(center(point)))
+                self.excluded.update(support_footprint(result['pos']))
             return
         for p in path:
             self.check()
             result=self.b.request('walk',target=center(p),arrival=.23,seconds=5,restore_flight=False)
             if distance(result['pos'],center(p))>.7:raise Paused('没有到达已检查的站位。')
+            self.excluded.update(support_footprint(center(p)))
+            self.excluded.update(support_footprint(result['pos']))
     def go_near(self,target,reach=3.6):
         w=self.scan();parents=w.paths(self.b.state['pos']);stance=w.approach(parents,target,reach)
         if stance is None:raise Paused('当前扫描范围内没有安全可达的操作位置。')
@@ -125,6 +135,15 @@ class Runner:
             target,path=found;before=amount();self.walk(path);w=self.scan();row=w.row(target)
             if not row:continue
             self.equip_tool(w.name(target));w=self.scan()
+            # Selection happened before walking. Recheck after arrival and tool
+            # selection, since the new stance can put this target underfoot.
+            fresh=self.b.read()
+            current_support=support_footprint(fresh['pos'])
+            self.excluded.update(current_support)
+            if target in current_support or target in self.excluded:
+                self.event('skip_support_target',target=target,position=fresh['pos'])
+                continue
+            if not w.row(target):continue
             try:self.b.request('mine_block',pos=list(target),expected_state=w.row(target)['state'],seconds=18)
             except Paused as error:
                 if str(error) not in ('mining target is occluded','Mining target out of reach','mining target moved out of reach'):raise
