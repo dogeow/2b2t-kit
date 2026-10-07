@@ -248,11 +248,23 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
     session = first['world_session']
     def safe(state, *, old_run=True, released=False):
         validate_scope(state, registry, session, run if old_run else None)
+        keys = state.get('movement_keys', {})
+        # In this exact host the recovery window returns recovering &&
+        # !actualStandaloneGuardBusy, then forces guard_busy. Only source
+        # replacement may treat that paired state as idle; no guard/player
+        # field is cleared and the restarted worker still honours the hold.
+        recovery_only = (state.get('kit_version') == '2026.10.7.5'
+            and state.get('guard_busy') is True and state.get('health_recovery_hold') is True
+            and state.get('guard_armed') is True and state.get('guard_pve_only') is True
+            and state.get('phase') != 'running'
+            and {'forward','back','jump','sneak'}.issubset(keys)
+            and all(value is False for value in keys.values()))
         if (state.get('health', 0) <= 0 or state.get('food', 0) < 8
                 or state.get('safety_hold', {}).get('active') is True
                 or state.get('under_water') is True or state.get('screen')
-                or any(state.get(k) for k in ('printing', 'chopping', 'navigating', 'borer_active', 'guard_busy'))):
-            raise RuntimeError('Trial hot update requires healthy idle control; no health lock is changed')
+                or any(state.get(k) for k in ('printing', 'chopping', 'navigating', 'borer_active'))
+                or state.get('guard_busy') and not recovery_only):
+            raise RuntimeError('Trial hot update requires alive idle control; no health lock is changed')
         if released:
             keys = state.get('movement_keys', {})
             if (state.get('phase') == 'running' or not {'forward', 'back', 'jump', 'sneak'}.issubset(keys)

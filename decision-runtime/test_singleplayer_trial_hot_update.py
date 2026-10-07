@@ -73,6 +73,34 @@ def mining_reply(reg, **changes):
 
 
 class HotUpdateTests(unittest.TestCase):
+    def test_known_host_recovery_only_hold_allows_source_swap_without_clearing_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            game,reg,state,bundle,commands,native=setup(Path(temp))
+            state.update(kit_version='2026.10.7.5',health=17.7,food=17,
+                         guard_busy=True,health_recovery_hold=True,guard_armed=True,guard_pve_only=True)
+            proof=install_and_restart(game,bundle,reader=lambda _:dict(state),native=native,
+                                      import_checker=Mock(),worker_checker=lambda:False)
+            self.assertEqual(['pause','cancel','start'],commands)
+            self.assertTrue(state['health_recovery_hold'])
+            self.assertTrue(state['guard_busy'])
+            self.assertEqual(17.7,state['health'])
+            self.assertFalse(proof['minecraft_restarted'])
+
+    def test_real_or_unproven_guard_activity_still_prevents_source_swap(self):
+        for changes in ({'health_recovery_hold':False},{'guard_pve_only':False},
+                        {'kit_version':'unknown'},{'screen':'InventoryScreen'},
+                        {'under_water':True},{'safety_hold':{'active':True}},
+                        {'movement_keys':{'forward':True,'back':False,'jump':False,'sneak':False}}):
+            with self.subTest(changes=changes),tempfile.TemporaryDirectory() as temp:
+                game,reg,state,bundle,commands,native=setup(Path(temp))
+                state.update(kit_version='2026.10.7.5',health=17.7,food=17,
+                             guard_busy=True,health_recovery_hold=True,guard_armed=True,guard_pve_only=True)
+                state.update(changes)
+                with self.assertRaises(RuntimeError):
+                    install_and_restart(game,bundle,reader=lambda _:dict(state),native=native,
+                                        import_checker=Mock(),worker_checker=lambda:False)
+                self.assertEqual([],commands)
+
     def test_missing_recovery_module_is_rejected_before_pause(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);game,reg,state,bundle,commands,native=setup(root)
