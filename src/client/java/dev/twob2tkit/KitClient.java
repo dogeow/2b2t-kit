@@ -117,6 +117,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 帧尾：热键、监视器、围箱与观察类逻辑。 */
 	private void onEndTick(Minecraft client) {
+		dev.twob2tkit.trial.SingleplayerTrialRuntime.tick(client);
 		dev.twob2tkit.automation.AutomationBridge.tick(client);
 		dev.twob2tkit.material.MaterialJobs.tick(client);
         dev.twob2tkit.automation.DecisionImageCapture.tick(client);
@@ -220,6 +221,8 @@ public final class KitClient implements ClientModInitializer {
 
     private static void stopAll(String reason,boolean announce) {
         Minecraft client = Minecraft.getInstance();
+        if(!reason.equals("已死亡")||!dev.twob2tkit.trial.SingleplayerTrialRuntime.expectedDeath(client))
+            dev.twob2tkit.trial.SingleplayerTrialRuntime.stop(client,reason);
         dev.twob2tkit.material.MaterialJobs.stop(reason);
         dev.twob2tkit.material.CaretakerJobs.stopImmediately(reason);
         dev.twob2tkit.combat.EmergencyExit.cancel(client);
@@ -273,6 +276,7 @@ public final class KitClient implements ClientModInitializer {
 		if (instance == null || instance.frozeForDeath) return;
 		instance.frozeForDeath = true;
 		emergencyStop("已死亡");
+		if(dev.twob2tkit.trial.SingleplayerTrialRuntime.expectedDeath(client))return;
 		if (client.player != null) {
 			client.player.sendSystemMessage(Component.literal(
 				"[twob2tkit] 已死亡，所有自动动作已停，停在死亡界面。请自己点重生去捡物。如果没点就活了，关掉 Meteor 的 Auto Respawn，否则掉落物会在出生点刷新"
@@ -876,6 +880,7 @@ public final class KitClient implements ClientModInitializer {
 	/** 由 Minecraft.tick HEAD mixin 调用：在玩家采样按键之前写入导航输入。 */
 	public static void tickNavigation(Minecraft client) {
         if (instance == null || instance.controller == null) return;
+        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.expectedDeath(client)){freezeForDeath(client);return;}
         dev.twob2tkit.automation.AutomationBridge.preemptIdleForManual(client);
         if(instance.handleHeldKeys(client))return;
         if(dev.twob2tkit.combat.EmergencyExit.tick(client))return;

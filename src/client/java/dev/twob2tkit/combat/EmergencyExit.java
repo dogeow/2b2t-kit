@@ -29,6 +29,7 @@ public final class EmergencyExit {
     private static SafetyHoldStore store(Minecraft c){if(cachedStore==null)cachedStore=new SafetyHoldStore(c.gameDirectory.toPath().resolve("config/twob2tkit/automation/safety-hold.json"));return cachedStore;}
     private static boolean nativeHeld(Minecraft c){return memoryHold||store(c).active();}
     public static boolean held(Minecraft c){
+        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))return false;
         return nativeHeld(c)||MaterialHealthHoldPolicy.active(
             c.gameDirectory.toPath().resolve("config/twob2tkit/automation/material-health-hold.json"),store(c).read());
     }
@@ -77,10 +78,12 @@ public final class EmergencyExit {
         }catch(Exception e){finish(c,"飞行不可用");}
     }
     public static void observeHealth(Minecraft c){
+        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))return;
         if(!nativeHeld(c)&&!escaping&&c.player!=null&&c.level!=null&&c.player.getHealth()<14
             &&(AutomationBridge.guardArmed()||KitClient.anyAfkAuto()))begin(c,"低血量紧急撤离");
     }
     public static boolean tick(Minecraft c){
+        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))return false;
         if(held(c))MeteorModules.disable(AUTO_RECONNECT);
         if(!escaping){
             // A script hold stops work/reconnect, but never suppresses the native low-health escape.

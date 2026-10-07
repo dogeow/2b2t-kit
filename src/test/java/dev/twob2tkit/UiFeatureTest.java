@@ -6,7 +6,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class UiFeatureTest {
     @Test void oneCatalogContainsEveryPlannedFeatureAndSevenCategories() {
-        assertEquals(7, UiFeature.Category.values().length); assertEquals(37, UiFeature.values().length);
+        assertEquals(7, UiFeature.Category.values().length); assertEquals(38, UiFeature.values().length);
+        assertNotNull(UiFeature.find("SINGLEPLAYER_TRIAL"));
         for (String id : List.of("AREA", "ORE", "GRAVEL", "FORWARD", "DOWN", "ROUTE", "BORER_SAFETY", "CRUISE", "CRUISE_OPTIONS", "PLACES", "SCENERY", "STRUCTURES", "STRUCTURE_MARKS", "DEATH", "CHOPPER", "PLANTER", "FEEDER", "FISHER", "CONCRETE", "CARETAKER", "MATERIALS", "SKILLS", "BUILDER", "VILLAGER", "BRAWLER", "STORAGE", "CHECKLIST", "RECIPES", "GUARD", "SURROUND", "SURVIVAL", "HEALING", "TRUSTED", "SETTINGS", "LOCAL_DECISION", "KEYBINDS", "DIAGNOSTICS"))
             assertNotNull(UiFeature.find(id), id);
     }
