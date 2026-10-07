@@ -37,10 +37,15 @@ class InventorySession:
         still never replaying the already dispatched click.
         """
         self._bind(menu_id)
+        tracked = getattr(self.client, 'sdk_inventory_confirmation', False) is True
+        if tracked:
+            confirmations = max(2, confirmations)
+            fresh = True
         deadline = time.monotonic() + 6
         seen = 0
         first = True
         last_observed_time = state.get('time')
+        witnesses = []
         poll_interval = interval if isinstance(last_observed_time, (int, float)) else 0
         while True:
             menu = state['menu']
@@ -52,10 +57,15 @@ class InventorySession:
                               or not isinstance(observed_time, (int, float))
                               or observed_time > last_observed_time))
             if time_advanced:
-                seen = seen + 1 if predicate(menu) else 0
+                matched = predicate(menu)
+                seen = seen + 1 if matched else 0
+                if tracked:
+                    witnesses = (witnesses + [copy.deepcopy(state)])[-2:] if matched else []
                 if isinstance(observed_time, (int, float)):
                     last_observed_time = observed_time
                 if seen >= confirmations:
+                    if tracked:
+                        self.client.commit_inventory_click(stage, witnesses, predicate)
                     return state
             if time.monotonic() >= deadline:
                 raise RuntimeError(f'Inventory acknowledgement missing at {stage}; no action replay')

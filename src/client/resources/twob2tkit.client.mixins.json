@@ -29,6 +29,11 @@
     "BucketInventoryUpdatesMixin",
     "PrinterProposalMixin",
     "InventoryProfilesCraftingGuardMixin",
+    "InventoryMenuDiagnosticsAccess",
+    "InventoryServerClickObservationMixin",
+    "InventoryConnectionDiagnosticsAccess",
+    "InventoryClientClickObservationMixin",
+    "InventoryEncodedClickObservationMixin",
     "KeyboardHandlerMixin",
     "PrinterCandidateMixin",
     "PrinterToolPreparationMixin"

@@ -26,6 +26,14 @@ public final class AutomationBridge {
     private static final Gson JSON=new GsonBuilder().disableHtmlEscaping().create();
     private static String lastId="", statusId="", phase="idle", detail="", op="";
     private static JsonObject active;
+    private static InventoryDiagnostics.Click inventoryClick;
+    private static JsonObject lastInventoryClick;
+    private static String inventoryClickCandidate="";
+    private static int inventoryClickMatches;
+    private static long inventoryClickLastServerObservation;
+    private static String inventoryProbePending="";
+    private static JsonObject inventoryProbeRequest;
+    private static Path inventoryProbeReplyPath;
     private static ScanJob pendingScan;
     private static final HeartbeatReadCache heartbeatReads=new HeartbeatReadCache();
     private static final StatusFileWriter statusWriter=new StatusFileWriter();
@@ -1365,6 +1373,7 @@ public final class AutomationBridge {
         if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))survivalArmed=false;
     }
     public static void cancelWork(Minecraft c,String reason){
+        terminalInventoryClick(c,false,"Inventory click interrupted: "+reason);
         if(pendingScan!=null)finishScan(c,"waiting","scan interrupted by control cleanup: "+reason);
         JsonObject cancelledMining=ordinaryMiningRequested(active)?active.deepCopy():null;
         JsonObject cancelledPrinter=active!=null&&op.equals("professional_print")?active.deepCopy():null;
@@ -1464,7 +1473,7 @@ public final class AutomationBridge {
     private static JsonObject deferredInterfaceRequest;
     private static long deferredInterfaceSince;
     private static boolean interfaceReadOrStop(String command){
-        return InterfacePausePolicy.readOrStop(command);
+        return command.equals("inventory_probe")||InterfacePausePolicy.readOrStop(command);
     }
     private static void deferInterfaceRequest(Minecraft c,JsonObject request){
         if(deferredInterfaceRequest!=null&&deferredInterfaceRequest.equals(request))return;
@@ -1682,6 +1691,15 @@ public final class AutomationBridge {
         if(!initialized){initialized=true;try{Path old=root(c).resolve("request.json");if(Files.isRegularFile(old))lastId=str(JsonParser.parseString(Files.readString(old)).getAsJsonObject(),"id");}catch(Exception ignored){}}
         if(guiRequested){guiRequested=false;if(c.player!=null)KitClient.openGui(c);}
         ticks++;
+        InventoryDiagnostics.sync(c);
+        if(inventoryProbeRequest!=null&&System.currentTimeMillis()>inventoryProbeRequest.get("expires_at").getAsLong()){
+            var proof=new JsonObject();proof.addProperty("protocol",InventoryDiagnostics.PROTOCOL);
+            proof.addProperty("request_id",inventoryProbePending);proof.addProperty("world_session",str(inventoryProbeRequest,"world_session"));
+            proof.addProperty("control_revision",inventoryProbeRequest.get("expected_revision").getAsLong());
+            proof.addProperty("scope_current",false);proof.addProperty("server_observed",false);
+            proof.addProperty("audit_scope","current_state_only_not_historical_dispatch");proof.addProperty("error","Inventory probe observation expired");
+            finishInventoryProbe(c,proof);
+        }
         if(active==null&&scaffoldFillTask!=null){scaffoldFillTask.close();lastScaffoldFill=scaffoldFillTask.snapshot();if(!scaffoldFillTask.cleanupPending())scaffoldFillTask=null;}
         if(ticks%5==0)pollMaterialTasks(c);
         validateProjectionBatch(c);
@@ -1701,9 +1719,9 @@ public final class AutomationBridge {
                             lastId=id;
                             try {
                                 if(Files.size(f)>16384&&!str(r,"op").equals("projection_batch_set"))throw new IllegalArgumentException("Request exceeds the bounded action size");
-                                if(nativeMaterialOwner!=null&&!Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","map_audit","gravel_stop").contains(str(r,"op")))
+                                if(nativeMaterialOwner!=null&&!Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","map_audit","gravel_stop","inventory_probe").contains(str(r,"op")))
                                     throw new IllegalStateException("A local material session owns all write actions");
-                                if(active!=null && !str(r,"op").equals("stop") && !Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","map_audit","gravel_stop","material_job_pause","trial_stop").contains(str(r,"op")))throw new IllegalStateException("A job is active; stop it first");
+                                if(active!=null && !str(r,"op").equals("stop") && !Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","map_audit","gravel_stop","material_job_pause","trial_stop","inventory_probe").contains(str(r,"op")))throw new IllegalStateException("A job is active; stop it first");
                                 boolean previousDispatching=dispatching,previousHandoff=materialHandoffDispatch;
                                 try{
                                 dispatching=true;
@@ -1900,7 +1918,9 @@ public final class AutomationBridge {
                         }
                     }else finish(c,arrived?"done":"stopped","navigation ended");
                 }else if(op.equals("print") && !KitClient.machines().isPlacing())finish(c,"stopped","printer stopped");
-                else if(op.equals("settle") && terrainReplaceRequested(active)){
+                else if(op.equals("inventory_click")){
+                    tickInventoryClick(c);
+                }else if(op.equals("settle") && terrainReplaceRequested(active)){
                     if(terrainServerConfirmation.confirmed(session(c),str(active,"id"),
                             str(active,"terrain_replace_stage"),terrainAckTarget(active)))
                         finish(c,"done","matching server block update acknowledged the guarded placement");
@@ -1983,9 +2003,10 @@ public final class AutomationBridge {
                 &&!IdleActivityPolicy.requestOwned(idleOwnerForAction(c),r))
                 throw new IllegalStateException("Idle action lacks a fresh exact owner; no foreign inputs stopped");
             if(!Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit",
-                "projection_model","map_audit","decision_screenshot","stop","material_job_pause","safe_logout").contains(str(r,"op")))
+                "projection_model","map_audit","decision_screenshot","stop","material_job_pause","safe_logout","inventory_probe").contains(str(r,"op")))
                 preemptIdleForPlayer(c,"FORMAL_NATIVE_INPUT");
         String command=str(r,"op");
+        if(command.equals("inventory_probe")){inventoryProbe(c,r);return;}
         if(command.equals("trial_respawn")||command.equals("trial_stop")){
             dev.twob2tkit.trial.SingleplayerTrialRuntime.require(c,r);
             if(!r.has("local_trial")||!r.get("local_trial").getAsBoolean()
@@ -2454,7 +2475,17 @@ public final class AutomationBridge {
             String kind=str(r,"kind");ContainerInput input=switch(kind){case "pickup"->ContainerInput.PICKUP;case "quick_move"->ContainerInput.QUICK_MOVE;case "swap"->ContainerInput.SWAP;default->throw new IllegalArgumentException("Unsupported slot action");};
             int button=r.has("button")?r.get("button").getAsInt():0;
             if(button<0 || button>(kind.equals("swap")?8:1))throw new IllegalArgumentException("Bad slot button");
-            c.gameMode.handleContainerInput(menu.containerId,slot,button,input,c.player);settle(r,8);
+            if(r.has("inventory_confirm")&&r.get("inventory_confirm").getAsBoolean()){
+                if(!r.has("local_trial")||!r.get("local_trial").getAsBoolean())throw new IllegalArgumentException("Confirmed inventory click requires an exact local trial request");
+                inventoryClick=InventoryDiagnostics.begin(c,lastId,session(c),controlRevision,slot,button,input,
+                    root(c).resolve("reply-"+safeId(lastId)+".json"));
+                active=r.deepCopy();op="inventory_click";phase="running";detail="one normal inventory click; awaiting exact server processing";deadline=ticks+120;
+                inventoryClickCandidate="";inventoryClickMatches=0;inventoryClickLastServerObservation=-1;
+                saveInventoryIntent(c,inventoryClick);
+                c.gameMode.handleContainerInput(menu.containerId,slot,button,input,c.player);
+                inventoryClick.predicted(c);
+                saveInventoryIntent(c,inventoryClick);
+            }else{c.gameMode.handleContainerInput(menu.containerId,slot,button,input,c.player);settle(r,8);}
         }else if(command.equals("interact")){
             JsonArray p=r.getAsJsonArray("pos");checkSiteTarget(r,p);BlockPos pos=new BlockPos(p.get(0).getAsInt(),p.get(1).getAsInt(),p.get(2).getAsInt());
             if(!state(c,pos).equals(str(r,"expected_state")))throw new IllegalStateException("Target block changed");
@@ -2665,6 +2696,72 @@ public final class AutomationBridge {
         }finally{idleDispatchRequest=previousIdleRequest;}
     }
     private static void settle(JsonObject r,int wait){active=r.deepCopy();op="settle";phase="running";detail="awaiting server acknowledgement";deadline=ticks+wait;}
+    private static void tickInventoryClick(Minecraft c){
+        var click=inventoryClick;
+        if(click==null){finish(c,"waiting","Inventory click observation disappeared; outcome pending");return;}
+        if(!click.current(c,session(c),controlRevision)){finish(c,"waiting","Inventory click scope changed; outcome pending");return;}
+        if(ticks%2==0)InventoryDiagnostics.refreshServer(click);
+        if(click.ageMillis()>=400){
+            var receipt=click.receipt(c,session(c),controlRevision,true);String candidate=str(receipt,"classification");
+            if(!candidate.equals("unknown")&&receipt.has("server")){
+                long observed=receipt.getAsJsonObject("server").get("observed_at").getAsLong();
+                if(observed>inventoryClickLastServerObservation){
+                    inventoryClickMatches=candidate.equals(inventoryClickCandidate)?inventoryClickMatches+1:1;
+                    inventoryClickCandidate=candidate;inventoryClickLastServerObservation=observed;
+                    if(inventoryClickMatches>=2){finish(c,"done",candidate.equals("confirmed")
+                        ?"one inventory click processed by the integrated server; final stacks agree"
+                        :"one inventory click processed with no item effect; inspect before a new intent");return;}
+                }
+            }else{inventoryClickMatches=0;inventoryClickCandidate="";}
+        }
+        if(ticks>=deadline)finish(c,"waiting","Inventory click final agreement missing; outcome pending, no replay");
+    }
+    private static void saveInventoryIntent(Minecraft c,InventoryDiagnostics.Click click)throws Exception{
+        var evidence=click.receipt(c,session(c),controlRevision,false);
+        evidence.addProperty("evidence_scope","normal_click_intent_and_local_prediction_not_server_confirmation");
+        save(click.replyPath.resolveSibling("inventory-intent-"+safeId(click.requestId)+".json"),evidence);
+    }
+    private static void terminalInventoryClick(Minecraft c,boolean allowFinal,String message){
+        var click=inventoryClick;if(click==null)return;
+        lastInventoryClick=click.receipt(c,session(c),controlRevision,allowFinal);
+        var result=snapshot(c);result.addProperty("id",click.requestId);result.addProperty("op","slot_click");
+        String classification=str(lastInventoryClick,"classification");boolean unknown=classification.equals("unknown");
+        result.addProperty("phase",unknown?"waiting":"done");result.addProperty("detail",message);
+        result.addProperty("outcome_pending",unknown);result.add("inventory_click_receipt",lastInventoryClick.deepCopy());
+        try{save(click.replyPath,result);click.close();inventoryClick=null;}
+        catch(Exception failure){KitClient.LOGGER.error("[Inventory] exact click receipt could not be saved; pending observation retained",failure);}
+    }
+    private static void inventoryProbe(Minecraft c,JsonObject request){
+        if(!inventoryProbePending.isEmpty())throw new IllegalStateException("An inventory probe is already pending");
+        if(c.player==null||c.level==null||c.getSingleplayerServer()==null
+            ||!str(request,"world_session").equals(session(c))||!request.has("expected_revision")
+            ||request.get("expected_revision").getAsLong()!=controlRevision||!request.has("expires_at"))
+            throw new IllegalStateException("Inventory probe world or controller changed");
+        long remaining=request.get("expires_at").getAsLong()-System.currentTimeMillis();
+        String world=c.getSingleplayerServer().getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).toAbsolutePath().normalize().toString();
+        if(remaining<0||remaining>15000||!str(request,"world_id").equals(world)
+            ||!str(request,"server").equals("singleplayer")
+            ||!str(request,"dimension").equals(c.level.dimension().identifier().toString()))
+            throw new IllegalStateException("Inventory probe requires the exact current singleplayer scope");
+        inventoryProbePending=safeId(str(request,"id"));inventoryProbeRequest=request.deepCopy();
+        inventoryProbeReplyPath=root(c).resolve("reply-"+inventoryProbePending+".json");
+        InventoryDiagnostics.probe(c,inventoryProbePending,session(c),controlRevision,()->session(c),()->controlRevision,
+            request.get("expires_at").getAsLong(),proof->{
+                if(inventoryProbePending.equals(str(proof,"request_id")))finishInventoryProbe(c,proof);
+            });
+    }
+    private static void finishInventoryProbe(Minecraft c,JsonObject proof){
+        String id=inventoryProbePending;if(id.isEmpty())return;
+        boolean good=proof.has("server_observed")&&proof.get("server_observed").getAsBoolean();
+        var out=snapshot(c);out.addProperty("id",id);out.addProperty("op","inventory_probe");
+        out.addProperty("phase",good?"done":"waiting");out.addProperty("outcome_pending",!good);
+        out.addProperty("detail",good?"current client and integrated-server inventory observed; historical dispatch unverified":str(proof,"error"));
+        out.add("inventory_probe",proof);
+        try{
+            save(inventoryProbeReplyPath,out);inventoryProbePending="";inventoryProbeRequest=null;inventoryProbeReplyPath=null;
+            if(active==null&&lastId.equals(id)){statusId=id;op="inventory_probe";phase=good?"done":"waiting";detail=str(out,"detail");writeStatus(c);}
+        }catch(Exception failure){KitClient.LOGGER.warn("[Inventory] read-only probe receipt could not be saved",failure);}
+    }
     private static boolean ordinaryMiningRequested(JsonObject request){
         return request!=null&&Set.of("mine_block","recover_shulker").contains(str(request,"op"))
             &&!terrainReplaceRequested(request)&&!dryPavingRequested(request);
@@ -2715,6 +2812,10 @@ public final class AutomationBridge {
         return proof;
     }
     private static void attachTerminalConfirmation(Minecraft c,JsonObject receipt,String id){
+        if(lastInventoryClick!=null&&id.equals(str(lastInventoryClick,"request_id"))){
+            receipt.add("inventory_click_receipt",lastInventoryClick.deepCopy());
+            receipt.addProperty("outcome_pending",str(lastInventoryClick,"classification").equals("unknown"));
+        }
         for(JsonObject proof:new JsonObject[]{lastSingleBlockConfirmation,lastPrinterConfirmation})
             if(proof!=null&&id.equals(str(proof,"id"))&&session(c).equals(str(proof,"world_session")))
                 for(var field:proof.entrySet())receipt.add(field.getKey(),field.getValue().deepCopy());
@@ -2726,6 +2827,10 @@ public final class AutomationBridge {
         }catch(Exception failure){KitClient.LOGGER.error("[Confirmation] terminal evidence could not be saved; no retry allowed",failure);}
     }
     private static void finish(Minecraft c,String p,String text){
+        if(inventoryClick!=null&&active!=null&&inventoryClick.requestId.equals(str(active,"id"))){
+            terminalInventoryClick(c,p.equals("done"),text);
+            if(lastInventoryClick!=null&&str(lastInventoryClick,"classification").equals("unknown"))p="waiting";
+        }
         String completedId=active==null?"":str(active,"id");
         JsonObject ordinaryMining=ordinaryMiningRequested(active)?active.deepCopy():null;
         JsonObject printing=active!=null&&op.equals("professional_print")?active.deepCopy():null;
@@ -3851,6 +3956,12 @@ public final class AutomationBridge {
     }
     private static JsonObject snapshot(Minecraft c){
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
+        j.addProperty("inventory_click_protocol",InventoryDiagnostics.PROTOCOL);j.addProperty("inventory_probe_protocol",InventoryDiagnostics.PROTOCOL);
+        if(inventoryClick!=null&&inventoryClick.requestId.equals(statusId)){
+            j.add("inventory_click_receipt",inventoryClick.receipt(c,session(c),controlRevision,false));j.addProperty("outcome_pending",true);
+        }else if(lastInventoryClick!=null&&statusId.equals(str(lastInventoryClick,"request_id"))){
+            j.add("inventory_click_receipt",lastInventoryClick.deepCopy());j.addProperty("outcome_pending",str(lastInventoryClick,"classification").equals("unknown"));
+        }
         j.addProperty("singleplayer_trial_protocol",1);var trial=dev.twob2tkit.trial.SingleplayerTrialRuntime.snapshot(c);j.add("trial_identity",trial);
         j.addProperty("singleplayer_trial_api_protocol",1);
         j.addProperty("trial_run_id",trial.get("run_id").getAsString());j.addProperty("trial_deaths",trial.get("deaths").getAsInt());

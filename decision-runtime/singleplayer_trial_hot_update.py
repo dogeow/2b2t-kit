@@ -20,18 +20,21 @@ import uuid
 
 from decisions import status
 from singleplayer_trial_cli import call
-from singleplayer_trial_bridge import (MUTATING_OPS, confirmed_mining_not_sent,
+from singleplayer_trial_bridge import (MUTATING_OPS, confirmed_mining_not_sent, confirmed_interaction_not_sent,
                                       canonical_save, validate_registry, validate_scope)
 from survival_world import World, block_id, distance, shelter
 from trial_native_chop import known_chop_receipt
-from trial_selection_receipts import known_select_item_receipt, request_fingerprint
+from trial_selection_receipts import known_select_item_receipt, known_guard_receipt, request_fingerprint
 
 SCHEMA = 1
 REQUIRED = {'singleplayer_trial.py', 'singleplayer_trial_bridge.py',
             'singleplayer_experience.py', 'singleplayer_trial_cli.py',
             'singleplayer_trial_capabilities.py', 'singleplayer_trial_hot_update.py',
             'trial_surface_recovery.py', 'survival_cooking.py', 'trial_safety_preparation.py', 'trial_safety_routing.py',
-            'trial_native_chop.py', 'trial_selection_receipts.py'}
+            'trial_native_chop.py', 'trial_selection_receipts.py', 'trial_station_access.py',
+            'survival_mining_access.py', 'trial_material_rebaseline.py', 'trial_inventory_audit.py'}
+ENVELOPE_KEYS = {'id','op','server','dimension','site','world_session','world_id','trial_id','run_id',
+                 'local_trial','local_survival','background_ok','expected_revision','expires_at'}
 HOLD_METADATA = ('reason', 'time', 'health', 'escape_result', 'rise')
 
 
@@ -183,6 +186,7 @@ def _capture_legacy_isolation(game, registry, state, checkpoint, identity_checke
 def _legacy_frozen_unchanged(isolation):
     if any(_file_digest(Path(path)) != digest for path, digest in isolation['frozen'].items()):
         raise RuntimeError('Preserved legacy evidence changed; do not install or resume')
+    _material_prefix_unchanged(isolation)
 
 
 def _only_isolated_legacy(pending, isolation):
@@ -190,6 +194,128 @@ def _only_isolated_legacy(pending, isolation):
     if (not pending or {_legacy_identity(row) for row in pending} != expected
             or any(row.get('op') == 'guard' for row in pending)):
         raise RuntimeError('Current-run or changed unknown intent cannot use legacy source replacement')
+
+
+def _capture_material_plan(game, registry, state, identity_checker, wall_time):
+    """Freeze an admitted current plan; a new run receives no material grant."""
+    root=game/'config/twob2tkit/singleplayer-trial/worker'
+    worker=_json_record(root/'status.json',262144)
+    bid=worker.get('material_baseline_id')
+    if (worker.get('protocol')!=1 or worker.get('phase')!='paused'
+            or worker.get('run_id')!=registry['run_id'] or worker.get('trial_id')!=registry['trial_id']
+            or not same_save(worker.get('world_id'),registry['world_id'])
+            or worker.get('historical_effects_unresolved') is not True
+            or worker.get('historical_replay_enabled') is not False
+            or worker.get('material_baseline_session')!=state['world_session']
+            or type(worker.get('time')) is not int or not 0<=wall_time()-worker['time']/1000<=5
+            or not identity_checker(worker.get('pid'),game)
+            or not isinstance(bid,str) or not bid.startswith('baseline-')
+            or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in bid)):
+        raise RuntimeError('Exact paused admitted material worker is required')
+    review=root/'material-review-runs'/registry['run_id']
+    folder=review/'replanned-material'/bid
+    if any(path.is_symlink() for path in (folder,*folder.parents)):
+        raise RuntimeError('Admitted material plan must not contain symlinks')
+    baseline=_json_record(folder/'baseline.json',8_000_000)
+    checkpoint=_json_record(folder/'checkpoint.json')
+    if (baseline.get('schema')!=1 or baseline.get('source')!='fresh_kit_physical_baseline'
+            or baseline.get('newbaseline_id')!=bid
+            or any(baseline.get(key)!=value for key,value in {
+                'world_id':registry['world_id'],'trial_id':registry['trial_id'],'run_id':registry['run_id'],
+                'world_session':state['world_session'],'dimension':state['dimension']}.items())
+            or baseline.get('historical_effects_unresolved') is not True
+            or baseline.get('old_action_completed') is not False or baseline.get('old_action_replayed') is not False
+            or checkpoint.get('schema')!=1 or checkpoint.get('material_baseline_id')!=bid
+            or checkpoint.get('source_run_id')!=registry['run_id']
+            or any(checkpoint.get(key)!=value for key,value in {
+                'world_id':registry['world_id'],'trial_id':registry['trial_id'],
+                'world_session':state['world_session'],'game_version':state['game_version']}.items())
+            or checkpoint.get('historical_effects_unresolved') is not True
+            or checkpoint.get('historical_unresolved_native')!=worker.get('legacy_pending')
+            or baseline.get('legacy_pending')!=worker.get('legacy_pending')):
+        raise RuntimeError('Admitted material baseline or latest checkpoint scope differs')
+    checked=baseline.get('review',{});request=checked.get('request',{});report=checked.get('report',{})
+    archived=review/'rebaseline-requests'/(str(baseline.get('request_id'))+'.json')
+    if (_json_record(archived)!=request or request.get('kind')!='fresh_material_replan'
+            or request.get('id')!=baseline.get('request_id')
+            or any(request.get(key)!=baseline.get(key) for key in ('world_id','trial_id','run_id','world_session','dimension'))
+            or type(checked.get('verified_at')) is not int
+            or not request.get('created_at',0)<=checked['verified_at']<=request.get('expires_at',0)
+            or report.get('decision')!='fresh_replan_allowed' or report.get('historical_effects_unresolved') is not True):
+        raise RuntimeError('Admitted plan has no exact archived operator review')
+    frozen=request.get('frozen_legacy',{})
+    if not isinstance(frozen,dict) or not frozen:
+        raise RuntimeError('Material review has no immutable historical evidence')
+    for name,digest in frozen.items():
+        if _file_digest(Path(name))!=digest:
+            raise RuntimeError('Historical material evidence changed after its review')
+    ref=request.get('report',{})
+    report_path=Path(ref.get('path',''))
+    if (_file_digest(report_path)!=ref.get('sha256') or ref.get('sha256')!=checked.get('report_sha256')
+            or _json_record(report_path)!=report):
+        raise RuntimeError('Immutable operator report differs from the admitted baseline')
+    preserved={str(path):_file_digest(path) for path in folder.rglob('*') if path.is_file()}
+    if any(path.is_symlink() for path in folder.rglob('*')):
+        raise RuntimeError('Material plan evidence must not contain symlinks')
+    preserved.update(frozen)
+    preserved.update({str(archived):_file_digest(archived),str(report_path):_file_digest(report_path)})
+    for reference in report.get('artifacts',{}).values():
+        path=Path(reference.get('path',''))
+        if _file_digest(path)!=reference.get('sha256'):
+            raise RuntimeError('Reviewed terminal or saved-world artifact changed')
+        preserved[str(path)]=reference['sha256']
+    journal=review/'journal.jsonl'
+    if worker.get('journal_path')!=str(journal) or journal.is_symlink() or not journal.is_file():
+        raise RuntimeError('Admitted material journal is unavailable')
+    content=journal.read_bytes()
+    events=[json.loads(line) for line in content.splitlines() if line]
+    if (not content.endswith(b'\n') or any(event.get('run_id')!=registry['run_id']
+            or event.get('trial_id')!=registry['trial_id'] for event in events)
+            or not any(event.get('event')=='physical_material_rebaseline_accepted'
+                and event.get('baseline_id')==bid and event.get('request_id')==request['id']
+                and event.get('historical_effects_unresolved') is True
+                and event.get('old_action_replayed') is False for event in events)):
+        raise RuntimeError('Current material journal does not confirm this operator admission')
+    return {'pending':worker['legacy_pending'],'pid':worker['pid'],'frozen':preserved,
+        'material_plan':{'baseline_id':bid,'baseline_path':str(folder/'baseline.json'),
+            'checkpoint_path':str(folder/'checkpoint.json'),'checkpoint_sha256':_file_digest(folder/'checkpoint.json'),
+            'protected_player_work':{key:checkpoint.get(key) for key in ('stations','owned','small_shelter','camp','excluded')},
+            'current_intents':checkpoint.get('unresolved_native',[]),
+            'source_scope':{key:state[key] for key in ('world_id','world_session','dimension','control_revision')},
+            'automatic_material_resume':False},
+        'review_prefix':{'path':str(journal),'size':len(content),'sha256':hashlib.sha256(content).hexdigest(),
+                         'run_id':registry['run_id'],'trial_id':registry['trial_id']}}
+
+
+def _material_prefix_unchanged(isolation):
+    prefix=isolation.get('review_prefix')
+    if not prefix:return
+    path=Path(prefix['path'])
+    if path.is_symlink() or not path.is_file():raise RuntimeError('Material journal changed')
+    content=path.read_bytes()
+    if hashlib.sha256(content[:prefix['size']]).hexdigest()!=prefix['sha256']:
+        raise RuntimeError('Original admitted material journal bytes changed')
+    for line in content[prefix['size']:].splitlines():
+        event=json.loads(line)
+        if (event.get('run_id')!=prefix['run_id'] or event.get('trial_id')!=prefix['trial_id']
+                or not (event.get('event')=='control' and event.get('command') in {'pause','cancel'}
+                        or event.get('event')=='worker_wait')):
+            raise RuntimeError('Material worker dispatched new work during source replacement')
+
+
+def _material_pending_checkpoint(isolation,registry,state):
+    checkpoint=_json_record(Path(isolation['material_plan']['checkpoint_path']))
+    result=json.loads(json.dumps(checkpoint))
+    for row in result.get('unresolved_native',[]):
+        if not isinstance(row,dict):raise RuntimeError('Malformed current material pending record')
+        for key,value in {'world_id':registry['world_id'],'trial_id':registry['trial_id'],
+                          'run_id':registry['run_id'],'dimension':state['dimension']}.items():
+            if key in row and row[key]!=value:
+                raise RuntimeError('Current material checkpoint pending scope differs')
+            row.setdefault(key,value)
+        if row.get('world_session')!=state['world_session']:
+            raise RuntimeError('Current material checkpoint session changed')
+    return result
 
 
 def _hold_metadata(state):
@@ -206,7 +332,7 @@ def _historical_trial_hold(game, state):
     It never clears the durable hold or grants any gameplay operation.
     """
     observed = state.get('safety_hold', {})
-    if (state.get('kit_version') not in {'2026.10.7.6', '2026.10.7.7'}
+    if (state.get('kit_version') not in {'2026.10.7.6', '2026.10.7.7', '2026.10.7.8'}
             or observed.get('active') is not False or observed.get('escaping') is not False
             or not state.get('dimension') or not state.get('player_uuid')):
         return None
@@ -233,7 +359,7 @@ def _historical_trial_hold(game, state):
 
 
 def _historical_hold_unchanged(game, state, captured):
-    if (state.get('kit_version') not in {'2026.10.7.6', '2026.10.7.7'}
+    if (state.get('kit_version') not in {'2026.10.7.6', '2026.10.7.7', '2026.10.7.8'}
             or state.get('dimension') != captured['dimension']
             or state.get('player_uuid') != captured['player_uuid']
             or _hold_metadata(state) != captured['metadata']
@@ -316,6 +442,15 @@ def load_checkpoint(game, registry, state):
 
 
 def _receipt_safe(receipt, request):
+    if (request.get('op') == 'interact' and receipt.get('id') == request.get('id')
+            and receipt.get('world_session') == request.get('world_session')
+            and receipt.get('world_id') == request.get('world_id')
+            and receipt.get('dimension') == request.get('dimension')
+            and receipt.get('trial_identity', {}).get('trial_id') == request.get('trial_id')
+            and receipt.get('trial_identity', {}).get('run_id') == request.get('run_id')
+            and confirmed_interaction_not_sent('interact', receipt, request.get('arguments', {}),
+                                               request.get('expected_revision'))):
+        return True
     if (receipt.get('id') != request.get('id')
             or receipt.get('world_session') != request.get('world_session')
             or receipt.get('op') != request.get('op')):
@@ -342,9 +477,14 @@ def unresolved_mutations(game, registry, state, checkpoint=None):
                 'world_id': request.get('world_id'), 'trial_id': request.get('trial_id'),
                 'run_id': request.get('run_id'), 'dimension': request.get('dimension'),
                 'arguments': {'pos': request.get('pos')}}
-            if request['op'] == 'select_item':
+            if request['op'] in {'select_item', 'guard'}:
                 pending[request['id']].update(request_sha256=request_fingerprint(request),
-                    arguments={'item': request.get('item')})
+                    arguments=({'item': request.get('item')} if request['op'] == 'select_item'
+                               else {'pve_only': request.get('pve_only')}))
+            elif request['op'] == 'interact':
+                pending[request['id']].update(expected_revision=request.get('expected_revision'),
+                    request_sha256=request_fingerprint(request),
+                    arguments={key: value for key, value in request.items() if key not in ENVELOPE_KEYS})
     # Terminal native replies retain trial/run identity. A later read-only scan
     # must not hide an earlier unconfirmed mutation in the same run.
     for path in automation.glob('reply-trial-*.json'):
@@ -373,6 +513,9 @@ def unresolved_mutations(game, registry, state, checkpoint=None):
             continue
         if (request.get('op') == 'select_item' and not reply.exists() and not reply.is_symlink()
                 and known_select_item_receipt(game, registry, request, state) is not None):
+            continue
+        if (request.get('op') == 'guard' and not reply.exists() and not reply.is_symlink()
+                and known_guard_receipt(game, registry, request, state) is not None):
             continue
         if not reply.is_file() or reply.is_symlink() or not _receipt_safe(json.loads(reply.read_text()), request):
             result.append(request)
@@ -459,7 +602,8 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
                         reader=status, native=call, installer=None,
                         import_checker=None, worker_checker=None,
                         sleeper=time.sleep, preserve_legacy_review=False,
-                        worker_identity_checker=None, wall_time=time.time):
+                        worker_identity_checker=None, wall_time=time.time,
+                        preserve_material_plan=False):
     # Release tooling is deliberately excluded from the installed worker. Keep
     # this import lazy so checkpoint restoration needs only bundled modules.
     from material_worker_release import verify, check_imports, install, worker_running
@@ -467,6 +611,8 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
     import_checker = import_checker or check_imports
     worker_checker = worker_checker or worker_running
     worker_identity_checker = worker_identity_checker or _worker_pid_matches
+    if preserve_material_plan and preserve_legacy_review:
+        raise RuntimeError('Choose one exact source replacement mode')
     game, bundle = Path(game).resolve(), Path(bundle).resolve()
     root = game / 'config/twob2tkit/singleplayer-trial'
     automation = game / 'config/twob2tkit/automation'
@@ -536,14 +682,20 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
                 raise RuntimeError('Native owned inputs have not been confirmed released')
         return state
     safe(first)
-    if preserve_legacy_review:
+    if preserve_legacy_review or preserve_material_plan:
         safe(first, released=True)
     checkpoint = load_checkpoint(game, registry, first)
     isolation = (_capture_legacy_isolation(game, registry, first, checkpoint,
                     worker_identity_checker, wall_time) if preserve_legacy_review else None)
-    unresolved = unresolved_mutations(game, registry, first, checkpoint)
+    if preserve_material_plan:
+        isolation=_capture_material_plan(game,registry,first,worker_identity_checker,wall_time)
+    current_checkpoint=(_material_pending_checkpoint(isolation,registry,first)
+                        if preserve_material_plan else checkpoint)
+    unresolved = unresolved_mutations(game, registry, first, current_checkpoint)
     if isolation:
-        _only_isolated_legacy(unresolved, isolation)
+        if preserve_material_plan:
+            if unresolved:raise RuntimeError('Current admitted plan still has unknown native work; preserve it')
+        else:_only_isolated_legacy(unresolved, isolation)
         _legacy_frozen_unchanged(isolation)
         # Historical receipts can be large. Never use the frame captured
         # before that audit to admit the following native lifecycle command.
@@ -563,6 +715,15 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
         proof.update(legacy_material_review_preserved=True, material_macros_enabled=False,
                      legacy_unknown_ids=[row['id'] for row in isolation['pending']],
                      preserved_legacy_sha256=isolation['frozen'], legacy_outcomes_confirmed=False)
+        if preserve_material_plan:
+            proof.update(admitted_material_plan_preserved=True,material_plan_handoff=isolation['material_plan'],
+                         automatic_material_resume=False,current_checkpoint_bytes_preserved=True,
+                         new_scope_operator_review_required=True)
+            mailbox=automation/'request.json'
+            if mailbox.is_file():
+                envelope=_json_record(mailbox,131072)
+                if envelope.get('run_id')==run:
+                    proof['preserved_current_envelope']={'request':envelope,'sha256':_file_digest(mailbox)}
     try:
         paused = native(game, 'pause')
         if paused.get('trial_identity', {}).get('run_id') != run:
@@ -579,12 +740,24 @@ def install_and_restart(game, bundle, *, python=sys.executable, timeout=30,
                 raise RuntimeError('A fresh paused native snapshot was not observed')
             sleeper(.1)
         checkpoint = load_checkpoint(game, registry, current) or checkpoint
-        pending = unresolved_mutations(game, registry, current, checkpoint)
+        paused_checkpoint=(_material_pending_checkpoint(isolation,registry,current)
+                           if preserve_material_plan else checkpoint)
+        pending = unresolved_mutations(game, registry, current, paused_checkpoint)
         if isolation:
-            _only_isolated_legacy(pending, isolation)
+            if preserve_material_plan:
+                if pending:raise RuntimeError('Paused admitted plan has unknown native work; do not replace source')
+            else:_only_isolated_legacy(pending, isolation)
             _legacy_frozen_unchanged(isolation)
-            paused_worker = _review_worker(game, registry, run, isolation['pending'], worker_identity_checker,
-                                            phases={'paused'}, wall_time=wall_time)
+            if preserve_material_plan:
+                paused_worker=_json_record(root/'worker/status.json',262144)
+                if (paused_worker.get('phase')!='paused' or paused_worker.get('run_id')!=run
+                        or paused_worker.get('material_baseline_id')!=isolation['material_plan']['baseline_id']
+                        or not worker_identity_checker(paused_worker.get('pid'),game)
+                        or not 0<=wall_time()-paused_worker.get('time',0)/1000<=5):
+                    raise RuntimeError('Admitted material worker changed before cancellation')
+            else:
+                paused_worker = _review_worker(game, registry, run, isolation['pending'], worker_identity_checker,
+                                                phases={'paused'}, wall_time=wall_time)
             if paused_worker['pid'] != isolation['pid']:
                 raise RuntimeError('Isolated worker PID changed before cancellation')
             current = safe(reader(automation), released=True)
@@ -700,9 +873,12 @@ def main():
     parser.add_argument('--python', type=Path, default=Path(sys.executable))
     parser.add_argument('--preserve-legacy-review', action='store_true',
                         help='Replace source only while preserving exact isolated older unknown material work')
+    parser.add_argument('--preserve-material-plan', action='store_true',
+                        help='Preserve an admitted paused material plan; new run waits for a new scoped operator review')
     args = parser.parse_args()
     print(json.dumps(install_and_restart(args.game, args.bundle, python=args.python,
-        preserve_legacy_review=args.preserve_legacy_review), ensure_ascii=False))
+        preserve_legacy_review=args.preserve_legacy_review,
+        preserve_material_plan=args.preserve_material_plan), ensure_ascii=False))
 
 
 if __name__ == '__main__':

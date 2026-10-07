@@ -20,7 +20,7 @@ import time
 
 from decisions import DecisionError, choose, status, validated_answer
 from ollama_decision import OllamaDecision, checked_image
-from singleplayer_trial_bridge import (Paused, TrialBridge, TrialDeath, TrialMovementBlocked, TrialGuardBusy, validate_registry,
+from singleplayer_trial_bridge import (Paused, TrialBridge, TrialDeath, TrialMovementBlocked, TrialGuardBusy, TrialInteractionRejected, TrialInventoryNoEffect, validate_registry,
                                       validate_scope)
 from survival import Runner, LOGS, FOOD
 from survival_bridge import inventory
@@ -339,6 +339,7 @@ class TrialWorld(World):
 
 class _TrialCraftClient:
     """Adapt SDK inventory transactions to the already bound trial controller."""
+    sdk_inventory_confirmation = True
     def __init__(self, bridge, output):
         self.bridge = bridge
         self.root = bridge.root
@@ -382,6 +383,11 @@ class _TrialCraftClient:
             raise Paused('Trial SDK crafting only permits ordinary scoped slot clicks')
         self.status()
         return self.bridge.request(op, **arguments)
+
+    def commit_inventory_click(self, stage, witnesses, predicate):
+        for witness in witnesses:
+            self.authorize_inventory(witness)
+        return self.bridge.commit_inventory_click(stage, witnesses, predicate)
 
 
 class TrialSkills(Runner):
@@ -706,6 +712,42 @@ class TrialSkills(Runner):
             return
         return super().collect(wanted)
 
+    def interact(self, pos, face=None):
+        # Explicit placement/door callers need their exact support face. Only
+        # opening a verified full-cube station may choose another visible face.
+        if face is not None:
+            return super().interact(pos, face=face)
+        from trial_station_access import STATIONS, station_access_plan, visible_station_faces
+        target = tuple(pos)
+        rejected = set()
+        for unused in range(3):
+            world = self.scan()
+            if world.name(target) not in STATIONS:
+                return super().interact(pos, face='up')
+            state = self.station_inventory_available()
+            expected = world.row(target)['state']
+            plan = station_access_plan(world, state, target, rejected)
+            if plan is None:
+                raise Paused('Recorded station has no fresh visible interaction face or supported stance')
+            if plan['route']:
+                self.walk(plan['route'])
+                world = self.scan()
+                state = self.station_inventory_available()
+            if (world.row(target).get('state') != expected
+                    or plan['face'] not in visible_station_faces(world, state['pos'], target)):
+                raise Paused('Recorded station face or identity changed after approach; no interaction sent')
+            try:
+                return self.b.request('interact', pos=list(target), face=plan['face'],
+                                      expected_state=expected, expected_hand=state['hand']['item'])
+            except TrialInteractionRejected as error:
+                # This is an exact no-send receipt. The old packet is retained;
+                # a different candidate uses a new request after another scan.
+                rejected.add((tuple(round(v, 3) for v in state['pos']), plan['face']))
+                self.event('station_face_refused_before_dispatch', target=list(target),
+                           face=plan['face'], position=list(state['pos']),
+                           request_id=error.receipt['request_id'], no_use_sent=True)
+        raise Paused('Three station faces were refused before dispatch; fresh access remains unverified')
+
     def station(self, name):
         # A crafting station needs safe reach and footing. It does not need the
         # 5x5 completely empty footprint required for the later shelter.
@@ -917,7 +959,7 @@ class TrialSkills(Runner):
                 client.owned_inventory_crafting = None
             if inventory_counts(result)[spec['output']] < before[spec['output']] + produces:
                 raise Paused('Trial craft has no confirmed inventory output')
-        except TrialGuardBusy:
+        except (TrialGuardBusy, TrialInventoryNoEffect):
             raise
         except (RuntimeError, ValueError) as error:
             # A delayed cursor/grid correction never justifies replaying clicks
@@ -1235,6 +1277,7 @@ class TrialWorker:
         self.legacy_scope = None
         self.legacy_evidence = None
         self.legacy_journal = None
+        self.material_rebaseline = None
         self.native_start_run = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='trial-clef')
         self.inference = None
@@ -1397,8 +1440,108 @@ class TrialWorker:
                    native_receipt=self.bridge.last_receipt)
         return state
 
+    def material_replan_enabled(self):
+        return (self.material_rebaseline is not None and self.bridge is not None
+                and not self.bridge.halted and not self.bridge.pending_mutations
+                and self.command in {'start', 'resume'}
+                and self.material_rebaseline['run_id'] == self.run_id
+                and self.material_rebaseline['world_session'] == self.bridge.session)
+
+    def accept_material_rebaseline(self, state):
+        """An operator review admits new physical plans, never an old replay."""
+        path = self.output / 'rebaseline-request.json'
+        if not path.exists():
+            return False
+        if (path.is_symlink() or path.stat().st_size > 131072
+                or any(p.is_symlink() for p in path.parents)):
+            raise Paused('Invalid physical rebaseline request; preserve it')
+        content = path.read_bytes()
+        request = json.loads(content)
+        try:
+            from trial_material_rebaseline import (validate_review, capture_baseline,
+                rejected_review_receipt)
+            if isinstance(request, dict) and rejected_review_receipt(self.output, request, content) is not None:
+                self.publish('waiting_material_review', '本次实物复核已明确拒绝；保留申请，等待新的当前会话申请', state)
+                return False
+            if request.get('inventory_review') is not None:
+                # A new defense-only controller can observe current server
+                # inventory. It cannot use a probe to rebind its own unknown
+                # SDK click or to add a missing historical acknowledgement.
+                if (self.bridge.halted or self.bridge.pending_mutations
+                        or self.material_rebaseline is not None):
+                    raise Paused('Current inventory work must be reviewed before a new probe')
+                self.inventory_review_probe = self.bridge.request('inventory_probe')
+                self.inventory_review_probe_request = json.loads((self.automation / 'request.json').read_text())
+                state = self.bridge.read()
+                probe_folder = self.legacy_journal.parent / 'inventory-audit-probes'
+                probe_folder.mkdir(parents=True, exist_ok=True)
+                atomic_json(probe_folder / (request['id'] + '.json'), {
+                    'request': self.inventory_review_probe_request, 'native': self.inventory_review_probe})
+            reviewed = validate_review(self, request, state)
+            baseline = capture_baseline(self, reviewed)
+            self.install_material_baseline(baseline)
+            if path.read_bytes() != content:
+                self.material_rebaseline = None
+                raise Paused('Physical rebaseline request changed during its own review')
+            # Preserve the exact new review request after its acknowledged
+            # admission, making room for a later separately scoped review.
+            folder = self.legacy_journal.parent / 'rebaseline-requests'
+            folder.mkdir(parents=True, exist_ok=True)
+            archived = folder / (request['id'] + '.json')
+            if archived.exists() or archived.is_symlink():
+                self.material_rebaseline = None
+                raise Paused('Physical review request archive already exists; never overwrite it')
+            path.replace(archived)
+            self.event('physical_material_rebaseline_accepted', baseline_id=baseline['newbaseline_id'],
+                       request_id=request['id'], historical_effects_unresolved=True,
+                       old_request_ids=baseline['forbidden_request_ids'], old_action_replayed=False,
+                       inventory_source='current_complete_native_inventory',
+                       scan_cells=baseline['terrain']['scan_cells_read'])
+            return True
+        except (Paused, OSError, ValueError, RuntimeError) as error:
+            self.material_rebaseline = None
+            if isinstance(request, dict):
+                from trial_material_rebaseline import record_review_refusal
+                record_review_refusal(self, request, content, error)
+            self.event('physical_material_rebaseline_rejected',
+                       request_id=request.get('id') if isinstance(request, dict) else None,
+                       reason=str(error)[:512], historical_effects_unresolved=True)
+            self.publish('waiting_material_review', str(error), state)
+            return False
+
+    def install_material_baseline(self, baseline):
+        """Install only fresh current facts into a new, independently saved plan."""
+        folder = self.legacy_journal.parent / 'replanned-material' / baseline['newbaseline_id']
+        if any(p.is_symlink() for p in (folder, *folder.parents)):
+            raise Paused('Physical baseline directory must not contain symlinks')
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / 'baseline.json'
+        if target.exists() or target.is_symlink():
+            raise Paused('Physical baseline already exists; preserve its record')
+        atomic_json(target, baseline)
+        skills = TrialSkills(self.bridge, folder / 'bootstrap')
+        bounds = baseline['scan_bounds']
+        world = TrialWorld(baseline['terrain']['blocks'], bounds['min'], bounds['max'])
+        skills.world = world
+        # Existing facilities are observed positions, not inherited claims of
+        # ownership. Other old coordinates stay frozen in the historical file.
+        parents = world.paths(baseline['position'])
+        for name in ('crafting_table', 'furnace'):
+            choices = [(distance(center(point), baseline['position']), point)
+                       for point in world.blocks if world.name(point) == name
+                       and world.approach(parents, point) is not None]
+            if choices:
+                skills.stations[name] = list(min(choices)[1])
+        self.skills = skills
+        self.material_rebaseline = baseline
+        self.checkpoint_signature = None
+        self.failures = {}
+        self.failure_contexts = {}
+        self.publish('replanning', '旧控制器已正常结束；保留旧效果未知，按当前实物重新规划', self.bridge.read())
+
     def actionable_candidates(self, candidates, state, world):
-        if self.legacy_pending or self.bridge.halted or self.bridge.pending_mutations:
+        if (self.legacy_pending and not self.material_replan_enabled()
+                or self.bridge.halted or self.bridge.pending_mutations):
             return {'wait': LABELS['wait']}
         context = local_failure_context(self.skills, state, world)
         for key in set(candidates) | {'explore_nearby'}:
@@ -1445,7 +1588,12 @@ class TrialWorker:
                  'dragon_defeated': bool(state and state.get('dragon_defeated') is True)}
         if self.legacy_pending:
             value.update(legacy_material_review=True, legacy_pending=self.legacy_pending,
-                         material_macros_enabled=False, journal_path=str(self.legacy_journal))
+                         material_macros_enabled=self.material_replan_enabled(),
+                         historical_effects_unresolved=True, journal_path=str(self.legacy_journal))
+            if self.material_rebaseline:
+                value.update(material_baseline_id=self.material_rebaseline['newbaseline_id'],
+                             historical_replay_enabled=False,
+                             material_baseline_session=self.material_rebaseline['world_session'])
         if state:
             value.update({key: state.get(key) for key in ('world_session', 'health', 'food', 'pos', 'control_revision')})
         if self.skills:
@@ -1454,14 +1602,21 @@ class TrialWorker:
                          pending_log_drops=sum(row['count'] for row in self.skills.log_drops.values()))
         atomic_json(self.output / 'status.json', value)
         if (state and self.skills and self.registry and not self.restoring_checkpoint
-                and self.legacy_evidence is None):
+                and (self.legacy_evidence is None or self.material_rebaseline is not None)):
             from singleplayer_trial_hot_update import checkpoint_from_skills
             checkpoint = checkpoint_from_skills(self.registry, state, self.skills,
                                                getattr(self.bridge, 'pending_mutations', {}))
+            destination = self.output / 'checkpoint.json'
+            if self.material_rebaseline:
+                checkpoint.update(material_baseline_id=self.material_rebaseline['newbaseline_id'],
+                                  historical_effects_unresolved=True,
+                                  historical_unresolved_native=self.legacy_pending)
+                destination = (self.legacy_journal.parent / 'replanned-material'
+                               / self.material_rebaseline['newbaseline_id'] / 'checkpoint.json')
             signature_value = {key: val for key, val in checkpoint.items() if key != 'observed_at'}
             signature = json.dumps(signature_value, sort_keys=True)
             if signature != self.checkpoint_signature:
-                atomic_json(self.output / 'checkpoint.json', checkpoint)
+                atomic_json(destination, checkpoint)
                 self.checkpoint_signature = signature
 
     def heartbeat(self, state):
@@ -1528,13 +1683,38 @@ class TrialWorker:
             if self.legacy_pending:
                 self.legacy_state(current)
                 self.archive_legacy_mailbox()
-                self.skills = TrialSkills(self.bridge, self.legacy_journal.parent / 'bootstrap')
+                if self.material_rebaseline:
+                    if not self.material_replan_enabled():
+                        raise Paused('Physical baseline scope changed; no old material plan is rebound')
+                    output = (self.legacy_journal.parent / 'replanned-material'
+                              / self.material_rebaseline['newbaseline_id'] / 'bootstrap')
+                    self.skills = TrialSkills(self.bridge, output)
+                    if old:
+                        for name in ('camp', 'stations', 'owned', 'excluded', 'camp_completed', 'explored',
+                                     'station_anchor', 'tried_grids', 'rejected_routes', 'log_drops', 'small_shelter'):
+                            setattr(self.skills, name, getattr(old, name))
+                else:
+                    self.skills = TrialSkills(self.bridge, self.legacy_journal.parent / 'bootstrap')
                 self.arm_legacy_guard(current)
                 return
             from singleplayer_trial_hot_update import load_checkpoint, restore_checkpoint, unresolved_mutations
+            from trial_inventory_audit import historical_pending
+            inventory_pending, inventory_frozen = historical_pending(self.output, self.registry, current)
+            if inventory_pending:
+                if self.legacy_evidence is None:
+                    raise Paused('Historical inventory review requires preserved legacy records')
+                self.legacy_evidence.update(inventory_frozen)
             checkpoint = load_checkpoint(self.game, self.registry, current) if old is None else None
             pending = (unresolved_mutations(self.game, self.registry, current, checkpoint)
                        if checkpoint is not None or self.legacy_evidence is not None else [])
+            by_id = {row['id']: row for row in pending}
+            for row in inventory_pending:
+                previous = by_id.get(row['id'])
+                if previous and any(previous.get(key) != row.get(key) for key in
+                        ('id','op','world_id','trial_id','run_id','world_session','dimension')):
+                    raise Paused('Historical inventory mailbox differs from its exact archive')
+                by_id[row['id']] = row
+            pending = list(by_id.values())
             if checkpoint:
                 original = {row.get('id'): row for row in checkpoint.get('unresolved_native', [])
                             if isinstance(row, dict)}
@@ -1845,13 +2025,29 @@ class TrialWorker:
         if self.legacy_pending:
             # Only this run's acknowledged normal respawn may change the
             # current defense session. Historical intent scopes stay untouched.
+            previous_baseline = self.material_rebaseline
             validate_scope(after, self.registry, self.bridge.session, self.run_id)
             self.legacy_scope.update(world_session=after['world_session'], dimension=after['dimension'])
             self.legacy_state(after)
             self.event('legacy_review_respawn_verified', death_epoch=epoch,
                        native_receipt=self.bridge.last_receipt, pending=self.legacy_pending)
+            self.material_rebaseline = None
             self.skills = TrialSkills(self.bridge, self.legacy_journal.parent / 'bootstrap')
             self.guard_origin = None
+            if previous_baseline:
+                from trial_material_rebaseline import recapture_after_respawn
+                try:
+                    baseline = recapture_after_respawn(self, previous_baseline, self.bridge.last_receipt)
+                    self.install_material_baseline(baseline)
+                    self.event('physical_material_rebaseline_after_respawn',
+                               baseline_id=baseline['newbaseline_id'],
+                               previous_baseline_id=previous_baseline['newbaseline_id'],
+                               native_respawn_receipt=baseline['native_respawn_receipt'],
+                               historical_effects_unresolved=True)
+                    return
+                except (Paused, OSError, ValueError, RuntimeError) as error:
+                    self.event('physical_material_respawn_rebaseline_rejected', reason=str(error)[:512],
+                               historical_effects_unresolved=True)
             self.publish('waiting_material_review', '正常复活已确认；旧材料动作仍待实物核查，防护继续', after)
             return
         self.attempt_record('recover_after_death', before, after, self.bridge.last_receipt)
@@ -1889,10 +2085,13 @@ class TrialWorker:
                     or getattr(self, 'guard_origin', None) is None
                     or distance(state['pos'], self.guard_origin) > 10):
                 state = self.arm_legacy_guard(state)
-            self.publish('waiting_material_review',
-                '旧 run 有 %d 个材料动作缺少完整确认；仅维持本 run PvE 防护与正常复活，等待实物核查%s'
-                % (len(self.legacy_pending), '；防护正在处理战斗' if state.get('guard_busy') else ''), state)
-            return
+            if not self.material_replan_enabled():
+                if not state.get('guard_busy') and self.accept_material_rebaseline(state):
+                    return
+                self.publish('waiting_material_review',
+                    '旧 run 有 %d 个材料动作缺少完整确认；仅维持本 run PvE 防护与正常复活，等待实物核查%s'
+                    % (len(self.legacy_pending), '；防护正在处理战斗' if state.get('guard_busy') else ''), state)
+                return
         if state.get('dragon_defeated') is True:
             self.completion_state = state
             self.publish('complete', '原生确认已击败末影龙', state)

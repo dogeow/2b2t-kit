@@ -4,7 +4,10 @@ The model never writes this mailbox. Unknown native results stop the run; the
 trial's normal death/respawn is a separate, rate-limited native operation.
 """
 import json
+import copy
+import hashlib
 import math
+import os
 import time
 import uuid
 from pathlib import Path
@@ -17,7 +20,7 @@ MENUS = {'', 'InventoryScreen', 'CraftingScreen', 'FurnaceScreen',
 OPS = frozenset({'snapshot', 'scan', 'walk', 'walk_path', 'mine_block',
                  'select_item', 'slot_click', 'close_menu', 'craft_recipe',
                  'interact', 'attack_passive', 'use_item', 'decision_screenshot',
-                 'trial_respawn', 'trial_stop', 'guard', 'scan_trees', 'chop'})
+                 'trial_respawn', 'trial_stop', 'guard', 'scan_trees', 'chop', 'inventory_probe'})
 MUTATING_OPS = frozenset({'mine_block', 'craft_recipe', 'interact', 'slot_click',
                         'select_item', 'use_item', 'attack_passive', 'guard', 'chop'})
 GUARD_BLOCKED_OPS = frozenset({'walk', 'walk_path', 'mine_block', 'select_item',
@@ -84,6 +87,62 @@ class TrialMiningRejected(Paused):
         self.receipt = receipt
 
 
+class TrialInteractionRejected(Paused):
+    """The exact native face check refused before rotation or useItemOn."""
+    def __init__(self, arguments, receipt):
+        super().__init__(receipt['detail'])
+        self.arguments = arguments
+        self.receipt = receipt
+
+
+def confirmed_interaction_not_sent(op, result, arguments, expected_revision):
+    """Recognize only the reviewed .7/.8 ordinary-interaction preflight path.
+
+    AutomationBridge checks BlockFaceTarget.visible before assigning active or
+    queuing PlacementRotation. The receive catch writes the exception message
+    without an operation field. Later rotation/use exceptions have different
+    messages; missing acknowledgements alone are never a no-send proof.
+    Exact request identity/world/run binding remains the caller's obligation.
+    """
+    if (not isinstance(result, dict) or type(expected_revision) is not int
+            or not isinstance(arguments, dict)
+            or set(arguments) - {'pos', 'face', 'expected_state', 'expected_hand', 'seconds'}):
+        return False
+    point = arguments.get('pos')
+    keys = result.get('movement_keys')
+    menu = result.get('menu', {})
+    if (not isinstance(menu, dict) or not isinstance(menu.get('cursor'), dict)
+            or not isinstance(menu.get('slots', []), list)
+            or any(not isinstance(row, dict) for row in menu.get('slots', []))
+            or not isinstance(result.get('hand'), dict)):
+        return False
+    no_sequence = lambda value: value is None or type(value) is int and value == -1
+    return (op == 'interact' and result.get('phase') == 'error'
+            and result.get('detail') == 'Target interaction face is occluded or out of reach'
+            and result.get('op') in (None, 'interact')
+            and isinstance(point, (list, tuple)) and len(point) == 3
+            and all(type(n) is int for n in point)
+            and arguments.get('face') in ('up', 'down', 'north', 'south', 'east', 'west')
+            and isinstance(arguments.get('expected_state'), str) and arguments['expected_state'].startswith('Block{minecraft:')
+            and isinstance(arguments.get('expected_hand'), str) and arguments['expected_hand'].startswith('minecraft:')
+            and result.get('kit_version') in {'2026.10.7.7', '2026.10.7.8'}
+            and result.get('bridge_version') == 4 and result.get('game_version') == '26.1.2'
+            and result.get('server') == 'singleplayer' and result.get('manual_movement') is False
+            and result.get('screen') == '' and result.get('game_paused') is False
+            and type(result.get('control_revision')) is int and result['control_revision'] == expected_revision
+            and result.get('hand', {}).get('item') == arguments['expected_hand']
+            and type(menu.get('id')) is int and menu['id'] == 0 and menu.get('type') == 'InventoryMenu'
+            and type(menu.get('cursor', {}).get('count')) is int and menu['cursor']['count'] == 0
+            and not any(row.get('count', 0) for row in menu.get('slots', [])[1:5])
+            and isinstance(keys, dict) and set(keys) >= {'forward', 'back', 'jump', 'sneak'}
+            and all(value is False for value in keys.values())
+            and all(no_sequence(result.get(key)) for key in ('native_sequence', 'server_ack_sequence'))
+            and all(key not in result or result[key] is False
+                    for key in ('outcome_pending', 'server_confirmed', 'server_update_seen'))
+            and result.get('confirmation_scope') in (None, 'none')
+            and result.get('requested_confirmation_scope') in (None, 'none'))
+
+
 def confirmed_mining_not_sent(op, result, arguments):
     keys = result.get('movement_keys')
     return (op == 'mine_block' and result.get('op') == op
@@ -112,6 +171,134 @@ def confirmed_movement_refusal(op, result):
             and result.get('outcome_pending') is not True
             and isinstance(keys, dict) and set(keys) >= {'forward', 'back', 'jump', 'sneak'}
             and all(value is False for value in keys.values()))
+
+
+class TrialInventoryNoEffect(Paused):
+    """The exact click was processed, with no inventory transition; never NoSend."""
+    def __init__(self, arguments, receipt):
+        super().__init__('Server processed the inventory click without an item transition; reobserve before a new intent')
+        self.arguments, self.receipt = arguments, receipt
+
+
+def inventory_menu_signature(menu):
+    if (not isinstance(menu, dict) or type(menu.get('id')) is not int
+            or menu.get('type') not in {'InventoryMenu', 'CraftingMenu'}
+            or not isinstance(menu.get('cursor'), dict)
+            or not isinstance(menu.get('slots'), list)
+            or len(menu['slots']) < (45 if menu['type'] == 'InventoryMenu' else 46)):
+        raise Paused('Incomplete inventory confirmation menu; preserve the click')
+    def stack(row):
+        if (not isinstance(row, dict) or not isinstance(row.get('item'), str)
+                or not row['item'].startswith('minecraft:') or type(row.get('count')) is not int
+                or row['count'] < 0):
+            raise Paused('Invalid inventory confirmation stack; preserve the click')
+        return row['item'], row['count']
+    slots = []
+    for index, row in enumerate(menu['slots']):
+        if not isinstance(row, dict) or type(row.get('slot')) is not int or row['slot'] != index:
+            raise Paused('Incomplete inventory confirmation slots; preserve the click')
+        slots.append(stack(row))
+    return menu['id'], menu['type'], stack(menu['cursor']), tuple(slots)
+
+
+def native_inventory_click_proof(result, envelope, before):
+    """Validate the new .8 exact server-processed receipt, never timer done."""
+    if not isinstance(result, dict):
+        raise Paused('Server inventory click confirmation is malformed; preserve the click')
+    proof = result.get('inventory_click_receipt', {})
+    if (result.get('kit_version') != '2026.10.7.8'
+            or type(result.get('inventory_click_protocol')) is not int or result['inventory_click_protocol'] != 1
+            or result.get('id') != envelope['id'] or result.get('phase') != 'done'
+            or result.get('outcome_pending') is True or not isinstance(proof, dict)
+            or proof.get('request_id') != envelope['id']
+            or proof.get('world_session') != envelope['world_session']
+            or type(proof.get('protocol')) is not int or proof['protocol'] != 1 or proof.get('scope_current') is not True
+            or proof.get('confirmation_scope') != 'integrated_server_processed_click_and_matching_final_inventory'
+            or type(proof.get('native_sequence')) is not int or proof['native_sequence'] <= 0
+            or proof.get('correlation_ambiguous') is not False
+            or type(proof.get('server_processed_at')) is not int
+            or proof.get('slot') != envelope['slot'] or type(proof.get('slot')) is not int
+            or proof.get('button') != envelope.get('button', 0) or type(proof.get('button')) is not int
+            or proof.get('kind') != envelope['kind']
+            or type(proof.get('control_revision')) is not int or proof['control_revision'] != envelope['expected_revision']
+            or proof.get('server_processed') is not True
+            or proof.get('classification') not in {'confirmed', 'no_effect'}):
+        raise Paused('Server inventory click confirmation is missing or unknown; preserve the click')
+    if (result.get('world_id') != envelope['world_id'] or result.get('world_session') != envelope['world_session']
+            or result.get('dimension') != envelope['dimension'] or result.get('server') != 'singleplayer'
+            or result.get('control_revision') != envelope['expected_revision']
+            or result.get('trial_identity', {}).get('trial_id') != envelope['trial_id']
+            or result.get('trial_identity', {}).get('run_id') != envelope['run_id']):
+        raise Paused('Server inventory confirmation belongs to another native scope; preserve the click')
+    signatures, complete_stacks, predicted_stacks = {}, {}, {}
+    for name in ('before', 'predicted_after', 'server', 'client'):
+        view = proof.get(name)
+        if (not isinstance(view, dict) or type(view.get('state_id')) is not int
+                or type(view.get('quickcraft_status')) is not int
+                or type(view.get('observed_at')) is not int or type(view.get('game_time')) is not int
+                or view.get('world_id') != envelope['world_id']
+                or view.get('dimension') != envelope['dimension']
+                or view.get('player_uuid') != before.get('player_uuid')
+                or not isinstance(view.get('player_uuid'), str) or not view['player_uuid']
+                or not isinstance(view.get('inventory'), list)
+                or len(view['inventory']) < 36
+                or any(not isinstance(row, dict) or 'stack_data' not in row
+                       for row in [view.get('cursor'), *view.get('slots', []), *view['inventory']])):
+            raise Paused('Server inventory click scope or full stacks are incomplete; preserve the click')
+        signatures[name] = inventory_menu_signature(view)
+        complete_stacks[name] = json.dumps({'cursor': view['cursor'], 'slots': view['slots'],
+                                           'inventory': view['inventory']}, sort_keys=True, allow_nan=False)
+        # The recipe output can first be calculated by the server. Its final
+        # client/server values must match, but local prediction of slot 0 is
+        # not a receipt for consuming a source, depositing or moving output.
+        predicted_stacks[name] = json.dumps({'cursor': view['cursor'], 'slots': view['slots'][1:],
+                                            'inventory': view['inventory']}, sort_keys=True, allow_nan=False)
+    if (signatures['before'] != inventory_menu_signature(before['menu'])
+            or signatures['server'] != signatures['client']
+            or complete_stacks['server'] != complete_stacks['client']
+            or proof['classification'] == 'confirmed' and predicted_stacks['server'] != predicted_stacks['predicted_after']
+            or proof['before']['observed_at'] > proof['server']['observed_at']
+            or proof['before']['observed_at'] > proof['client']['observed_at']
+            or proof['before']['observed_at'] > proof['server_processed_at']
+            or proof['server_processed_at'] > proof['server']['observed_at']
+            or proof['server_processed_at'] > proof['client']['observed_at']
+            or proof['classification'] == 'no_effect' and complete_stacks['server'] != complete_stacks['before']
+            or proof['classification'] == 'no_effect' and (proof['server']['quickcraft_status'] != 0
+                                                         or proof['client']['quickcraft_status'] != 0)
+            or proof['classification'] == 'no_effect' and signatures['server'] != signatures['before']
+            or proof['classification'] == 'confirmed' and signatures['server'] == signatures['before']):
+        raise Paused('Server inventory click transition differs from the exact SDK intent; preserve the click')
+    return proof
+
+
+def native_inventory_probe_proof(result, envelope, before):
+    """Current server/client views never supply historical click evidence."""
+    probe = result.get('inventory_probe', {})
+    if (result.get('kit_version') != '2026.10.7.8' or result.get('id') != envelope['id']
+            or result.get('phase') != 'done' or not isinstance(probe, dict)
+            or type(probe.get('protocol')) is not int or probe['protocol'] != 1
+            or probe.get('request_id') != envelope['id']
+            or probe.get('world_session') != envelope['world_session']
+            or type(probe.get('control_revision')) is not int or probe['control_revision'] != envelope['expected_revision']
+            or probe.get('scope_current') is not True or probe.get('server_observed') is not True
+            or probe.get('audit_scope') != 'current_state_only_not_historical_dispatch'):
+        raise Paused('Exact current inventory probe scope was not confirmed; no inventory action permitted')
+    for name in ('server', 'client'):
+        value = probe.get(name)
+        if (not isinstance(value, dict) or value.get('world_id') != envelope['world_id']
+                or value.get('dimension') != envelope['dimension']
+                or value.get('player_uuid') != before.get('player_uuid')
+                or not isinstance(value.get('player_uuid'), str) or not value['player_uuid']
+                or type(value.get('state_id')) is not int or type(value.get('quickcraft_status')) is not int
+                or type(value.get('game_time')) is not int or type(value.get('observed_at')) is not int
+                or value['observed_at'] < before['time']
+                or not 0 <= time.time() - value['observed_at'] / 1000 <= 3
+                or not isinstance(value.get('inventory'), list) or len(value['inventory']) < 36
+                or any(not isinstance(row, dict) or 'stack_data' not in row
+                       for row in [value.get('cursor'), *value.get('slots', []), *value['inventory']])):
+            raise Paused('Current inventory probe contains incomplete or stale server/client views')
+        inventory_menu_signature(value)
+    return probe
 
 
 def walking_signature(op, arguments):
@@ -227,6 +414,125 @@ class TrialBridge:
         self.minimum_time = 0
         self.rejected_paths = {}
         self.pending_mutations = {}
+        self.sdk_inventory_pending = {}
+        self._restore_inventory_intents()
+
+    def _inventory_paths(self, request_id):
+        root = self.root / 'trial-sdk-inventory'
+        return root / 'pending' / (request_id + '.json'), root / 'receipts' / (request_id + '.json')
+
+    def _durable_json(self, path, value):
+        if not path.is_relative_to(self.root):
+            raise Paused('Inventory evidence path is outside the bound controller')
+        parents = []
+        for parent in path.parents:
+            parents.append(parent)
+            if parent == self.root:
+                break
+        if path.is_symlink() or any(parent.is_symlink() for parent in parents):
+            raise Paused('Inventory evidence path is linked; preserve the click')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix('.tmp')
+        if temp.is_symlink():
+            raise Paused('Inventory evidence temporary path is linked; preserve the click')
+        with temp.open('w') as stream:
+            json.dump(value, stream, allow_nan=False, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temp.replace(path)
+
+    def _restore_inventory_intents(self):
+        folder = self.root / 'trial-sdk-inventory' / 'pending'
+        if not folder.exists():
+            return
+        if folder.is_symlink():
+            raise Paused('Inventory pending evidence is linked; no replay')
+        for path in folder.glob('trial-*.json'):
+            if path.is_symlink() or path.stat().st_size > 512_000:
+                raise Paused('Invalid inventory pending evidence; no replay')
+            record = json.loads(path.read_text())
+            envelope = record.get('envelope', {})
+            if envelope.get('world_id') != self.registry['world_id']:
+                continue
+            request_id = envelope.get('id')
+            if (record.get('protocol') != 1 or envelope.get('op') != 'slot_click'
+                    or envelope.get('inventory_confirm') is not True or path.stem != request_id):
+                raise Paused('Malformed same-world SDK inventory intent; no replay')
+            unused, receipt_path = self._inventory_paths(request_id)
+            settled = False
+            if receipt_path.exists():
+                if receipt_path.is_symlink() or receipt_path.stat().st_size > 1_000_000:
+                    raise Paused('Invalid inventory confirmation evidence; no replay')
+                receipt = json.loads(receipt_path.read_text())
+                match = (receipt.get('protocol') == 1 and receipt.get('request_id') == request_id
+                         and receipt.get('intent_sha256') == hashlib.sha256(path.read_bytes()).hexdigest())
+                if receipt.get('receipt_class') == 'native_guard_busy_before_inventory_dispatch':
+                    value = receipt.get('native_result', {})
+                    validate_scope(value, self.registry, envelope['world_session'], envelope['run_id'])
+                    settled = (match and value.get('id') == request_id
+                               and guard_pre_dispatch_refusal('slot_click', value, envelope['expected_revision']))
+                else:
+                    proof = native_inventory_click_proof(receipt.get('native_result', {}), envelope, record['before'])
+                    stamps = receipt.get('witness_times', [])
+                    settled = (match and (proof['classification'] == 'no_effect'
+                                and receipt.get('receipt_class') == 'server_processed_inventory_click_no_effect'
+                                or proof['classification'] == 'confirmed'
+                                and receipt.get('receipt_class') == 'sdk_inventory_click_committed'
+                                and receipt.get('sdk_predicate_confirmed') is True
+                                and isinstance(stamps, list) and len(stamps) == 2
+                                and all(type(stamp) is int for stamp in stamps)
+                                and receipt['native_result']['time'] < stamps[0] < stamps[1]))
+                if not settled:
+                    raise Paused('Inventory confirmation evidence is incomplete; no replay')
+            if not settled:
+                self.pending_mutations[request_id] = {'id': request_id, 'op': 'slot_click',
+                    'world_session': envelope['world_session'], 'arguments': record['arguments'],
+                    'sdk_inventory_pending': True, 'intent_path': str(path)}
+                self.sdk_inventory_pending[request_id] = record
+                self.halted = True
+
+    def commit_inventory_click(self, stage, witnesses, predicate):
+        if not self.sdk_inventory_pending:
+            return None
+        if (self.halted or len(self.sdk_inventory_pending) != 1 or not isinstance(stage, str) or not stage
+                or not callable(predicate) or not isinstance(witnesses, list) or len(witnesses) != 2):
+            raise Paused('SDK inventory commit lacks an exact pending transaction; preserve it')
+        request_id, record = next(iter(self.sdk_inventory_pending.items()))
+        envelope = record['envelope']
+        proof = native_inventory_click_proof(record.get('native_result', {}), envelope, record['before'])
+        if proof['classification'] != 'confirmed':
+            raise Paused('An unchanged or unknown click is not SDK ingredient acknowledgement')
+        times = []
+        expected = inventory_menu_signature(proof['client'])
+        for witness in witnesses:
+            validate_scope(witness, self.registry, self.session, self.run_id)
+            if (witness.get('last_request') != request_id or witness.get('control_revision') != envelope['expected_revision']
+                    or witness.get('dimension') != envelope['dimension']
+                    or type(witness.get('time')) is not int
+                    or witness['time'] <= record['native_result']['time']
+                    or not 0 <= time.time() - witness['time'] / 1000 <= 3
+                    or inventory_menu_signature(witness['menu']) != expected or not predicate(witness['menu'])):
+                raise Paused('SDK inventory predicate or exact fresh witnesses are not confirmed; preserve the click')
+            times.append(witness['time'])
+        if times[0] >= times[1]:
+            raise Paused('SDK inventory requires two time-advanced confirmations; preserve the click')
+        current = self.read()
+        if (type(current.get('time')) is not int or current['time'] < times[-1]
+                or inventory_menu_signature(current['menu']) != expected or not predicate(current['menu'])):
+            raise Paused('SDK inventory changed before commit; preserve the click')
+        pending, destination = self._inventory_paths(request_id)
+        receipt = {'protocol': 1, 'request_id': request_id, 'receipt_class': 'sdk_inventory_click_committed',
+                   'intent_sha256': hashlib.sha256(pending.read_bytes()).hexdigest(),
+                   'native_result': record['native_result'], 'sdk_stage': stage,
+                   'sdk_predicate_confirmed': True, 'witness_times': times,
+                   'confirmation_scope': 'server_processed_inventory_transition_and_two_fresh_sdk_predicates',
+                   'replayed': False}
+        self._durable_json(destination, receipt)
+        self.sdk_inventory_pending.pop(request_id)
+        self.pending_mutations.pop(request_id, None)
+        self.events('sdk_inventory_click_committed', id=request_id, stage=stage, witness_times=times,
+                    receipt_path=str(destination), replayed=False)
+        return receipt
 
     def observe(self, deadline=None):
         deadline = time.monotonic() + 6 if deadline is None else deadline
@@ -264,6 +570,10 @@ class TrialBridge:
     def request(self, op, **args):
         if op not in OPS:
             raise Paused('Trial primitive is not explicitly supported: ' + str(op))
+        if self.sdk_inventory_pending and op != 'trial_stop':
+            raise Paused('SDK inventory click is still pending; observe and commit before another native request')
+        if 'inventory_confirm' in args:
+            raise Paused('SDK inventory confirmation flag is owned by the exact trial bridge')
         chop_origin = args.pop('_chop_origin', None)
         if chop_origin is not None and (op != 'chop' or not isinstance(chop_origin, (list, tuple))
                 or len(chop_origin) != 3 or any(type(n) is not int for n in chop_origin)):
@@ -290,6 +600,14 @@ class TrialBridge:
             if guard_waited:
                 raise TrialGuardBusy(op, args)
             raise Paused('Trial request observation budget expired before dispatch; no action sent')
+        sdk_click = op == 'slot_click' and state.get('menu', {}).get('type') in {'InventoryMenu', 'CraftingMenu'}
+        if sdk_click or op == 'inventory_probe':
+            if (state.get('kit_version') != '2026.10.7.8'
+                    or type(state.get('inventory_click_protocol')) is not int or state['inventory_click_protocol'] != 1):
+                raise Paused('Server-confirmed trial inventory requires Kit .8 protocol 1; no click sent')
+        if sdk_click:
+            inventory_menu_signature(state['menu'])
+            args['inventory_confirm'] = True
         if op == 'chop':
             # Native defense may have changed inventory while this request
             # waited; scope and bounded batch prerequisites are checked again.
@@ -322,6 +640,13 @@ class TrialBridge:
                 raise Paused('Primitive arguments cannot replace trial scope')
         temp = self.root / (request_id + '.tmp')
         temp.write_text(json.dumps(envelope, allow_nan=False))
+        if sdk_click:
+            record = {'protocol': 1, 'request_id': request_id, 'envelope': copy.deepcopy(envelope),
+                      'arguments': copy.deepcopy(args), 'before': copy.deepcopy(state),
+                      'outcome': 'sent_or_unknown_until_native_and_sdk_confirmation'}
+            intent, unused = self._inventory_paths(request_id)
+            self._durable_json(intent, record)
+            self.sdk_inventory_pending[request_id] = record
         self.events('native_request', id=request_id, op=op, arguments=args)
         temp.replace(pending)
         self.active = request_id
@@ -329,6 +654,8 @@ class TrialBridge:
         if op in MUTATING_OPS:
             self.pending_mutations[request_id] = {'id': request_id, 'op': op,
                 'world_session': self.session, 'arguments': args}
+            if sdk_click:
+                self.pending_mutations[request_id].update(sdk_inventory_pending=True, intent_path=str(intent))
             if op == 'chop':
                 self.pending_mutations[request_id].update({key: envelope[key]
                     for key in ('world_id', 'trial_id', 'run_id', 'dimension')})
@@ -384,9 +711,26 @@ class TrialBridge:
                         raise Paused('Native tree survey payload or revision is incomplete; no chopping permitted')
                     self.last_receipt = {**self.last_receipt, 'receipt_class': 'native_tree_survey'}
                     self.receipts[-1] = self.last_receipt
+                if op == 'inventory_probe':
+                    try:
+                        if not path.exists() or current['control_revision'] != envelope['expected_revision']:
+                            raise Paused('Inventory probe lacks a durable exact reply or current native revision')
+                        native_inventory_probe_proof(result, envelope, state)
+                    except Paused:
+                        self.halted = True
+                        raise
+                    self.last_receipt = {**self.last_receipt, 'receipt_class': 'current_inventory_probe_only'}
+                    self.receipts[-1] = self.last_receipt
                 if op not in {'scan', 'scan_trees'} and result.get('phase') != 'done':
                     if (current['control_revision'] == envelope['expected_revision']
                             and guard_pre_dispatch_refusal(op, result, envelope['expected_revision'])):
+                        if sdk_click:
+                            intent, destination = self._inventory_paths(request_id)
+                            self._durable_json(destination, {'protocol': 1, 'request_id': request_id,
+                                'receipt_class': 'native_guard_busy_before_inventory_dispatch',
+                                'intent_sha256': hashlib.sha256(intent.read_bytes()).hexdigest(),
+                                'native_result': result, 'replayed': False})
+                            self.sdk_inventory_pending.pop(request_id, None)
                         self.pending_mutations.pop(request_id, None)
                         self.last_receipt = {**self.last_receipt, 'code': 'guard_pre_dispatch_refusal',
                                              'receipt_class': 'native_guard_busy_before_dispatch'}
@@ -403,6 +747,13 @@ class TrialBridge:
                                              'receipt_class': 'mining_pre_dispatch_refusal'}
                         self.receipts[-1] = self.last_receipt
                         raise TrialMiningRejected(args, self.last_receipt)
+                    if (current['control_revision'] == envelope['expected_revision']
+                            and confirmed_interaction_not_sent(op, result, args, envelope['expected_revision'])):
+                        self.pending_mutations.pop(request_id, None)
+                        self.last_receipt = {**self.last_receipt, 'code': 'pre_dispatch_refusal',
+                                             'receipt_class': 'interaction_pre_dispatch_refusal'}
+                        self.receipts[-1] = self.last_receipt
+                        raise TrialInteractionRejected(args, self.last_receipt)
                     if confirmed_movement_refusal(op, result):
                         self.last_receipt = {**self.last_receipt, 'code': 'path_blocked',
                                              'receipt_class': 'terrain_movement_refusal'}
@@ -418,7 +769,30 @@ class TrialBridge:
                     except (OSError, ValueError, Paused):
                         self.halted = True
                         raise
-                if result.get('phase') == 'done' and result.get('outcome_pending') is not True:
+                if sdk_click:
+                    try:
+                        proof = native_inventory_click_proof(result, envelope, self.sdk_inventory_pending[request_id]['before'])
+                        self.sdk_inventory_pending[request_id]['native_result'] = copy.deepcopy(result)
+                        self._durable_json(self.root / 'trial-sdk-inventory' / 'native-results' / (request_id + '.json'), result)
+                        if proof['classification'] == 'no_effect':
+                            intent, destination = self._inventory_paths(request_id)
+                            receipt = {'protocol': 1, 'request_id': request_id,
+                                'receipt_class': 'server_processed_inventory_click_no_effect',
+                                'intent_sha256': hashlib.sha256(intent.read_bytes()).hexdigest(),
+                                'native_result': result, 'confirmation_scope': 'server_processed_no_inventory_transition',
+                                'action_sent': True, 'sdk_predicate_confirmed': False, 'replayed': False}
+                            self._durable_json(destination, receipt)
+                            self.sdk_inventory_pending.pop(request_id)
+                            self.pending_mutations.pop(request_id, None)
+                            self.events('sdk_inventory_click_no_effect', id=request_id, action_sent=True,
+                                        receipt_path=str(destination), replayed=False)
+                            raise TrialInventoryNoEffect(args, receipt)
+                    except TrialInventoryNoEffect:
+                        raise
+                    except (Paused, OSError, ValueError):
+                        self.halted = True
+                        raise
+                elif result.get('phase') == 'done' and result.get('outcome_pending') is not True:
                     self.pending_mutations.pop(request_id, None)
                 return result
             if current.get('last_request') == request_id:

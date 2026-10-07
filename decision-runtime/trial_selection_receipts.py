@@ -1,7 +1,9 @@
-"""Worker-owned evidence for the host's local settled item selection.
+"""Worker-owned evidence for status-only item selection and PvE guard setup.
 
 select_item becomes op=settle on .6/.7 and has no durable host reply. These
 records copy actual SDK/native frames; they are not block mutation ACKs.
+Guard setup preserves the preceding native op field; its effect is verified
+from the exact guard envelope, IDs, revision, completion detail and PvE flags.
 """
 import hashlib
 import json
@@ -15,8 +17,10 @@ from singleplayer_trial_bridge import validate_registry, validate_scope
 
 CONTRACT = 'host_settle_select_item_v1'
 SOURCE = 'sdk_native_selector_frame_and_fresh_current_witness'
-HOSTS = {'2026.10.7.6', '2026.10.7.7'}
+HOSTS = {'2026.10.7.6', '2026.10.7.7', '2026.10.7.8'}
 SCOPE = ('world_id', 'trial_id', 'run_id', 'world_session', 'dimension')
+GUARD_CONTRACT = 'host_inherited_op_pve_guard_setup_v1'
+GUARD_SOURCE = 'review_journal_native_guard_frame_and_fresh_current_witness'
 
 
 def request_fingerprint(request):
@@ -174,6 +178,138 @@ def known_select_item_receipt(game,registry,unresolved,state):
             return None
         if registry['run_id']==request['run_id'] and (not _selection_frame(state,request)
                 or _held_fingerprint(state)!=_held_fingerprint(value['current_witness'])):
+            return None
+        return value
+    except (OSError,KeyError,TypeError,ValueError,RuntimeError):
+        return None
+
+
+def _guard_frame(frame,request,*,within_expiry=False):
+    try:
+        identity=frame.get('trial_identity',{});keys=frame.get('movement_keys',{})
+        menu=frame.get('menu',{});cursor=menu.get('cursor',{})
+        return (request.get('op')=='guard' and request.get('pve_only') is True
+            and request.get('local_trial') is True and request.get('local_survival') is True
+            and request.get('server')=='singleplayer' and isinstance(request.get('id'),str)
+            and re.fullmatch(r'trial-[A-Za-z0-9_-]{1,74}',request['id']) is not None
+            and type(request.get('expected_revision')) is int and type(request.get('expires_at')) is int
+            and frame.get('kit_version') in HOSTS and frame.get('game_version')=='26.1.2'
+            and frame.get('singleplayer_trial_protocol')==1 and frame.get('connected') is True
+            and frame.get('server')=='singleplayer' and frame.get('game_mode')=='survival'
+            and frame.get('player_dead') is not True and frame.get('health',0)>0
+            and frame.get('manual_movement') is False and frame.get('screen','')==''
+            and identity.get('registered') is True and identity.get('process_alive') is True
+            and all((identity if key in ('trial_id','run_id') else frame).get(key)==request.get(key) for key in SCOPE)
+            and identity.get('world_id')==request.get('world_id')
+            and frame.get('id')==request['id'] and frame.get('last_request')==request['id']
+            and isinstance(frame.get('op'),str) and len(frame['op'])<=64
+            and frame.get('phase')=='done' and frame.get('detail')=='guard modules enabled'
+            and frame.get('outcome_pending') is not True and frame.get('control_revision')==request['expected_revision']
+            and type(frame.get('time')) is int
+            and (not within_expiry or request['expires_at']-10_000<=frame['time']<=request['expires_at'])
+            and frame.get('guard_armed') is True and frame.get('guard_pve_only') is True
+            and frame.get('guard_busy') is False and frame.get('health_recovery_hold') is False
+            and frame.get('safety_hold',{}).get('active') is False
+            and frame.get('safety_hold',{}).get('escaping') is False
+            and menu.get('id')==0 and menu.get('type')=='InventoryMenu'
+            and cursor.get('item')=='minecraft:air' and cursor.get('count')==0
+            and {'forward','back','jump','sneak'}<=keys.keys() and all(value is False for value in keys.values())
+            and all(frame.get(key) is False for key in ('chopping','navigating','printing','borer_active')))
+    except (KeyError,TypeError,ValueError,AttributeError):
+        return False
+
+
+def _valid_guard(value):
+    try:
+        request,result,witness=(value.get(key) for key in ('request','native_result','current_witness'))
+        return (value.get('schema')==1 and value.get('source')==GUARD_SOURCE
+            and value.get('contract')==GUARD_CONTRACT
+            and value.get('confirmation_scope')=='native_local_pve_guard_setup_not_material_outcome'
+            and value.get('server_block_acknowledged') is False
+            and isinstance(value.get('source_proof_sha256'),str)
+            and re.fullmatch(r'[0-9a-f]{64}',value['source_proof_sha256']) is not None
+            and request_fingerprint(request)==value.get('request_sha256')
+            and _guard_frame(result,request,within_expiry=True) and _guard_frame(witness,request)
+            and witness['time']>=result['time']
+            and witness['op']==result['op']==value.get('inherited_native_operation'))
+    except (KeyError,TypeError,ValueError,AttributeError):
+        return False
+
+
+def capture_guard_receipt(game,source_journal=None,*,reader=status,wall_time=time.time):
+    """Preserve exact acknowledged guard setup; never arm or replay a guard."""
+    game=Path(game).resolve();automation=game/'config/twob2tkit/automation'
+    registry=validate_registry(json.loads((automation.parent/'singleplayer-trial/registry.json').read_text()),game)
+    mailbox=automation/'request.json'
+    if mailbox.is_symlink() or not mailbox.is_file() or mailbox.stat().st_size>131072:
+        raise RuntimeError('Exact original guard mailbox is unavailable')
+    raw=mailbox.read_bytes();request=json.loads(raw)
+    expected=automation.parent/'singleplayer-trial/worker/material-review-runs'/registry['run_id']/'journal.jsonl'
+    source=Path(source_journal) if source_journal is not None else expected
+    if (source.resolve()!=expected.resolve() or any(path.is_symlink() for path in (source,*source.parents))
+            or not source.is_file() or source.stat().st_size>8_000_000):
+        raise RuntimeError('Exact current-run review journal is unavailable')
+    content=source.read_bytes()
+    if not content.endswith(b'\n'):raise RuntimeError('Guard journal record is incomplete')
+    events=[json.loads(line) for line in content.splitlines() if line]
+    matches=[event['native_receipt'] for event in events if isinstance(event,dict)
+        and event.get('event')=='legacy_review_guard_verified'
+        and event.get('run_id')==request.get('run_id') and event.get('trial_id')==request.get('trial_id')
+        and isinstance(event.get('native_receipt'),dict)
+        and event['native_receipt'].get('native') is True
+        and event['native_receipt'].get('id')==request.get('id')
+        and event['native_receipt'].get('request_id')==request.get('id')]
+    if len(matches)!=1 or not _guard_frame(matches[0],request,within_expiry=True):
+        raise RuntimeError('No exact guard frame in its original valid window; keep unknown')
+    current=reader(automation)
+    validate_scope(current,registry,request.get('world_session'),registry.get('run_id'))
+    if (request.get('run_id')!=registry.get('run_id')
+            or not 0<=wall_time()-current.get('time',0)/1000<=3
+            or not _guard_frame(current,request) or current.get('op')!=matches[0].get('op')
+            or mailbox.read_bytes()!=raw):
+        raise RuntimeError('Fresh current guard setup no longer matches its native journal frame')
+    value={'schema':1,'source':GUARD_SOURCE,'contract':GUARD_CONTRACT,'request':request,
+        'request_sha256':request_fingerprint(request),'original_envelope_sha256':hashlib.sha256(raw).hexdigest(),
+        'native_result':matches[0],'current_witness':current,'inherited_native_operation':matches[0]['op'],
+        'source_proof':str(source.resolve()),'source_proof_sha256':hashlib.sha256(content).hexdigest(),
+        'confirmation_scope':'native_local_pve_guard_setup_not_material_outcome','server_block_acknowledged':False}
+    if not _valid_guard(value):raise RuntimeError('Guard setup evidence is inconsistent; keep unknown')
+    root=automation.parent/'singleplayer-trial/worker/native-guard-receipts'
+    if any(path.is_symlink() for path in (root,*root.parents)):raise RuntimeError('Guard ledger is linked')
+    root.mkdir(parents=True,exist_ok=True);path=root/(request['id']+'.json')
+    if path.exists():
+        prior=json.loads(path.read_text())
+        if (path.is_symlink() or not _valid_guard(prior) or prior['request_sha256']!=value['request_sha256']
+                or prior['native_result']!=value['native_result']):
+            raise RuntimeError('Different guard setup evidence exists; preserve it')
+        return prior
+    temporary=path.with_suffix('.'+uuid.uuid4().hex[:8]+'.tmp')
+    temporary.write_text(json.dumps(value,allow_nan=False,ensure_ascii=False)+'\n');temporary.replace(path)
+    return value
+
+
+def known_guard_receipt(game,registry,unresolved,state):
+    rid=unresolved.get('id')
+    if unresolved.get('op')!='guard' or not isinstance(rid,str) or not re.fullmatch(r'trial-[A-Za-z0-9_-]{1,74}',rid):
+        return None
+    path=Path(game).resolve()/'config/twob2tkit/singleplayer-trial/worker/native-guard-receipts'/(rid+'.json')
+    try:
+        if any(part.is_symlink() for part in (path,*path.parents)) or not path.is_file() or path.stat().st_size>2_000_000:
+            return None
+        value=json.loads(path.read_text())
+        if not _valid_guard(value):return None
+        request=value['request']
+        if (any(unresolved.get(key)!=request.get(key) for key in SCOPE)
+                or unresolved.get('request_sha256')!=value['request_sha256']
+                or request['world_id']!=registry['world_id'] or request['trial_id']!=registry['trial_id']):
+            return None
+        validate_scope(state,registry,request['world_session'],registry['run_id'])
+        if (state.get('dimension')!=request['dimension'] or state.get('kit_version')!=value['native_result']['kit_version']
+                or state['time']<value['current_witness']['time']
+                or state.get('control_revision',-1)<request['expected_revision']):
+            return None
+        if registry['run_id']==request['run_id'] and (not _guard_frame(state,request)
+                or state.get('op')!=value['inherited_native_operation']):
             return None
         return value
     except (OSError,KeyError,TypeError,ValueError,RuntimeError):

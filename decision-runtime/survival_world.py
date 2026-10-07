@@ -2,6 +2,7 @@
 from collections import deque
 import math
 import re
+from survival_mining_access import soil_top_exposed
 
 DANGERS={'lava','water','fire','soul_fire','magma_block','cactus','sweet_berry_bush',
          'powder_snow','campfire','soul_campfire','pointed_dripstone','wither_rose'}
@@ -91,6 +92,7 @@ class World:
             if p in excluded or self.name(p) not in names or r.get('block_entity'):continue
             # Remove the exposed top of a column first, leaving steps rather than an overhang.
             if self.name((p[0],p[1]+1,p[2])) in names:continue
+            if self.name(p) in {'dirt','grass_block'} and not soil_top_exposed(self,p,excluded):continue
             if p in current_support:continue
             if any(not self.safe((p[0]+dx,p[1]+dy,p[2]+dz)) for dx,dy,dz in ((1,0,0),(-1,0,0),(0,1,0),(0,-1,0),(0,0,1),(0,0,-1))):continue
             stance=self.approach(parent,p,avoid_support=True)

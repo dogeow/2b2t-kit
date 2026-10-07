@@ -1622,6 +1622,12 @@ class TrialSdkCraftTests(unittest.TestCase):
             assert not self.snapshot['menu']['cursor']['count']
             self.closed += 1
 
+        def commit_inventory_click(self, stage, witnesses, predicate):
+            # This fixture models synchronized normal clicks. Durable native
+            # protocol and unknown outcomes use the real bridge in dedicated tests.
+            assert len(witnesses) == 2 and witnesses[0]['time'] < witnesses[1]['time']
+            assert all(predicate(value['menu']) for value in witnesses)
+
     def skills(self, game, width, stock, recipe, output, produces=1):
         reg = registry(game)
         bridge = self.Bridge(Path(game) / 'automation', reg, width, stock, recipe, output, produces)

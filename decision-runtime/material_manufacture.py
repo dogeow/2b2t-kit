@@ -119,6 +119,11 @@ def _inventory_execute(client, spec, target_total, *, authorize=None):
         raise RuntimeError('Invalid inventory recipe cells')
 
     class OwnedInventory:
+        sdk_inventory_confirmation = getattr(client, 'sdk_inventory_confirmation', False) is True
+
+        def commit_inventory_click(self, stage, witnesses, predicate):
+            return client.commit_inventory_click(stage, witnesses, predicate)
+
         def status(self):
             state=client.status()
             if authorize is None:

@@ -12,6 +12,7 @@ import time
 from decisions import PRIVATE,DecisionError,Jev,choose
 from survival_bridge import Bridge,Paused,inventory,valid
 from survival_world import World,block_id,cell,center,distance,shelter,support_footprint
+from survival_mining_access import mining_plan,mining_stance
 
 ROOT=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation')
 LOGS={s+'_log' for s in ('oak','birch','spruce','acacia','dark_oak','jungle','mangrove','cherry','pale_oak')}
@@ -130,6 +131,7 @@ class Runner:
                 if wanted=={'dirt'}:protected.update(p for p in w.blocks if p[1]<cy)
             for station in self.stations.values():
                 protected.update({tuple(station),(station[0],station[1]-1,station[2])})
+            protected.update(tuple(map(int,key.split(','))) for key in self.owned)
             found=w.resource(self.b.state['pos'],names,protected)
             if not found:raise Paused('附近没有可安全触及的 '+ '/'.join(sorted(names))+'；请在资源附近重新开始。')
             target,path=found;before=amount();self.walk(path);w=self.scan();row=w.row(target)
@@ -144,7 +146,42 @@ class Runner:
                 self.event('skip_support_target',target=target,position=fresh['pos'])
                 continue
             if not w.row(target):continue
-            try:self.b.request('mine_block',pos=list(target),expected_state=w.row(target)['state'],seconds=18)
+            protected.update(self.excluded)
+            plan=mining_plan(w,fresh['pos'],target,protected)
+            if plan is None:
+                path=mining_stance(w,fresh['pos'],target,protected)
+                if path is not None:
+                    self.event('mining_reapproach',target=target,path=path)
+                    self.walk(path);w=self.scan();fresh=self.b.read()
+                    protected.update(self.excluded)
+                    plan=mining_plan(w,fresh['pos'],target,protected)
+            if plan is None:
+                self.excluded.add(target)
+                self.event('skip_mining_preflight',target=target,position=fresh['pos'],reason='No clear actual-eye mining ray')
+                continue
+            try:
+                # Grass/litter may be walkable yet intercept vanilla's OUTLINE
+                # ray. Clear only the bounded allowlist, with normal native ACKs;
+                # never remove an opaque log, crop, owned block or container.
+                for plant in plan['plants']:
+                    w=self.scan();fresh=self.b.read();protected.update(self.excluded)
+                    current=mining_plan(w,fresh['pos'],target,protected)
+                    if current is None:break
+                    if plant not in current['plants']:continue
+                    plant_plan=mining_plan(w,fresh['pos'],plant,protected,max_plants=0)
+                    if plant_plan is None:break
+                    args={'face':plant_plan['face']} if plant_plan['face'] is not None else {}
+                    self.b.request('mine_block',pos=list(plant),expected_state=w.row(plant)['state'],seconds=8,**args)
+                    w=self.scan()
+                    if w.name(plant)!='air':raise Paused('植被清理没有得到稳定的方块消失确认。')
+                    self.event('mining_vegetation_cleared',target=target,plant=plant)
+                w=self.scan();fresh=self.b.read();protected.update(self.excluded)
+                plan=mining_plan(w,fresh['pos'],target,protected,max_plants=0)
+                if plan is None or w.name(target) not in names:
+                    self.excluded.add(target);self.event('skip_mining_preflight',target=target,position=fresh['pos'],reason='Mining ray changed after vegetation observation')
+                    continue
+                args={'face':plan['face']} if plan['face'] is not None else {}
+                self.b.request('mine_block',pos=list(target),expected_state=w.row(target)['state'],seconds=18,**args)
             except Paused as error:
                 if str(error) not in ('mining target is occluded','Mining target out of reach','mining target moved out of reach'):raise
                 failures+=1;self.excluded.add(target);self.event('skip_occluded_target',target=target,reason=str(error))
