@@ -42,7 +42,7 @@ class InteractionContractTests(unittest.TestCase):
             mutations = [
                 {'detail': 'Interaction became occluded while rotating'},
                 {'detail': 'Target moved out of reach'}, {'detail': 'Placement context changed while rotating'},
-                {'phase': 'waiting'}, {'op': 'rotation'}, {'op': 'settle'}, {'kit_version': '2026.10.7.9'},
+                {'phase': 'waiting'}, {'op': 'rotation'}, {'op': 'settle'}, {'kit_version': '2026.10.7.10'},
                 {'bridge_version': 3}, {'game_version': '1.21'}, {'control_revision': 5},
                 {'native_sequence': 0}, {'server_ack_sequence': 0}, {'outcome_pending': True},
                 {'server_confirmed': True}, {'server_update_seen': True}, {'confirmation_scope': 'ack'},

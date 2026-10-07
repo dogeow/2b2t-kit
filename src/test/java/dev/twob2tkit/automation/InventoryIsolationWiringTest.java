@@ -32,4 +32,14 @@ class InventoryIsolationWiringTest {
   var c=calls(method("automation/AutomationBridge","cancel"));
   assertTrue(c.indexOf("dev/twob2tkit/automation/ProfessionalPrinter.stop")<c.indexOf("dev/twob2tkit/automation/AutomationBridge.disarmGuard"));
  }
+ @Test void autoRefillChecksWholeInventoryOwnershipBeforeItsHeadCancellation()throws Exception{
+  var m=method("mixin/InventoryProfilesAutoRefillGuardMixin","kit$ownedRefillTick");var c=calls(m);
+  assertTrue(c.indexOf("dev/twob2tkit/automation/AutomationBridge.ownsMaterialInventory")<c.indexOf("dev/twob2tkit/automation/AutoRefillCompatibility.tick"));
+  assertTrue(c.indexOf("dev/twob2tkit/automation/AutoRefillCompatibility.tick")<c.indexOf("org/spongepowered/asm/mixin/injection/callback/CallbackInfo.cancel"));
+  assertFalse(c.stream().anyMatch(call->call.contains("cleanCursor")||call.contains("setValue")));
+  var inject=m.visibleAnnotations.stream().filter(a->a.desc.endsWith("/Inject;")).findFirst().orElseThrow();
+  assertTrue(inject.values.toString().contains("onTickInGame()V"));
+  int index=inject.values.indexOf("at");@SuppressWarnings("unchecked") var at=(List<AnnotationNode>)inject.values.get(index+1);
+  assertTrue(at.getFirst().values.contains("HEAD"));
+ }
 }

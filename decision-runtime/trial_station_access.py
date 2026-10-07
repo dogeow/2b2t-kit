@@ -58,7 +58,15 @@ def _air_ray(world, eye, surface, target):
 
 def visible_station_faces(world, feet, target, reach=3.6):
     target = tuple(target)
-    if world.name(target) not in STATIONS or not world.full(target):
+    if world.name(target) not in STATIONS:
+        return []
+    return visible_full_faces(world, feet, target, reach)
+
+
+def visible_full_faces(world, feet, target, reach=3.6):
+    """Scan solid means isCollisionShapeFullBlock; use its actual cube faces."""
+    target = tuple(target)
+    if not world.full(target):
         return []
     eye = [feet[0], feet[1] + 1.62, feet[2]]
     choices = []

@@ -11,7 +11,8 @@ from zoneinfo import ZoneInfo
 
 from singleplayer_trial_bridge import Paused
 from trial_inventory_audit import (archive_failed_pickup,file_hash,historical_pending,
-                                   validate_inventory_review)
+                                   validate_inventory_review, validate_inventory_reviews,
+                                   validate_retired_inventory, retired_inventory_metadata, historical_manifest)
 
 
 def fixture(root):
@@ -75,7 +76,116 @@ def fixture(root):
     return worker,state,reference,review,output,original,frozen
 
 
+def ambiguous_case(root,values):
+    worker,state,first_ref,first_review,output,first_original,frozen=values
+    original={**first_original,'id':'trial-ambiguous-pickup','run_id':'old-8-run',
+              'world_session':'old-8-session','expected_revision':4,'inventory_confirm':True}
+    source=record_json(first_review['manifest']);failed=record_json(source['failed_client'])
+    failed.update(id=original['id'],op='slot_click',phase='waiting',outcome_pending=True,
+                  detail='Inventory click final agreement missing; outcome pending, no replay',
+                  kit_version='2026.10.7.8',control_revision=4,world_session=original['world_session'])
+    failed.pop('last_request',None);failed['trial_identity']['run_id']=original['run_id']
+    final=copy.deepcopy(worker.inventory_review_probe['inventory_probe']['client'])
+    native={**copy.deepcopy(failed),'inventory_click_receipt':{'protocol':1,'request_id':original['id'],
+        'classification':'unknown','server_processed':True,'scope_current':True,'native_sequence':1,
+        'correlation_ambiguous':True,'world_session':original['world_session'],'control_revision':4,
+        'slot':11,'button':0,'kind':'pickup','server':copy.deepcopy(final),'client':copy.deepcopy(final)}}
+    def artifact(name,value):
+        path=(root/(name+'.json')).resolve();path.write_text(json.dumps(value));return {'path':str(path),'sha256':file_hash(path)}
+    sdk={'protocol':1,'request_id':original['id'],'envelope':copy.deepcopy(original),'before':copy.deepcopy(failed),
+         'outcome':'sent_or_unknown_until_native_and_sdk_confirmation',
+         'arguments':{key:original[key] for key in ('menu_id','slot','kind','button','expected_item','expected_count',
+             'expected_cursor','expected_cursor_count','inventory_confirm')}}
+    sdk_ref=artifact('sdk8-pending',sdk);native_ref=artifact('native8-unknown',native)
+    (output.parent.parent/'automation/request.json').write_text(json.dumps(original))
+    manifest=archive_failed_pickup(output.parents[3],failed,old_worker_pid=501,old_jvm_pid=502,
+        sdk_pending_path=sdk_ref['path'],native_unknown_reply_path=native_ref['path'])
+    review=copy.deepcopy(first_review);review.update(manifest=manifest,old_worker_pid=501,old_jvm_pid=502)
+    saved=copy.deepcopy(failed);saved.update(chopping=False,navigating=False,printing=False,borer_active=False)
+    saved['trial_identity'].update(process_alive=False,run_id='')
+    exit_state=record_json(first_review['artifacts']['normal_exit'])
+    exit_state.update(old_jvm_pid=502,world_session=original['world_session'],run_id=original['run_id'])
+    review['artifacts']={'before_save':artifact('before8',saved),'after_save':artifact('after8',{**saved,'connected':False}),
+        'normal_quit':artifact('quit8',{'phase':'done','trial_identity':copy.deepcopy(saved['trial_identity'])}),
+        'normal_exit':artifact('exit8',exit_state)}
+    reference=artifact('review8',review)
+    retirement=Path(manifest['path']).parent/'retirement-review.json';retirement.write_text(json.dumps(review))
+    worker.legacy_pending=historical_pending(output,worker.registry,state)[0]
+    bundle=artifact('reviews',{'schema':1,'kind':'operator_retired_inventory_reviews','reviews':[first_ref,reference]})
+    return original,manifest,reference,bundle,sdk_ref,native_ref
+
+
+def record_json(reference):return json.loads(Path(reference['path']).read_text())
+
+
 class InventoryAuditTests(unittest.TestCase):
+    def test_inventory_manifest_limit_is_four_and_never_drops_the_fifth(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);values=fixture(root);worker,state,reference,review,output,original,frozen=values
+            source_manifest=record_json(review['manifest']);source_failed=record_json(source_manifest['failed_client'])
+            for index in range(1,5):
+                cloned={**original,'id':'trial-extra-'+str(index)}
+                failed=copy.deepcopy(source_failed);failed.update(id=cloned['id'],last_request=cloned['id'])
+                (output.parent.parent/'automation/request.json').write_text(json.dumps(cloned))
+                archive_failed_pickup(output.parents[3],failed,old_worker_pid=401,old_jvm_pid=402)
+                if index<4:self.assertEqual(index+1,len(historical_pending(output,worker.registry,state)[0]))
+                else:
+                    with self.assertRaises(Paused):historical_pending(output,worker.registry,state)
+            self.assertEqual(5,len(list((output/'legacy-inventory-intents').glob('*/manifest.json'))))
+
+    def test_two_inventory_unknowns_get_independent_retirement_and_one_complete_current_probe(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);values=fixture(root);worker,state,first_ref,review,output,original,frozen=values
+            second,manifest,reference,bundle,sdk_ref,native_ref=ambiguous_case(root,values)
+            ids=validate_inventory_reviews(worker,bundle,state,lambda _:False)
+            self.assertEqual({original['id'],second['id']},set(ids))
+            metadata=retired_inventory_metadata(output,worker.registry,state)
+            self.assertEqual(1,len(metadata))
+            admitted=validate_retired_inventory(metadata[0],worker.registry,state,worker.parent_pid,lambda _:False)
+            self.assertEqual(second,admitted['request'])
+            self.assertEqual(record_json(sdk_ref),admitted['sdk_pending'])
+            self.assertIn(sdk_ref['path'],admitted['frozen'])
+            self.assertIn(native_ref['path'],admitted['frozen'])
+            self.assertTrue(admitted['historical_effects_unresolved'])
+            self.assertFalse(admitted['old_action_completed'])
+            self.assertEqual('unknown',record_json(native_ref)['inventory_click_receipt']['classification'])
+
+    def test_ambiguous_native_or_sdk_original_mutation_cannot_become_retired_defense_or_replan(self):
+        for change in ('sdk_envelope','sdk_args','sdk_outcome','native_processed','native_sequence',
+                       'native_ambiguity','native_classification','native_scope','native_stock','missing_review',
+                       'old_alive','same_run','same_session','reviews_missing','reviews_duplicate'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                root=Path(temp);values=fixture(root);worker,state,first_ref,review,output,original,frozen=values
+                second,manifest,reference,bundle,sdk_ref,native_ref=ambiguous_case(root,values)
+                metadata=retired_inventory_metadata(output,worker.registry,state)[0]
+                alive=lambda _:False
+                if change.startswith('sdk_'):
+                    body=record_json(sdk_ref)
+                    if change=='sdk_envelope':body['envelope']['expected_count']=2
+                    elif change=='sdk_args':body['arguments']['slot']=12
+                    else:body['outcome']='completed'
+                    Path(sdk_ref['path']).write_text(json.dumps(body))
+                elif change.startswith('native_'):
+                    body=record_json(native_ref);proof=body['inventory_click_receipt']
+                    if change=='native_processed':proof['server_processed']=False
+                    elif change=='native_sequence':proof['native_sequence']=2
+                    elif change=='native_ambiguity':proof['correlation_ambiguous']=False
+                    elif change=='native_classification':proof['classification']='no_effect'
+                    elif change=='native_scope':body['trial_identity']['run_id']='foreign'
+                    else:proof['server']['inventory'][11]['count']=0
+                    Path(native_ref['path']).write_text(json.dumps(body))
+                elif change=='missing_review':Path(metadata['retirement_review']['path']).unlink()
+                elif change=='old_alive':alive=lambda pid:pid==502
+                elif change=='same_run':worker.registry['run_id']=second['run_id']
+                elif change=='same_session':state['world_session']=second['world_session']
+                elif change.startswith('reviews_'):
+                    body=record_json(bundle);body['reviews']=[first_ref] if change=='reviews_missing' else [first_ref,first_ref]
+                    Path(bundle['path']).write_text(json.dumps(body));bundle['sha256']=file_hash(bundle['path'])
+                if change.startswith('reviews_'):
+                    with self.assertRaises(Paused):validate_inventory_reviews(worker,bundle,state,alive)
+                else:
+                    with self.assertRaises(Paused):validate_retired_inventory(metadata,worker.registry,state,worker.parent_pid,alive)
+
     def test_saved_native_quit_and_hmcl_stop_allow_replan_without_inventing_exit_code(self):
         for change in (None,'missing_save','quit_command','quit_id','quit_expiry','no_stop','stop_pid','stop_scope',
                        'stop_time','stop_hash','old_alive','new_probe_missing'):

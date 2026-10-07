@@ -107,11 +107,11 @@ def _validate_review(worker, request, state, *, pid_alive=pid_alive, now_ms=None
     # exact reconciliation and cannot borrow this historical-stop permission.
     chops = [row for row in worker.legacy_pending if row.get('op') == 'chop']
     inventory = [row for row in worker.legacy_pending if row.get('op') == 'slot_click']
-    if len(chops) != 1 or len(inventory) > 1 or len(worker.legacy_pending) != len(chops) + len(inventory):
+    if len(chops) != 1 or len(inventory) > 4 or len(worker.legacy_pending) != len(chops) + len(inventory):
         raise Paused('Only the stopped historical chop and separately reviewed inventory case are supported')
     if inventory:
-        from trial_inventory_audit import validate_inventory_review
-        validate_inventory_review(worker, request.get('inventory_review'), state, pid_alive)
+        from trial_inventory_audit import validate_inventory_reviews
+        inventory_ids = validate_inventory_reviews(worker, request.get('inventory_review'), state, pid_alive)
     elif request.get('inventory_review') is not None:
         raise Paused('Inventory review differs from the preserved historical intents')
     old = chops[0]
@@ -223,7 +223,7 @@ def _validate_review(worker, request, state, *, pid_alive=pid_alive, now_ms=None
     # all actual terminal/save evidence have passed. Old files remain intact.
     worker.legacy_evidence[archive] = archive_hash
     return {'request': request, 'report': report, 'report_sha256': request['report']['sha256'],
-            'verified_at': now_ms}
+            'verified_at': now_ms, 'inventory_review_verified_ids': inventory_ids if inventory else []}
 
 
 def validate_review(worker, request, state, *, pid_alive=pid_alive, now_ms=None):
@@ -303,6 +303,7 @@ def capture_baseline(worker, verified_review, *, now_ms=None):
         'terrain': terrain, 'scan_bounds': bounds, 'review': checked,
         'historical_effects_unresolved': True, 'legacy_pending': worker.legacy_pending,
         'forbidden_request_ids': [row['id'] for row in worker.legacy_pending],
+        'inventory_review_verified_ids': checked.get('inventory_review_verified_ids', []),
         'old_action_replayed': False, 'old_action_completed': False}
 
 
@@ -413,8 +414,8 @@ def submit_review(game, report_path, *, expires_seconds=120, inventory_review=No
     if inventory_review is not None:
         from trial_inventory_audit import historical_pending
         extra, protected = historical_pending(output, registry, current)
-        if len(extra) != 1:
-            raise Paused('One separately archived historical inventory case is required')
+        if not 1 <= len(extra) <= 4:
+            raise Paused('Each historical inventory case needs its own archive and physical review')
         frozen.update({str(path): digest for path, digest in protected.items()})
     now = int(time.time() * 1000)
     value = {'schema': 1, 'kind': 'fresh_material_replan', 'id': 'rebaseline-' + uuid.uuid4().hex,

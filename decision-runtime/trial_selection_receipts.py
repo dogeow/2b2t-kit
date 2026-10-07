@@ -17,7 +17,7 @@ from singleplayer_trial_bridge import validate_registry, validate_scope
 
 CONTRACT = 'host_settle_select_item_v1'
 SOURCE = 'sdk_native_selector_frame_and_fresh_current_witness'
-HOSTS = {'2026.10.7.6', '2026.10.7.7', '2026.10.7.8'}
+HOSTS = {'2026.10.7.6', '2026.10.7.7', '2026.10.7.8', '2026.10.7.9'}
 SCOPE = ('world_id', 'trial_id', 'run_id', 'world_session', 'dimension')
 GUARD_CONTRACT = 'host_inherited_op_pve_guard_setup_v1'
 GUARD_SOURCE = 'review_journal_native_guard_frame_and_fresh_current_witness'

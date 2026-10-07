@@ -3957,6 +3957,7 @@ public final class AutomationBridge {
     private static JsonObject snapshot(Minecraft c){
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
         j.addProperty("inventory_click_protocol",InventoryDiagnostics.PROTOCOL);j.addProperty("inventory_probe_protocol",InventoryDiagnostics.PROTOCOL);
+        j.add("auto_refill_guard",AutoRefillCompatibility.snapshot());
         if(inventoryClick!=null&&inventoryClick.requestId.equals(statusId)){
             j.add("inventory_click_receipt",inventoryClick.receipt(c,session(c),controlRevision,false));j.addProperty("outcome_pending",true);
         }else if(lastInventoryClick!=null&&statusId.equals(str(lastInventoryClick,"request_id"))){

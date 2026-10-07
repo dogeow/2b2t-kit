@@ -20,6 +20,7 @@ import java.util.UUID;
 import java.util.ArrayDeque;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.IdentityHashMap;
 import java.util.function.Consumer;
 
 /** One normal click, with read-only observations on each side of an integrated server. */
@@ -40,9 +41,43 @@ public final class InventoryDiagnostics {
         Channel next=c.getConnection()==null?null:((InventoryConnectionDiagnosticsAccess)c.getConnection().getConnection()).kit$getChannel();
         var server=c.getSingleplayerServer();var player=c.player==null?null:c.player.getUUID();
         if(channel!=next||connectionServer!=server||connectionLevel!=c.level||!java.util.Objects.equals(connectionPlayer,player)){
-            if(observing!=null)observing.poisoned=true;
+            if(observing!=null)observing.poison("connection_scope_changed",null);
             sent.clear();channel=next;connectionServer=server;connectionLevel=c.level;connectionPlayer=player;sequence=0;connectionPoisoned=false;
         }
+    }
+
+    /** Bounded evidence only: no command arguments, credentials or exception messages. */
+    static final class Trace {
+        static final int LIMIT=16,MAX_CALLERS=8;
+        private final ArrayDeque<JsonObject> events=new ArrayDeque<>();
+        private final IdentityHashMap<Object,JsonArray> origins=new IdentityHashMap<>();
+        private long dropped;
+        synchronized void origin(Object packet,JsonArray callers){if(origins.size()<LIMIT)origins.put(packet,callers.deepCopy());}
+        synchronized JsonArray origin(Object packet){var value=origins.get(packet);return value==null?new JsonArray():value.deepCopy();}
+        synchronized void add(String event,long seq,boolean owned,JsonObject packet,JsonArray caller,JsonObject menu,String reason,String failureType){
+            var row=new JsonObject();row.addProperty("event",event);row.addProperty("observed_at",System.currentTimeMillis());
+            row.addProperty("native_sequence",seq);row.addProperty("owner",owned?"owned":"foreign");
+            if(packet!=null)row.add("packet",packet.deepCopy());
+            if(caller!=null&&!caller.isEmpty()){var bounded=new JsonArray();for(int i=0;i<Math.min(MAX_CALLERS,caller.size());i++)bounded.add(caller.get(i).deepCopy());row.add("caller",bounded);}
+            if(menu!=null)row.add("menu",menu.deepCopy());if(reason!=null&&!reason.isBlank())row.addProperty("reason",reason);
+            if(failureType!=null&&!failureType.isBlank())row.addProperty("failure_type",failureType);
+            if(events.size()==LIMIT){events.removeFirst();dropped++;}events.addLast(row);
+        }
+        synchronized JsonArray snapshot(){var rows=new JsonArray();events.forEach(row->rows.add(row.deepCopy()));return rows;}
+        synchronized long dropped(){return dropped;}
+    }
+    private static JsonArray callers(){
+        try{return StackWalker.getInstance().walk(frames->{
+            var rows=new JsonArray();frames.filter(frame->!frame.getClassName().equals(InventoryDiagnostics.class.getName())
+                &&!frame.getClassName().equals(InventoryDiagnostics.Click.class.getName())
+                &&!frame.getMethodName().startsWith("kit$")&&!frame.getClassName().startsWith("java."))
+                .limit(Trace.MAX_CALLERS).forEach(frame->rows.add(frame.getClassName()+"."+frame.getMethodName()));return rows;
+        });}catch(RuntimeException unavailable){return new JsonArray();}
+    }
+    private static JsonObject summary(JsonObject snapshot,int slot){
+        var out=new JsonObject();for(String key:new String[]{"id","type","state_id","quickcraft_status","cursor","observed_at","game_time"})
+            if(snapshot.has(key))out.add(key,snapshot.get(key).deepCopy());
+        if(snapshot.has("slots")&&slot>=0&&slot<snapshot.getAsJsonArray("slots").size())out.add("clicked_slot",snapshot.getAsJsonArray("slots").get(slot).deepCopy());return out;
     }
 
     public static final class Scope {
@@ -78,11 +113,14 @@ public final class InventoryDiagnostics {
         final ContainerInput input;
         final JsonObject before;
         JsonObject predicted;
-        volatile JsonObject serverBefore,processedAfter;
+        volatile JsonObject serverBefore,processedAfter,processingAfter;
+        final Trace trace=new Trace();
+        volatile String poisonReason="";
         volatile boolean serverProcessed,poisoned;
         volatile long sentSequence;
         volatile long processedAt;
         volatile ServerboundContainerClickPacket outbound,received;
+        volatile long receivedSequence;
         volatile boolean closed;
         final long started=System.currentTimeMillis();
         Click(Minecraft c,String requestId,String session,long revision,int slot,int button,ContainerInput input,Path replyPath){
@@ -94,12 +132,16 @@ public final class InventoryDiagnostics {
         boolean packet(ServerPlayer player,ServerboundContainerClickPacket packet){
             return !closed&&!poisoned&&received==packet&&sentSequence>0&&player.level().getServer()==scope.server&&scope.server.isSameThread()
                 &&player.getUUID().equals(scope.player)&&scope.dimension.equals(player.level().dimension().identifier().toString())
-                &&packet.containerId()==menuId&&packet.stateId()==stateId&&packet.slotNum()==slot
-                &&packet.buttonNum()==button&&packet.containerInput()==input;
+                &&headersMatch(packet);
         }
+        boolean headersMatch(ServerboundContainerClickPacket packet){return packet.containerId()==menuId&&packet.stateId()==stateId&&packet.slotNum()==slot&&packet.buttonNum()==button&&packet.containerInput()==input;}
         public boolean current(Minecraft c,String session,long revision){return !closed&&scope.current(c,session,revision);}
         public long ageMillis(){return System.currentTimeMillis()-started;}
         public void predicted(Minecraft c){predicted=snapshot(c.player,scope.world);}
+        synchronized void poison(String reason,Throwable failure){
+            poisoned=true;if(poisonReason.isEmpty())poisonReason=reason;
+            trace.add("poison",sentSequence,false,null,null,null,reason,failure==null?"":failure.getClass().getSimpleName());
+        }
         public JsonObject receipt(Minecraft c,String session,long revision,boolean allowFinal){
             boolean current=scope.current(c,session,revision);
             JsonObject client=current?snapshot(c.player,scope.world):null;
@@ -110,10 +152,12 @@ public final class InventoryDiagnostics {
             out.addProperty("classification",classification);out.addProperty("server_processed",serverProcessed);
             out.addProperty("scope_current",current);out.addProperty("confirmation_scope","integrated_server_processed_click_and_matching_final_inventory");
             out.addProperty("native_sequence",sentSequence);out.addProperty("correlation_ambiguous",poisoned);
+            out.addProperty("poison_reason",poisonReason);out.add("click_trace",trace.snapshot());out.addProperty("click_trace_dropped",trace.dropped());
             out.addProperty("server_processed_at",processedAt);
             out.addProperty("slot",slot);out.addProperty("button",button);out.addProperty("kind",input.name().toLowerCase());
             out.add("before",before.deepCopy());if(predicted!=null)out.add("predicted_after",predicted.deepCopy());
             if(serverBefore!=null)out.add("server_processing_before",serverBefore.deepCopy());
+            if(processingAfter!=null)out.add("server_processing_after",processingAfter.deepCopy());
             if(server!=null)out.add("server",server.deepCopy());if(client!=null)out.add("client",client);
             return out;
         }
@@ -132,28 +176,36 @@ public final class InventoryDiagnostics {
     /** The argument is returned unchanged, and this observation sends no packet. */
     public static void outbound(ServerboundContainerClickPacket packet){
         var click=observing;
+        if(click!=null&&!click.closed){
+            var caller=callers();click.trace.origin(packet,caller);
+            try{click.trace.add("normal_outbound",0,click.outbound==null&&click.headersMatch(packet),fingerprint(packet),caller,null,"","");}
+            catch(RuntimeException failure){click.poison("outbound_observation_failed",failure);}
+        }
         if(click!=null&&!click.closed&&packet.containerId()==click.menuId&&packet.stateId()==click.stateId
             &&packet.slotNum()==click.slot&&packet.buttonNum()==click.button&&packet.containerInput()==click.input){
-            if(click.outbound!=null)click.poisoned=true;else click.outbound=packet;
+            if(click.outbound!=null)click.poison("duplicate_matching_outbound_click",null);else click.outbound=packet;
         }
     }
     /** Called only after the actual encoder succeeds, beyond Meteor's cancellable send event. */
     public static synchronized void encoded(Channel encodedChannel,ServerboundContainerClickPacket packet){
         if(encodedChannel!=channel||connectionServer==null)return;
         var click=observing;Click owner=click!=null&&!click.closed&&click.outbound==packet?click:null;
-        if(click!=null&&owner==null)click.poisoned=true;
-        if(sent.size()>=32){if(click!=null)click.poisoned=true;connectionPoisoned=true;sent.clear();return;}
+        if(click!=null&&owner==null)click.poison("foreign_encoded_click",null);
+        if(sent.size()>=32){if(click!=null)click.poison("encoded_queue_overflow",null);connectionPoisoned=true;sent.clear();return;}
         long seq=++sequence;if(owner!=null)owner.sentSequence=seq;
-        try{sent.addLast(new Sent(seq,fingerprint(packet),owner));}
-        catch(RuntimeException observationFailed){if(click!=null)click.poisoned=true;connectionPoisoned=true;sent.clear();}
+        try{
+            var frame=fingerprint(packet);sent.addLast(new Sent(seq,frame,owner));
+            if(click!=null)click.trace.add("encoded",seq,owner==click,frame,click.trace.origin(packet),null,"","");
+        }catch(RuntimeException observationFailed){if(click!=null)click.poison("encoded_fingerprint_failed",observationFailed);connectionPoisoned=true;sent.clear();}
     }
     /** Every received click consumes one encoded FIFO entry, including early-returned clicks. */
     public static synchronized void received(ServerPlayer player,ServerboundContainerClickPacket packet){
         if(player.level().getServer()!=connectionServer||!player.getUUID().equals(connectionPlayer)||!connectionServer.isSameThread())return;
         var entry=sent.pollFirst();var click=observing;
         boolean match=false;try{match=entry!=null&&entry.packet.equals(fingerprint(packet));}
-        catch(RuntimeException observationFailed){/* Observation cannot alter the original server click. */}
-        if(!match){if(click!=null)click.poisoned=true;connectionPoisoned=true;sent.clear();return;}
+        catch(RuntimeException observationFailed){if(click!=null)click.poison("received_fingerprint_failed",observationFailed);}
+        if(!match){if(click!=null)click.poison(entry==null?"received_without_encoded_entry":"received_fingerprint_mismatch",null);connectionPoisoned=true;sent.clear();return;}
+        if(click!=null){click.receivedSequence=entry.sequence;click.trace.add("received",entry.sequence,entry.owner==click,entry.packet,null,null,"","");}
         if(entry.owner!=null&&entry.owner==click&&entry.sequence==click.sentSequence)click.received=packet;
     }
     private static JsonObject fingerprint(ServerboundContainerClickPacket packet){
@@ -175,20 +227,32 @@ public final class InventoryDiagnostics {
     }
     /** Called immediately around the actual server menu.clicked invocation, never a timer or packet send. */
     public static void serverBefore(ServerPlayer player,ServerboundContainerClickPacket packet){
-        var click=observing;if(click==null||!click.packet(player,packet))return;
-        try{click.serverBefore=snapshot(player,click.scope.world);}catch(RuntimeException failure){click.poisoned=true;}
+        var click=observing;if(!serverTraceScope(click,player))return;
+        boolean owned=click.packet(player,packet);
+        try{
+            var view=snapshot(player,click.scope.world);click.trace.add("server_before",click.receivedSequence,owned,fingerprint(packet),null,summary(view,packet.slotNum()),"","");
+            if(owned)click.serverBefore=view;
+        }catch(RuntimeException failure){click.poison("server_before_snapshot_failed",failure);}
     }
     public static void serverAfter(ServerPlayer player,ServerboundContainerClickPacket packet){
-        var click=observing;if(click==null||!click.packet(player,packet))return;
-        try{click.processedAt=System.currentTimeMillis();click.processedAfter=snapshot(player,click.scope.world);click.serverProcessed=true;}
-        catch(RuntimeException failure){click.poisoned=true;}
+        var click=observing;if(!serverTraceScope(click,player))return;
+        boolean owned=click.packet(player,packet);
+        try{
+            long processed=System.currentTimeMillis();var view=snapshot(player,click.scope.world);
+            click.trace.add("server_after",click.receivedSequence,owned,fingerprint(packet),null,summary(view,packet.slotNum()),"","");
+            if(owned){click.processedAt=processed;click.processedAfter=view;click.processingAfter=view.deepCopy();click.serverProcessed=true;}
+        }catch(RuntimeException failure){click.poison("server_after_snapshot_failed",failure);}
+    }
+    private static boolean serverTraceScope(Click click,ServerPlayer player){
+        return click!=null&&!click.closed&&player.level().getServer()==click.scope.server&&click.scope.server.isSameThread()
+            &&player.getUUID().equals(click.scope.player)&&click.scope.dimension.equals(player.level().dimension().identifier().toString());
     }
     public static void refreshServer(Click click){
         if(!click.serverProcessed||click.closed)return;
         click.scope.server.execute(()->{
             var p=click.scope.serverPlayer();
             if(p!=null&&!click.closed&&observing==click&&p.containerMenu.containerId==click.menuId)
-                try{click.processedAfter=snapshot(p,click.scope.world);}catch(RuntimeException failure){click.poisoned=true;}
+                try{click.processedAfter=snapshot(p,click.scope.world);}catch(RuntimeException failure){click.poison("server_refresh_snapshot_failed",failure);}
         });
     }
     /** Complete player inventory is included; stack_data retains all native item components. */

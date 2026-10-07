@@ -6,6 +6,8 @@ historical ACK, classify the old click as no-send, or authorize its replay.
 import hashlib
 import json
 import os
+import copy
+from types import SimpleNamespace
 from pathlib import Path
 import re
 from datetime import datetime
@@ -15,6 +17,7 @@ from singleplayer_trial_bridge import Paused
 
 SCOPE=('world_id','trial_id','run_id','world_session','dimension')
 SHA=re.compile(r'[0-9a-f]{64}\Z')
+MAX_INVENTORY_HISTORY=4
 
 
 def verified_retirement(exit_state,quit_reply,disconnected,original,old_jvm_pid):
@@ -139,12 +142,45 @@ def historical_manifest(value):
             or original.get('server')!='singleplayer' or original.get('local_trial') is not True
             or original.get('local_survival') is not True or type(original.get('expected_revision')) is not int
             or not isinstance(original.get('id'),str) or not re.fullmatch(r'trial-[A-Za-z0-9_-]{1,74}',original['id'])
-            or failed.get('id')!=original['id'] or failed.get('last_request')!=original['id']
-            or failed.get('op')!='settle' or failed.get('phase')!='done'
-            or failed.get('detail')!='server state available' or failed.get('control_revision')!=original['expected_revision']
+            or failed.get('id')!=original['id']
+            or (failed.get('last_request') not in (None,original['id']) if original.get('inventory_confirm') is True
+                else failed.get('last_request')!=original['id'])
+            or failed.get('control_revision')!=original['expected_revision']
             or any((failed.get('trial_identity',{}) if key in ('trial_id','run_id') else failed).get(key)
                    !=original.get(key) for key in SCOPE) or not empty_menu(failed.get('menu'))):
         raise Paused('Unsupported or mismatched historical pickup; do not replay it')
+    if original.get('inventory_confirm') is True:
+        pending=record(value.get('sdk_pending'))
+        native=record(value.get('native_unknown_reply'))
+        receipt=native.get('inventory_click_receipt',{})
+        if (pending.get('protocol')!=1 or pending.get('request_id')!=original['id']
+                or pending.get('envelope')!=original
+                or pending.get('outcome')!='sent_or_unknown_until_native_and_sdk_confirmation'
+                or any(pending.get('arguments',{}).get(key)!=original.get(key) for key in
+                    ('menu_id','slot','kind','button','expected_item','expected_count','expected_cursor','expected_cursor_count','inventory_confirm'))
+                or native.get('id')!=original['id'] or native.get('op')!='slot_click'
+                or native.get('phase')!='waiting' or native.get('outcome_pending') is not True
+                or native.get('kit_version')!='2026.10.7.8'
+                or native.get('control_revision')!=original['expected_revision']
+                or any((native.get('trial_identity',{}) if key in ('trial_id','run_id') else native).get(key)
+                    !=original.get(key) for key in SCOPE)
+                or receipt.get('protocol')!=1 or receipt.get('request_id')!=original['id']
+                or receipt.get('classification')!='unknown' or receipt.get('server_processed') is not True
+                or type(receipt.get('native_sequence')) is not int or receipt['native_sequence']!=1
+                or receipt.get('correlation_ambiguous') is not True or receipt.get('scope_current') is not True
+                or receipt.get('world_session')!=original['world_session']
+                or receipt.get('control_revision')!=original['expected_revision']
+                or receipt.get('slot')!=11 or receipt.get('button')!=0 or receipt.get('kind')!='pickup'
+                or failed.get('op')!='slot_click' or failed.get('phase')!='waiting'
+                or failed.get('outcome_pending') is not True):
+            raise Paused('Confirmed-protocol historical click must retain its exact ambiguous native outcome')
+        if exact_side(receipt.get('server',{}))!=exact_side(receipt.get('client',{})):
+            raise Paused('Retired ambiguous click final server/client stock disagrees')
+        if quantities(pending.get('before',{}).get('inventory'))[1]!=quantities(failed.get('inventory'))[1]:
+            raise Paused('Retired SDK stage stock changed; separate audit required')
+    elif (failed.get('op')!='settle' or failed.get('phase')!='done'
+            or failed.get('detail')!='server state available'):
+        raise Paused('Legacy timer-only inventory observation contract differs')
     inventory,totals=quantities(failed.get('inventory'))
     if (inventory[11]['item']!=original['expected_item'] or inventory[11]['count']!=1
             or len(failed['menu']['slots'])<=11 or failed['menu']['slots'][11].get('slot')!=11
@@ -173,12 +209,17 @@ def historical_pending(output,registry,state):
             'inventory_manifest':str(path.resolve())})
         for reference in (manifest['original_intent'],manifest['failed_client']):
             frozen[Path(reference['path'])]=reference['sha256']
+        for name in ('sdk_pending','native_unknown_reply'):
+            if name in manifest:
+                reference=manifest[name];record(reference)
+                frozen[Path(reference['path'])]=reference['sha256']
         frozen[path.resolve()]=file_hash(path.resolve())
-    if len(rows)>1:raise Paused('Multiple inventory unknowns require separate physical review')
+    if len(rows)>MAX_INVENTORY_HISTORY:raise Paused('Inventory history review limit exceeded')
     return rows,frozen
 
 
-def archive_failed_pickup(game,failed_client,*,old_worker_pid,old_jvm_pid):
+def archive_failed_pickup(game,failed_client,*,old_worker_pid,old_jvm_pid,
+                          sdk_pending_path=None,native_unknown_reply_path=None):
     """Copy the original envelope and failed client frame without gameplay."""
     game=Path(game).resolve();output=game/'config/twob2tkit/singleplayer-trial/worker'
     mailbox=output.parent.parent/'automation/request.json'
@@ -203,6 +244,12 @@ def archive_failed_pickup(game,failed_client,*,old_worker_pid,old_jvm_pid):
         'old_action_completed':False,'old_action_replayed':False,'old_worker_pid':old_worker_pid,
         'old_jvm_pid':old_jvm_pid,'original_intent':{'path':str(archive),'sha256':file_hash(archive)},
         'failed_client':{'path':str(failure),'sha256':file_hash(failure)}}
+    if original.get('inventory_confirm') is True:
+        if sdk_pending_path is None or native_unknown_reply_path is None:
+            raise Paused('Confirmed-protocol unknown requires its immutable SDK intent and native reply')
+        for name,path in (('sdk_pending',sdk_pending_path),('native_unknown_reply',native_unknown_reply_path)):
+            path=Path(path).resolve()
+            value[name]={'path':str(path),'sha256':file_hash(path)}
     historical_manifest(value)
     target=folder/'manifest.json'
     if target.exists() and json.loads(target.read_text())!=value:
@@ -211,7 +258,7 @@ def archive_failed_pickup(game,failed_client,*,old_worker_pid,old_jvm_pid):
     return {'path':str(target),'sha256':file_hash(target)}
 
 
-def _validate_inventory_review(worker,reference,state,pid_alive):
+def _validate_inventory_review(worker,reference,state,pid_alive,*,require_probe=True):
     review=record(reference)
     if (review.get('schema')!=1 or review.get('kind')!='operator_retired_inventory_review'
             or review.get('decision')!='fresh_inventory_replan_allowed'
@@ -259,6 +306,9 @@ def _validate_inventory_review(worker,reference,state,pid_alive):
         raise Paused('Inventory retirement lacks complete real saved-world evidence')
     if quantities(saved.get('inventory'))[1]!=quantities(failed['inventory'])[1]:
         raise Paused('Stock changed before normal retirement; preserve inventory unknown')
+    if not require_probe:
+        return {'request_id':original['id'],'request':original,'manifest':manifest,'review':review,
+                'historical_effects_unresolved':True,'old_action_completed':False,'old_action_replayed':False}
     probe_result=getattr(worker,'inventory_review_probe',None)
     probe_request=getattr(worker,'inventory_review_probe_request',None)
     if not isinstance(probe_result,dict) or not isinstance(probe_request,dict):
@@ -305,3 +355,74 @@ def validate_inventory_review(worker,reference,state,pid_alive):
     except Paused:raise
     except (OSError,ValueError,TypeError,KeyError,AttributeError):
         raise Paused('Historical inventory review is incomplete or malformed') from None
+
+
+def process_alive(pid):
+    if type(pid) is not int or pid<=1:return True
+    try:os.kill(pid,0);return True
+    except ProcessLookupError:return False
+    except (PermissionError,OSError):return True
+
+
+def retired_inventory_metadata(output,registry,state):
+    """References for SDK-backed retired records, not a new material grant."""
+    result=[]
+    for path in sorted((Path(output)/'legacy-inventory-intents').glob('*/manifest.json')):
+        manifest=record({'path':str(path.resolve()),'sha256':file_hash(path.resolve())})
+        original,failed=historical_manifest(manifest)
+        if not manifest.get('sdk_pending') or original['world_id']!=registry['world_id'] or original['trial_id']!=registry['trial_id']:
+            continue
+        review=path.parent/'retirement-review.json'
+        result.append({'manifest':{'path':str(path.resolve()),'sha256':file_hash(path.resolve())},
+            'retirement_review':{'path':str(review.resolve()),'sha256':file_hash(review.resolve())}})
+    if len(result)>MAX_INVENTORY_HISTORY:raise Paused('Retired inventory admission limit exceeded')
+    return result
+
+
+def validate_retired_inventory(metadata,registry,state,parent_pid,pid_alive=process_alive):
+    """Bridge defense admission: exact retired SDK intent and actual saved quit.
+
+    It intentionally omits fresh inventory-plan admission. The constructor
+    retains the pending record; only the independent new probe review may
+    authorize fresh material intentions later.
+    """
+    try:
+        manifest=record(metadata.get('manifest'));original,failed=historical_manifest(manifest)
+        if not manifest.get('sdk_pending'):raise Paused('Retired SDK admission requires a durable original intent')
+        reference=metadata.get('retirement_review');review=record(reference)
+        if review.get('manifest')!=metadata.get('manifest'):
+            raise Paused('Retirement review differs from the exact SDK manifest')
+        worker=SimpleNamespace(registry=registry,run_id=registry['run_id'],parent_pid=parent_pid,
+            legacy_pending=[{'id':original['id'],'op':'slot_click'}])
+        checked=_validate_inventory_review(worker,reference,state,pid_alive,require_probe=False)
+        refs=[metadata['manifest'],reference,manifest['original_intent'],manifest['failed_client'],
+              manifest['sdk_pending'],manifest['native_unknown_reply'],*review['artifacts'].values()]
+        exit_state=record(review['artifacts']['normal_exit'])
+        refs.append(exit_state['save_log'])
+        if exit_state.get('source')=='verified_native_saved_quit_and_terminated_process':
+            refs.extend([exit_state['quit_request'],exit_state['launcher_stopped']])
+            refs.append(record(exit_state['launcher_stopped'])['log_excerpt'])
+        frozen={}
+        for ref in refs:
+            if file_hash(ref['path'])!=ref['sha256']:raise Paused('Retired SDK evidence changed')
+            frozen[str(Path(ref['path']))]=ref['sha256']
+        return {'request':original,'sdk_pending':record(manifest['sdk_pending']),
+                'frozen':frozen,'metadata':metadata,'historical_effects_unresolved':True,
+                'old_action_completed':False,'old_action_replayed':False}
+    except Paused:raise
+    except (OSError,ValueError,TypeError,KeyError,AttributeError):
+        raise Paused('Retired SDK inventory admission is incomplete') from None
+
+
+def validate_inventory_reviews(worker,reference,state,pid_alive):
+    """Every retired inventory case must have its own independent retirement."""
+    root=record(reference)
+    references=(root.get('reviews') if root.get('kind')=='operator_retired_inventory_reviews' else [reference])
+    if (not isinstance(references,list) or not 1<=len(references)<=MAX_INVENTORY_HISTORY):
+        raise Paused('Historical inventory review count is invalid')
+    values=[validate_inventory_review(worker,ref,state,pid_alive) for ref in references]
+    ids=[value['request_id'] for value in values]
+    expected=[row['id'] for row in worker.legacy_pending if row.get('op')=='slot_click']
+    if len(set(ids))!=len(ids) or set(ids)!=set(expected):
+        raise Paused('Each historical inventory intent needs exactly one matching physical review')
+    return ids

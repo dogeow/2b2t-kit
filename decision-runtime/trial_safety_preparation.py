@@ -182,12 +182,14 @@ def prepare_small_shelter(skills):
         if any(saved.get(key) != plan[key] for key in plan):
             raise Paused('Small shelter coordinates differ from the bounded layout')
         door_item = saved['door_item']
-        world = skills.scan()
-        if any(not world.known(tuple(point)) or world.name(tuple(point)) not in {'air', 'dirt', 'grass_block'}
-               for point in plan['layout']):
-            raise Paused('Partial small shelter changed or lies outside fresh terrain; preserve it')
+        skills.excluded.update(tuple(point) for point in (*plan['floor'], *plan['layout']))
+        from trial_shelter_access import observe_partial_shelter
+        world = observe_partial_shelter(skills, plan)
+        if (any(world.name(tuple(point)) not in {'air', 'dirt', 'grass_block'} for point in plan['layout'])
+                or any(not world.full(tuple(point)) or world.row(tuple(point)).get('block_entity')
+                       for point in plan['floor'])):
+            raise Paused('Partial small shelter has an unexpected current block or changed floor; preserve it')
         missing = sum(not world.earth(tuple(point)) for point in plan['layout'])
-        skills.excluded.update(tuple(point) for point in plan['floor'])
     if _counts(_ready(skills))['dirt'] < missing:
         skills.gather({'dirt', 'grass_block'}, {'dirt'}, missing)
         if _counts(_ready(skills))['dirt'] < missing:

@@ -96,7 +96,7 @@ class TrialInteractionRejected(Paused):
 
 
 def confirmed_interaction_not_sent(op, result, arguments, expected_revision):
-    """Recognize only the reviewed .7/.8 ordinary-interaction preflight path.
+    """Recognize only the reviewed .7/.8/.9 ordinary-interaction preflight path.
 
     AutomationBridge checks BlockFaceTarget.visible before assigning active or
     queuing PlacementRotation. The receive catch writes the exception message
@@ -125,7 +125,7 @@ def confirmed_interaction_not_sent(op, result, arguments, expected_revision):
             and arguments.get('face') in ('up', 'down', 'north', 'south', 'east', 'west')
             and isinstance(arguments.get('expected_state'), str) and arguments['expected_state'].startswith('Block{minecraft:')
             and isinstance(arguments.get('expected_hand'), str) and arguments['expected_hand'].startswith('minecraft:')
-            and result.get('kit_version') in {'2026.10.7.7', '2026.10.7.8'}
+            and result.get('kit_version') in {'2026.10.7.7', '2026.10.7.8', '2026.10.7.9'}
             and result.get('bridge_version') == 4 and result.get('game_version') == '26.1.2'
             and result.get('server') == 'singleplayer' and result.get('manual_movement') is False
             and result.get('screen') == '' and result.get('game_paused') is False
@@ -202,11 +202,11 @@ def inventory_menu_signature(menu):
 
 
 def native_inventory_click_proof(result, envelope, before):
-    """Validate the new .8 exact server-processed receipt, never timer done."""
+    """Validate an audited .8/.9 server-processed receipt, never timer done."""
     if not isinstance(result, dict):
         raise Paused('Server inventory click confirmation is malformed; preserve the click')
     proof = result.get('inventory_click_receipt', {})
-    if (result.get('kit_version') != '2026.10.7.8'
+    if (result.get('kit_version') not in {'2026.10.7.8', '2026.10.7.9'}
             or type(result.get('inventory_click_protocol')) is not int or result['inventory_click_protocol'] != 1
             or result.get('id') != envelope['id'] or result.get('phase') != 'done'
             or result.get('outcome_pending') is True or not isinstance(proof, dict)
@@ -274,7 +274,7 @@ def native_inventory_click_proof(result, envelope, before):
 def native_inventory_probe_proof(result, envelope, before):
     """Current server/client views never supply historical click evidence."""
     probe = result.get('inventory_probe', {})
-    if (result.get('kit_version') != '2026.10.7.8' or result.get('id') != envelope['id']
+    if (result.get('kit_version') not in {'2026.10.7.8', '2026.10.7.9'} or result.get('id') != envelope['id']
             or result.get('phase') != 'done' or not isinstance(probe, dict)
             or type(probe.get('protocol')) is not int or probe['protocol'] != 1
             or probe.get('request_id') != envelope['id']
@@ -299,6 +299,27 @@ def native_inventory_probe_proof(result, envelope, before):
             raise Paused('Current inventory probe contains incomplete or stale server/client views')
         inventory_menu_signature(value)
     return probe
+
+
+def trial_auto_refill_ready(state):
+    """Only the .9 observed hook can own cursor isolation against present IPN."""
+    guard = state.get('auto_refill_guard')
+    if (state.get('kit_version') != '2026.10.7.9' or not isinstance(guard, dict)
+            or type(guard.get('protocol')) is not int or guard['protocol'] != 1
+            or type(guard.get('ipn_present')) is not bool or guard.get('supported') is not True
+            or guard.get('active') is not True
+            or type(state.get('time')) is not int or not 0 <= time.time() * 1000 - state['time'] <= 1000):
+        return False
+    isolation = state.get('inventory_isolation', {})
+    if isolation.get('ipn_present', guard['ipn_present']) is not guard['ipn_present']:
+        return False
+    if not guard['ipn_present']:
+        return True
+    return (guard.get('hook_seen') is True and guard.get('suppressed') is True
+            and type(guard.get('suppressed_ticks')) is int and guard['suppressed_ticks'] > 0
+            and all(type(guard.get(key)) is int and 0 <= state['time'] - guard[key] <= 1000
+                    and 0 <= time.time() * 1000 - guard[key] <= 1000
+                    for key in ('last_hook_at', 'last_suppressed_at')))
 
 
 def walking_signature(op, arguments):
@@ -390,7 +411,7 @@ def validate_scope(state, registry, session=None, run_id=None, allow_dead=False)
 class TrialBridge:
     def __init__(self, root, registry, run_id, check_control=lambda: None,
                  heartbeat=lambda state: None, events=lambda *a, **k: None,
-                 reader=status, sleeper=time.sleep):
+                 reader=status, sleeper=time.sleep, retired_inventory=None, parent_pid=None):
         self.root = Path(root)
         self.registry = registry
         self.world = registry['world_name']
@@ -415,6 +436,12 @@ class TrialBridge:
         self.rejected_paths = {}
         self.pending_mutations = {}
         self.sdk_inventory_pending = {}
+        self.historical_inventory_pending = {}
+        self.retired_inventory = copy.deepcopy(retired_inventory)
+        self.parent_pid = parent_pid
+        self.inventory_replan = None
+        self.historical_inventory_frozen = {}
+        self.last_inventory_probe = None
         self._restore_inventory_intents()
 
     def _inventory_paths(self, request_id):
@@ -443,10 +470,31 @@ class TrialBridge:
 
     def _restore_inventory_intents(self):
         folder = self.root / 'trial-sdk-inventory' / 'pending'
-        if not folder.exists():
-            return
         if folder.is_symlink():
             raise Paused('Inventory pending evidence is linked; no replay')
+        if not folder.exists():
+            if self.retired_inventory:
+                raise Paused('Retired SDK admission lacks its original pending directory')
+            return
+        admitted = {}
+        if self.retired_inventory:
+            if (not isinstance(self.retired_inventory, list) or not 1 <= len(self.retired_inventory) <= 4
+                    or type(self.parent_pid) is not int or self.parent_pid <= 1):
+                raise Paused('Retired SDK inventory lacks a bounded new-parent admission')
+            from trial_inventory_audit import validate_retired_inventory
+            for metadata in self.retired_inventory:
+                claim = validate_retired_inventory(metadata, self.registry, self.state, self.parent_pid)
+                original = claim.get('request', {})
+                rid = original.get('id')
+                if (rid in admitted or not isinstance(claim.get('sdk_pending'), dict)
+                        or not isinstance(claim.get('frozen'), dict)
+                        or claim.get('historical_effects_unresolved') is not True
+                        or claim.get('old_action_completed') is not False or claim.get('old_action_replayed') is not False
+                        or original.get('run_id') == self.run_id or original.get('world_session') == self.session
+                        or original.get('world_id') != self.registry['world_id']
+                        or original.get('trial_id') != self.registry['trial_id']):
+                    raise Paused('Retired SDK inventory admission differs from the exact new scope')
+                admitted[rid] = claim
         for path in folder.glob('trial-*.json'):
             if path.is_symlink() or path.stat().st_size > 512_000:
                 raise Paused('Invalid inventory pending evidence; no replay')
@@ -485,11 +533,90 @@ class TrialBridge:
                 if not settled:
                     raise Paused('Inventory confirmation evidence is incomplete; no replay')
             if not settled:
+                if request_id in admitted:
+                    claim = admitted.pop(request_id)
+                    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                    if (record != claim['sdk_pending'] or envelope != claim['request']
+                            or claim['frozen'].get(str(path.resolve())) != digest):
+                        raise Paused('Original durable SDK pending differs from its retired frozen evidence')
+                    self.historical_inventory_pending[request_id] = copy.deepcopy(record)
+                    self.historical_inventory_frozen.update(claim['frozen'])
+                    self.historical_inventory_frozen[str(path.resolve())] = digest
+                    continue
                 self.pending_mutations[request_id] = {'id': request_id, 'op': 'slot_click',
                     'world_session': envelope['world_session'], 'arguments': record['arguments'],
                     'sdk_inventory_pending': True, 'intent_path': str(path)}
                 self.sdk_inventory_pending[request_id] = record
                 self.halted = True
+        if admitted:
+            raise Paused('A retired admission lacks its original unresolved durable SDK pending')
+        self._verify_historical_inventory()
+
+    def _verify_historical_inventory(self):
+        for filename, digest in self.historical_inventory_frozen.items():
+            path = Path(filename)
+            if (not path.is_absolute() or any(part.is_symlink() for part in (path, *path.parents))
+                    or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest):
+                self.halted = True
+                raise Paused('Retired SDK inventory evidence changed; preserve all unknown intents')
+
+    def _inventory_replan_current(self):
+        baseline = self.inventory_replan
+        return (isinstance(baseline, dict)
+                and all(baseline.get(key) == value for key, value in {
+                    'world_id': self.registry['world_id'], 'trial_id': self.registry['trial_id'],
+                    'run_id': self.run_id, 'world_session': self.session,
+                    'dimension': self.state.get('dimension')}.items()))
+
+    def authorize_inventory_replan(self, baseline):
+        """Admit new current facts after review; retain every historical unknown."""
+        if not self.historical_inventory_pending:
+            return
+        self._verify_historical_inventory()
+        current = self.read()
+        identifiers = set(self.historical_inventory_pending)
+        if (self.halted or self.pending_mutations or self.active is not None
+                or not isinstance(baseline, dict) or baseline.get('schema') != 1
+                or baseline.get('source') != 'fresh_kit_physical_baseline'
+                or not isinstance(baseline.get('newbaseline_id'), str) or not baseline['newbaseline_id']
+                or baseline.get('historical_effects_unresolved') is not True
+                or baseline.get('old_action_completed') is not False or baseline.get('old_action_replayed') is not False
+                or any(baseline.get(key) != value for key, value in {
+                    'world_id': self.registry['world_id'], 'trial_id': self.registry['trial_id'],
+                    'run_id': self.run_id, 'world_session': self.session, 'dimension': current['dimension'],
+                    'control_revision': self.revision}.items())
+                or type(baseline.get('observed_at')) is not int
+                or not 0 <= time.time() * 1000 - baseline['observed_at'] <= 3000
+                or not isinstance(baseline.get('legacy_pending'), list)
+                or not identifiers <= {row.get('id') for row in baseline['legacy_pending'] if isinstance(row, dict)}
+                or not isinstance(baseline.get('forbidden_request_ids'), list)
+                or not identifiers <= set(baseline['forbidden_request_ids'])
+                or not isinstance(baseline.get('inventory_review_verified_ids'), list)
+                or set(baseline['inventory_review_verified_ids']) != {
+                    row.get('id') for row in baseline['legacy_pending']
+                    if isinstance(row, dict) and row.get('op') == 'slot_click'}
+                or not identifiers <= set(baseline['inventory_review_verified_ids'])
+                or baseline.get('menu') != current.get('menu')
+                or baseline.get('inventory') != current.get('inventory')):
+            raise Paused('Retired SDK inventory requires this new scope\'s independently reviewed physical baseline')
+        probe = self.last_inventory_probe
+        if not isinstance(probe, dict):
+            raise Paused('A new bridge-owned current inventory probe is required before fresh inventory planning')
+        result, envelope = probe['result'], probe['envelope']
+        value = native_inventory_probe_proof(result, envelope, probe['before'])
+        if (result.get('world_session') != self.session or result.get('control_revision') != self.revision
+                or result.get('trial_identity', {}).get('run_id') != self.run_id
+                or not 0 <= current['time'] - result['time'] <= 3000
+                or inventory_menu_signature(value['client']) != inventory_menu_signature(current['menu'])
+                or inventory_menu_signature(value['server']) != inventory_menu_signature(current['menu'])):
+            raise Paused('Current SDK physical baseline differs from its fresh server/client probe')
+        full = lambda side: json.dumps({key: side[key] for key in ('cursor', 'slots', 'inventory')}, sort_keys=True)
+        if full(value['client']) != full(value['server']):
+            raise Paused('Current complete server/client inventory components differ; no fresh inventory plan')
+        self.inventory_replan = copy.deepcopy(baseline)
+        self.events('historical_sdk_inventory_fresh_plan_admitted', baseline_id=baseline['newbaseline_id'],
+                    forbidden_request_ids=sorted(identifiers), historical_effects_unresolved=True,
+                    old_action_completed=False, old_action_replayed=False)
 
     def commit_inventory_click(self, stage, witnesses, predicate):
         if not self.sdk_inventory_pending:
@@ -555,6 +682,7 @@ class TrialBridge:
 
     def read(self, allow_dead=False, deadline=None):
         self.check_control()
+        self._verify_historical_inventory()
         if self.halted:
             raise Paused('Unknown or handed-over native operation; no automatic replay')
         state = validate_scope(self.observe(deadline=deadline), self.registry, self.session,
@@ -572,6 +700,10 @@ class TrialBridge:
             raise Paused('Trial primitive is not explicitly supported: ' + str(op))
         if self.sdk_inventory_pending and op != 'trial_stop':
             raise Paused('SDK inventory click is still pending; observe and commit before another native request')
+        if (self.historical_inventory_pending and not self._inventory_replan_current()
+                and op not in {'guard', 'snapshot', 'scan', 'scan_trees', 'decision_screenshot',
+                               'inventory_probe', 'trial_respawn', 'trial_stop'}):
+            raise Paused('Retired SDK inventory permits defense and current review only; no material action sent')
         if 'inventory_confirm' in args:
             raise Paused('SDK inventory confirmation flag is owned by the exact trial bridge')
         chop_origin = args.pop('_chop_origin', None)
@@ -602,10 +734,12 @@ class TrialBridge:
             raise Paused('Trial request observation budget expired before dispatch; no action sent')
         sdk_click = op == 'slot_click' and state.get('menu', {}).get('type') in {'InventoryMenu', 'CraftingMenu'}
         if sdk_click or op == 'inventory_probe':
-            if (state.get('kit_version') != '2026.10.7.8'
+            if (state.get('kit_version') not in {'2026.10.7.8', '2026.10.7.9'}
                     or type(state.get('inventory_click_protocol')) is not int or state['inventory_click_protocol'] != 1):
-                raise Paused('Server-confirmed trial inventory requires Kit .8 protocol 1; no click sent')
+                raise Paused('Server-confirmed trial inventory requires an audited host protocol 1; no click sent')
         if sdk_click:
+            if not trial_auto_refill_ready(state):
+                raise Paused('Trial SDK requires fresh .9 auto-refill cursor isolation; no click sent')
             inventory_menu_signature(state['menu'])
             args['inventory_confirm'] = True
         if op == 'chop':
@@ -625,6 +759,8 @@ class TrialBridge:
             if previous.get('id') not in {self.last, self.active}:
                 raise Paused('Foreign or unresolved native mailbox; preserve it')
         request_id = 'trial-' + uuid.uuid4().hex[:20]
+        if request_id in self.historical_inventory_pending:
+            raise Paused('Historical inventory request identifiers are forbidden; no replay')
         envelope = {'id': request_id, 'op': op, 'server': 'singleplayer',
                     'dimension': state['dimension'], 'site': list(state['pos']),
                     'world_session': self.session, 'world_id': self.registry['world_id'],
@@ -721,6 +857,8 @@ class TrialBridge:
                         raise
                     self.last_receipt = {**self.last_receipt, 'receipt_class': 'current_inventory_probe_only'}
                     self.receipts[-1] = self.last_receipt
+                    self.last_inventory_probe = {'result': copy.deepcopy(result),
+                                                 'envelope': copy.deepcopy(envelope), 'before': copy.deepcopy(state)}
                 if op not in {'scan', 'scan_trees'} and result.get('phase') != 'done':
                     if (current['control_revision'] == envelope['expected_revision']
                             and guard_pre_dispatch_refusal(op, result, envelope['expected_revision'])):

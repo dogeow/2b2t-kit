@@ -1,0 +1,632 @@
+{
+  "bounds": {
+    "details": true,
+    "max": [
+      11,
+      65,
+      -77
+    ],
+    "min": [
+      8,
+      62,
+      -80
+    ]
+  },
+  "checkpoint": {
+    "owned": {
+      "9,63,-78": "dirt",
+      "9,63,-79": "dirt"
+    },
+    "small_shelter": {
+      "dimension": "minecraft:overworld",
+      "door": [
+        10,
+        63,
+        -77
+      ],
+      "door_item": "dark_oak_door",
+      "floor": [
+        [
+          9,
+          62,
+          -79
+        ],
+        [
+          9,
+          62,
+          -78
+        ],
+        [
+          9,
+          62,
+          -77
+        ],
+        [
+          10,
+          62,
+          -79
+        ],
+        [
+          10,
+          62,
+          -78
+        ],
+        [
+          10,
+          62,
+          -77
+        ],
+        [
+          11,
+          62,
+          -79
+        ],
+        [
+          11,
+          62,
+          -78
+        ],
+        [
+          11,
+          62,
+          -77
+        ]
+      ],
+      "inside": [
+        10,
+        63,
+        -78
+      ],
+      "layout": [
+        [
+          9,
+          63,
+          -79
+        ],
+        [
+          9,
+          63,
+          -78
+        ],
+        [
+          9,
+          63,
+          -77
+        ],
+        [
+          10,
+          63,
+          -79
+        ],
+        [
+          11,
+          63,
+          -79
+        ],
+        [
+          11,
+          63,
+          -78
+        ],
+        [
+          11,
+          63,
+          -77
+        ],
+        [
+          9,
+          64,
+          -79
+        ],
+        [
+          9,
+          64,
+          -78
+        ],
+        [
+          9,
+          64,
+          -77
+        ],
+        [
+          10,
+          64,
+          -79
+        ],
+        [
+          11,
+          64,
+          -79
+        ],
+        [
+          11,
+          64,
+          -78
+        ],
+        [
+          11,
+          64,
+          -77
+        ],
+        [
+          9,
+          65,
+          -79
+        ],
+        [
+          9,
+          65,
+          -78
+        ],
+        [
+          9,
+          65,
+          -77
+        ],
+        [
+          10,
+          65,
+          -79
+        ],
+        [
+          10,
+          65,
+          -77
+        ],
+        [
+          11,
+          65,
+          -79
+        ],
+        [
+          11,
+          65,
+          -78
+        ],
+        [
+          11,
+          65,
+          -77
+        ],
+        [
+          10,
+          65,
+          -78
+        ]
+      ],
+      "roof": [
+        [
+          9,
+          65,
+          -79
+        ],
+        [
+          9,
+          65,
+          -78
+        ],
+        [
+          9,
+          65,
+          -77
+        ],
+        [
+          10,
+          65,
+          -79
+        ],
+        [
+          10,
+          65,
+          -77
+        ],
+        [
+          11,
+          65,
+          -79
+        ],
+        [
+          11,
+          65,
+          -78
+        ],
+        [
+          11,
+          65,
+          -77
+        ],
+        [
+          10,
+          65,
+          -78
+        ]
+      ],
+      "schema": 1,
+      "verified": false,
+      "walls": [
+        [
+          9,
+          63,
+          -79
+        ],
+        [
+          9,
+          63,
+          -78
+        ],
+        [
+          9,
+          63,
+          -77
+        ],
+        [
+          10,
+          63,
+          -79
+        ],
+        [
+          11,
+          63,
+          -79
+        ],
+        [
+          11,
+          63,
+          -78
+        ],
+        [
+          11,
+          63,
+          -77
+        ],
+        [
+          9,
+          64,
+          -79
+        ],
+        [
+          9,
+          64,
+          -78
+        ],
+        [
+          9,
+          64,
+          -77
+        ],
+        [
+          10,
+          64,
+          -79
+        ],
+        [
+          11,
+          64,
+          -79
+        ],
+        [
+          11,
+          64,
+          -78
+        ],
+        [
+          11,
+          64,
+          -77
+        ]
+      ],
+      "world_id": "fixture-save"
+    },
+    "stations": {}
+  },
+  "scan": {
+    "blocks": [
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          8,
+          62,
+          -80
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          8,
+          62,
+          -79
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": true,
+        "pos": [
+          8,
+          63,
+          -79
+        ],
+        "replaceable": true,
+        "solid": false,
+        "state": "Block{minecraft:short_grass}"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          8,
+          62,
+          -78
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": true,
+        "pos": [
+          8,
+          63,
+          -78
+        ],
+        "replaceable": true,
+        "solid": false,
+        "state": "Block{minecraft:leaf_litter}[facing=north,segment_amount=3]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          8,
+          62,
+          -77
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          9,
+          62,
+          -80
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          9,
+          62,
+          -79
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:dirt}"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          9,
+          63,
+          -79
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          9,
+          62,
+          -78
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:dirt}"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          9,
+          63,
+          -78
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          9,
+          62,
+          -77
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          10,
+          62,
+          -80
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:dirt}"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          10,
+          63,
+          -80
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:mushroom_stem}[down=false,east=true,north=true,south=true,up=false,west=true]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          10,
+          64,
+          -80
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:mushroom_stem}[down=false,east=true,north=true,south=true,up=false,west=true]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          10,
+          65,
+          -80
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:mushroom_stem}[down=false,east=true,north=true,south=true,up=false,west=true]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          10,
+          62,
+          -79
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          10,
+          62,
+          -78
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          10,
+          62,
+          -77
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          11,
+          62,
+          -80
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          11,
+          62,
+          -79
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          11,
+          62,
+          -78
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      },
+      {
+        "block_entity": false,
+        "fluid": false,
+        "passable": false,
+        "pos": [
+          11,
+          62,
+          -77
+        ],
+        "replaceable": false,
+        "solid": true,
+        "state": "Block{minecraft:grass_block}[snowy=false]"
+      }
+    ],
+    "control_revision": 14,
+    "phase": "done",
+    "scan_cells_read": 64,
+    "scan_end_revision": 14,
+    "scan_start_revision": 14,
+    "scan_total_cells": 64
+  },
+  "source": "sanitized_actual_64_cell_kit_scan_no_historical_placement_ack"
+}

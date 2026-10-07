@@ -39,10 +39,14 @@ class NativeInventory:
         menu = {'id': 0, 'type': 'InventoryMenu', 'cursor': stack(),
                 'slots': [stack(slot=i) for i in range(45)]}
         menu['slots'][11] = stack('minecraft:dark_oak_log', 1, 11)
-        self.current = fixtures.state(self.registry, kit_version='2026.10.7.8', inventory_click_protocol=1,
+        stamp = int(time.time() * 1000) - 500
+        self.current = fixtures.state(self.registry, kit_version='2026.10.7.9', inventory_click_protocol=1,
             player_uuid='11111111-1111-1111-1111-111111111111', menu=menu,
             inventory=[copy.deepcopy(menu['slots'][11])], safety_hold={'active': False},
-            health_recovery_hold=False, guard_busy=False, time=int(time.time() * 1000) - 1000)
+            health_recovery_hold=False, guard_busy=False, time=stamp,
+            auto_refill_guard={'protocol': 1, 'ipn_present': True, 'hook_seen': True,
+                'supported': True, 'active': True, 'suppressed': True, 'suppressed_ticks': 20,
+                'last_hook_at': stamp, 'last_suppressed_at': stamp})
         self.current['trial_identity']['process_alive'] = True
         self.sent = []
         self.native_result = None
@@ -123,6 +127,37 @@ class TrialInventoryConfirmationTests(unittest.TestCase):
             with self.assertRaisesRegex(Paused, 'no click sent'): self.click(bridge)
             self.assertFalse((native.root / 'request.json').exists())
             self.assertFalse(bridge.pending_mutations)
+
+    def test_unobserved_or_inactive_auto_refill_isolation_never_dispatches(self):
+        for change in ('old_host', 'missing', 'unsupported', 'inactive', 'unseen', 'unsuppressed',
+                       'never_suppressed', 'stale_hook', 'stale_state', 'conflicting_presence'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as game:
+                native = NativeInventory(game)
+                guard = native.current['auto_refill_guard']
+                if change == 'old_host': native.current['kit_version'] = '2026.10.7.8'
+                elif change == 'missing': native.current.pop('auto_refill_guard')
+                elif change == 'unsupported': guard['supported'] = False
+                elif change == 'inactive': guard['active'] = False
+                elif change == 'unseen': guard['hook_seen'] = False
+                elif change == 'unsuppressed': guard['suppressed'] = False
+                elif change == 'never_suppressed': guard['suppressed_ticks'] = 0
+                elif change == 'stale_hook': guard['last_suppressed_at'] -= 2000
+                elif change == 'stale_state': native.current['time'] -= 2000
+                else: native.current['inventory_isolation'] = {'ipn_present': False}
+                bridge = native.bridge()
+                with self.assertRaisesRegex(Paused, 'cursor isolation'): self.click(bridge)
+                self.assertFalse((native.root / 'request.json').exists())
+                self.assertFalse(bridge.pending_mutations)
+
+    def test_no_ipn_requires_supported_owned_guard_but_no_suppression_claim(self):
+        with tempfile.TemporaryDirectory() as game:
+            native = NativeInventory(game)
+            native.current['auto_refill_guard'].update(ipn_present=False, hook_seen=False,
+                                                      suppressed=False, suppressed_ticks=0)
+            native.current['inventory_isolation'] = {'ipn_present': False}
+            bridge = native.bridge()
+            self.click(bridge)
+            self.assertTrue(bridge.pending_mutations)
 
     def test_native_confirmed_keeps_pending_until_sdk_predicate_two_frames(self):
         with tempfile.TemporaryDirectory() as game, patch('kit_runtime.inventory.time.sleep'):

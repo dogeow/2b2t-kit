@@ -7,7 +7,9 @@ from unittest.mock import Mock, patch
 
 from material_worker_release import build
 from singleplayer_trial_hot_update import (install_and_restart, load_checkpoint,
-                                          restore_checkpoint, unresolved_mutations)
+                                          restore_checkpoint, unresolved_mutations,
+                                          _preserve_sdk_inventory,_file_digest,prepare_cold_material_handoff,
+                                          _material_review_chain,_minecraft_pid_matches,supersede_unclaimed_material_handoff)
 from singleplayer_trial import TrialSkills
 from singleplayer_trial_bridge import TrialBridge
 from trial_native_chop import record_chop_receipt
@@ -40,7 +42,8 @@ def setup(root):
                  'singleplayer_trial_hot_update.py', 'trial_surface_recovery.py', 'survival_cooking.py',
                  'trial_safety_preparation.py', 'trial_safety_routing.py', 'trial_native_chop.py', 'trial_selection_receipts.py',
                  'trial_station_access.py', 'survival_mining_access.py', 'trial_material_rebaseline.py',
-                 'trial_inventory_audit.py'):
+                 'trial_inventory_audit.py','trial_placement_access.py','trial_shelter_access.py',
+                 'trial_material_handoff.py'):
         (source / file).write_text('VALUE = "new verified worker"\n')
     (source / 'singleplayer_trial_capabilities.py').write_text('VALUE = "only registered macros"\n')
     bundle = root / 'worker.zip'
@@ -225,8 +228,15 @@ def admitted_material_setup(root,*,no_send=False):
     def lifecycle(unused,command):
         reply=native(unused,command)
         if command=='pause':material_flags()
+        reply.update(protocol=1,id='trial-api-'+command)
+        if command in {'pause','cancel'}:
+            request={'protocol':1,'id':reply['id'],'command':command,'world_id':reg['world_id'],
+                'world_session':state['world_session'],'expected_revision':state['control_revision'],
+                'expires_at':state['time']+15000}
+            (output.parent/('api-intent-'+reply['id']+'.json')).write_text(json.dumps(request))
         return reply
-    checks.update(native=lifecycle,preserve_legacy_review=False,preserve_material_plan=True)
+    checks.update(native=lifecycle,preserve_legacy_review=False,preserve_material_plan=True,
+                  worker_parent_reader=lambda pid,game:900)
     return result,checks,folder,journal,report_path
 
 
@@ -242,7 +252,361 @@ def mining_reply(reg, **changes):
             'movement_keys': {'forward': False, 'back': False, 'jump': False, 'sneak': False}, **changes}
 
 
+def cold_material_setup(root):
+    result,checks,folder,journal,report=admitted_material_setup(root)
+    game,reg,state,bundle,commands,native,unused,output,old,archive=result
+    worker=json.loads((output/'status.json').read_text());worker['phase']='stopped';worker.pop('world_session',None)
+    worker['time']=state['time']-10000;(output/'status.json').write_text(json.dumps(worker))
+    status_path=root/'source-stopped-worker.json';status_path.write_bytes((output/'status.json').read_bytes())
+    ref={'path':str(status_path.resolve()),'sha256':_file_digest(status_path)}
+    stock=[{'slot':i,'item':'minecraft:air','count':0} for i in range(43)]
+    for i,item,count in ((0,'dirt',23),(1,'dark_oak_door',3),(2,'cobblestone',45)):
+        stock[i]={'slot':i,'item':'minecraft:'+item,'count':count}
+    state.update(kit_version='2026.10.7.9',player_uuid='player-a',inventory=stock,
+                 safety_hold={'active':True,'escaping':False,'time':state['time']-20000,'reason':'historical exit'})
+    state['trial_identity'].update(process_alive=False,run_id='',detail='手动移动接管')
+    options={'source_parent_pid':900,'worker_status_ref':ref,'reader':lambda _:dict(state),
+             'pid_alive':lambda _:False,'minecraft_identity_checker':lambda pid,game:pid==900,
+             'import_checker':Mock(),'wall_time':checks['wall_time']}
+    return result,folder,journal,ref,options
+
+
+def inherited_material_plan(output,reg,reference,target_run):
+    manifest=json.loads(Path(reference['path']).read_text())
+    source=json.loads(Path(manifest['baseline']['path']).read_text())
+    baseline={**source,'run_id':target_run,'request_id':manifest['id'],'newbaseline_id':'baseline-inherited',
+        'source_handoff':{'kind':manifest['kind'],'manifest_ref':reference,'source_baseline_ref':manifest['baseline'],
+            'source_checkpoint_ref':manifest['checkpoint'],'source_run_id':reg['run_id'],
+            'source_parent_pid':manifest['source_parent_pid'],'target_run_id':target_run,
+            'stock_fresh':True,'player_work_fresh':True,'source_authorization_inherited':True}}
+    claim={'schema':1,'handoff_id':manifest['id'],'manifest_sha256':reference['sha256'],'run_id':target_run,
+        'world_session':manifest['world_session'],'baseline_id':baseline['newbaseline_id'],
+        'historical_effects_unresolved':True,'old_action_completed':False,'old_action_replayed':False}
+    claim_path=output/'source-material-handoff-claims'/(manifest['id']+'.json')
+    claim_path.parent.mkdir(exist_ok=True);claim_path.write_text(json.dumps(claim))
+    folder=output/'material-review-runs'/target_run/'replanned-material'/baseline['newbaseline_id']
+    folder.mkdir(parents=True);(folder/'baseline.json').write_text(json.dumps(baseline))
+    checkpoint=json.loads(Path(manifest['checkpoint']['path']).read_text())
+    checkpoint.update(source_run_id=target_run,material_baseline_id=baseline['newbaseline_id'],unresolved_native=[])
+    (folder/'checkpoint.json').write_text(json.dumps(checkpoint))
+    return baseline,claim_path,folder
+
+
+def rejected_handoff_setup(root):
+    result,folder,journal,ref,options=cold_material_setup(root)
+    game,reg,state,bundle,commands,native,unused,output,old,archive=result
+    original=prepare_cold_material_handoff(game,bundle,dict(state),**options)
+    registry={**reg,'run_id':'run-rejected'}
+    (output.parent/'registry.json').write_text(json.dumps(registry))
+    worker={'protocol':1,'pid':703,'phase':'cancelled','run_id':registry['run_id'],'trial_id':reg['trial_id'],
+        'world_id':reg['world_id'],'legacy_pending':[old],'material_macros_enabled':False,'time':state['time']}
+    (output/'status.json').write_text(json.dumps(worker))
+    cancel={'protocol':1,'id':'trial-api-retire-rejected','phase':'done',
+        'trial_identity':{**state['trial_identity'],'run_id':registry['run_id']}}
+    intent={'protocol':1,'id':cancel['id'],'command':'cancel','world_id':reg['world_id'],
+        'world_session':state['world_session'],'expected_revision':state['control_revision'],'expires_at':state['time']+15000}
+    (output.parent/('api-intent-'+cancel['id']+'.json')).write_text(json.dumps(intent))
+    (output.parent/('api-reply-'+cancel['id']+'.json')).write_text(json.dumps(cancel))
+    state['trial_identity']['detail']='试验后台已停止，进度和经验保留'
+    after_cancel_path=root/'after-cancel-native.json';after_cancel_path.write_text(json.dumps(state))
+    # A second verified source artifact, not an invented hash on the old one.
+    (root/'source/trial_placement_access.py').write_text('VALUE = "fixed Python placement"\n')
+    new_bundle=root/'worker-fixed.zip';build(root/'source',new_bundle)
+    kwargs={key:options[key] for key in ('reader','pid_alive','minecraft_identity_checker','import_checker','wall_time')}
+    kwargs.update(original_manifest_ref=original,retired_cancel_reply=cancel,source_parent_pid=900,
+        retired_cancel_native_ref={'path':str(after_cancel_path.resolve()),'sha256':_file_digest(after_cancel_path)})
+    return result,original,new_bundle,kwargs
+
+
 class HotUpdateTests(unittest.TestCase):
+    def test_supersession_binds_observed_after_cancel_revision_instead_of_guessing_increment(self):
+        for change in (None,'new_revision','wrong_scope','alive_after','old_time','tampered_after'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                result,original,bundle,options=rejected_handoff_setup(Path(temp))
+                game,reg,state,oldbundle,commands,native,unused,output,old,archive=result
+                # Before-cancel revision 3, actually observed after-cancel 8.
+                # No constant increment can produce permission for new 9.
+                state['control_revision']=8
+                after_path=Path(options['retired_cancel_native_ref']['path'])
+                value=json.loads(json.dumps(state));value['time']-=1
+                if change=='wrong_scope':value['world_session']='foreign'
+                elif change=='alive_after':value['trial_identity']['process_alive']=True
+                elif change=='old_time':value['time']-=40000
+                after_path.write_text(json.dumps(value))
+                options['retired_cancel_native_ref']['sha256']=_file_digest(after_path)
+                if change=='new_revision':state['control_revision']=9
+                elif change=='tampered_after':after_path.write_bytes(after_path.read_bytes()+b' ')
+                if change:
+                    with self.assertRaises(RuntimeError):supersede_unclaimed_material_handoff(game,bundle,dict(state),**options)
+                    self.assertEqual(original,json.loads((output/'source-material-handoff.json').read_text()))
+                else:
+                    reference=supersede_unclaimed_material_handoff(game,bundle,dict(state),**options)
+                    manifest=json.loads(Path(reference['path']).read_text())
+                    self.assertEqual(8,manifest['operator_current_native']['control_revision'])
+                    self.assertEqual(options['retired_cancel_native_ref'],manifest['superseded_worker_retirement']['after_cancel_native_ref'])
+                    self.assertIn(str(after_path),manifest['frozen'])
+                self.assertEqual([],commands)
+
+    def test_supersession_checks_entry_frame_before_slow_audit_then_requires_a_new_fresh_frame(self):
+        from singleplayer_trial_hot_update import _capture_material_plan
+        for stale_final in (False,True):
+            with self.subTest(stale_final=stale_final),tempfile.TemporaryDirectory() as temp:
+                result,original,bundle,options=rejected_handoff_setup(Path(temp))
+                game,reg,state,oldbundle,commands,native,unused,output,old,archive=result
+                entered=json.loads(json.dumps(state));clock=[(state['time']+100)/1000]
+                options['wall_time']=lambda:clock[0]
+                options['reader']=lambda _:entered if stale_final else dict(state)
+                def delayed(*args,**kwargs):
+                    captured=_capture_material_plan(*args,**kwargs)
+                    clock[0]+=8.5;state['time']=int(clock[0]*1000)-100
+                    return captured
+                with patch('singleplayer_trial_hot_update._capture_material_plan',side_effect=delayed):
+                    if stale_final:
+                        with self.assertRaises(RuntimeError):supersede_unclaimed_material_handoff(game,bundle,entered,**options)
+                        self.assertEqual(original,json.loads((output/'source-material-handoff.json').read_text()))
+                    else:
+                        reference=supersede_unclaimed_material_handoff(game,bundle,entered,**options)
+                        value=json.loads(Path(reference['path']).read_text())
+                        self.assertGreater(value['operator_current_native']['time'],entered['time'])
+                self.assertEqual([],commands)
+
+    def test_unclaimed_cold_manifest_supersession_keeps_original_evidence_and_retires_temporary_worker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result,original,bundle,options=rejected_handoff_setup(Path(temp))
+            game,reg,state,oldbundle,commands,native,unused,output,old,archive=result
+            old_path=Path(original['path']);original_bytes=old_path.read_bytes();old_value=json.loads(original_bytes)
+            new=supersede_unclaimed_material_handoff(game,bundle,dict(state),**options)
+            value=json.loads(Path(new['path']).read_text())
+            self.assertNotEqual(original['path'],new['path']);self.assertEqual(original_bytes,old_path.read_bytes())
+            self.assertEqual(original,value['original_manifest_ref']);self.assertEqual(_file_digest(bundle),value['bundle_sha256'])
+            self.assertNotEqual(old_value['bundle_sha256'],value['bundle_sha256'])
+            for key in ('source_stopped_native','source_worker_status','source_run_id','historical_pending','protected_player_work','checkpoint','baseline'):
+                self.assertEqual(old_value[key],value[key])
+            for path,digest in old_value['frozen'].items():self.assertEqual(digest,value['frozen'][path])
+            self.assertEqual(original['sha256'],value['frozen'][original['path']])
+            self.assertEqual('run-rejected',value['superseded_worker_retirement']['run_id'])
+            self.assertEqual([],commands);self.assertFalse((output/'source-material-handoff-claims').exists())
+            self.assertEqual(new,json.loads((output/'source-material-handoff.json').read_text()))
+
+    def test_source_supersession_refuses_claimed_changed_original_or_current_unknown(self):
+        for change in ('claimed','old_hash','old_frozen','wrong_cancel','temporary_alive','current_unknown','changed_stock','changed_session','current_child'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                result,original,bundle,options=rejected_handoff_setup(Path(temp))
+                game,reg,state,oldbundle,commands,native,unused,output,old,archive=result
+                if change=='claimed':
+                    path=output/'source-material-handoff-claims'/(Path(original['path']).stem+'.json');path.parent.mkdir();path.write_text('{}')
+                elif change=='old_hash':Path(original['path']).write_bytes(Path(original['path']).read_bytes()+b' ')
+                elif change=='old_frozen':archive.write_bytes(archive.read_bytes()+b' ')
+                elif change=='wrong_cancel':options['retired_cancel_reply']={**options['retired_cancel_reply'],'id':'foreign'}
+                elif change=='temporary_alive':options['pid_alive']=lambda pid:pid==703
+                elif change=='changed_stock':state['inventory'][0]['count']+=1
+                elif change=='changed_session':state['world_session']='foreign'
+                elif change=='current_child':state['chopping']=True
+                elif change=='current_unknown':
+                    envelope={'id':'trial-new-unknown','op':'interact','world_id':reg['world_id'],'trial_id':reg['trial_id'],
+                        'run_id':'run-rejected','world_session':state['world_session'],'dimension':state['dimension'],
+                        'server':'singleplayer','local_trial':True,'local_survival':True,
+                        'expected_revision':state['control_revision'],'expires_at':state['time']+15000,'pos':[2,70,0]}
+                    (game/'config/twob2tkit/automation/request.json').write_text(json.dumps(envelope))
+                with self.assertRaises(RuntimeError):supersede_unclaimed_material_handoff(game,bundle,dict(state),**options)
+                self.assertEqual(original,json.loads((output/'source-material-handoff.json').read_text()))
+                self.assertEqual([],commands)
+
+    def test_cold_handoff_game_process_matches_fabric_entrypoint_and_exact_game_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            game=Path(temp).resolve()
+            for entry in ('net.fabricmc.loader.impl.launch.knot.KnotClient','net.minecraft.client.main.Main','unknown.Main'):
+                reply=Mock(stdout='java '+entry+' --gameDir '+str(game))
+                with patch('singleplayer_trial_hot_update.subprocess.run',return_value=reply):
+                    self.assertEqual(entry!='unknown.Main',_minecraft_pid_matches(900,game))
+                    self.assertFalse(_minecraft_pid_matches(900,game/'foreign'))
+
+    def test_same_session_source_handoff_claim_allows_waiting_handoff_without_new_operator_review(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result,checks,folder,journal,report=admitted_material_setup(Path(temp))
+            game,reg,state,bundle,commands,native,unused,output,old,archive=result
+            original_native=checks['native']
+            def new_worker(unused,command):
+                answer=original_native(unused,command)
+                if command=='start':
+                    reference=json.loads((output/'source-material-handoff.json').read_text())
+                    manifest=json.loads(Path(reference['path']).read_text())
+                    baseline,claim_path,newfolder=inherited_material_plan(output,reg,reference,'run-new')
+                    worker=json.loads((output/'status.json').read_text())
+                    worker.update(phase='waiting_material_handoff',material_baseline_id=baseline['newbaseline_id'],
+                        source_material_handoff_waiting=True,source_material_handoff_id=manifest['id'],
+                        source_handoff_parent_pid=900,historical_effects_unresolved=True,historical_replay_enabled=False)
+                    (output/'status.json').write_text(json.dumps(worker))
+                return answer
+            checks['native']=new_worker
+            proof=install_and_restart(game,bundle,**checks)
+            self.assertEqual(['pause','cancel','start'],commands)
+            self.assertEqual('waiting_material_handoff',proof['legacy_new_worker_phase'])
+            self.assertTrue(proof['material_plan_freshly_inherited'])
+            self.assertFalse(proof['new_scope_operator_review_required'])
+            self.assertFalse(proof['automatic_material_resume'])
+
+    def test_inherited_source_plan_keeps_original_review_and_requires_exact_consumed_claim(self):
+        for change in (None,'claim_run','claim_hash','source_scope','review'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                result,folder,journal,ref,options=cold_material_setup(Path(temp))
+                game,reg,state,bundle,commands,native,unused,output,old,archive=result
+                reference=prepare_cold_material_handoff(game,bundle,dict(state),**options)
+                base,claim_path,newfolder=inherited_material_plan(output,reg,reference,'run-new')
+                if change in {'claim_run','claim_hash'}:
+                    value=json.loads(claim_path.read_text());value['run_id' if change=='claim_run' else 'manifest_sha256']='foreign'
+                    claim_path.write_text(json.dumps(value))
+                elif change=='source_scope':base['world_session']='foreign'
+                elif change=='review':base['review']={**base['review'],'verified_at':0}
+                if change:
+                    with self.assertRaises(RuntimeError):_material_review_chain(output,base)
+                else:
+                    checked,request,report,frozen=_material_review_chain(output,base)
+                    self.assertEqual(base['review'],checked)
+                    self.assertEqual('run-a',request['run_id'])
+                    self.assertIn(str(claim_path),frozen)
+                    self.assertIn(reference['path'],frozen)
+
+    def test_warm_material_handoff_requires_exact_pause_cancel_api_intents(self):
+        for change in ('missing','command','session','revision'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                result,checks,folder,journal,report=admitted_material_setup(Path(temp))
+                game,reg,state,bundle,commands,native,unused,output,old,archive=result
+                original_native=checks['native']
+                def changed(unused,command):
+                    reply=original_native(unused,command)
+                    if command=='cancel':
+                        path=output.parent/('api-intent-'+reply['id']+'.json')
+                        if change=='missing':path.unlink()
+                        else:
+                            value=json.loads(path.read_text())
+                            if change=='command':value['command']='resume'
+                            elif change=='session':value['world_session']='foreign'
+                            else:value['expected_revision']+=1
+                            path.write_text(json.dumps(value))
+                    return reply
+                checks['native']=changed
+                with self.assertRaises(RuntimeError):install_and_restart(game,bundle,**checks)
+                self.assertEqual(['pause','cancel'],commands)
+                self.assertFalse((output/'source-material-handoff.json').exists())
+
+    def test_cold_manual_source_handoff_preserves_partial_work_and_new_user_stock_without_dispatch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result,folder,journal,ref,options=cold_material_setup(Path(temp))
+            game,reg,state,bundle,commands,native,unused,output,old,archive=result
+            paths=[folder/'checkpoint.json',folder/'baseline.json',output/'checkpoint.json',output/'journal.jsonl',archive,journal]
+            original={p:p.read_bytes() for p in paths}
+            reference=prepare_cold_material_handoff(game,bundle,dict(state),**options)
+            manifest=json.loads(Path(reference['path']).read_text())
+            self.assertEqual([],commands)
+            self.assertEqual('manual_stopped_same_session',manifest['lifecycle_kind'])
+            self.assertEqual(900,manifest['source_parent_pid'])
+            self.assertEqual('',manifest['source_stopped_native']['trial_identity']['run_id'])
+            self.assertEqual(state['inventory'],manifest['operator_current_native']['inventory'])
+            self.assertEqual(ref,manifest['source_worker_status'])
+            self.assertEqual({'3,70,0':'dirt'},manifest['protected_player_work']['owned'])
+            self.assertTrue(manifest['historical_pending'])
+            self.assertFalse(manifest['old_actions_replayed'])
+            self.assertEqual(reference,json.loads((output/'source-material-handoff.json').read_text()))
+            for p,data in original.items():self.assertEqual(data,p.read_bytes())
+
+    def test_cold_source_handoff_rejects_changed_scope_current_unknown_or_unreleased_control(self):
+        for change in ('alive_worker','foreign_parent','new_session','active_child','manual_held',
+                       'menu_cursor','partial_stock','changed_stock','changed_hold','status_hash','current_unknown','not_manual_stop'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                result,folder,journal,ref,options=cold_material_setup(Path(temp))
+                game,reg,state,bundle,commands,native,unused,output,old,archive=result
+                first=json.loads(json.dumps(state))
+                if change=='alive_worker':options['pid_alive']=lambda _:True
+                elif change=='foreign_parent':options['minecraft_identity_checker']=lambda *_:False
+                elif change=='new_session':state['world_session']='foreign'
+                elif change=='active_child':state['chopping']=True
+                elif change=='manual_held':state['manual_movement']=True
+                elif change=='menu_cursor':state['menu']['cursor']={'item':'minecraft:dirt','count':1}
+                elif change=='partial_stock':state['inventory'].pop()
+                elif change=='changed_stock':state['inventory'][0]['count']+=1
+                elif change=='changed_hold':state['safety_hold']['time']+=1
+                elif change=='status_hash':Path(ref['path']).write_bytes(Path(ref['path']).read_bytes()+b' ')
+                elif change=='not_manual_stop':state['trial_identity']['detail']='健康退出'
+                elif change=='current_unknown':
+                    cp=json.loads((folder/'checkpoint.json').read_text())
+                    cp['unresolved_native']=[{'id':'trial-current-unknown','op':'interact','world_session':state['world_session'],
+                        'arguments':{'pos':[1,70,0],'item':'minecraft:dirt'}}]
+                    (folder/'checkpoint.json').write_text(json.dumps(cp))
+                with self.assertRaises(RuntimeError):prepare_cold_material_handoff(game,bundle,first,**options)
+                self.assertEqual([],commands);self.assertFalse((output/'source-material-handoff.json').exists())
+
+    def test_cold_handoff_does_not_overwrite_unclaimed_source_pointer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result,folder,journal,ref,options=cold_material_setup(Path(temp))
+            game,reg,state,bundle,commands,native,unused,output,old,archive=result
+            first=prepare_cold_material_handoff(game,bundle,dict(state),**options)
+            with self.assertRaises(RuntimeError):prepare_cold_material_handoff(game,bundle,dict(state),**options)
+            self.assertEqual(first,json.loads((output/'source-material-handoff.json').read_text()))
+
+    def test_material_plan_preserves_legacy_three_partial_house_and_recursive_inventory_audits(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result,checks,folder,journal,report=admitted_material_setup(Path(temp))
+            game,reg,state,bundle,commands,native,unused,output,old,archive=result
+            state['kit_version']='2026.10.7.9'
+            extra=[{**old,'id':'trial-old-inventory-'+str(i),'op':'slot_click','run_id':'old-inventory-'+str(i)} for i in range(2)]
+            legacy=[old,*extra]
+            inventory_docs=[]
+            for i,row in enumerate(extra):
+                evidence=Path(temp)/('inventory-terminal-'+str(i)+'.txt');evidence.write_text('immutable inventory retirement\n')
+                audit=Path(temp)/('inventory-review-'+str(i)+'.json');audit.write_text(json.dumps({'kind':'operator_retired_inventory_review',
+                    'manifest':{'path':str(evidence.resolve()),'sha256':_file_digest(evidence)}}))
+                inventory_docs.append({'path':str(audit.resolve()),'sha256':_file_digest(audit)})
+            collection=Path(temp)/'inventory-reviews.json';collection.write_text(json.dumps({'kind':'operator_retired_inventory_reviews','reviews':inventory_docs}))
+            ref={'path':str(collection.resolve()),'sha256':_file_digest(collection)}
+            baseline_path=folder/'baseline.json';base=json.loads(baseline_path.read_text());base['legacy_pending']=legacy
+            base['review']['inventory_review_verified_ids']=[row['id'] for row in extra]
+            base['review']['request']['inventory_review']=ref;baseline_path.write_text(json.dumps(base))
+            request_path=output/'material-review-runs'/reg['run_id']/'rebaseline-requests'/ (base['request_id']+'.json')
+            request_path.write_text(json.dumps(base['review']['request']))
+            cp_path=folder/'checkpoint.json';cp=json.loads(cp_path.read_text());cp['historical_unresolved_native']=legacy
+            cp['owned']={'9,63,-79':'dirt','9,63,-78':'dirt'};cp['small_shelter']={'inside':[10,63,-78],'verified':False}
+            cp_path.write_text(json.dumps(cp))
+            worker_path=output/'status.json';worker=json.loads(worker_path.read_text());worker['legacy_pending']=legacy;worker_path.write_text(json.dumps(worker))
+            original_native=checks['native']
+            def lifecycle(unused,command):
+                answer=original_native(unused,command)
+                worker=json.loads(worker_path.read_text());worker['legacy_pending']=legacy;worker_path.write_text(json.dumps(worker))
+                return answer
+            checks['native']=lifecycle
+            before=cp_path.read_bytes();proof=install_and_restart(game,bundle,**checks)
+            self.assertEqual(before,cp_path.read_bytes())
+            self.assertEqual(cp['owned'],proof['material_plan_handoff']['protected_player_work']['owned'])
+            self.assertEqual(cp['small_shelter'],proof['material_plan_handoff']['protected_player_work']['small_shelter'])
+            for reference in [ref,*inventory_docs]:self.assertIn(reference['path'],proof['preserved_legacy_sha256'])
+            self.assertEqual(3,len(proof['legacy_unknown_ids']))
+            self.assertFalse(proof['automatic_material_resume'])
+
+    def test_sdk_timer_or_missing_sdk_predicate_never_counts_as_committed_inventory(self):
+        for change in (None,'missing','intent_hash','predicate','times','native_unknown'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as temp:
+                game,reg,state,bundle,commands,native=setup(Path(temp))
+                root=game/'config/twob2tkit/automation/trial-sdk-inventory';(root/'pending').mkdir(parents=True);(root/'receipts').mkdir()
+                envelope={'id':'trial-sdk-current','op':'slot_click','world_id':reg['world_id'],'trial_id':reg['trial_id'],
+                    'run_id':reg['run_id'],'world_session':state['world_session'],'inventory_confirm':True}
+                intent={'protocol':1,'request_id':envelope['id'],'envelope':envelope,'before':{}}
+                path=root/'pending/trial-sdk-current.json';path.write_text(json.dumps(intent))
+                receipt={'protocol':1,'request_id':envelope['id'],'intent_sha256':_file_digest(path),
+                    'receipt_class':'sdk_inventory_click_committed','replayed':False,'sdk_predicate_confirmed':True,
+                    'confirmation_scope':'server_processed_inventory_transition_and_two_fresh_sdk_predicates',
+                    'native_result':{'time':100},'witness_times':[101,102]}
+                if change=='intent_hash':receipt['intent_sha256']='0'*64
+                elif change=='predicate':receipt['sdk_predicate_confirmed']=False
+                elif change=='times':receipt['witness_times']=[101,101]
+                if change!='missing':(root/'receipts/trial-sdk-current.json').write_text(json.dumps(receipt))
+                verifier=Mock(side_effect=RuntimeError('No real inventory confirmation')) if change=='native_unknown' else Mock(return_value={'classification':'confirmed'})
+                with patch('singleplayer_trial_hot_update.native_inventory_click_proof',verifier):
+                    if change:
+                        with self.assertRaises(RuntimeError):_preserve_sdk_inventory(game,reg,[],{})
+                    else:
+                        frozen={};ids=_preserve_sdk_inventory(game,reg,[],frozen)
+                        self.assertEqual([envelope['id']],ids);self.assertIn(str(path),frozen)
+
     def test_admitted_material_plan_source_swap_preserves_new_work_and_old_unknown(self):
         for no_send in (False,True):
             with self.subTest(no_send=no_send),tempfile.TemporaryDirectory() as temp:

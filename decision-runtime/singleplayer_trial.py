@@ -6,6 +6,7 @@ All world inputs are existing verified native skills; model output is a typed
 choice among locally constructed macros and never executable code.
 """
 import argparse
+import copy
 from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
@@ -712,6 +713,65 @@ class TrialSkills(Runner):
             return
         return super().collect(wanted)
 
+    def place(self, item, target):
+        """Keep the planned cell while choosing a real visible support face."""
+        from trial_placement_access import body_overlap, placement_access_plan
+        from trial_station_access import visible_full_faces
+        target = tuple(target)
+        self.station_inventory_available()
+        self.b.close()
+        rejected = set()
+        for unused in range(5):
+            world = self.scan()
+            if world.name(target) == item or item == 'dirt' and world.earth(target):
+                return
+            if not world.known(target) or world.name(target) != 'air':
+                raise Paused('Planned placement is unknown or occupied; preserve the target and existing blocks')
+            state = self.station_inventory_available()
+            record = self.small_shelter
+            door_axis = ('z' if item.endswith('_door') and isinstance(record, dict)
+                         and tuple(record.get('door', [])) == target else None)
+            plan = placement_access_plan(world, state, target, rejected, door_axis=door_axis)
+            if plan is None:
+                raise Paused('Planned placement has no fresh visible support face and safe normal stance')
+            if plan['route']:
+                self.walk(plan['route'])
+            self.b.select(item)
+            fresh = self.scan()
+            state = self.station_inventory_available()
+            support, face = plan['support'], plan['face']
+            if (fresh.name(target) != 'air' or not fresh.full(support)
+                    or fresh.row(support).get('block_entity') or body_overlap(state['pos'], target)
+                    or door_axis and (fresh.name((target[0], target[1] + 1, target[2])) != 'air'
+                                      or body_overlap(state['pos'], (target[0], target[1] + 1, target[2])))
+                    or state['hand']['item'] != 'minecraft:' + item
+                    or face not in visible_full_faces(fresh, state['pos'], support)):
+                self.event('placement_access_changed_before_dispatch', target=list(target),
+                           support=list(support), face=face, no_use_sent=True)
+                rejected.add((support, face, tuple(round(v, 3) for v in state['pos'])))
+                continue
+            try:
+                self.b.request('interact', pos=list(support), face=face,
+                               expected_state=fresh.row(support)['state'], expected_hand=state['hand']['item'])
+            except TrialInteractionRejected as error:
+                rejected.add((support, face, tuple(round(v, 3) for v in state['pos'])))
+                self.event('placement_face_refused_before_dispatch', target=list(target),
+                           support=list(support), face=face, position=list(state['pos']),
+                           request_id=error.receipt['request_id'], no_use_sent=True)
+                continue
+            after = self.scan()
+            if after.name(target) != item:
+                # A dispatched use cannot be reclassified as the preflight
+                # refusal above, even when the target still appears empty.
+                self.b.halted = True
+                raise Paused('Placement result is not the exact planned block; preserve its dispatched intent')
+            self.owned[','.join(map(str, target))] = item
+            self.save('running')
+            self.event('planned_placement_verified', item=item, target=list(target),
+                       support=list(support), face=face, route_steps=len(plan['route']), flight_used=False)
+            return
+        raise Paused('Fresh placement candidates were refused; retain the same unfinished target')
+
     def interact(self, pos, face=None):
         # Explicit placement/door callers need their exact support face. Only
         # opening a verified full-cube station may choose another visible face.
@@ -1060,6 +1120,13 @@ class TrialSkills(Runner):
                 candidates['leave_small_shelter']=LABELS['leave_small_shelter']
                 return candidates
         house_materials = inv.get('dirt',0)>=23 or world.resource(state['pos'],{'dirt','grass_block'},self.excluded)
+        if (isinstance(self.small_shelter, dict) and self.small_shelter.get('verified') is False
+                and self.small_shelter.get('world_id') == state.get('world_id')
+                and self.small_shelter.get('dimension') == state.get('dimension')):
+            # The saved plan owns the next destination. Its missing scan cells
+            # trigger a checked return corridor, not a new distant house search.
+            candidates['prepare_small_shelter'] = LABELS['prepare_small_shelter']
+            return candidates
         if not sheltered and world.paths(state['pos']) and house_materials and (wooden_door or door_wood_budget >= door_board_requirement):
             candidates['prepare_small_shelter'] = LABELS['prepare_small_shelter']
             return candidates
@@ -1278,6 +1345,8 @@ class TrialWorker:
         self.legacy_evidence = None
         self.legacy_journal = None
         self.material_rebaseline = None
+        self.source_handoff_id = None
+        self.source_handoff_waiting = False
         self.native_start_run = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='trial-clef')
         self.inference = None
@@ -1442,10 +1511,40 @@ class TrialWorker:
 
     def material_replan_enabled(self):
         return (self.material_rebaseline is not None and self.bridge is not None
+                and not self.source_handoff_waiting
                 and not self.bridge.halted and not self.bridge.pending_mutations
                 and self.command in {'start', 'resume'}
                 and self.material_rebaseline['run_id'] == self.run_id
                 and self.material_rebaseline['world_session'] == self.bridge.session)
+
+    def accept_source_material_handoff(self, state):
+        """Same-Minecraft source replacement inherits only an already admitted plan."""
+        pointer = self.output / 'source-material-handoff.json'
+        if not pointer.exists() or self.material_rebaseline is not None:
+            return False
+        try:
+            from trial_material_handoff import validate_handoff, observe_handoff, claim_handoff
+            checked = validate_handoff(self, state)
+            baseline = observe_handoff(self, checked)
+            claim = claim_handoff(self, checked, baseline)
+            self.source_handoff_id = claim['handoff_id']
+            self.source_handoff_waiting = True
+            self.legacy_evidence.update({Path(path):digest for path,digest in checked['frozen'].items()})
+            self.legacy_evidence[Path(checked['reference']['path'])] = checked['reference']['sha256']
+            self.install_material_baseline(baseline, source_handoff_checkpoint=checked.get('derived_checkpoint',checked['checkpoint']))
+            self.event('source_material_handoff_accepted', handoff_id=self.source_handoff_id,
+                       baseline_id=baseline['newbaseline_id'], historical_effects_unresolved=True,
+                       old_action_completed=False, old_action_replayed=False,
+                       owned_preserved=self.skills.owned, partial_house_preserved=self.skills.small_shelter,
+                       reconciled_absent_owned=baseline.get('reconciled_absent_owned',[]),
+                       stock_source='fresh_operator_handback_and_new_server_client_probe')
+            self.publish('waiting_material_handoff', '原实物计划和施工保护已承接，等待本次 Kit 继续指令', self.bridge.read())
+            return True
+        except (Paused, OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+            self.event('source_material_handoff_rejected', reason=str(error)[:512],
+                       historical_effects_unresolved=True, old_action_replayed=False)
+            self.publish('waiting_material_review', str(error), state)
+            return False
 
     def accept_material_rebaseline(self, state):
         """An operator review admits new physical plans, never an old replay."""
@@ -1509,7 +1608,7 @@ class TrialWorker:
             self.publish('waiting_material_review', str(error), state)
             return False
 
-    def install_material_baseline(self, baseline):
+    def install_material_baseline(self, baseline, *, source_handoff_checkpoint=None):
         """Install only fresh current facts into a new, independently saved plan."""
         folder = self.legacy_journal.parent / 'replanned-material' / baseline['newbaseline_id']
         if any(p.is_symlink() for p in (folder, *folder.parents)):
@@ -1523,10 +1622,20 @@ class TrialWorker:
         bounds = baseline['scan_bounds']
         world = TrialWorld(baseline['terrain']['blocks'], bounds['min'], bounds['max'])
         skills.world = world
+        if source_handoff_checkpoint is not None:
+            # This branch is reached only after the new worker rechecked every
+            # owned/station/partial-house cell; the source plan is never reset.
+            checkpoint = source_handoff_checkpoint
+            for key in ('camp', 'stations', 'owned', 'camp_completed', 'station_anchor', 'log_drops', 'small_shelter'):
+                setattr(skills, key, copy.deepcopy(checkpoint.get(key, getattr(skills, key))))
+            skills.excluded = {tuple(p) for p in checkpoint.get('excluded', [])}
+            skills.explored = {tuple(p) for p in checkpoint.get('explored', [])}
+            skills.tried_grids = {tuple(p) for p in checkpoint.get('tried_grids', [])}
+            skills.rejected_routes = {tuple(tuple(p) for p in route) for route in checkpoint.get('rejected_routes', [])}
         # Existing facilities are observed positions, not inherited claims of
         # ownership. Other old coordinates stay frozen in the historical file.
         parents = world.paths(baseline['position'])
-        for name in ('crafting_table', 'furnace'):
+        for name in (() if source_handoff_checkpoint is not None else ('crafting_table', 'furnace')):
             choices = [(distance(center(point), baseline['position']), point)
                        for point in world.blocks if world.name(point) == name
                        and world.approach(parents, point) is not None]
@@ -1534,6 +1643,8 @@ class TrialWorker:
                 skills.stations[name] = list(min(choices)[1])
         self.skills = skills
         self.material_rebaseline = baseline
+        if getattr(self.bridge, 'historical_inventory_pending', None):
+            self.bridge.authorize_inventory_replan(baseline)
         self.checkpoint_signature = None
         self.failures = {}
         self.failure_contexts = {}
@@ -1555,7 +1666,9 @@ class TrialWorker:
         # exhausted here, a normal freshly scanned route can change its local
         # conditions instead of leaving the worker permanently in wait.
         priority = {'prepare_small_shelter', 'gather_starting_wood', 'prepare_sword', 'upgrade_stone_sword'}
-        if (len(result) < 2 and priority.intersection(candidates) - result.keys()
+        partial_shelter = (isinstance(self.skills.small_shelter, dict)
+                           and self.skills.small_shelter.get('verified') is False)
+        if (not partial_shelter and len(result) < 2 and priority.intersection(candidates) - result.keys()
                 and isinstance(world, World) and self.failures.get('explore_nearby',0) < 3):
             route = self.skills.exploration(world)
             if route is not None:
@@ -1594,6 +1707,10 @@ class TrialWorker:
                 value.update(material_baseline_id=self.material_rebaseline['newbaseline_id'],
                              historical_replay_enabled=False,
                              material_baseline_session=self.material_rebaseline['world_session'])
+        if self.source_handoff_id is not None:
+            value.update(source_material_handoff_id=self.source_handoff_id,
+                         source_material_handoff_waiting=self.source_handoff_waiting,
+                         source_handoff_parent_pid=self.parent_pid)
         if state:
             value.update({key: state.get(key) for key in ('world_session', 'health', 'food', 'pos', 'control_revision')})
         if self.skills:
@@ -1661,6 +1778,8 @@ class TrialWorker:
                         # Preserve observed camp coordinates in this same save,
                         # but do not re-send any old native request envelope.
                         self.bridge = None
+                        if self.source_handoff_id is not None:
+                            self.source_handoff_waiting = False
                     self.run_id = registry['run_id']
                     if self.command == 'start':
                         self.native_start_run = self.run_id
@@ -1676,9 +1795,13 @@ class TrialWorker:
         self.restoring_checkpoint = True
         try:
             self.protect_legacy_evidence()
+            from trial_inventory_audit import retired_inventory_metadata
+            preliminary = self.reader(self.automation)
+            retired = retired_inventory_metadata(self.output, self.registry, preliminary)
+            bridge_options = {'retired_inventory': retired, 'parent_pid': self.parent_pid} if retired else {}
             self.bridge = self.bridge_factory(self.automation, self.registry, self.run_id,
                           check_control=self.control, heartbeat=self.heartbeat,
-                          events=self.event, reader=self.reader, sleeper=self.sleeper)
+                          events=self.event, reader=self.reader, sleeper=self.sleeper, **bridge_options)
             current = self.bridge.state
             if self.legacy_pending:
                 self.legacy_state(current)
@@ -1696,6 +1819,16 @@ class TrialWorker:
                 else:
                     self.skills = TrialSkills(self.bridge, self.legacy_journal.parent / 'bootstrap')
                 self.arm_legacy_guard(current)
+                if self.source_handoff_id is not None and self.material_rebaseline is not None and getattr(self.bridge, 'historical_inventory_pending', None):
+                    # Native Resume binds a new observation cursor. Refresh its
+                    # read-only proof before reusing this run's admitted grant.
+                    self.bridge.request('inventory_probe')
+                    fresh = self.bridge.read()
+                    grant = {**self.material_rebaseline, 'inventory':copy.deepcopy(fresh['inventory']),
+                             'menu':copy.deepcopy(fresh['menu']), 'observed_at':fresh['time'],
+                             'control_revision':fresh['control_revision']}
+                    self.bridge.authorize_inventory_replan(grant)
+                    self.material_rebaseline = grant
                 return
             from singleplayer_trial_hot_update import load_checkpoint, restore_checkpoint, unresolved_mutations
             from trial_inventory_audit import historical_pending
@@ -2085,7 +2218,12 @@ class TrialWorker:
                     or getattr(self, 'guard_origin', None) is None
                     or distance(state['pos'], self.guard_origin) > 10):
                 state = self.arm_legacy_guard(state)
+            if self.source_handoff_waiting:
+                self.publish('waiting_material_handoff', '施工保护已承接，等待本次 Kit 继续指令', state)
+                return
             if not self.material_replan_enabled():
+                if not state.get('guard_busy') and self.accept_source_material_handoff(state):
+                    return
                 if not state.get('guard_busy') and self.accept_material_rebaseline(state):
                     return
                 self.publish('waiting_material_review',

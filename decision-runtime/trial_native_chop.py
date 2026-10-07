@@ -19,7 +19,7 @@ from survival_world import cell
 LOG_IDS = frozenset('minecraft:' + name + '_log' for name in
                    ('oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak',
                     'mangrove', 'cherry', 'pale_oak'))
-SUPPORTED_HOSTS = frozenset({'2026.10.7.6', '2026.10.7.7', '2026.10.7.8'})
+SUPPORTED_HOSTS = frozenset({'2026.10.7.6', '2026.10.7.7', '2026.10.7.8', '2026.10.7.9'})
 RECEIPT_SCHEMA = 1
 RECEIPT_SOURCE = 'matched_native_status_snapshot'
 INTERRUPTION_SOURCE = 'matched_native_pause_and_complete_chopper_log'
