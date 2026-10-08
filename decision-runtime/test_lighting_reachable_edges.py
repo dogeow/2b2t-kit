@@ -8,6 +8,9 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_intermediate_short_grass_is_a_ray_obstacle_even_when_walkable(self):
+  grass={'pos':[1,65,0],'state':'Block{minecraft:short_grass}','passable':True,'solid':False,'fluid':False,'block_entity':False,'replaceable':True}
+  self.assertFalse(ray_clear({(1,65,0):grass},[2.5,66.52,.5],(0,64,0)))
  def test_native_interaction_clicks_replaceable_grass_instead_of_hidden_soil_face(self):
   support=(0,64,0);target=(0,65,0)
   grass={'state':'Block{minecraft:short_grass}','passable':True,'solid':False,'fluid':False,'block_entity':False,'replaceable':True}

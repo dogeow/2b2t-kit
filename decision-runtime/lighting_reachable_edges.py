@@ -21,7 +21,8 @@ def ray_clear(cells, eye, support):
     for i in range(math.ceil(distance/.04)+1):
         t = i / max(1, math.ceil(distance/.04))
         point = tuple(math.floor(eye[a]+(aim[a]-eye[a])*t) for a in range(3))
-        if point in cells and point != tuple(support) and not safe_noncolliding_plant(cells[point]):
+        replace_target=(support[0],support[1]+1,support[2])
+        if point in cells and point != tuple(support) and not(point==replace_target and replaceable_short_grass(cells[point])):
             return False
     return True
 
@@ -108,7 +109,7 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
             route=route_cache[key]
             if route:stations.append((station,route))
         if stations:
-            station,route=min(stations,key=lambda p:len(p[1])+math.dist(start,p[1][0]))
+            station,route=min(stations,key=lambda p:(math.dist(p[0],[x+.5,y+1,z+.5]),len(p[1])+math.dist(start,p[1][0])))
             score=sum(sum(abs(a-b)for a,b in zip(support,p))<=11 for p in dark)
             result.append({'support':list(support),'target':list(target),
                 'support_state':cells[support]['state'],'station':station,
