@@ -74,7 +74,7 @@ final class BorerRangedCombat {
 		int passive = 0;
 		for (var e : observed.values()) {
 			boolean present = c.level.getEntity(e.getId()) == e && e.level()==c.level;
-			boolean eligible = present && BorerDefensePolicy.eligible(true, e.isAlive(), p.hasLineOfSight(e), rank(p,e), p.distanceTo(e));
+			boolean eligible = present && attackEligible(c,e);
 			boolean engaged = eligible && engine.engagement.shouldReact(p, e)
 				|| present && flightDefenseScope() && p.distanceTo(e)<=12 && BorerThreats.currentReceivedMobHit(e,p)
 				|| present && flightDefenseScope() && creeperAlert(c, e);
@@ -1008,7 +1008,7 @@ final class BorerRangedCombat {
         boolean current=mob!=null&&mob.level()==c.level&&c.level.getEntity(mob.getId())==mob&&mob.isAlive();
         boolean visible=current&&p.hasLineOfSight(mob),attack=current&&session.canAttack(mob.getUUID());
         String reason=!current?"unknown_current_entity":!visible?"no_los":
-            !BorerDefensePolicy.eligible(true,true,true,rank(p,mob),p.distanceTo(mob))?"outside_attack_distance":
+            !attackEligible(c,mob)?"outside_attack_distance":
             !attack?"unresolved_attack_budget":"attack_available";
         String key=stage+'|'+(current?mob.getUUID():"unknown")+'|'+reason;
         if(key.equals(evidenceLogKey)&&(long)p.tickCount-evidenceLogTick<40)return;
@@ -1065,6 +1065,20 @@ final class BorerRangedCombat {
 		}
 		return false;
 	}
+    boolean usableGuardBow(Minecraft c){
+        if(c.player==null)return false;
+        for(int i=0;i<36;i++){
+            var stack=c.player.getInventory().getItem(i);
+            if(usableBow(stack)&&!c.player.getProjectile(stack).isEmpty())return true;
+        }
+        return false;
+    }
+    private boolean attackEligible(Minecraft c,LivingEntity enemy){
+        var p=c.player;boolean visible=p.hasLineOfSight(enemy);double distance=p.distanceTo(enemy);
+        if(BorerDefensePolicy.eligible(true,enemy.isAlive(),visible,rank(p,enemy),distance))return true;
+        return rank(p,enemy)==2&&BorerDefensePolicy.trackedBowEligible(enemy instanceof Enemy,
+            enemy.isAlive(),visible,session.contains(enemy.getUUID()),usableGuardBow(c),distance);
+    }
 	private void cancelDraw(Minecraft c) {
 		if (c.player != null && (drawing || target != null && c.player.getUseItem().is(Items.BOW))) c.player.stopUsingItem();
 		if (c.options != null) c.options.keyUse.setDown(false);

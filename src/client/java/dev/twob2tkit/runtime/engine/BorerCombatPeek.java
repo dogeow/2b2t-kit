@@ -57,7 +57,7 @@ final class BorerCombatPeek {
     ||!withinAttackRange(c,enemy,c.player.position())||!safeDistance(c,c.player.position()))return false;
   // Seeing the head through a gap does not prove the host's arrow trajectory
   // reaches the body. Only the actual current firing position can renew it.
-  boolean ranged=BorerThreats.isRangedCombatThreat(enemy,c.player);
+  boolean ranged=BorerThreats.isRangedCombatThreat(enemy,c.player)||engine.rangedCombat.usableGuardBow(c);
   return firingSolutionVerified(ranged,!ranged||engine.host.borerBowAim(c,enemy)!=null);
  }
  void reapply(Minecraft c){if(active&&look!=null&&c.screen==null)RotationAim.apply(c.player,look);}
@@ -74,9 +74,12 @@ final class BorerCombatPeek {
   }return true;
  }
  private static Vec3 feet(BlockPos p){return BorerFlyPath.waypoint(p);}
- private static boolean withinAttackRange(Minecraft c,LivingEntity enemy,Vec3 point){
+ private boolean withinAttackRange(Minecraft c,LivingEntity enemy,Vec3 point){
   int priority=BorerDefensePolicy.priority(enemy instanceof Creeper,BorerThreats.isRangedCombatThreat(enemy,c.player));
-  return BorerDefensePolicy.eligible(true,enemy.isAlive(),true,priority,point.distanceTo(enemy.position()));
+  double distance=point.distanceTo(enemy.position());
+  return BorerDefensePolicy.eligible(true,enemy.isAlive(),true,priority,distance)
+   ||priority==2&&BorerDefensePolicy.trackedBowEligible(enemy instanceof Enemy,enemy.isAlive(),true,true,
+       engine.rangedCombat.usableGuardBow(c),distance);
  }
  static boolean firingPositionFarEnough(double squaredDistance){return Double.isFinite(squaredDistance)&&squaredDistance>=2.25;}
  static boolean firingSolutionVerified(boolean ranged,boolean feasible){return !ranged||feasible;}

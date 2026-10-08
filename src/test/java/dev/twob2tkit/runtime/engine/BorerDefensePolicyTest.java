@@ -3,6 +3,16 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 class BorerDefensePolicyTest {
+    @Test void capturedSafetyAscentRetainsBowReachForEngagedZombieOnly(){
+        assertFalse(BorerDefensePolicy.eligible(true,true,true,2,14.598142));
+        assertTrue(BorerDefensePolicy.trackedBowEligible(true,true,true,true,true,14.598142));
+        assertFalse(BorerDefensePolicy.trackedBowEligible(true,true,true,false,true,14.598142));
+        assertFalse(BorerDefensePolicy.trackedBowEligible(true,true,true,true,false,14.598142));
+        assertFalse(BorerDefensePolicy.trackedBowEligible(true,true,false,true,true,14.598142));
+        assertFalse(BorerDefensePolicy.trackedBowEligible(false,true,true,true,true,14.598142));
+        assertFalse(BorerDefensePolicy.trackedBowEligible(true,false,true,true,true,14.598142));
+        assertFalse(BorerDefensePolicy.trackedBowEligible(true,true,true,true,true,41));
+    }
 	@Test void visibleIdleMobsDoNotInterruptMiningEvenAtCloseRange() {
 		for (double distance : new double[]{2, 8, 24, 32})
 			assertFalse(BorerDefensePolicy.engaged(true, false, false, false, false, false, false, distance, 0));

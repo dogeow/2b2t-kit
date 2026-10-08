@@ -38,6 +38,13 @@ final class BorerDefensePolicy {
 	static boolean eligible(boolean hostile, boolean alive, boolean visible, int priority, double distance) {
 		return hostile && alive && visible && distance <= (priority == 0 ? 24 : priority == 1 ? 40 : 10);
 	}
+    /** A safety ascent must not drop an already-engaged melee mob merely
+     * because a usable bow now replaces the original close-range weapon. */
+    static boolean trackedBowEligible(boolean hostile,boolean alive,boolean visible,
+                                     boolean tracked,boolean usableBow,double distance){
+        return hostile&&alive&&visible&&tracked&&usableBow&&Double.isFinite(distance)
+            &&distance>=0&&distance<=40;
+    }
 	static boolean releaseArrow(int chargeTicks, boolean sameTarget, boolean clearShot) {
 		return chargeTicks >= 20 && sameTarget && clearShot;
 	}

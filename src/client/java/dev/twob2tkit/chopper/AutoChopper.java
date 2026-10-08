@@ -44,7 +44,7 @@ import dev.twob2tkit.KitKeys;
  */
 public final class AutoChopper {
 	/** 挖树主机逻辑版本（打进诊断日志）。 */
-	public static final String VERSION = "1.9.53";
+	public static final String VERSION = "1.9.54";
 	/** 无进度时多久再点一次攻击（tick）。 */
 	private static final int RETRY_TICKS = 40;
 	/** 挖不动多久跳过这块（tick）。 */

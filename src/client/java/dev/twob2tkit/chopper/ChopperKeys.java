@@ -96,9 +96,9 @@ public final class ChopperKeys {
 		client.options.keyShift.setDown(flying && dy < -0.35 && horiz > 0.35);
 	}
 
-	/** 屏幕字幕提示（带 [挖树] 前缀）。 */
+	/** Compatibility entry point; WorkHud owns the single chopper status display. */
 	public static void overlay(Minecraft client, String text, int color) {
-		client.gui.setOverlayMessage(Component.literal("[挖树] " + text).withColor(color), false);
+		// Do not duplicate the upper task status in Minecraft's action bar.
 	}
 
 	/** 聊天系统消息（带 [挖树] 前缀）。 */
