@@ -176,14 +176,27 @@ final class BorerRangedCombat {
                 peek.close(c);target = emergency; return evadeCreeper(c, emergency);
             }
 		}
-        if(engine.standaloneGuard && safetyRise(c))return true;
+        // A nearby melee threat can remain visible just beyond attack range.
+        // Try only the existing collision-checked safe route before another
+        // rise undoes that approach; creepers and ranged threats keep priority.
+        if(engine.standaloneGuard&&next==null&&!missingRestored
+                &&nearby.stream().noneMatch(e->e.isAlive()&&(e instanceof Creeper||BorerThreats.isRangedCombatThreat(e,p)))){
+            var reposition=session.targets().stream().filter(e->c.level.getEntity(e.getId())==e&&e.isAlive()
+                &&!(e instanceof Creeper)&&!BorerThreats.isRangedCombatThreat(e,p)&&session.needsReposition(e.getUUID()))
+                .min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
+            if(reposition!=null&&peek.tick(c,reposition))return true;
+        }
+        // A verified safe peek must reach attack range before its expired
+        // attack budget can be renewed. Re-rising mid-route would undo it.
+        if(engine.standaloneGuard && !peek.active() && safetyRise(c))return true;
 		if (next == null) {
             rangedMode(false);
             releaseMiningMelee();
 			if (missingRestored) return holdForMissingObservation(c);
 			releaseEscape(c); cancelDraw(c); rangedMode(false); target = null;
 			if(engine.standaloneGuard){
-				var hidden=session.targets().stream().filter(e->c.level.getEntity(e.getId())==e&&e.isAlive()&&!p.hasLineOfSight(e))
+				var hidden=session.targets().stream().filter(e->c.level.getEntity(e.getId())==e&&e.isAlive()
+					&&(!p.hasLineOfSight(e)||session.needsReposition(e.getUUID())))
 					.min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
 				if(hidden!=null&&peek.tick(c,hidden))return true;
 			}

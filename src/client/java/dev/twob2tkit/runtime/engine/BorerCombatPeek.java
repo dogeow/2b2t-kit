@@ -34,7 +34,8 @@ final class BorerCombatPeek {
    route=CombatPeekPath.find(new CombatPeekPath.World(){
     public boolean clear(BlockPos q){return cache.computeIfAbsent(q,k->BorerCombatPeek.this.clear(c,k));}
     public boolean edge(BlockPos a,BlockPos b){return c.level.noCollision(p,body(feet(a)).expandTowards(feet(b).subtract(feet(a))));}
-    public boolean visible(BlockPos q){var eye=feet(q).add(0,p.getEyeHeight(),0);return c.level.clip(new ClipContext(eye,enemy.getEyePosition(),ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,p)).getType()==HitResult.Type.MISS;}
+    public boolean visible(BlockPos q){var eye=feet(q).add(0,p.getEyeHeight(),0);return firingPositionFarEnough(feet(q).distanceToSqr(origin))&&withinAttackRange(c,enemy,feet(q))
+     &&c.level.clip(new ClipContext(eye,enemy.getEyePosition(),ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,p)).getType()==HitResult.Type.MISS;}
    },start,12,3000);
    if(route.isEmpty())return false;
    try{flight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/combat-peek-flight.bak"));if(flight.acquire(p)!=null)return false;}
@@ -51,7 +52,7 @@ final class BorerCombatPeek {
   p.stopUsingItem();c.options.keyUse.setDown(false);c.options.keyUp.setDown(input.forward());c.options.keyJump.setDown(input.up());c.options.keyShift.setDown(input.down());
   engine.status="绕开遮挡，重新确认敌对生物位置";return true;
  }
- boolean acquired(Minecraft c,LivingEntity enemy){return active&&target==enemy&&c.player.position().distanceToSqr(origin)>=1&&c.player.hasLineOfSight(enemy)&&safeDistance(c,c.player.position());}
+ boolean acquired(Minecraft c,LivingEntity enemy){return active&&target==enemy&&c.player.position().distanceToSqr(origin)>=1&&c.player.hasLineOfSight(enemy)&&withinAttackRange(c,enemy,c.player.position())&&safeDistance(c,c.player.position());}
  void reapply(Minecraft c){if(active&&look!=null&&c.screen==null)RotationAim.apply(c.player,look);}
  void close(Minecraft c){if(!active)return;engine.pauseGuardMovement(c);flight.closeKeepingFlight();active=false;look=null;route=List.of();}
  private boolean clear(Minecraft c,BlockPos p){
@@ -66,5 +67,10 @@ final class BorerCombatPeek {
   }return true;
  }
  private static Vec3 feet(BlockPos p){return BorerFlyPath.waypoint(p);}
+ private static boolean withinAttackRange(Minecraft c,LivingEntity enemy,Vec3 point){
+  int priority=BorerDefensePolicy.priority(enemy instanceof Creeper,BorerThreats.isRangedCombatThreat(enemy,c.player));
+  return BorerDefensePolicy.eligible(true,enemy.isAlive(),true,priority,point.distanceTo(enemy.position()));
+ }
+ static boolean firingPositionFarEnough(double squaredDistance){return Double.isFinite(squaredDistance)&&squaredDistance>=2.25;}
  private static AABB body(Vec3 p){return new AABB(p.x-.31,p.y+.01,p.z-.31,p.x+.31,p.y+1.8,p.z+.31);}
 }

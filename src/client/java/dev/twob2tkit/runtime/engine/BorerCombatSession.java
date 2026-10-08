@@ -12,11 +12,12 @@ final class BorerCombatSession<T> {
 		T entity;
 		float lowestHealth;
 		long progressAt;
+		long observedAt;
 		boolean attackable;
 		int repositionAttempts;
 		boolean trialMeleeRetry;
 		Entry(T entity, float health, long now) {
-			this.entity = entity; lowestHealth = health; progressAt = now;
+			this.entity = entity; lowestHealth = health; progressAt = observedAt = now;
 		}
 	}
 	private final Map<UUID, Entry<T>> unresolved = new LinkedHashMap<>();
@@ -40,6 +41,7 @@ final class BorerCombatSession<T> {
 			unresolved.put(id, entry);
 		}
 		entry.entity = entity;
+		entry.observedAt = now;
 		entry.attackable = attackable;
 		// A shot, aim, movement or healing is not proof that an attack succeeded.
 		if (health < entry.lowestHealth) {
@@ -56,6 +58,11 @@ final class BorerCombatSession<T> {
 		return pausedAt == Long.MIN_VALUE && e != null && e.attackable && now - e.progressAt < NO_PROGRESS_TICKS;
 	}
 	boolean timedOut() { return unresolved.values().stream().anyMatch(e -> now - e.progressAt >= NO_PROGRESS_TICKS); }
+	boolean needsReposition(UUID id) {
+		var e=unresolved.get(id);
+		return pausedAt==Long.MIN_VALUE&&e!=null&&e.observedAt==now&&e.lowestHealth>0
+			&&(!e.attackable||now-e.progressAt>=NO_PROGRESS_TICKS)&&e.repositionAttempts<2;
+	}
 	/** A verified different firing position allows a bounded retry, never a completion claim. */
 	boolean repositioned(UUID id) {
 		var e=unresolved.get(id);
