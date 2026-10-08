@@ -8,6 +8,17 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_spawnable_log_can_be_lit_from_neighbouring_soil_without_replacing_log(self):
+  log={**floor((0,67,0)),'state':'Block{minecraft:cherry_log}[axis=y]'}
+  soil={**floor((1,64,0)),'zombie_block_light_risk':False,'spawn_block_light':2}
+  cells={(0,67,0):log,(1,64,0):soil}
+  candidates=edge_candidates(cells,[-4,62,-4],[4,90,4],[2.5,80,.5],surface_only=True)
+  self.assertTrue(candidates);self.assertTrue(all(v['support']==[1,64,0]and v['lit_neighbour']for v in candidates))
+ def test_known_noncolliding_grass_is_walkable_but_tall_grass_can_occlude_ray(self):
+  p=(0,63,0);grass={**floor(p),'state':'Block{minecraft:short_grass}','passable':True,'solid':False,'zombie_spawn_floor':False,'zombie_block_light_risk':False}
+  self.assertIsNotNone(observed_exit_route({p:grass},[.5,63.1,.5],[-2,62,-2],[2,70,2]))
+  tall={**grass,'state':'Block{minecraft:tall_grass}[half=upper]'}
+  self.assertFalse(ray_clear({(1,64,0):tall},[2.5,65.5,.5],(0,63,0)))
  def test_surface_mode_keeps_leaf_covered_ground_separate_from_underground_pockets(self):
   p=(0,62,0);leaf={**floor((0,68,0)),'state':'Block{minecraft:cherry_leaves}[distance=3,persistent=false,waterlogged=false]'}
   self.assertTrue(exterior_surface_support({p:floor(p),(0,68,0):leaf},p))

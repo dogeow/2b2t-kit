@@ -8,7 +8,7 @@ import math
 import time
 from collections import deque
 from lighting_cli import (LightingRun, LightingBlocked, TORCH, EVIDENCE, bounds,
-    candidate_protected, safe_dark_support, scan_cells, stock, later_torch_frame,
+    candidate_protected, safe_dark_support, safe_support, scan_cells, stock, later_torch_frame,
     risk_counts, validate_native_details, write_json, safe_noncolliding_plant,block_id,known_rejected_intent)
 
 
@@ -21,7 +21,7 @@ def ray_clear(cells, eye, support):
     for i in range(math.ceil(distance/.04)+1):
         t = i / max(1, math.ceil(distance/.04))
         point = tuple(math.floor(eye[a]+(aim[a]-eye[a])*t) for a in range(3))
-        if point in cells and point != tuple(support):
+        if point in cells and point != tuple(support) and not safe_noncolliding_plant(cells[point]):
             return False
     return True
 
@@ -31,12 +31,12 @@ def observed_exit_route(cells, station, low, high, budget=4000):
     first=tuple(math.floor(v)for v in station)
     def clear(n):
         return (all(low[i]<=n[i]<=high[i] for i in range(3))
-                and n[1]+1<=high[1] and all((n[0],y,n[2])not in cells for y in (n[1],n[1]+1)))
+                and n[1]+1<=high[1] and all((n[0],y,n[2])not in cells or safe_noncolliding_plant(cells[(n[0],y,n[2])]) for y in (n[1],n[1]+1)))
     if not clear(first):return None
     queue=deque([first]);parents={first:None}
     while queue and len(parents)<=budget:
         n=queue.popleft()
-        if all((n[0],y,n[2])not in cells for y in range(n[1],high[1]+1)):
+        if all((n[0],y,n[2])not in cells or safe_noncolliding_plant(cells[(n[0],y,n[2])]) for y in range(n[1],high[1]+1)):
             route=[]
             while n is not None:
                 route.append([n[0]+.5,n[1]+.1,n[2]+.5]);n=parents[n]
@@ -45,7 +45,7 @@ def observed_exit_route(cells, station, low, high, budget=4000):
         for delta in ((1,0,0),(-1,0,0),(0,0,1),(0,0,-1),(0,1,0),(0,-1,0)):
             nxt=tuple(n[i]+delta[i]for i in range(3))
             if nxt in parents or not clear(nxt):continue
-            if delta[1]and any((n[0],y,n[2])in cells for y in range(min(n[1],nxt[1]),max(n[1],nxt[1])+2)):continue
+            if delta[1]and any((n[0],y,n[2])in cells and not safe_noncolliding_plant(cells[(n[0],y,n[2])]) for y in range(min(n[1],nxt[1]),max(n[1],nxt[1])+2)):continue
             parents[nxt]=n;queue.append(nxt)
     return None
 
@@ -71,12 +71,18 @@ def replaceable_short_grass(row):
 def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False):
     low, high = bounds(low, high)
     validate_native_details(cells)
-    dark = [p for p,r in cells.items() if safe_dark_support(r)
+    dark = [p for p,r in cells.items() if r.get('zombie_block_light_risk')is True
             and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)
             and(not surface_only or exterior_surface_support(cells,p))]
+    supports=[p for p in dark if safe_dark_support(cells[p])]
+    lit_neighbour=not supports and bool(dark)
+    if lit_neighbour:
+        supports=[p for p,r in cells.items()if safe_support(r,require_dark=False)
+                  and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)
+                  and any(sum(abs(a-b)for a,b in zip(p,q))<=11 for q in dark)]
     result=[]
     route_cache={}
-    for support in dark:
+    for support in supports:
         x,y,z=support;target=(x,y+1,z)
         if (target in cells and not replaceable_short_grass(cells[target]))or y+1<low[1] or y+3>high[1]:
             continue
@@ -89,7 +95,8 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
             station=[sx+.5,y+1.1,sz+.5]
             # Native arrival can settle up to .2 below a requested waypoint.
             # A face must remain visible at that lower actual eye position.
-            if not ray_clear(cells,[station[0],station[1]+1.62-.2,station[2]],support):
+            if not all(ray_clear(cells,[station[0]+ox,station[1]+1.62-.2,station[2]+oz],support)
+                       for ox,oz in ((0,0),(-.2,-.2),(-.2,.2),(.2,-.2),(.2,.2))):
                 continue
             key=tuple(station)
             if key not in route_cache:route_cache[key]=observed_exit_route(cells,station,low,high)
@@ -101,6 +108,7 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
             result.append({'support':list(support),'target':list(target),
                 'support_state':cells[support]['state'],'station':station,
                 'entry_route':route,
+                'lit_neighbour':lit_neighbour,
                 'prediction_dark_neighbours':score})
     return sorted(result,key=lambda r:(-r['prediction_dark_neighbours'],math.dist(start,r['station'])))
 
@@ -133,7 +141,7 @@ class ReachableEdgeLightingRun(LightingRun):
         hi=[max(target[i],math.floor(station[i]+(.35 if i!=1 else 1.81+1.62)))for i in range(3)]
         current=self.scan(lo,hi,f'edge-pre-{index}.json');cells=scan_cells(current,lo,hi,self.c.world)
         row=cells.get(support)
-        if (not row or row['state']!=candidate['support_state']or not safe_dark_support(row)
+        if (not row or row['state']!=candidate['support_state']or not safe_support(row,require_dark=not candidate.get('lit_neighbour',False))
                 or tuple(target)in cells and not replaceable_short_grass(cells[tuple(target)]) or candidate_protected(support,target,self.protected)
                 or current['scan_entities']):
             raise LightingBlocked('Current adjacent support/target/entity proof changed')
