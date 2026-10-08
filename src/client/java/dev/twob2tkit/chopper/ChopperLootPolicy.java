@@ -5,6 +5,7 @@ package dev.twob2tkit.chopper;
  * 高了就飞，地面只跳一格台阶。
  */
 public final class ChopperLootPolicy {
+	public static int verifiedPickupGain(int before,int after,int expected){return Math.min(Math.max(0,expected),Math.max(0,after-before));}
 	private ChopperLootPolicy() {
 	}
 

@@ -51,6 +51,10 @@ public final class ChopperLoot {
 	private int leafObstacleTicks;
 	private int leafDestroyStage = -1;
 	private boolean collectLeaves;
+	private final ChopperLootFlight flightRoute=new ChopperLootFlight();
+	private Minecraft lastClient;
+	private ItemStack lockedStack=ItemStack.EMPTY;
+	private int inventoryBefore;
 
 	/** 是否正在捡物流程。 */
 	public boolean active() {
@@ -92,6 +96,7 @@ public final class ChopperLoot {
 
 	/** 结束本轮拾取状态（保留会话计数与忽略表）。 */
 	public void clear() {
+		if(lastClient!=null)flightRoute.close(lastClient);
 		origin = null;
 		saplingItem = null;
 		ticks = 0;
@@ -144,10 +149,11 @@ public final class ChopperLoot {
 
 	/** true：本拍还在捡；false：捡完或没有可捡的，交给补种/下一棵。 */
 	public boolean tick(Minecraft client, LocalPlayer player) {
+		lastClient=client;
 		if (origin == null) return false;
 		pruneIgnored(client);
 		ticks++;
-		if (notePicked(client)) {
+		if (notePicked(client,player)) {
 			stuckTicks = 0;
 			bestDist = Double.MAX_VALUE;
 		}
@@ -207,13 +213,19 @@ public final class ChopperLoot {
 			resetLeafObstacle();
 		}
 		ChopperKeys.releaseMine(client);
-		if (ChopperLootPolicy.closeEnoughForPickup(horiz, dy, distance)) {
+		if (ChopperLootFlight.pickupIntersects(player.getBoundingBox(),loot.getBoundingBox())) {
+			flightRoute.pause(client);
 			ChopperKeys.holdStill(client);
 			ChopperKeys.overlay(client, "捡 " + loot.getItem().getHoverName().getString() + " ×" + loot.getItem().getCount(), 0x55FF55);
 			return true;
 		}
 		look = loot.position();
-		ChopperKeys.walkToward(client, player, look, horiz, dy, distance);
+		boolean routing=flightRoute.tick(client,loot);
+		if(!routing){
+			ChopperKeys.holdStill(client);
+			ChopperKeys.overlay(client,"拾取路径受阻，保留当前位置",0xFFFF55);
+			return true;
+		}
 		ChopperKeys.overlay(client, String.format("去捡 %s  距离 %.1f", loot.getItem().getHoverName().getString(), distance), 0x55FFFF);
 		return true;
 	}
@@ -241,12 +253,13 @@ public final class ChopperLoot {
 		resetLockedTarget();
 	}
 
-	/** 锁定实体消失则计入 picked。 */
-	private boolean notePicked(Minecraft client) {
+	/** 实体消失后只累计同组件物品实际进入背包的数量。 */
+	private boolean notePicked(Minecraft client,LocalPlayer player) {
 		if (entityId < 0 || client.level == null) return false;
 		if (client.level.getEntity(entityId) != null) return false;
-		picked += Math.max(1, entityCount);
-		log(client, "loot-picked id=" + entityId + " count=" + Math.max(1, entityCount));
+		int gained=ChopperLootPolicy.verifiedPickupGain(inventoryBefore,inventoryCount(player,lockedStack),entityCount);
+		picked += gained;
+		log(client, gained>0?"loot-picked id="+entityId+" count="+gained:"loot-disappeared-unconfirmed id="+entityId);
 		resetLockedTarget();
 		return true;
 	}
@@ -291,6 +304,7 @@ public final class ChopperLoot {
 	private void lockTarget(Minecraft client, LocalPlayer player, ItemEntity loot) {
 		entityId = loot.getId();
 		entityCount = loot.getItem().getCount();
+		lockedStack=loot.getItem().copy();inventoryBefore=inventoryCount(player,lockedStack);
 		targetTicks = 0;
 		stuckTicks = 0;
 		bestDist = Double.MAX_VALUE;
@@ -304,8 +318,10 @@ public final class ChopperLoot {
 
 	/** 清当前锁定与叶障状态。 */
 	private void resetLockedTarget() {
+		flightRoute.resetRoute();
 		entityId = -1;
 		entityCount = 0;
+		lockedStack=ItemStack.EMPTY;inventoryBefore=0;
 		targetTicks = 0;
 		stuckTicks = 0;
 		bestDist = Double.MAX_VALUE;
@@ -364,6 +380,7 @@ public final class ChopperLoot {
 		}
 		look = BorerAim.lookPoint(hit);
 		ChopperKeys.releaseWalk(client);
+		flightRoute.pause(client);
 		ChopperKeys.lookAt(player, look);
 		BlockHitResult freshHit = BorerAim.clipView(client, player);
 		boolean exactLeaf = freshHit != null
@@ -429,6 +446,13 @@ public final class ChopperLoot {
 		if (inventory.getFreeSlot() >= 0) return true;
 		return inventory.getSlotWithRemainingSpace(stack) >= 0;
 	}
+	private static int inventoryCount(LocalPlayer player,ItemStack wanted){
+		if(wanted.isEmpty())return 0;int total=0;
+		for(int slot=0;slot<36;slot++)if(ItemStack.isSameItemSameComponents(wanted,player.getInventory().getItem(slot)))total+=player.getInventory().getItem(slot).getCount();
+		return total;
+	}
+	void pauseFlight(Minecraft c){flightRoute.pause(c);}
+	void closeFlight(Minecraft c){flightRoute.close(c);}
 
 	/** 掉落物是否在岩浆里。 */
 	private static boolean inLava(Minecraft client, ItemEntity loot) {

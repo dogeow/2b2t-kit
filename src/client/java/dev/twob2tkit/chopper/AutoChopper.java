@@ -44,7 +44,7 @@ import dev.twob2tkit.KitKeys;
  */
 public final class AutoChopper {
 	/** 挖树主机逻辑版本（打进诊断日志）。 */
-	public static final String VERSION = "1.9.51";
+	public static final String VERSION = "1.9.52";
 	/** 无进度时多久再点一次攻击（tick）。 */
 	private static final int RETRY_TICKS = 40;
 	/** 挖不动多久跳过这块（tick）。 */
@@ -180,6 +180,7 @@ public final class AutoChopper {
 	public void stop(Minecraft client, String reason) {
 		if (!active) return;
 		int pickedLoot = loot.picked();
+		loot.closeFlight(client);
 		scaffold.stop(client);
 		miningModules.release(); nativeTarget=null;
 		active = false;
@@ -207,6 +208,7 @@ public final class AutoChopper {
 			return;
 		}
 		if (client.screen != null) {
+			loot.pauseFlight(client);
 			ChopperKeys.releaseMine(client);
 			ChopperKeys.releaseWalk(client);
 			status = "先关掉界面再砍";
@@ -215,7 +217,7 @@ public final class AutoChopper {
 
 		LocalPlayer player = client.player;
 		if (flyToggleCooldown > 0) flyToggleCooldown--;
-		if (updateCombatPause(client, player)) return;
+		if (updateCombatPause(client, player)) { loot.closeFlight(client); return; }
 		try {
 			if (scaffold.tick(client)) { mineLook=null; status=scaffold.status(); ChopperKeys.overlay(client,status,0x75D8C5); return; }
 		} catch (IllegalStateException e) { stop(client,e.getMessage()); return; }
@@ -239,9 +241,10 @@ public final class AutoChopper {
 				if (!loot.miningObstacle()) ChopperKeys.releaseMine(client);
 				if (config.chopperPickup && loot.active()) {
 					status = "去捡掉落物";
-					boolean fly = loot.wantsFlight(client, player);
-					applyFlight(player, fly);
-					boolean collecting = loot.tick(client, player);
+					boolean fly = BorerFlight.isFlying(player);
+					boolean collecting;
+					try { collecting=loot.tick(client, player); }
+					catch(IllegalStateException failure){stop(client,failure.getMessage());return;}
 					mineLook = loot.look();
 					if (collecting) {
 						if (mineLook != null) {
@@ -278,8 +281,9 @@ public final class AutoChopper {
 					applyFlight(player, false);
 					if (config.chopperPickup && loot.beginNear(client, player)) {
 						status = "没有新树，先捡剩下的掉落物";
-						applyFlight(player, loot.wantsFlight(client, player));
-						boolean collecting = loot.tick(client, player);
+						boolean collecting;
+						try { collecting=loot.tick(client, player); }
+						catch(IllegalStateException failure){stop(client,failure.getMessage());return;}
 						mineLook = loot.look();
 						if (collecting) return;
 					}
@@ -633,7 +637,21 @@ public final class AutoChopper {
 		}
 		mineLook = destCenter;
 		ChopperKeys.lookAt(player, destCenter);
-		if (treeLogs.isEmpty()) { ChopperKeys.walkToward(client,player,Vec3.atBottomCenterOf(dest)); return true; }
+		if (treeLogs.isEmpty()) {
+			// Replanting after an aerial pickup also needs a real route; a
+			// preserved manual Flight cannot safely use the old ground W loop.
+			BlockPos standby=null;double nearest=Double.POSITIVE_INFINITY;
+			for(var candidate:BlockPos.betweenClosed(dest.offset(-2,0,-2),dest.offset(2,0,2))){
+				if(stumps.stream().anyMatch(root->root.getX()==candidate.getX()&&root.getZ()==candidate.getZ()))continue;
+				if(!scaffold.safeStandby(client,candidate))continue;
+				double distance=player.position().distanceToSqr(Vec3.atBottomCenterOf(candidate));
+				if(distance<nearest){standby=candidate.immutable();nearest=distance;}
+			}
+			if(standby==null){ChopperKeys.holdStill(client);return false;}
+			try { scaffold.returnToStandby(client,standby); }
+			catch(IllegalStateException failure){stop(client,failure.getMessage());return false;}
+			return true;
+		}
 		try {
 			scaffold.moveToTree(client,treeLogs);
 			mineTarget=nativeTarget=null;mineLook=null;approach.reset();
