@@ -1,5 +1,5 @@
 import unittest
-from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route
+from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass
 from lighting_cli import safe_noncolliding_plant,floor_step_lift
 
 def floor(pos):
@@ -8,6 +8,15 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_surface_mode_keeps_leaf_covered_ground_separate_from_underground_pockets(self):
+  p=(0,62,0);leaf={**floor((0,68,0)),'state':'Block{minecraft:cherry_leaves}[distance=3,persistent=false,waterlogged=false]'}
+  self.assertTrue(exterior_surface_support({p:floor(p),(0,68,0):leaf},p))
+  self.assertFalse(exterior_surface_support({p:floor(p),(0,65,0):floor((0,65,0))},p))
+ def test_only_explicitly_replaceable_short_grass_can_be_a_torch_target(self):
+  grass={'state':'Block{minecraft:short_grass}','passable':True,'solid':False,'fluid':False,'block_entity':False,'replaceable':True}
+  self.assertTrue(replaceable_short_grass(grass))
+  self.assertFalse(replaceable_short_grass({**grass,'replaceable':False}))
+  self.assertFalse(replaceable_short_grass({**grass,'state':'Block{minecraft:dandelion}'}))
  def test_actual_hover_undershoot_can_lift_before_neighbouring_higher_floor(self):
   row=floor((760822,65,797908));start=[760821.534,65.909,797908.499]
   self.assertEqual(floor_step_lift([row],start,[760822.5,66.1,797908.5]),[start[0],66.195,start[2]])

@@ -9,7 +9,7 @@ import time
 from collections import deque
 from lighting_cli import (LightingRun, LightingBlocked, TORCH, EVIDENCE, bounds,
     candidate_protected, safe_dark_support, scan_cells, stock, later_torch_frame,
-    risk_counts, validate_native_details, write_json)
+    risk_counts, validate_native_details, write_json, safe_noncolliding_plant,block_id)
 
 
 def ray_clear(cells, eye, support):
@@ -50,15 +50,35 @@ def observed_exit_route(cells, station, low, high, budget=4000):
     return None
 
 
-def edge_candidates(cells, low, high, start, protected=None):
+def exterior_surface_support(cells,pos):
+    """Separate covered natural surface from a floor below dirt/stone terrain."""
+    for p,row in cells.items():
+        if p[0]!=pos[0]or p[2]!=pos[2]or p[1]<=pos[1]:continue
+        if row.get('fluid')or row.get('block_entity'):return False
+        if safe_noncolliding_plant(row):continue
+        name=block_id(row)
+        if name.endswith('_leaves') and 'persistent=false'in row.get('state',''):continue
+        if name.endswith('_log'):continue
+        if name=='minecraft:torch'and row.get('passable')is True:continue
+        return False
+    return True
+
+
+def replaceable_short_grass(row):
+    return bool(safe_noncolliding_plant(row)and row['state']=='Block{minecraft:short_grass}'and row.get('replaceable')is True)
+
+
+def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False):
     low, high = bounds(low, high)
     validate_native_details(cells)
     dark = [p for p,r in cells.items() if safe_dark_support(r)
-            and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)]
+            and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)
+            and(not surface_only or exterior_surface_support(cells,p))]
     result=[]
+    route_cache={}
     for support in dark:
         x,y,z=support;target=(x,y+1,z)
-        if target in cells or y+1<low[1] or y+3>high[1]:
+        if (target in cells and not replaceable_short_grass(cells[target]))or y+1<low[1] or y+3>high[1]:
             continue
         stations=[]
         for dx,dz in [(a,b) for a in range(-3,4) for b in range(-3,4)
@@ -69,7 +89,9 @@ def edge_candidates(cells, low, high, start, protected=None):
             station=[sx+.5,y+1.1,sz+.5]
             if not ray_clear(cells,[station[0],station[1]+1.62,station[2]],support):
                 continue
-            route=observed_exit_route(cells,station,low,high)
+            key=tuple(station)
+            if key not in route_cache:route_cache[key]=observed_exit_route(cells,station,low,high)
+            route=route_cache[key]
             if route:stations.append((station,route))
         if stations:
             station,route=min(stations,key=lambda p:len(p[1])+math.dist(start,p[1][0]))
@@ -82,6 +104,13 @@ def edge_candidates(cells, low, high, start, protected=None):
 
 
 class ReachableEdgeLightingRun(LightingRun):
+    def __init__(self,*args,surface_only=False,**kwargs):
+        super().__init__(*args,**kwargs);self.surface_only=surface_only
+        self.report['surface_only']=surface_only
+    def counts(self,cells):
+        if not self.surface_only:return risk_counts(cells,self.protected)
+        selected={p:r for p,r in cells.items()if r.get('zombie_spawn_floor')and exterior_surface_support(cells,p)}
+        return risk_counts(selected,self.protected)
     def place_edge(self,candidate,index):
         support=tuple(candidate['support']);target=candidate['target'];station=candidate['station'];route=candidate['entry_route'];entry=route[0]
         state=self.wait_for_guard(stage='before_edge_station')
@@ -103,7 +132,7 @@ class ReachableEdgeLightingRun(LightingRun):
         current=self.scan(lo,hi,f'edge-pre-{index}.json');cells=scan_cells(current,lo,hi,self.c.world)
         row=cells.get(support)
         if (not row or row['state']!=candidate['support_state']or not safe_dark_support(row)
-                or tuple(target)in cells or candidate_protected(support,target,self.protected)
+                or tuple(target)in cells and not replaceable_short_grass(cells[tuple(target)]) or candidate_protected(support,target,self.protected)
                 or current['scan_entities']):
             raise LightingBlocked('Current adjacent support/target/entity proof changed')
         latest=self.fresh()
@@ -140,14 +169,15 @@ class ReachableEdgeLightingRun(LightingRun):
         for i in range(self.limit):
             reply=self.scan(self.low,self.high,f'edge-survey-{i}.json')
             cells=scan_cells(reply,self.low,self.high,self.c.world)
-            counts=risk_counts(cells,self.protected)
+            counts=self.counts(cells)
+            self.report['all_scanned_counts']=risk_counts(cells,self.protected)
             if i==0:self.report['before']=counts
             self.report['after']=counts;self.save()
             if not counts['unprotected_dark_floor']:break
-            candidates=edge_candidates(cells,self.low,self.high,self.fresh()['pos'],self.protected)
+            candidates=edge_candidates(cells,self.low,self.high,self.fresh()['pos'],self.protected,surface_only=self.surface_only)
             if not candidates:break
             self.place_edge(candidates[0],i)
         reply=self.scan(self.low,self.high,'edge-final-survey.json')
-        self.report['after']=risk_counts(scan_cells(reply,self.low,self.high,self.c.world),self.protected)
+        self.report['after']=self.counts(scan_cells(reply,self.low,self.high,self.c.world))
         self.report.update(state='bounded_run_finished',remaining_unprotected_risk=self.report['after']['unprotected_dark_floor'])
         self.save()
