@@ -71,7 +71,7 @@ final class ChopperLootFlight {
         else if(++stalled>=30)return replan(c,"no-actual-movement");
         var destination=feet(route.get(node));
         var input=BorerFlyPath.input(p.position(),destination,p.getYRot());
-        var swept=p.getBoundingBox().expandTowards(input.delta()).inflate(.005);
+        var swept=stepSweep(p.getBoundingBox(),input.delta());
         if(!clear(c,route.get(node))||!safeBody(c,swept))return replan(c,"actual-body-collision");
         ChopperKeys.releaseWalk(c);
         flight.speed(input.speed());
@@ -164,6 +164,11 @@ final class ChopperLootFlight {
     }
     static Vec3 feet(BlockPos p){return BorerFlyPath.waypoint(p);}
     static boolean adjacentEdge(BlockPos from,BlockPos to){return from.distManhattan(to)==1;}
+    // A player legitimately touching a floor must not acquire an invented
+    // overlap below their feet. Retain the full actual vertical movement.
+    static AABB stepSweep(AABB actualBody,Vec3 delta){
+        return actualBody.expandTowards(delta).inflate(.005,0,.005);
+    }
     private static AABB body(Vec3 p){return new AABB(p.x-.31,p.y+.01,p.z-.31,p.x+.31,p.y+1.81,p.z+.31);}
     private static void log(Minecraft c,String message){ChopperFileLog.append(c,AutoChopper.VERSION,message);}
 }

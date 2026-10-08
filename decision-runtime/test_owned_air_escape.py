@@ -26,6 +26,14 @@ class CanopyEscapeTest(unittest.TestCase):
     def test_escape_budget_rejects_unbounded_routes(self):
         with self.assertRaises(ValueError):side_candidates([],[32.5,69,882.5],130,radius=9)
 
+    def test_observed_fractional_hover_uses_actual_feet_for_clearance(self):
+        start=[760879.544,69.809,797969.544]
+        rows=[solid(760879,68,797969)]
+        plan=side_candidates(rows,start,130)
+        self.assertTrue(plan)
+        self.assertEqual(start[1],plan[0][1][1])
+        self.assertTrue(blocks_segment(solid(760879,69,797969),start,plan[0][1]))
+
     def idle_client(self,changed_owner=False,unknown=False):
         states=[{'world_session':'w','control_revision':5,'pending_scan':{},
                  'supervision_lease':{'id':'h','job_session':'t','kind':'materials','revision':5}},

@@ -69,8 +69,8 @@ def escape_side(c,out,target_y=130):
             raise RuntimeError('Canopy escape scan is incomplete')
         current();save(name,reply);return reply
     start=current()['pos'];target_y=max(target_y,start[1])
-    if abs(start[1]-round(start[1]))>.05:
-        raise RuntimeError('Side canopy escape starts at an observed whole-height farm pose')
+    # Native Flight can settle a fraction below its requested waypoint. Use
+    # the actual AABB sweep below; rounding a valid AIR pose is unnecessary.
     low=[math.floor(start[0])-9,math.floor(start[1]),math.floor(start[2])-9]
     high=[math.floor(start[0])+9,math.ceil(target_y+1.81),math.floor(start[2])+9]
     reply=scan(low,high,'fresh-side-volume.json')

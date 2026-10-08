@@ -32,6 +32,21 @@ class ChopperLootFlightTest {
         assertFalse(ChopperLootFlight.thinFloorOverlap(current,java.util.List.of(new AABB(-1,84,-1,1,86,1))));
         assertFalse(ChopperLootFlight.thinFloorOverlap(current,java.util.List.of()));
     }
+    @Test void capturedFloorContactMustNotBlockAValidHorizontalPickupStep(){
+        var current=body(760886.456,67,797976.470);
+        var swept=ChopperLootFlight.stepSweep(current,new Vec3(.08,0,0));
+        var floor=new AABB(760886,66,797976,760887,67,797977);
+        assertEquals(67,swept.minY,1e-9);
+        assertFalse(swept.intersects(floor));
+        assertTrue(swept.maxX>current.maxX);
+    }
+    @Test void realDownwardStepIntoFloorAndHorizontalWallRemainBlocked(){
+        var current=body(0,67,0);
+        var floor=new AABB(-1,66,-1,1,67,1);
+        assertTrue(ChopperLootFlight.stepSweep(current,new Vec3(0,-.08,0)).intersects(floor));
+        var wall=new AABB(.35,67,-1,1,69,1);
+        assertTrue(ChopperLootFlight.stepSweep(current,new Vec3(.08,0,0)).intersects(wall));
+    }
     @Test void sharedSearchRoutesAroundWallWithOnlyExecutableSingleAxisEdges(){
         var navigation=new dev.twob2tkit.runtime.engine.DefaultBuildNavigation();
         var world=new dev.twob2tkit.runtime.api.BuildNavigation.World(){
