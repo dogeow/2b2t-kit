@@ -39,4 +39,9 @@ class BorerVisibleTimeoutRepositionTest {
         assertTrue(BorerCombatPeek.firingPositionFarEnough(1.5*1.5));
         assertFalse(BorerCombatPeek.firingPositionFarEnough(Double.NaN));
     }
+    @Test void visibleRangedTargetWithoutARealArrowSolutionCannotRenewAttackBudget() {
+        assertFalse(BorerCombatPeek.firingSolutionVerified(true,false));
+        assertTrue(BorerCombatPeek.firingSolutionVerified(true,true));
+        assertTrue(BorerCombatPeek.firingSolutionVerified(false,false));
+    }
 }

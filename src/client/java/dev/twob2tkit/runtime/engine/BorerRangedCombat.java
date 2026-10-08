@@ -144,9 +144,11 @@ final class BorerRangedCombat {
 		if (passive > 0 && ++passiveTicks >= 100) {
 			engine.fileLog(c, "area-defense-ignore-passive count=" + passive); passiveTicks = 0;
 		}
-		if(peek.active()&&peek.acquired(c,peek.target())){
-			boolean retry=session.repositioned(peek.target().getUUID());
-			engine.fileLog(c,"guard-peek-visible uuid="+peek.target().getUUID()+" retry="+retry);peek.close(c);
+		if(peek.active()){
+			if(peek.acquired(c,peek.target())){
+				boolean retry=session.repositioned(peek.target().getUUID());
+				engine.fileLog(c,"guard-peek-visible uuid="+peek.target().getUUID()+" retry="+retry);peek.close(c);
+			}else if(peek.tick(c,peek.target()))return true;
 		}
 		var threats = session.targets().stream().filter(e -> session.canAttack(e.getUUID())).toList();
 		int chosen = BorerDefensePolicy.choose(threats.stream().map(e -> new BorerDefensePolicy.Candidate(e.getId(), rank(p,e), p.distanceTo(e), engine.engagement.recentAttacker(p, e))).toList(), target == null ? -1 : target.getId());
