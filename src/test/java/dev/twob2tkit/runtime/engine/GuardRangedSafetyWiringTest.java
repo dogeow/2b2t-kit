@@ -54,6 +54,14 @@ class GuardRangedSafetyWiringTest {
         assertTrue(calls("GuardWeaponPolicy","riseThreatClear").containsAll(List.of("intersects","boxDistanceSquared","finiteBox")));
         assertTrue(calls("BorerRangedCombat","currentServerChunk").contains("isServerChunk"));
     }
+    @Test void emptyAmmoRangedRetreatAlsoOutranksTheOrdinaryFoodPause()throws Exception{
+        for(String name:List.of("safetyRise","hasImmediateHostileThreat")){
+            var c=calls("BorerRangedCombat",name);
+            assertTrue(c.containsAll(List.of("usableGuardBow","rangedWithoutWeaponRise","contains","isRangedCombatThreat")),name);
+        }
+        assertTrue(calls("BorerRangedCombat","safetyRise").contains("clearWholeRise"));
+        assertFalse(calls("BorerRangedCombat","safetyRise").contains("requestEmergencyExit"));
+    }
     @Test void sharedClassifierCoversPriorityRiseFoodPauseOrdinaryAndEngagement()throws Exception{
         for(String name:List.of("rank","elevateBeforeCombat","hasImmediateHostileThreat","ordinaryZombie"))
             assertTrue(calls("BorerRangedCombat",name).contains("isRangedCombatThreat"),name);

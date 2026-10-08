@@ -46,6 +46,21 @@ class GuardRangedSafetyPolicyTest {
         assertFalse(GuardWeaponPolicy.safetyRiseNeeded(true,true,true,true,true,false,false,12.01));
         assertFalse(GuardWeaponPolicy.safetyRiseNeeded(true,true,true,true,true,false,false,Double.NaN));
     }
+    @Test void emptyAmmoAtObservedSkeletonDistanceRequestsTheExistingCheckedRise(){
+        double distance=16.202795;
+        assertFalse(GuardWeaponPolicy.safetyRiseNeeded(true,true,true,true,true,true,true,distance));
+        assertTrue(GuardWeaponPolicy.rangedWithoutWeaponRise(true,true,true,true,true,false,distance));
+        assertTrue(GuardWeaponPolicy.rangedWithoutWeaponRise(true,true,true,true,true,false,40));
+        assertFalse(GuardWeaponPolicy.rangedWithoutWeaponRise(true,true,true,true,true,false,40.01));
+        assertFalse(GuardWeaponPolicy.rangedWithoutWeaponRise(true,true,true,true,true,true,distance));
+        assertFalse(GuardWeaponPolicy.rangedWithoutWeaponRise(true,true,true,false,true,false,distance));
+        assertFalse(GuardWeaponPolicy.rangedWithoutWeaponRise(true,true,true,true,false,false,distance));
+        assertFalse(GuardWeaponPolicy.rangedWithoutWeaponRise(false,true,true,true,true,false,distance));
+        assertFalse(GuardWeaponPolicy.rangedWithoutWeaponRise(true,false,true,true,true,false,distance));
+        assertFalse(GuardWeaponPolicy.rangedWithoutWeaponRise(true,true,false,true,true,false,distance));
+        for(double invalid:List.of(-1.,Double.NaN,Double.POSITIVE_INFINITY))
+            assertFalse(GuardWeaponPolicy.rangedWithoutWeaponRise(true,true,true,true,true,false,invalid));
+    }
     @Test void fixedTargetLatchesUntilTriggerResetsOrARealDescentRearms(){
         Object world=new Object();var rise=new GuardWeaponPolicy.SafetyRise();
         assertEquals(12,rise.remaining(world,65,10,true));assertEquals(77,rise.target());
@@ -56,6 +71,17 @@ class GuardRangedSafetyPolicyTest {
         assertEquals(12,rise.remaining(world,65,33,true));assertEquals(77,rise.target());
         assertEquals(0,rise.remaining(world,69,34,false));assertFalse(rise.active());
         assertEquals(12,rise.remaining(world,69,35,true));assertEquals(81,rise.target());
+    }
+    @Test void emptyAmmoRetreatUsesALatchedHigherTargetWithinExistingCheckedAscent(){
+        Object world=new Object();var rise=new GuardWeaponPolicy.SafetyRise();
+        assertEquals(32,rise.remaining(world,84.0985,10,true,32));
+        assertEquals(116.0985,rise.target(),1e-6);
+        assertEquals(20,rise.remaining(world,96.0985,11,true,32),1e-6);
+        assertEquals(116.0985,rise.target(),1e-6);
+        assertEquals(0,rise.remaining(world,116.0985,12,true,32));
+        assertEquals(0,rise.remaining(world,116.0985,13,true,32));
+        assertEquals(0,rise.remaining(world,116.0985,14,true,33));
+        assertFalse(rise.active());
     }
     @Test void partialRiseDescentStartsFromCurrentFeetAndNeverClimbsBackAnOldUnboundedTarget(){
         Object world=new Object();var rise=new GuardWeaponPolicy.SafetyRise();

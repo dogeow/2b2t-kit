@@ -55,6 +55,12 @@ final class GuardWeaponPolicy {
         return standalone&&current&&aliveHostile&&engaged&&Double.isFinite(distance)&&distance>=0&&distance<=12
             &&(ranged||!canAttack||!visible);
     }
+    /** An engaged archer can keep hitting beyond the ordinary close-rise radius. */
+    static boolean rangedWithoutWeaponRise(boolean standalone,boolean current,boolean aliveHostile,
+                                            boolean engaged,boolean ranged,boolean usableBow,double distance){
+        return standalone&&current&&aliveHostile&&engaged&&ranged&&!usableBow
+            &&Double.isFinite(distance)&&distance>=0&&distance<=40;
+    }
     static boolean finiteVector(Vec3 value){
         return value!=null&&Double.isFinite(value.x)&&Double.isFinite(value.y)&&Double.isFinite(value.z);
     }
@@ -82,15 +88,19 @@ final class GuardWeaponPolicy {
         private Object world;private double target=Double.NaN,highestFeet=Double.NaN;
         private long lastAttempt=Long.MIN_VALUE;private int attempts;private boolean spent;
         double remaining(Object currentWorld,double feet,long tick,boolean trigger){
+            return remaining(currentWorld,feet,tick,trigger,12);
+        }
+        double remaining(Object currentWorld,double feet,long tick,boolean trigger,double rise){
             if(world!=currentWorld){clear();world=currentWorld;}
-            if(currentWorld==null||!Double.isFinite(feet)||tick<0||!trigger){cancel();return 0;}
+            if(currentWorld==null||!Double.isFinite(feet)||tick<0||!trigger
+                ||!Double.isFinite(rise)||rise<12||rise>32){cancel();return 0;}
             if(feet<highestFeet-1||tick<lastAttempt)cancel();
             if(Double.isNaN(target)){
-                target=Math.min(316,feet+12);highestFeet=feet;
+                target=Math.min(316,feet+rise);highestFeet=feet;
             }
             highestFeet=Math.max(highestFeet,feet);
             if(spent||attempts>=200||feet>=target-.25){spent=true;return 0;}
-            return Math.min(12,Math.max(0,target-feet));
+            return Math.min(32,Math.max(0,target-feet));
         }
         void attempted(long tick){if(active()&&tick>=0&&tick!=lastAttempt){attempts++;lastAttempt=tick;}}
         double target(){return target;}

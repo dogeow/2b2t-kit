@@ -732,10 +732,16 @@ final class BorerRangedCombat {
         var observed=session.targets().stream().filter(e->e instanceof Enemy&&e.isAlive()&&e.level()==c.level
             &&c.level.getEntity(e.getId())==e&&currentServerChunk(c,e.blockPosition())).toList();
         if(observed.isEmpty()){safetyRise.cancel();return false;}
+        boolean usableBow=usableGuardBow(c);
         var near=observed.stream().filter(e->GuardWeaponPolicy.safetyRiseNeeded(engine.standaloneGuard,true,true,
             session.contains(e.getUUID()),BorerThreats.isRangedCombatThreat(e,p),session.canAttack(e.getUUID()),
-            p.hasLineOfSight(e),p.distanceTo(e))).min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
-        double rise=safetyRise.remaining(c.level,p.getY(),p.tickCount,near!=null);
+            p.hasLineOfSight(e),p.distanceTo(e))
+            ||GuardWeaponPolicy.rangedWithoutWeaponRise(engine.standaloneGuard,true,true,
+                session.contains(e.getUUID()),BorerThreats.isRangedCombatThreat(e,p),usableBow,p.distanceTo(e)))
+            .min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
+        boolean unarmedRanged=near!=null&&GuardWeaponPolicy.rangedWithoutWeaponRise(engine.standaloneGuard,true,true,
+            session.contains(near.getUUID()),BorerThreats.isRangedCombatThreat(near,p),usableBow,p.distanceTo(near));
+        double rise=safetyRise.remaining(c.level,p.getY(),p.tickCount,near!=null,unarmedRanged?32:12);
         if(rise<=.25)return false;
         if(p.tickCount<safetyRiseRetryAfter&&p.getHealth()>=14)return false;
         cancelDraw(c);releaseZombieMelee();rangedMode(true);engine.pauseGuardMovement(c);
@@ -789,12 +795,16 @@ final class BorerRangedCombat {
 	boolean hasImmediateHostileThreat(Minecraft c) {
 		if (c.player == null || c.level == null) return false;
 		var p = c.player;
-		return c.level.getEntities(p, p.getBoundingBox().inflate(12)).stream()
+        boolean usableBow=usableGuardBow(c);
+		return c.level.getEntities(p, p.getBoundingBox().inflate(usableBow?12:40)).stream()
 			.anyMatch(e -> e instanceof Enemy && e instanceof LivingEntity living && living.isAlive()
                 &&e.level()==c.level&&c.level.getEntity(e.getId())==e
                 &&(GuardWeaponPolicy.safetyRiseNeeded(engine.standaloneGuard,true,true,
                     session.contains(e.getUUID())||BorerThreats.currentReceivedMobHit(e,p),BorerThreats.isRangedCombatThreat(e,p),
                     session.canAttack(e.getUUID()),p.hasLineOfSight(e),p.distanceTo(e))
+                    ||GuardWeaponPolicy.rangedWithoutWeaponRise(engine.standaloneGuard,true,true,
+                        session.contains(e.getUUID())||BorerThreats.currentReceivedMobHit(e,p),
+                        BorerThreats.isRangedCombatThreat(e,p),usableBow,p.distanceTo(e))
                     ||p.distanceTo(e) <= (BorerThreats.isRangedCombatThreat(living,p) ? 12 : 9)
 				    && (p.hasLineOfSight(e) || p.distanceTo(e) < 3)));
 	}
