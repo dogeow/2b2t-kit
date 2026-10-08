@@ -68,6 +68,11 @@ def replaceable_short_grass(row):
     return bool(safe_noncolliding_plant(row)and row['state']=='Block{minecraft:short_grass}'and row.get('replaceable')is True)
 
 
+def interaction_surface(cells,support,target):
+    plant=cells.get(tuple(target))
+    return (list(target),plant['state'])if replaceable_short_grass(plant)else(list(support),cells[tuple(support)]['state'])
+
+
 def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False):
     low, high = bounds(low, high)
     validate_native_details(cells)
@@ -164,7 +169,8 @@ class ReachableEdgeLightingRun(LightingRun):
             write_json(archived,prior)
             intent['prior_proved_no_send']=str(archived)
         write_json(path,intent);write_json(self.out/f'edge-before-{index}.json',latest)
-        ack=self.c.checked('interact',pos=list(support),face='up',expected_state=row['state'],expected_hand=TORCH)
+        interaction_pos,interaction_state=interaction_surface(cells,support,target)
+        ack=self.c.checked('interact',pos=interaction_pos,face='up',expected_state=interaction_state,expected_hand=TORCH)
         write_json(self.out/f'edge-interaction-{index}.json',ack)
         deadline=time.monotonic()+8;frames=[];last=latest['time']
         while time.monotonic()<deadline:
@@ -176,7 +182,8 @@ class ReachableEdgeLightingRun(LightingRun):
         if len(frames)<2:raise LightingBlocked('Adjacent torch unknown; preserve intent without repeat')
         write_json(self.out/f'edge-confirmed-{index}.json',frames)
         intent.update(state='verified',after_stock=stock(state),after_time=state['time'],
-                      later_verified_frames=2,interaction_request=ack['id'],evidence_scope=EVIDENCE)
+                      later_verified_frames=2,interaction_request=ack['id'],evidence_scope=EVIDENCE,
+                      observed_block_state=actual['blocks'][0]['state'])
         write_json(path,intent);self.report['placed'].append(intent);self.save()
         for waypoint in reversed(route[:-1]):self.move(waypoint)
         self.move([entry[0],high_y,entry[2]])

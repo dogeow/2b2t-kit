@@ -135,6 +135,13 @@ class OwnTorchTests(unittest.TestCase):
                        {'state':'Block{minecraft:wall_torch}[facing=north]'},{'pos':[3,64,2]}):
             self.assertFalse(lighting.verified_own_torch(torch_row()|change,[placement()],'world-a','task-a',100))
 
+    def test_verified_wall_variant_requires_its_exact_observed_state(self):
+        wall=torch_row()|{'state':'Block{minecraft:wall_torch}[facing=south]'}
+        actual=placement()|{'observed_block_state':wall['state']}
+        self.assertTrue(lighting.verified_own_torch(wall,[actual],'world-a','task-a',100))
+        self.assertFalse(lighting.verified_own_torch(wall,[placement()],'world-a','task-a',100))
+        self.assertFalse(lighting.verified_own_torch(wall|{'state':'Block{minecraft:wall_torch}[facing=north]'},[actual],'world-a','task-a',100))
+
     def test_own_torch_terminal_preflight_counts_original_placement_only(self):
         self.assertEqual(1,reconcile.validate_pending(*own_fixture()))
 

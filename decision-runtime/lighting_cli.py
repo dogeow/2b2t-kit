@@ -101,9 +101,15 @@ def block_id(row):
     return state.split('}', 1)[0].removeprefix('Block{') if isinstance(state, str) else ''
 
 
+def actual_torch_state(row):
+    state=row.get('state')if isinstance(row,dict)else None
+    return bool(state=='Block{minecraft:torch}'or state in
+                {f'Block{{minecraft:wall_torch}}[facing={face}]'for face in ('north','south','east','west')})
+
+
 def verified_own_torch(row, placements, world, task, observed_at=None):
     """Only a noncolliding torch proved by this same batch may cross a sweep."""
-    if (not isinstance(row, dict) or row.get('state') != 'Block{minecraft:torch}'
+    if (not isinstance(row, dict) or not actual_torch_state(row)
             or row.get('passable') is not True or row.get('solid') is not False
             or row.get('fluid') is not False or row.get('block_entity') is not False):
         return False
@@ -115,7 +121,8 @@ def verified_own_torch(row, placements, world, task, observed_at=None):
     if len(matched) != 1:
         return False
     placed = matched[0]
-    return bool(placed.get('state') == 'verified' and placed.get('later_verified_frames') == 2
+    return bool(placed.get('observed_block_state','Block{minecraft:torch}')==row['state']
+                and placed.get('state') == 'verified' and placed.get('later_verified_frames') == 2
                 and placed.get('world_session') == world and placed.get('task_session') == task
                 and placed.get('evidence_scope') == EVIDENCE
                 and isinstance(placed.get('interaction_request'), str) and placed['interaction_request']
@@ -167,7 +174,9 @@ def known_rejected_intent(record,root):
             and proof.get('same_world')==record.get('world_session')==reply.get('world_session')
             and proof.get('same_task')==record.get('task_session')
             and proof.get('unchanged_stock')==record.get('before_stock')
-            and proof.get('two_current_inventory_frames')is True and proof.get('target_currently_air')is True
+            and proof.get('two_current_inventory_frames')is True
+            and (proof.get('target_currently_air')is True
+                 or proof.get('target_unmodified_state')==record.get('initial_target_state')=='Block{minecraft:short_grass}')
             and proof.get('original_replayed')is False
             and proof.get('original_reply_sha256')==hashlib.sha256(reply_raw).hexdigest()
             and reply.get('id')==rid and reply.get('phase')=='error'
@@ -366,7 +375,7 @@ def later_torch_frame(reply, state, target, world, before_stock, after_time):
     cells = scan_cells(reply, target, target, world)
     return (state.get('world_session') == world
             and type(state.get('time')) in (int, float) and state['time'] > after_time
-            and set(cells) == {tuple(target)} and cells[tuple(target)]['state'] == 'Block{minecraft:torch}'
+            and set(cells) == {tuple(target)} and actual_torch_state(cells[tuple(target)])
             and stock(state) == before_stock - 1)
 
 
@@ -503,7 +512,7 @@ class LightingRun:
                 self.move(lifted,allow_entity_overpass=False,allow_floor_adjust=False)
                 return self.move(target,allow_entity_overpass=allow_entity_overpass,allow_floor_adjust=False)
             raise LightingBlocked('Fresh movement body sweep is occupied')
-        torches=[row for row in sweep['blocks']if row.get('state')=='Block{minecraft:torch}']
+        torches=[row for row in sweep['blocks']if actual_torch_state(row)]
         if torches:
             self.report.setdefault('own_torch_sweep_checks', []).append({
                 'request_id': sweep.get('id'), 'targets': [row['pos'] for row in torches],

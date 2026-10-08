@@ -1,5 +1,5 @@
 import unittest
-from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass
+from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass,interaction_surface
 from lighting_cli import safe_noncolliding_plant,floor_step_lift
 
 def floor(pos):
@@ -8,6 +8,12 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_native_interaction_clicks_replaceable_grass_instead_of_hidden_soil_face(self):
+  support=(0,64,0);target=(0,65,0)
+  grass={'state':'Block{minecraft:short_grass}','passable':True,'solid':False,'fluid':False,'block_entity':False,'replaceable':True}
+  cells={support:floor(support),target:grass}
+  self.assertEqual(interaction_surface(cells,support,target),([0,65,0],'Block{minecraft:short_grass}'))
+  self.assertEqual(interaction_surface({support:floor(support)},support,target),([0,64,0],'Block{minecraft:dirt}'))
  def test_spawnable_log_can_be_lit_from_neighbouring_soil_without_replacing_log(self):
   log={**floor((0,67,0)),'state':'Block{minecraft:cherry_log}[axis=y]'}
   soil={**floor((1,64,0)),'zombie_block_light_risk':False,'spawn_block_light':2}
