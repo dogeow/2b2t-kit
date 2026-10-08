@@ -126,6 +126,33 @@ def verified_own_torch(row, placements, world, task, observed_at=None):
                 and (observed_at is None or type(observed_at) is int and placed['after_time'] <= observed_at))
 
 
+def safe_noncolliding_plant(row):
+    """Exact current natural plant states; native air_only rechecks collision."""
+    return bool(isinstance(row,dict)
+                and row.get('state')in ('Block{minecraft:short_grass}','Block{minecraft:dandelion}')
+                and row.get('passable')is True and row.get('solid')is False
+                and row.get('fluid')is False and row.get('block_entity')is False)
+
+
+def floor_step_lift(rows,start,target):
+    """Correct a small actual hover undershoot before crossing a higher floor."""
+    if not rows or math.hypot(start[0]-target[0],start[2]-target[2])<.01:
+        return None
+    if any(row.get('solid')is not True or row.get('fluid')is not False
+           or row.get('block_entity')is not False or block_id(row)not in SAFE_SUPPORTS
+           or row['pos'][1]+1>target[1] for row in rows):
+        return None
+    # A current-body collision needs a different recovery; do not ignore it.
+    if any(all(row['pos'][i]+1>start[i]-(.35 if i!=1 else 0)
+               and row['pos'][i]<start[i]+(.35 if i!=1 else 1.81)
+               for i in range(3))for row in rows):
+        return None
+    top=max(row['pos'][1]+1 for row in rows)
+    if not 0<top-start[1]<=.35:
+        return None
+    return [start[0],top+.195,start[2]]
+
+
 def scan_cells(reply, low, high, world=None):
     """Native scan omits AIR; validate every returned non-AIR coordinate."""
     low, high = bounds(low, high)
@@ -433,7 +460,7 @@ class LightingRun:
             if all(self.low[i] <= target[i] <= self.high[i] for i in range(3)):
                 raise LightingBlocked('Unresolved prior lighting interaction; inspect intent before any replay: ' + str(path))
 
-    def move(self, target, *, allow_entity_overpass=True):
+    def move(self, target, *, allow_entity_overpass=True, allow_floor_adjust=True):
         # Fresh native body/entity checks cover the whole sweep. An exact
         # same-batch verified torch has no collision/fluid; native air_only
         # rechecks actual collisions and hazards before and during movement.
@@ -444,15 +471,27 @@ class LightingRun:
         if any(low[i] < self.move_low[i] or high[i] > self.move_high[i] for i in range(3)):
             raise LightingBlocked('Movement body sweep exceeds authorized movement bounds')
         sweep = self.scan(low, high)
-        if any(not verified_own_torch(row, self.report['placed'], self.c.world, self.c.task,
-                                     state.get('time')) for row in sweep['blocks']):
+        occupied=[row for row in sweep['blocks']if not safe_noncolliding_plant(row) and not verified_own_torch(row, self.report['placed'], self.c.world, self.c.task,
+                                     state.get('time'))]
+        if occupied:
+            lifted=floor_step_lift(occupied,start,target)if allow_floor_adjust else None
+            if lifted is not None:
+                # Both issued legs independently repeat native body/entity
+                # checks. The original solid floor remains in every receipt.
+                self.move(lifted,allow_entity_overpass=False,allow_floor_adjust=False)
+                return self.move(target,allow_entity_overpass=allow_entity_overpass,allow_floor_adjust=False)
             raise LightingBlocked('Fresh movement body sweep is occupied')
-        if sweep['blocks']:
+        torches=[row for row in sweep['blocks']if row.get('state')=='Block{minecraft:torch}']
+        if torches:
             self.report.setdefault('own_torch_sweep_checks', []).append({
-                'request_id': sweep.get('id'), 'targets': [row['pos'] for row in sweep['blocks']],
+                'request_id': sweep.get('id'), 'targets': [row['pos'] for row in torches],
                 'world_session': self.c.world, 'task_session': self.c.task,
                 'observed_at': sweep.get('scan_ended_at', state.get('time')),
                 'native_air_only_required': True})
+        plants=[row for row in sweep['blocks']if safe_noncolliding_plant(row)]
+        if plants:
+            self.report.setdefault('plant_sweep_checks',[]).append({'request_id':sweep.get('id'),
+                'current_plants':plants,'native_air_only_required':True})
         entities = swept_entities(sweep,start,target,low,high,self.c.world,self.c.rev)
         blockers = [e for e in entities if not isinstance(e, dict)
                     or e.get('type') not in ('minecraft:item', 'minecraft:experience_orb')]
