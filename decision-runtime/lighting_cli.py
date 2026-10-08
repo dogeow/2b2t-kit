@@ -153,6 +153,28 @@ def floor_step_lift(rows,start,target):
     return [start[0],top+.195,start[2]]
 
 
+def known_rejected_intent(record,root):
+    """Only a preserved native pre-send rejection can retire a torch intent."""
+    if record.get('state')!='native_rejected_without_send':return False
+    try:
+        path=Path(record['no_send_proof']);raw=path.read_bytes()
+        if hashlib.sha256(raw).hexdigest()!=record['no_send_proof_sha256']:return False
+        proof=json.loads(raw);rid=proof['original_request']
+        if not isinstance(rid,str)or not rid.startswith('materials-')or any(c not in 'abcdefghijklmnopqrstuvwxyz0123456789-'for c in rid):return False
+        reply_path=Path(root)/('reply-'+rid+'.json');reply_raw=reply_path.read_bytes();reply=json.loads(reply_raw)
+        return bool(proof.get('phase')=='pre_send_rejected'
+            and proof.get('target')==record.get('target')
+            and proof.get('same_world')==record.get('world_session')==reply.get('world_session')
+            and proof.get('same_task')==record.get('task_session')
+            and proof.get('unchanged_stock')==record.get('before_stock')
+            and proof.get('two_current_inventory_frames')is True and proof.get('target_currently_air')is True
+            and proof.get('original_replayed')is False
+            and proof.get('original_reply_sha256')==hashlib.sha256(reply_raw).hexdigest()
+            and reply.get('id')==rid and reply.get('phase')=='error'
+            and reply.get('detail')=='Target interaction face is occluded or out of reach')
+    except (OSError,KeyError,ValueError,TypeError):return False
+
+
 def scan_cells(reply, low, high, world=None):
     """Native scan omits AIR; validate every returned non-AIR coordinate."""
     low, high = bounds(low, high)
@@ -454,7 +476,7 @@ class LightingRun:
     def reject_unknown_intents(self):
         for path in self.intent_dir.glob('*.json'):
             record = json.loads(path.read_text())
-            if record.get('world_session') != self.c.world or record.get('state') == 'verified':
+            if record.get('world_session') != self.c.world or record.get('state') == 'verified' or known_rejected_intent(record,self.c.root):
                 continue
             target = point(record.get('target'))
             if all(self.low[i] <= target[i] <= self.high[i] for i in range(3)):

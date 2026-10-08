@@ -9,7 +9,7 @@ import time
 from collections import deque
 from lighting_cli import (LightingRun, LightingBlocked, TORCH, EVIDENCE, bounds,
     candidate_protected, safe_dark_support, scan_cells, stock, later_torch_frame,
-    risk_counts, validate_native_details, write_json, safe_noncolliding_plant,block_id)
+    risk_counts, validate_native_details, write_json, safe_noncolliding_plant,block_id,known_rejected_intent)
 
 
 def ray_clear(cells, eye, support):
@@ -87,7 +87,9 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
             if not low[0]<=sx<=high[0] or not low[2]<=sz<=high[2]:
                 continue
             station=[sx+.5,y+1.1,sz+.5]
-            if not ray_clear(cells,[station[0],station[1]+1.62,station[2]],support):
+            # Native arrival can settle up to .2 below a requested waypoint.
+            # A face must remain visible at that lower actual eye position.
+            if not ray_clear(cells,[station[0],station[1]+1.62-.2,station[2]],support):
                 continue
             key=tuple(station)
             if key not in route_cache:route_cache[key]=observed_exit_route(cells,station,low,high)
@@ -145,7 +147,14 @@ class ReachableEdgeLightingRun(LightingRun):
                 'before_stock':before,'before_time':latest['time'],
                 'access':'observed_air_route_and_native_face_checked'}
         path=self.intent_path(target)
-        if path.exists():raise LightingBlocked('Existing torch intent is never repeated')
+        if path.exists():
+            import json
+            prior=json.loads(path.read_text())
+            if not known_rejected_intent(prior,self.c.root):
+                raise LightingBlocked('Existing torch intent is never repeated')
+            archived=self.out/f'prior-proved-no-send-{index}.json'
+            write_json(archived,prior)
+            intent['prior_proved_no_send']=str(archived)
         write_json(path,intent);write_json(self.out/f'edge-before-{index}.json',latest)
         ack=self.c.checked('interact',pos=list(support),face='up',expected_state=row['state'],expected_hand=TORCH)
         write_json(self.out/f'edge-interaction-{index}.json',ack)
