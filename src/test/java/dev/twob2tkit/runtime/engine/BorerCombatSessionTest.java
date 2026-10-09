@@ -5,6 +5,35 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BorerCombatSessionTest {
+    @Test void currentCalmNeedsTwentyTicksAndNeverReportsADeath() {
+        UUID enderman=UUID.randomUUID();
+        see(0,enderman,true,false,true,34);
+        for(int tick=1;tick<=20;tick++){
+            see(tick,enderman,false,false,false,34);
+            assertFalse(session.releaseObservedCalm(enderman,true,true));
+            assertTrue(session.pending());assertFalse(session.canAttack(enderman));
+        }
+        see(21,enderman,false,false,false,34);
+        assertTrue(session.releaseObservedCalm(enderman,true,true));assertFalse(session.pending());
+        assertFalse(session.observe(enderman,"alive and calm",false,false,false,34));
+    }
+    @Test void missingOrRenewedAggressionRestartsCalmEvidence() {
+        UUID enderman=UUID.randomUUID();see(0,enderman,true,false,true,34);
+        see(1,enderman,false,false,false,34);assertFalse(session.releaseObservedCalm(enderman,true,true));
+        session.beginTick(25);assertFalse(session.releaseObservedCalm(enderman,false,true));assertTrue(session.pending());
+        see(26,enderman,false,false,false,34);assertFalse(session.releaseObservedCalm(enderman,true,true));
+        see(40,enderman,true,false,true,34);assertFalse(session.releaseObservedCalm(enderman,true,false));assertTrue(session.canAttack(enderman));
+        see(41,enderman,false,false,false,34);assertFalse(session.releaseObservedCalm(enderman,true,true));
+        see(60,enderman,false,false,false,34);assertFalse(session.releaseObservedCalm(enderman,true,true));
+        see(61,enderman,false,false,false,34);assertTrue(session.releaseObservedCalm(enderman,true,true));
+    }
+    @Test void calmCannotReleaseAnotherStillAggressiveEnemy() {
+        UUID enderman=UUID.randomUUID();see(0,enderman,true,false,true,34);
+        session.observe(creeper,"creeper",true,false,true,20);
+        see(1,enderman,false,false,false,34);assertFalse(session.releaseObservedCalm(enderman,true,true));
+        see(21,enderman,false,false,false,34);assertTrue(session.releaseObservedCalm(enderman,true,true));
+        assertTrue(session.contains(creeper));assertTrue(session.pending());
+    }
 	private final BorerCombatSession<String> session = new BorerCombatSession<>();
 	private final UUID creeper = UUID.fromString("00000000-0000-0000-0000-000000000001");
 	private final UUID archer = UUID.fromString("00000000-0000-0000-0000-000000000002");

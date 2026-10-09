@@ -6,6 +6,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.monster.EnderMan;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
@@ -74,7 +75,9 @@ final class BorerRangedCombat {
 		int passive = 0;
 		for (var e : observed.values()) {
 			boolean present = c.level.getEntity(e.getId()) == e && e.level()==c.level;
-			boolean eligible = present && attackEligible(c,e);
+			boolean calmEnderman=present&&e instanceof EnderMan enderman&&enderman.isAlive()&&!enderman.isCreepy()
+                &&!engine.engagement.recentAttacker(p,e)&&!BorerThreats.currentReceivedMobHit(e,p);
+            boolean eligible = present && !calmEnderman && attackEligible(c,e);
 			boolean engaged = eligible && engine.engagement.shouldReact(p, e)
 				|| present && flightDefenseScope() && p.distanceTo(e)<=12 && BorerThreats.currentReceivedMobHit(e,p)
 				|| present && flightDefenseScope() && creeperAlert(c, e);
@@ -82,6 +85,8 @@ final class BorerRangedCombat {
 			// isAlive() also becomes false on an unload. Health/death status is the required evidence.
 			if (session.observe(e.getUUID(), e, engaged, e.isDeadOrDying(), eligible, e.getHealth()))
 				engine.fileLog(c, "area-defense-death-confirmed id=" + e.getId() + " uuid=" + e.getUUID());
+            if(session.releaseObservedCalm(e.getUUID(),present,calmEnderman))
+                engine.fileLog(c,"area-defense-disengage-observed-calm uuid="+e.getUUID()+" confirmed_deaths=0");
 		}
         if (minerCombat) {
             if (imminent != null) {
@@ -154,7 +159,7 @@ final class BorerRangedCombat {
 		int chosen = BorerDefensePolicy.choose(threats.stream().map(e -> new BorerDefensePolicy.Candidate(e.getId(), rank(p,e), p.distanceTo(e), engine.engagement.recentAttacker(p, e))).toList(), target == null ? -1 : target.getId());
 		LivingEntity next = threats.stream().filter(e -> e.getId() == chosen).findFirst().orElse(null);
 		if (!missingRestored && !session.pending()) {
-			if (wasPending) engine.fileLog(c, "area-defense-resume-work reason=all-engaged-targets-dead");
+			if (wasPending) engine.fileLog(c, "area-defense-resume-work reason=no-unresolved-engaged-targets");
 			end(c); return false;
 		}
 		if (previousSlot < 0) previousSlot = p.getInventory().getSelectedSlot();
@@ -184,7 +189,7 @@ final class BorerRangedCombat {
         if(engine.standaloneGuard&&next==null&&!missingRestored
                 &&nearby.stream().noneMatch(e->e.isAlive()&&(e instanceof Creeper||BorerThreats.isRangedCombatThreat(e,p)))){
             var reposition=session.targets().stream().filter(e->c.level.getEntity(e.getId())==e&&e.isAlive()
-                &&!(e instanceof Creeper)&&!BorerThreats.isRangedCombatThreat(e,p)&&session.needsReposition(e.getUUID()))
+                &&!(e instanceof Creeper)&&!(e instanceof EnderMan)&&!BorerThreats.isRangedCombatThreat(e,p)&&session.needsReposition(e.getUUID()))
                 .min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
             if(reposition!=null&&peek.tick(c,reposition))return true;
         }
@@ -198,7 +203,7 @@ final class BorerRangedCombat {
 			releaseEscape(c); cancelDraw(c); rangedMode(false); target = null;
 			if(engine.standaloneGuard){
 				var hidden=session.targets().stream().filter(e->c.level.getEntity(e.getId())==e&&e.isAlive()
-					&&(!p.hasLineOfSight(e)||session.needsReposition(e.getUUID())))
+					&&!(e instanceof EnderMan)&&(!p.hasLineOfSight(e)||session.needsReposition(e.getUUID())))
 					.min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
 				if(hidden!=null&&peek.tick(c,hidden))return true;
 			}
@@ -275,6 +280,7 @@ final class BorerRangedCombat {
 			return true;
 		}
 		if (previousSlot < 0) previousSlot = p.getInventory().getSelectedSlot();
+        if (target instanceof EnderMan) return defendEnderman(c);
 		rangedMode(true);
 		if (!visibleHost()) {
 			cancelDraw(c); look = RotationAim.lookAt(p, target.getEyePosition()); lookTick = p.tickCount; RotationAim.apply(p, look);
@@ -1088,6 +1094,27 @@ final class BorerRangedCombat {
         if(BorerDefensePolicy.eligible(true,enemy.isAlive(),visible,rank(p,enemy),distance))return true;
         return rank(p,enemy)==2&&BorerDefensePolicy.trackedBowEligible(enemy instanceof Enemy,
             enemy.isAlive(),visible,session.contains(enemy.getUUID()),usableGuardBow(c),distance);
+    }
+    /** Endermen evade projectiles: use only normal in-range sword attacks, never a bow/chase. */
+    private boolean defendEnderman(Minecraft c){
+        var p=c.player;
+        cancelDraw(c);releaseZombieMelee();rangedMode(true);engine.pauseGuardMovement(c);
+        boolean present=target instanceof EnderMan enderman&&enderman.isCreepy()&&enderman.isAlive()
+            &&target.level()==c.level&&c.level.getEntity(target.getId())==target;
+        double reach=present?Math.sqrt(target.getBoundingBox().distanceToSqr(p.getEyePosition())):Double.POSITIVE_INFINITY;
+        if(present&&p.hasLineOfSight(target)&&Double.isFinite(reach)&&reach<=p.entityInteractionRange()
+                &&BorerItems.selectWeapon(c,p,GuardWeaponPolicy.SWORD_RESERVE)
+                &&BorerItems.isSwordWithReserve(p.getMainHandItem(),GuardWeaponPolicy.SWORD_RESERVE)){
+            engine.mobs.lowerShield(c);
+            if(p.isUsingItem()&&p.getUseItem().is(Items.SHIELD))p.stopUsingItem();
+            look=RotationAim.lookAt(p,target.getEyePosition());lookTick=p.tickCount;RotationAim.apply(p,look);
+            if(p.getAttackStrengthScale(0)>=.95F){c.gameMode.attack(p,target);p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);}
+            engine.status="末影人近身，使用剑反击；施工暂停";
+        }else{
+            look=new RotationAim.Look(p.getYRot(),90);lookTick=p.tickCount;RotationAim.apply(p,look);
+            engine.mobs.raiseShield(c,p);engine.status="末影人无法用箭命中，举盾等待合法近身或恢复中立";
+        }
+        return true;
     }
 	private void cancelDraw(Minecraft c) {
 		if (c.player != null && (drawing || target != null && c.player.getUseItem().is(Items.BOW))) c.player.stopUsingItem();

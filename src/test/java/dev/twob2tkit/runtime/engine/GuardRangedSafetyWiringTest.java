@@ -7,6 +7,21 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GuardRangedSafetyWiringTest {
+    @Test void endermanDefensePreemptsBowAndUsesOnlyRealSwordReach()throws Exception{
+        var tick=calls("BorerRangedCombat","tick");
+        assertTrue(tick.indexOf("defendEnderman")<tick.indexOf("selectBow"));
+        var defense=calls("BorerRangedCombat","defendEnderman");
+        assertTrue(defense.containsAll(List.of("cancelDraw","isCreepy","getEntity","distanceToSqr",
+            "hasLineOfSight","entityInteractionRange","selectWeapon","isSwordWithReserve","attack","raiseShield")));
+        assertFalse(defense.contains("selectBow"));assertFalse(defense.contains("startExact"));
+        assertTrue(defense.indexOf("entityInteractionRange")<defense.indexOf("attack"));
+    }
+    @Test void observedNeutralEndermanUsesDistinctCalmReleaseEvidence()throws Exception{
+        var tick=calls("BorerRangedCombat","tick");
+        assertTrue(tick.containsAll(List.of("isCreepy","currentReceivedMobHit","recentAttacker","releaseObservedCalm")));
+        assertTrue(tick.indexOf("releaseObservedCalm")<tick.indexOf("save"));
+        assertFalse(calls("BorerCombatSession","releaseObservedCalm").contains("clear"));
+    }
     private MethodNode method(String owner,String name)throws Exception{
         var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/runtime/engine/"+owner+".class")){
             assertNotNull(in);new ClassReader(in).accept(node,0);
