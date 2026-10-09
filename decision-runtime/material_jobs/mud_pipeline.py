@@ -113,7 +113,9 @@ def run(c,profile,item,target_count,out,checkpoint):
         book['pending']=None;save();return result,before,after
     def fetch(output,target):
         if stock()[output]>=target:return
-        if (output,target) in fetched:return
+        # A filled bucket is consumed by the cauldron. A later empty cauldron
+        # is a new supply demand, not permission to reuse a cached fetched count.
+        if output!='minecraft:water_bucket' and (output,target) in fetched:return
         fetched.add((output,target))
         result,_,_=operation('fetch',lambda:backend.fetch({output:target}))
         if result.get('phase') not in ('done','waiting'):raise Wait('WAIT_SOURCE','Depot fetch incomplete')
@@ -242,7 +244,17 @@ def run(c,profile,item,target_count,out,checkpoint):
                     if (drop.get('type')=='minecraft:item' and drop.get('stack',{}).get('item')=='minecraft:mud'
                             and len(drop.get('pos',[]))==3 and math.dist(drop['pos'],pos)<=6
                             and drop.get('uuid') not in {e.get('uuid') for e in before.get('entities',[])}):
-                        checkpoint();collect_drop(client(),drop)
+                        checkpoint();picked=collect_drop(client(),drop)
+                        if not picked:
+                            terminal=getattr(client(),'last_terminal_evidence',{})or{}
+                            if (terminal.get('op')=='scan'and terminal.get('phase')=='done'
+                                    and terminal.get('request_id')==getattr(client(),'last',None)
+                                    and terminal.get('world_session')==scope['world_session']
+                                    and terminal.get('task_session')==getattr(client(),'task',None)
+                                    and getattr(client(),'unconfirmed_native_request',None)is None
+                                    and getattr(client(),'native_inflight',None)is None):
+                                from drop_pickup_settle import settle
+                                settle(client(),drop,inventory_counts(before).get('minecraft:mud',0))
                 return reply
             operation('mine_owned_mud',mine,lambda a,b:block(pos)==AIR and inventory_counts(b)['minecraft:mud']-inventory_counts(a)['minecraft:mud']==1)
             book['owned_cell']=False;save();new_mud+=1

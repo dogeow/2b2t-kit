@@ -17,6 +17,7 @@ from material_plan import inventory_counts, quantities
 from projection_material_plan import ProcessingCatalog
 from projection_wood import POST_ITEM, POST_RAW, finish_beams, post_work
 from recipe_catalog import RecipeCatalog
+from container_hand import select_container_hand
 from safety_interlock import require_unlocked
 from kit_runtime.journal import write_json
 from material_jobs.protocol import (JobBlocked, JobCancelled, JobPaused, fingerprint,
@@ -1088,14 +1089,14 @@ class Backend:
         fresh,_=observed()
         if fresh['state']!=row['state']:
             raise JobBlocked('接近时登记门状态改变，保留现场；不重复开关')
-        c.checked('select_item',item='minecraft:diamond_sword')
+        hand=select_container_hand(c)
         fresh,_=observed()
         if fresh['state']!=row['state']:
             raise JobBlocked('门交互前状态改变，保留现场；不重复开关')
         # The native interaction verifies reach and visibility again after
         # rotation. Its result may be ambiguous, so never resend this toggle.
         c.checked('interact',pos=pos,face=face,expected_state=fresh['state'],
-                  expected_hand='minecraft:diamond_sword')
+                  expected_hand=hand)
         deadline=time.monotonic()+2
         while True:
             after,after_properties=observed()

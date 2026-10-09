@@ -153,6 +153,21 @@ class MudPipelineTest(unittest.TestCase):
     def test_current_finished_stock_is_absolute_not_added_target(self):
         self.c.add('minecraft:mud_bricks',4)
         self.assertEqual(4,self.go()['after']);self.assertEqual([],self.b.calls)
+    def test_consumed_water_bucket_can_be_fetched_again_in_one_four_cell_call(self):
+        self.c.blocks[(103,64,100)]=CAULDRON
+        self.c.add('minecraft:water_bucket',-1)
+        old_fetch=self.b.fetch
+        def refill(targets):
+            if targets=={'minecraft:water_bucket':1}:
+                self.b.calls.append(('fetch',targets));self.c.add('minecraft:water_bucket',1)
+                return {'phase':'done'}
+            return old_fetch(targets)
+        self.b.fetch=refill
+        result=self.go(item='minecraft:mud',target=4)
+        self.assertEqual('done',result['phase']);self.assertEqual(4,self.c.count('minecraft:mud'))
+        fills=[params for op,params in self.c.calls if op=='interact'and params['expected_hand']=='minecraft:water_bucket']
+        self.assertEqual(2,len(fills))
+        self.assertEqual(2,len([v for v in self.b.calls if v==('fetch',{'minecraft:water_bucket':1})]))
     def test_existing_packed_mud_uses_exact_four_output_recipe_no_source(self):
         self.c.add('minecraft:packed_mud',4)
         self.assertEqual('done',self.go()['phase'])

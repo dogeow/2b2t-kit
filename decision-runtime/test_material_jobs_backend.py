@@ -889,6 +889,8 @@ class BackendTest(unittest.TestCase):
     def exit_door_scene(self):
         pos=[761014,65,797840]
         self.current['pos']=[761014.5,70.58,797839.5]
+        self.current['hand']={'item':'minecraft:bow'}
+        self.current['inventory']=[{'slot':0,'item':'minecraft:diamond_sword','count':1}]
         self.job.profile={'workbench_exit':[{'kind':'door','pos':pos,'item':'minecraft:birch_door',
                                              'face':'north','open':False}]}
         door={'state':'Block{minecraft:birch_door}[facing=north,half=lower,hinge=left,open=true,powered=false]'}
@@ -901,6 +903,7 @@ class BackendTest(unittest.TestCase):
             return {'world_session':'w','blocks':[{'pos':pos,'state':door['state'],'fluid':False}]}
         def checked(op,**params):
             calls.append((op,dict(params)))
+            if op=='select_item':self.current['hand']={'item':params['item']}
             if op=='approach_block':self.current['pos']=[761014.5,65,797839.5]
             if op=='interact':door['state']=door['state'].replace('open=true','open=false')
             return {'phase':'done'}
@@ -917,6 +920,15 @@ class BackendTest(unittest.TestCase):
                           'stand_distance':3,'seconds':45},calls[1][1])
         self.assertEqual(calls[0][1],calls[5][1]['expected_state'])
         self.assertIn('open=false',door['state'])
+
+    def test_registered_door_uses_the_actual_carried_netherite_sword(self):
+        _,_,calls=self.exit_door_scene()
+        self.current['inventory'][0]['item']='minecraft:netherite_sword'
+        self.job.route('workbench_exit')
+        selected=next(params for op,params in calls if op=='select_item')
+        used=next(params for op,params in calls if op=='interact')
+        self.assertEqual('minecraft:netherite_sword',selected['item'])
+        self.assertEqual('minecraft:netherite_sword',used['expected_hand'])
 
     def test_exit_door_changed_during_approach_never_selects_or_toggles(self):
         _,door,calls=self.exit_door_scene()

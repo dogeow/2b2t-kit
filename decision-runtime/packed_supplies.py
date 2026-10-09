@@ -11,6 +11,7 @@ from projection_wood import use_with_margin
 from drop_collection import collect_drop
 from material_cleanup import register as register_cleanup,complete as cleanup_complete
 from container_access import wait_container_contents
+from container_hand import select_container_hand
 
 # Before pickup: the intact box, an output/splitting slot, and recovery room.
 # Placing the box releases its slot; callers may then reserve the other two.
@@ -100,8 +101,8 @@ def open_box(client,pos,kind):
     state=block(client,pos)
     allowed='minecraft:ender_chest' in (state or '') if kind=='ChestMenu' else 'shulker_box' in (state or '')
     if not allowed:raise RuntimeError('Expected portable-stock container changed')
-    client.checked('select_item',item='minecraft:diamond_sword')
-    use_with_margin(client,pos,state,'minecraft:diamond_sword',('up','north','south','west','east','down'))
+    hand=select_container_hand(client)
+    use_with_margin(client,pos,state,hand,('up','north','south','west','east','down'))
     s=wait_container_contents(client,kind)
     client.owned_material_menu=s['menu']['id'];return s
 
@@ -208,7 +209,31 @@ def recover_and_return(client,record,ender,journal):
             drop=owned_drop(state.get('entities',[]),item,pad,set(record.get('before_drop_uuids',[])),record.get('drop_uuid'))
             if drop:
                 record['drop_uuid']=drop['uuid'];save('broken')
-                if not collect_drop(client,drop,observation=state):raise RuntimeError('Owned portable box still needs recovery; inventory must be checked before any retry')
+                if not collect_drop(client,drop,observation=state):
+                    # An exact completed geometry read can leave the same owned box
+                    # outside a grid pickup pose. Use one normal short ground step,
+                    # never another collect_item or another box excavation.
+                    terminal=getattr(client,'last_terminal_evidence',{}) or {}
+                    current=client.status();lease=current.get('supervision_lease') or {}
+                    if (terminal.get('op')!='scan' or terminal.get('phase')!='done'
+                            or terminal.get('request_id')!=getattr(client,'last',None)
+                            or terminal.get('world_session')!=record.get('world_session')
+                            or record.get('world_session')!=getattr(client,'world',None)
+                            or terminal.get('task_session')!=getattr(client,'task',None)
+                            or terminal.get('revision_after')!=current.get('control_revision')
+                            or lease.get('kind')!='materials' or lease.get('job_session')!=getattr(client,'task',None)
+                            or lease.get('world_session')!=record.get('world_session')
+                            or lease.get('revision')!=current.get('control_revision')
+                            or lease.get('id')!=getattr(getattr(client,'heartbeat',None),'id',None)
+                            or getattr(client,'unconfirmed_native_request',None)is not None
+                            or getattr(client,'native_inflight',None)is not None):
+                        raise RuntimeError('Owned portable box still needs recovery; inventory must be checked before any retry')
+                    from drop_pickup_settle import settle
+                    before=inventory_counts(client.status()).get(item,0)
+                    if not settle(client,drop,before):
+                        raise RuntimeError('Owned portable box still needs recovery after one short normal step; no collection replay')
+                    record['separate_normal_ground_pickup']={'observed_uuid':drop['uuid'],
+                        'old_collect_repeated':False,'geometry_request':terminal['request_id']}
             else:time.sleep(.2)
         wait(client,lambda s:carried_box(s,item,remaining) is not None);save('recovered')
     if record['stage'] not in ('carried','recovered'):
