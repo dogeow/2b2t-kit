@@ -9,3 +9,5 @@
 后续直接调用既有 Kit `scan_trees` / `chop` 采集用户种植的樱花树；背包合成等采集完整结束并验证原生停车后再开始。合成按实际容量限制，原木96根保留，不再触发通用仓库检查。本次未修改或部署 Kit 宿主、引擎或通用仓库模块。
 
 证据：`work/live-20261004/warehouse-map-cargo-room-3f1f-003/actual-small-material-storage.json`、`actual-warehouse-fetch.json`、`progress.json`、`native-high-keep.json`；编排语法检查通过。完整地图及真实像素验收仍未完成。
+
+原生两棵樱花树本轮新增74根原木，实际随身96→170，临时垫块0。离树直线上升被原生接口在派发前拒绝，回执明确已知且无未确认请求；沿用同一原任务，复用 `owned_air_escape.escape_side` 扫描侧移再升高，实际高空驻留通过。错误回执保留，另存恢复证明。后续本地树批次已复用此离树入口。证明：`user-planted-cherry-batch-3f1f-002/actual-collected-inventory-frames.json`、`treebatch002-known-side-finish-3f1f-001/escape/verified.json`、`native-high-keep.json`。
