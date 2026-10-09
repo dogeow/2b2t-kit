@@ -6,6 +6,57 @@ from ground_pickup import collect_nearby_ground
 REFRESH_ONLY={'Drop identity or stack changed','Drop is no longer loaded; observe again'}
 NO_ACCESS={'No visible collision-free depot approach','No loaded collision-free route to this depot; no ceiling is broken'}
 
+
+def collect_nearby_air(client,drop,before_count):
+    """A new short normal flight after one exact reached-but-uncollected reply.
+
+    Never calls collect_item again. Integer-grid pickup poses can stop just
+    beyond pickup reach; a fractional pose uses the existing scanned air route.
+    """
+    terminal=getattr(client,'last_terminal_evidence',{})or{}
+    params=terminal.get('params',{})
+    if (terminal.get('op')!='collect_item' or terminal.get('phase')!='waiting'
+            or terminal.get('detail')!='Drop pickup not confirmed at the reached position'
+            or terminal.get('request_id')!=getattr(client,'last',None)
+            or terminal.get('world_session')!=getattr(client,'world',None)
+            or terminal.get('task_session')!=getattr(client,'task',None)
+            or params.get('expected_uuid')!=drop.get('uuid')
+            or params.get('expected_item')!=drop.get('stack',{}).get('item')
+            or params.get('expected_count')!=1
+            or getattr(client,'unconfirmed_native_request',None)is not None):return False
+    state=client.status();item=drop['stack']['item'];amount=drop['stack']['count']
+    current=next((e for e in state.get('entities',[])if e.get('uuid')==drop['uuid']),None)
+    if (not current or current.get('stack')!=drop['stack'] or amount!=1
+            or terminal.get('revision_after')!=state.get('control_revision')
+            or inventory_counts(state)[item]!=before_count
+            or not state.get('flight')or state.get('guard_busy')or state.get('health')!=20
+            or state.get('food',0)<18 or state.get('manual_movement')or state.get('screen')
+            or not state.get('guard_armed')or not state.get('guard_pve_only')):return False
+    point=[current['pos'][0]-.5,current['pos'][1]+.3,current['pos'][2]]
+    if sum((a-b)**2 for a,b in zip(point,state['pos']))>9:return False
+    from material_jobs.acquisition import _travel
+    world=client.world;hurt=state.get('recent_hurt_at');trace=[]
+    def checkpoint():
+        q=client.status()
+        if (q.get('world_session')!=world or q.get('health')!=20 or q.get('food',0)<18
+                or q.get('recent_hurt_at')!=hurt or q.get('manual_movement')or q.get('screen')
+                or q.get('guard_busy')or not q.get('guard_armed')or not q.get('guard_pve_only')):
+            raise RuntimeError('Fractional pickup survival/control changed; no route replay')
+        return q
+    _travel(client,point,checkpoint,trace)
+    deadline=time.monotonic()+4
+    while True:
+        q=checkpoint();held=inventory_counts(q)[item]
+        if held==before_count+amount and not any(e.get('uuid')==drop['uuid']for e in q.get('entities',[])):
+            if getattr(client,'out',None):
+                with (client.out/'fractional-air-pickup-confirmed.jsonl').open('a')as f:
+                    f.write(json.dumps({'original_waiting_request':terminal,'drop':drop,'target':point,
+                        'world_session':world,'inventory_before':before_count,'inventory_after':held,
+                        'route':trace,'collect_item_replayed':False,'time':q.get('time')})+'\n')
+            return True
+        if held not in (before_count,before_count+amount)or time.monotonic()>=deadline:return False
+        time.sleep(.15)
+
 def collect_drop(client,drop,observation=None,seconds=90):
     original=observation or client.status();item=drop['stack']['item'];before=inventory_counts(original)[item]
     reselected=False

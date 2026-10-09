@@ -199,6 +199,9 @@ def finish_beams(client,limit=16,*,expected_key=None,expected_world=None,expecte
                 raise RuntimeError('Placed raw log was not confirmed in the fresh projection audit')
         else:
             raw_state=row['actual'];strip_row=row;placement_audit=[None]
+        # select_item may have moved the raw block into a hotbar slot and
+        # displaced the previously observed axe. Bind its current actual slot.
+        axe=_usable_axe(client.status())
         client.checked('select_item',item=axe['item'],slot=axe['slot'])
         strip_audit=[None]
         def still_raw():strip_audit[0]=_exact_target(client,strip_row,log_target(strip_row),selection,world,server,dimension)

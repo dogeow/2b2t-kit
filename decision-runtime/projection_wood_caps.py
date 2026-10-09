@@ -8,15 +8,23 @@ from collections import deque
 from pathlib import Path
 from kit_runtime.journal import write_json
 from material_plan import inventory_counts
-from projection_wood import finish_beams,_scoped_audit,use_with_margin
+from projection_wood import finish_beams,_scoped_audit
 from work_access import approach_faces
 from material_cleanup import register,complete
-from owned_air_escape import wait_known_idle
+from owned_air_escape import wait_known_idle,blocks_segment
+from lighting_cli import swept_entities
+from material_jobs.acquisition import _travel
 
 DIRT='Block{minecraft:dirt}'
 RAW='minecraft:cherry_wood'
 EXPECTED='Block{minecraft:stripped_cherry_wood}[axis=y]'
 FACE={(1,0):'east',(-1,0):'west',(0,1):'south',(0,-1):'north'}
+
+
+def body_overlaps_cell(feet,cell):
+    return all(hi>p and lo<p+1 for lo,hi,p in zip(
+        [feet[0]-.35,feet[1],feet[2]-.35],
+        [feet[0]+.35,feet[1]+1.81,feet[2]+.35],cell))
 
 
 def plan_caps(target,observed,matched,low,high,max_caps=4):
@@ -46,7 +54,7 @@ def plan_caps(target,observed,matched,low,high,max_caps=4):
     return None
 
 
-def run_one(c,target,out,checkpoint,*,max_caps=4):
+def run_one(c,target,out,checkpoint,*,max_caps=4,resume_confirmed=None):
     out=Path(out);out.mkdir(parents=True,exist_ok=False)
     before=checkpoint();key=before['projection_selection']['key'];world=c.world
     low=before['projection_selection']['min'];high=before['projection_selection']['max']
@@ -88,52 +96,123 @@ def run_one(c,target,out,checkpoint,*,max_caps=4):
     hi=[min(high[0],target[0]+max_caps),target[1]+2,min(high[2],target[2]+max_caps)]
     volume=scan(lo,hi);write_json(out/'current-cap-volume.json',volume)
     matched={tuple(r['pos'])for r in volume['blocks']if r['pos'][1]==target[1]and tuple(r['pos'])not in mismatch}
-    plan=plan_caps(target,volume['blocks'],matched,low,high,max_caps)
+    resumed=None
+    if resume_confirmed is not None:
+        resumed=json.loads(Path(resume_confirmed).read_text())
+        if (resumed.get('pending')is not None or resumed.get('world_session')!=world
+                or resumed.get('task_session')!=c.task or resumed.get('placement_key')!=key
+                or resumed.get('target')!=list(target)or resumed.get('complete')is not False):
+            raise RuntimeError('Only exact confirmed same-task caps without pending work may resume')
+        plan=resumed['plan'];owned=resumed['owned_caps']
+        caps=plan.get('caps',[]);base=plan.get('base',[])
+        geometry=(plan.get('target')==list(target)and len(base)==3
+            and tuple(base)in matched and 2<=len(caps)<=max_caps
+            and caps[0]==[base[0],base[1]+1,base[2]]and caps[-1]==[target[0],target[1]+1,target[2]]
+            and all(isinstance(p,list)and len(p)==3 and all(type(v)is int for v in p)
+                    and p[1]==target[1]+1 and low[0]<=p[0]<=high[0]and low[2]<=p[2]<=high[2]for p in caps)
+            and all(abs(a[0]-b[0])+abs(a[2]-b[2])==1 for a,b in zip(caps,caps[1:])))
+        if (not geometry or not owned or owned!=caps[:len(owned)]
+                or at(plan['base'])!=plan['base_state']
+                or any(at(pos)!=DIRT for pos in owned)
+                or any(at(pos)!='AIR'for pos in plan['caps'][len(owned):])):
+            raise RuntimeError('Confirmed cap prefix or remaining AIR geometry changed')
+        book['owned_caps']=owned[:];book['resumed_confirmed_receipt']=str(Path(resume_confirmed).resolve())
+    else:plan=plan_caps(target,volume['blocks'],matched,low,high,max_caps)
     if not plan:raise RuntimeError('No bounded cap bridge above actual matched blocks')
     wood_before=inventory_counts(state()).get(RAW,0);dirt_before=inventory_counts(state()).get('minecraft:dirt',0)
+    if resumed is not None:
+        if wood_before!=resumed['wood_before']or dirt_before!=resumed['dirt_before']-len(book['owned_caps']):
+            raise RuntimeError('Confirmed cap resume stock differs; no mutation')
+        dirt_before=resumed['dirt_before']
     if wood_before<1 or dirt_before<len(plan['caps'])+1:raise RuntimeError('Actual raw wood/dirt capacity unavailable')
     book.update(plan=plan,wood_before=wood_before,dirt_before=dirt_before);save()
     cleanup_key='wood-caps:'+str(out.resolve())
     def cleanup():
         if book['pending']:raise RuntimeError('Unknown cap action retained; cleanup must not replay')
+        cap_positions=plan['caps']
         for pos in reversed(book['owned_caps'][:]):
             if at(pos)!=DIRT:raise RuntimeError('Owned cap changed; no other block is removed')
             tool=next((r for r in state()['inventory']if r['item']in ('minecraft:diamond_shovel','minecraft:netherite_shovel')and r['count']==1 and r.get('durability',0)>=2),None)
             if tool is None:raise RuntimeError('Actual durable shovel required')
             face=approach_faces(c,pos,DIRT,('up','north','south','east','west'),seconds=30,stand_distance=2.4)
-            c.checked('select_item',item=tool['item'],slot=tool['slot']);old=state();held=inventory_counts(old).get('minecraft:dirt',0)
-            old_ids={e.get('uuid')for e in old.get('entities',[])if e.get('type')=='minecraft:item'}
-            book['pending']={'op':'mine_owned_cap','pos':pos,'dirt_before':held};save()
+            c.checked('select_item',item=tool['item'],slot=tool['slot'])
+            book['pending']={'op':'mine_owned_cap','pos':pos};save()
             r=c.request('mine_block',pos=pos,face=face,expected_state=DIRT,seconds=30)
             if r.get('phase')!='done':raise RuntimeError('Cap mining not confirmed; no second mine')
-            deadline=time.monotonic()+4
-            while inventory_counts(state()).get('minecraft:dirt',0)!=held+1:
-                s=state();drop=next((e for e in s.get('entities',[])if e.get('type')=='minecraft:item'and e.get('uuid')not in old_ids and e.get('stack',{}).get('item')=='minecraft:dirt'and e['stack'].get('count')==1 and math.dist(e['pos'],[v+.5 for v in pos])<=3),None)
-                if drop:
-                    book['pending']={'op':'pickup_owned_cap','uuid':drop['uuid'],'pos':pos,'dirt_before':held};save()
-                    r=c.request('collect_item',expected_uuid=drop['uuid'],expected_item='minecraft:dirt',expected_count=1,seconds=30)
-                    if r.get('phase')!='done':
-                        if (r.get('phase')=='error' and r.get('detail')=='Drop is no longer loaded; observe again'
-                                and inventory_counts(state()).get('minecraft:dirt',0)==held+1):
-                            # Native pickup admission saw an already collected
-                            # drop. Verify the cell/balance below; never resend.
-                            pass
-                        else:raise RuntimeError('Cap pickup not confirmed; no replay')
-                    break
-                if time.monotonic()>=deadline:raise RuntimeError('Owned cap drop missing; retain journal')
-                time.sleep(.1)
-            settled(pos,'AIR','minecraft:dirt',held+1)
+            if at(pos)!='AIR':raise RuntimeError('Mined cap AIR not confirmed; no repeat')
             book['owned_caps'].remove(pos);book['pending']=None;save()
-        if inventory_counts(state()).get('minecraft:dirt',0)!=dirt_before:raise RuntimeError('Dirt reserve not restored')
+        for attempt in range(12):
+            q=state();held=inventory_counts(q).get('minecraft:dirt',0)
+            if held==dirt_before:return
+            if held>dirt_before:raise RuntimeError('Dirt total changed outside owned cleanup')
+            drops=[e for e in q.get('entities',[])if e.get('type')=='minecraft:item'
+                and e.get('stack',{}).get('item')=='minecraft:dirt'
+                and 0<e['stack'].get('count',0)<=dirt_before-held
+                and min(math.dist(e['pos'],[v+.5 for v in p])for p in cap_positions)<=10]
+            if not drops:raise RuntimeError('Owned caps are AIR but dirt balance is unconfirmed; retain it')
+            drop=min(drops,key=lambda e:math.dist(e['pos'],q['pos']))
+            point=[math.floor(drop['pos'][0])+.5,drop['pos'][1]+.3,math.floor(drop['pos'][2])+.5]
+            lo=[math.floor(drop['pos'][0])-1,min(60,math.floor(drop['pos'][1])-1),math.floor(drop['pos'][2])-1]
+            hi=[lo[0]+2,max(68,math.ceil(drop['pos'][1]+3)),lo[2]+2]
+            area=scan(lo,hi);water=[v['pos'][1]+1 for v in area['blocks']if v['fluid']and 'minecraft:water' in v['state']]
+            if water:point[1]=max(water)+.1
+            trace=[];_travel(c,[point[0],max(67,q['pos'][1]),point[2]],state,trace,keep_cruise=True)
+            q=state()
+            if inventory_counts(q).get('minecraft:dirt',0)==dirt_before:return
+            lo=[math.floor(min(a,b)-.35)for a,b in zip(q['pos'],point)]
+            hi=[math.ceil(max(a,b)+(1.81 if i==1 else .35))for i,(a,b)in enumerate(zip(q['pos'],point))]
+            corridor=scan(lo,hi)
+            if any(e.get('hostile')and e.get('alive')for e in corridor.get('scan_entities',[])):
+                raise RuntimeError('Current hostile on dirt pickup corridor; preserve balance')
+            for row in corridor['blocks']:
+                if 'minecraft:lava' in row['state']or row['block_entity']or not row['fluid']and blocks_segment(row,q['pos'],point):
+                    raise RuntimeError('No current safe dirt pickup corridor; balance retained')
+            q=state()
+            if inventory_counts(q).get('minecraft:dirt',0)==dirt_before:return
+            book['pending']={'op':'new_known_drop_surface_route','uuid':drop['uuid'],'point':point,'dirt_before':held};save()
+            c.checked('navigate',target=point,arrival=.12,seconds=12)
+            latest=state()
+            if latest['under_water']:raise RuntimeError('Pickup left the observed water surface; no repeat')
+            deadline=time.monotonic()+4
+            while inventory_counts(state()).get('minecraft:dirt',0)==held and time.monotonic()<deadline:time.sleep(.15)
+            latest=state();after=inventory_counts(latest).get('minecraft:dirt',0)
+            if not held<after<=dirt_before:raise RuntimeError('No confirmed dirt pickup gain; route not replayed')
+            write_json(out/('cleanup-pickup-%02d.json'%attempt),{'drop':drop,'point':point,'corridor':corridor,'actual':latest,'route':trace,'collect_item_replayed':False})
+            book['pending']=None;save()
+        raise RuntimeError('Owned cap pickup budget ended before actual balance')
     register(c,cleanup_key,cleanup)
     for i,pos in enumerate(plan['caps']):
+        if pos in book['owned_caps']:continue
         anchor=plan['base']if i==0 else plan['caps'][i-1]
         expected=plan['base_state']if i==0 else DIRT
         face='up'if i==0 else FACE[(pos[0]-anchor[0],pos[2]-anchor[2])]
         if at(pos)!='AIR' or at(anchor)!=expected:raise RuntimeError('Cap AIR cell or anchor changed')
         approach_faces(c,anchor,expected,(face,),seconds=30,stand_distance=2.4)
+        q=state()
+        if (pos[0]-.4<q['pos'][0]<pos[0]+1.4 and pos[2]-.4<q['pos'][2]<pos[2]+1.4):
+            # ApproachBlock verifies anchor reach, not the future placed cube.
+            # Move out of that cube before dispatch; never click/retry a block
+            # whose placement is denied by the player's own body.
+            destination=None
+            directions=[delta for delta,name in FACE.items()if name==face]if face in FACE.values()else list(FACE)
+            for dx,dz in directions:
+                candidate=[pos[0]+.5+dx,pos[1]+2.4,pos[2]+.5+dz]
+                lo=[math.floor(min(q['pos'][0],candidate[0])-.35),math.floor(min(q['pos'][1],candidate[1])),math.floor(min(q['pos'][2],candidate[2])-.35)]
+                hi=[math.floor(max(q['pos'][0],candidate[0])+.35),math.ceil(max(q['pos'][1],candidate[1])+1.81),math.floor(max(q['pos'][2],candidate[2])+.35)]
+                corridor=scan(lo,hi)
+                lifted=[q['pos'][0],candidate[1],q['pos'][2]]
+                if (not any(blocks_segment(v,q['pos'],lifted)or blocks_segment(v,lifted,candidate)for v in corridor['blocks'])
+                        and not swept_entities(corridor,q['pos'],lifted,lo,hi,c.world,c.rev)
+                        and not swept_entities(corridor,lifted,candidate,lo,hi,c.world,c.rev)):
+                    destination=candidate;break
+            if destination is None:raise RuntimeError('No current clear side pose before cap placement')
+            trace=[];_travel(c,destination,state,trace)
+            write_json(out/('cap-'+str(i)+'-body-route.json'),trace)
+            q=wait_known_idle(c)
+            if body_overlaps_cell(q['pos'],pos):raise RuntimeError('Cap target still intersects actual player body')
         c.checked('select_item',item='minecraft:dirt');held=inventory_counts(state()).get('minecraft:dirt',0)
         if at(pos)!='AIR':raise RuntimeError('Cap target changed before placement')
+        if body_overlaps_cell(state()['pos'],pos):raise RuntimeError('Actual body changed before cap interaction; no click')
         book['pending']={'op':'place_cap','pos':pos,'anchor':anchor,'face':face,'dirt_before':held};save()
         r=c.request('interact',pos=anchor,face=face,expected_state=expected,expected_hand='minecraft:dirt')
         if r.get('phase')!='done':raise RuntimeError('Cap placement uncertain; no repeat')

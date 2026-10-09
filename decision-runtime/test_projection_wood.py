@@ -65,6 +65,20 @@ class PostClient:
   raise AssertionError(op)
 
 class WoodTest(unittest.TestCase):
+ def test_axe_slot_is_reobserved_after_raw_material_changes_hotbar_layout(self):
+  class SwappingClient(PostClient):
+   def checked(self,op,**kw):
+    if 'slot'in kw:
+     row=next(r for r in self.status()['inventory']if r['slot']==kw['slot'])
+     if row['item']!=kw['item']:raise RuntimeError('Selected material slot no longer holds the expected item')
+    super().checked(op,**kw)
+    if kw['item']=='minecraft:oak_log':
+     amount=self.items.pop('minecraft:oak_log');self.items['minecraft:oak_log']=amount
+  with tempfile.TemporaryDirectory()as folder:
+   c=SwappingClient(folder,targets=[[0,1,0]])
+   with patch('projection_wood.approach_faces',return_value='up'):
+    self.assertEqual(1,len(finish_beams(c,limit=1,target_item=POST_ITEM,target_axis='y')['completed']))
+   self.assertEqual(1,c.items['minecraft:oak_log'])
  def test_offhand_shield_is_restored_only_after_confirmed_axe_transformation(self):
   for confirmed in (True,False):
    with tempfile.TemporaryDirectory()as folder:
