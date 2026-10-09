@@ -34,6 +34,19 @@ class AirWoodTests(unittest.TestCase):
   with self.assertRaisesRegex(RuntimeError,'changed before'):
    self.run_case(['Block{minecraft:stone}'])
   self.assertNotIn('projection_air_seed',self.calls)
+ def test_exact_admission_rejection_is_deferred_after_proving_no_change(self):
+  self.receipt={'phase':'error','detail':'Air seed requires the current healthy idle guarded material lease'}
+  def reject(op,**kw):self.calls.append(op);return self.receipt
+  self.client.request=reject
+  from work_access import ApproachUnavailable
+  with self.assertRaises(ApproachUnavailable):
+   self.run_case(['Block{minecraft:air}']*3)
+  self.assertEqual(self.calls.count('projection_air_seed'),1)
+ def test_admission_rejection_with_unexplained_stock_change_is_not_recoverable(self):
+  self.receipt={'phase':'error','detail':'Air seed requires the current healthy idle guarded material lease'}
+  with self.assertRaisesRegex(RuntimeError,'actual state changed'):
+   self.run_case(['Block{minecraft:air}']*3)
+  self.assertEqual(self.calls.count('projection_air_seed'),1)
  def test_old_host_is_rejected_before_send(self):
   self.state['projection_air_seed_axis_protocol']=None
   with self.assertRaisesRegex(RuntimeError,'unavailable'):

@@ -4,6 +4,7 @@ from pathlib import Path
 from material_plan import inventory_counts
 from projection_wood import log_target,cell_at,finish_beams
 from owned_air_escape import wait_known_idle
+from work_access import ApproachUnavailable
 
 
 def run_one(client,row,out,checkpoint):
@@ -27,6 +28,14 @@ def run_one(client,row,out,checkpoint):
     result=client.request('projection_air_seed',placement_key=key,target=pos,
                           expected_item=raw,expected_state=book['raw_state'])
     (out/'native-air-seed.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
+    # This exact host branch throws before constructing/sending the action.
+    # Retain its failed receipt, verify no change, and allow another target.
+    if (result.get('phase')=='error'
+            and result.get('detail')=='Air seed requires the current healthy idle guarded material lease'):
+        if cell_at(client,pos)['state']!=row['actual']or inventory_counts(client.status()).get(raw,0)!=count:
+            raise RuntimeError('Air admission rejected but actual state changed; retain the original outcome')
+        book.update(pending=None,known_not_sent=True,deferred=True);save()
+        raise ApproachUnavailable('Air placement rejected before dispatch; this cell is deferred')
     receipt=result.get('projection_air_seed')or{}
     if (result.get('phase')!='done'or receipt.get('server_confirmed')is not True
             or receipt.get('target')!=pos or receipt.get('use_count')!=1
