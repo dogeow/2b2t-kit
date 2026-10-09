@@ -2,7 +2,6 @@ package dev.twob2tkit.runtime.engine;
 
 import dev.twob2tkit.runtime.api.RotationAim;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.KeyMapping;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Enemy;
@@ -361,9 +360,11 @@ final class BorerRangedCombat {
 				logViewWait(c);
 			}
 		} else {
-			if (!drawing) KeyMapping.click(com.mojang.blaze3d.platform.InputConstants.getKey(c.options.keyUse.saveString()));
+			// Start the normal main-hand interaction explicitly after the normal
+			// shield release. A stale drawing flag must not leave an unused bow held forever.
+			if (!p.isUsingItem()) c.gameMode.useItem(p, net.minecraft.world.InteractionHand.MAIN_HAND);
 			c.options.keyUse.setDown(true);
-			drawing = true;
+			drawing = p.isUsingItem() && p.getUseItem().is(Items.BOW);
 			engine.status = "拉弓反击 " + target.getName().getString() + " · 苦力怕优先";
 		}
 		return true;
@@ -1126,6 +1127,7 @@ final class BorerRangedCombat {
 	private static boolean usableBow(net.minecraft.world.item.ItemStack stack){return GuardWeaponPolicy.usableBow(stack.is(Items.BOW),stack.isDamageableItem(),stack.getMaxDamage()-stack.getDamageValue());}
 	private boolean selectBow(Minecraft c) {
 		var p = c.player; var inv = p.getInventory();
+		engine.mobs.lowerShield(c);
 		if (usableBow(p.getMainHandItem())) return true;
 		for (int i = 0; i < 36; i++) {
 			var stack = inv.getItem(i);
@@ -1325,7 +1327,9 @@ final class BorerRangedCombat {
 		drawing = false; releasePending = false; cooldown = 6; viewWaitTicks = 0;
 		shieldCycle.shot(p.tickCount);
 		engine.status = "放箭反击 " + target.getName().getString();
-		engine.fileLog(c, "area-defense-shot id=" + target.getId() + " rank=" + rank(c.player,target) + " visible=true look=" + look
+		engine.fileLog(c, "area-defense-shot id=" + target.getId() + " rank=" + rank(c.player,target)
+            + " phase=release_intent server_confirmed=false draw_ticks=" + p.getTicksUsingItem()
+            + " bow_damage=" + p.getUseItem().getDamageValue() + " mob_health=" + target.getHealth() + " visible=true look=" + look
 			+ " target=" + target.position() + " " + engine.host.borerBowDiagnostics());
 		return true;
 	}

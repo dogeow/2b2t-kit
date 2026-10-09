@@ -311,6 +311,11 @@ final class BorerMobs {
 
 	/** 放下副手盾。 */
 	void lowerShield(Minecraft client) {
+		var player = client.player;
+		// stopUsingItem() only clears the client copy. The server otherwise keeps
+		// using the off-hand shield and ignores the next startUsingItem(MAIN_HAND).
+		if (player != null && client.gameMode != null && player.isUsingItem()
+				&& player.getUseItem().is(Items.SHIELD)) client.gameMode.releaseUsingItem(player);
 		if (!engine.holdingShield) return;
 		client.options.keyUse.setDown(false);
 		engine.holdingShield = false;

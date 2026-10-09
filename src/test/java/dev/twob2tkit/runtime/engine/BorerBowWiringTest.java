@@ -10,6 +10,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Inspect real bytecode hooks without initializing Minecraft's client singleton. */
 class BorerBowWiringTest {
+    @Test void shieldReleaseReachesServerBeforeBowSelectionAndDrawingUsesNormalInteraction() throws Exception {
+        var lower = calls(method(ROOT+"runtime/engine/BorerMobs", "lowerShield"));
+        assertTrue(lower.containsAll(List.of("isUsingItem", "getUseItem", "releaseUsingItem")));
+        assertFalse(lower.contains("stopUsingItem"), "Client-only shield clearing leaves server use active");
+        var select = calls(method(ROOT+"runtime/engine/BorerRangedCombat", "selectBow"));
+        assertTrue(select.indexOf("lowerShield") < select.indexOf("setSelectedSlot"));
+        var tick = calls(method(ROOT+"runtime/engine/BorerRangedCombat", "tick"));
+        assertTrue(tick.contains("useItem"));
+        assertFalse(tick.contains("click"), "Drawing must be based on actual normal bow use, not a queued click");
+    }
     @Test void shieldActuallyUsesItsHandAndArcherCyclePrecedesBowSelection()throws Exception{
         var shield=calls(method(ROOT+"runtime/engine/BorerMobs","raiseShield"));
         assertTrue(shield.containsAll(List.of("getUseItem","useItem","isUsingItem")));

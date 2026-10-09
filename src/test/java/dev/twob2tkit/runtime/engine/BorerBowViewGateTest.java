@@ -34,4 +34,10 @@ class BorerBowViewGateTest {
         assertFalse(BorerBowViewGate.aligned(new Look(0, 0), new Look(Float.NaN, 0)));
         assertFalse(BorerBowViewGate.aligned(null, new Look(0, 0)));
     }
+    @Test void nearlyVerticalAimUsesDirectionInsteadOfUnstableYaw() {
+        assertTrue(BorerBowViewGate.aligned(new Look(-110.820045F, 89.45271F), new Look(-236.9443F, 89.84833F)));
+        assertTrue(BorerBowViewGate.aligned(new Look(0, 90), new Look(180, 90)));
+        assertFalse(BorerBowViewGate.aligned(new Look(0, 80), new Look(180, 80)));
+        assertFalse(BorerBowViewGate.aligned(new Look(0, 89), new Look(0, -89)));
+    }
 }

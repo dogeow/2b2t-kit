@@ -15,9 +15,12 @@ final class BorerBowViewGate {
     static boolean aligned(RotationAim.Look a, RotationAim.Look b) {
         if (a == null || b == null || !Float.isFinite(a.yaw()) || !Float.isFinite(a.pitch())
             || !Float.isFinite(b.yaw()) || !Float.isFinite(b.pitch())) return false;
-        double yaw = ((a.yaw() - b.yaw() + 180) % 360 + 360) % 360 - 180;
-        // A 0.25 block/tick strafe at 3 blocks turns ~5 degrees between rendered frames.
-        // Reject a genuinely different view without deadlocking close moving targets.
-        return Math.abs(yaw) <= 6 && Math.abs(a.pitch() - b.pitch()) <= 6;
+        double pitchA = Math.toRadians(a.pitch()), pitchB = Math.toRadians(b.pitch());
+        double yaw = Math.toRadians((double)a.yaw() - b.yaw());
+        // Compare the actual view directions. Near straight down, a large yaw
+        // change can still represent less than one degree of aiming movement.
+        double dot = Math.sin(pitchA) * Math.sin(pitchB)
+            + Math.cos(pitchA) * Math.cos(pitchB) * Math.cos(yaw);
+        return dot >= Math.cos(Math.toRadians(6));
     }
 }
