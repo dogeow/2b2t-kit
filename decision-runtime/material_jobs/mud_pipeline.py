@@ -27,6 +27,7 @@ TARGET_SCOPE='absolute_backpack_total'
 MAX_TARGET_COUNT=2304
 AIR='Block{minecraft:air}'
 DIRT='Block{minecraft:dirt}'
+GRASS='Block{minecraft:grass_block}[snowy=false]'
 MUD='Block{minecraft:mud}'
 CAULDRON='Block{minecraft:cauldron}'
 
@@ -92,6 +93,21 @@ def run(c,profile,item,target_count,out,checkpoint):
         return reply['blocks']
     def block(pos):return next((r['state'] for r in scan(pos) if r['pos']==pos),AIR)
     def save():write_json(path,book)
+    def select(item,slot=None):
+        retained=book.get('derived_water_slot');before=state()
+        client().checked('select_item',item=item,**({'slot':slot}if slot is not None else {}))
+        if retained is None:return
+        rows=state()['inventory'];current=next((r for r in rows if r.get('slot')==retained['slot']),None)
+        if current==retained:return
+        old={r['slot']:r for r in before['inventory']}
+        payload=lambda r:{k:v for k,v in r.items()if k!='slot'}
+        moved=[r for r in rows if r.get('slot',99)<36 and payload(r)==payload(retained)
+               and payload(old.get(r['slot'],{}))!=payload(retained)]
+        changed=[r['slot']for r in rows if payload(r)!=payload(old.get(r['slot'],{}))]
+        if (len(moved)!=1 or set(changed)!={retained['slot'],moved[0]['slot']}
+                or payload(current or {})!=payload(old[moved[0]['slot']])):
+            raise Wait('WAIT_RECONCILE','Derived water selection swap identity is unproved')
+        book['derived_water_slot']=moved[0];save()
     def operation(kind,fn,validate=None):
         nonlocal actions
         if actions>=64:raise Wait('WAIT_BUDGET','Bounded mud action budget reached')
@@ -161,10 +177,19 @@ def run(c,profile,item,target_count,out,checkpoint):
                 or any(r.get('fluid') is not False or r.get('block_entity') is not False for r in rows)):
             raise Wait('WAIT_SOURCE','Owned mud station is wet, changed or unsafe')
         actual=next((r['state'] for r in rows if r['pos']==pos),AIR)
-        if actual!=AIR and (not book['owned_cell'] or actual not in (DIRT,MUD)):
+        if actual!=AIR and (not book['owned_cell'] or actual not in (DIRT,GRASS,MUD)):
             raise Wait('WAIT_SOURCE','Preserve pre-existing work-cell blocks')
         return cfg,pos,support,actual
     def bottle(preflight=False):
+        retained=book.get('derived_water_slot')
+        if retained is not None:
+            if not isinstance(retained,dict):
+                raise Wait('WAIT_RECONCILE','Retained cauldron-derived water identity is incomplete')
+            actual=next((r for r in state()['inventory'] if r.get('slot')==retained.get('slot')),None)
+            if (retained.get('item')!='minecraft:potion'
+                    or retained.get('count')!=1 or actual!=retained):
+                raise Wait('WAIT_RECONCILE','Retained cauldron-derived water slot changed; preserve potion')
+            return None if preflight else retained
         fetch('minecraft:glass_bottle',1)
         if stock()['minecraft:glass_bottle']<1:
             require_raw('minecraft:glass',3);craft('minecraft:glass_bottle',1,'glass_bottle')
@@ -200,6 +225,7 @@ def run(c,profile,item,target_count,out,checkpoint):
         if len(added)!=1:
             book['pending']={'kind':'water_slot_identity','before':dict(inventory_counts(before))};save()
             raise Wait('WAIT_RECONCILE','New cauldron-derived water bottle slot is ambiguous')
+        book['derived_water_slot']=added[0];save()
         return added[0] # No generic old potion is classified as water from water_breathing=False.
 
     def make_mud(target):
@@ -214,25 +240,69 @@ def run(c,profile,item,target_count,out,checkpoint):
             if new_mud>=4:raise Wait('WAIT_MUD_BATCH','Four owned mud cells completed; next call rechecks sources')
             cfg,pos,support,actual=station()
             if actual==AIR:require_raw('minecraft:dirt',1)
-            if actual!=MUD:bottle(preflight=True)
+            if actual!=MUD:
+                # Fill before placing dirt, shortening its exposed growth window.
+                water=bottle()
             from work_access import approach_faces
+            if actual==GRASS:
+                face=approach_faces(client(),pos,GRASS,('up','north','south','west','east'),seconds=45)
+                tools=[r for r in state()['inventory'] if r.get('slot',99)<36
+                       and r.get('item') in ('minecraft:diamond_shovel','minecraft:netherite_shovel')
+                       and r.get('durability',0)>=33 and not any(
+                           e.get('id')=='minecraft:silk_touch' and e.get('level',0)>0
+                           for e in r.get('enchantments',[]))]
+                if not tools:raise Wait('WAIT_TOOL','Owned grass recovery requires a durable ordinary shovel')
+                tool=max(tools,key=lambda r:r['durability']);select(tool['item'],tool['slot'])
+                def recover_grass():
+                    before=state();reply=client().request('mine_block',pos=pos,face=face,expected_state=GRASS,seconds=20)
+                    if reply.get('phase')!='done':return reply
+                    for drop in state().get('entities',[]):
+                        if (drop.get('type')=='minecraft:item' and drop.get('stack',{}).get('item')=='minecraft:dirt'
+                                and len(drop.get('pos',[]))==3 and math.dist(drop['pos'],pos)<=6
+                                and drop.get('uuid') not in {e.get('uuid') for e in before.get('entities',[])}):
+                            collect_drop(client(),drop)
+                    return reply
+                operation('recover_owned_grass',recover_grass,
+                          lambda a,b:block(pos)==AIR and inventory_counts(b)['minecraft:dirt']-inventory_counts(a)['minecraft:dirt']==1)
+                book['owned_cell']=False;save();actual=AIR
             if actual==AIR:
+                # A pickup can leave the player inside this now-empty work cell.
+                # Native approach may consider that pose already in reach, but
+                # normal placement rejects collision with our own body.
+                pose=state()['pos']
+                if (pos[0]-.35<pose[0]<pos[0]+1.35 and pos[2]-.35<pose[2]<pos[2]+1.35
+                        and pose[1]<pos[1]+1 and pose[1]+1.8>pos[1]):
+                    approach=cfg.get('approach')
+                    if (not isinstance(approach,list)or len(approach)!=3
+                            or any(type(v)not in (int,float)or not math.isfinite(v)for v in approach)
+                            or math.dist(pose,approach)>4):
+                        raise Wait('WAIT_SOURCE','Owned mud placement requires a registered adjacent stand')
+                    client().checked('navigate',target=approach,arrival=.15,air_only=True,seconds=15)
+                    pose=state()['pos']
+                    if pos[0]-.35<pose[0]<pos[0]+1.35 and pos[2]-.35<pose[2]<pos[2]+1.35:
+                        raise Wait('WAIT_SOURCE','Actual adjacent mud stand still overlaps the work cell')
                 face=approach_faces(client(),support,cfg['support_state'],('up',),seconds=45)
-                client().checked('select_item',item='minecraft:dirt')
+                select('minecraft:dirt')
                 operation('place_owned_dirt',lambda:client().request('interact',pos=support,face=face,expected_state=cfg['support_state'],expected_hand='minecraft:dirt'),
                           lambda a,b:block(pos)==DIRT and inventory_counts(a)['minecraft:dirt']-inventory_counts(b)['minecraft:dirt']==1)
                 book['owned_cell']=True;save();actual=DIRT
             if actual==DIRT:
-                water=bottle()
-                face=approach_faces(client(),pos,DIRT,('up','north','south','west','east'),seconds=45)
+                try:
+                    face=approach_faces(client(),pos,DIRT,('up','north','south','west','east'),seconds=45)
+                except RuntimeError:
+                    if book['owned_cell'] and block(pos)==GRASS:
+                        raise Wait('WAIT_MUD_BATCH','Owned dirt grew grass; retained water remains for ordinary recovery')
+                    raise
+                water=book['derived_water_slot']
                 current=next((r for r in state()['inventory'] if r.get('slot')==water['slot']),None)
                 if current!=water:
                     book['pending']={'kind':'water_slot_identity','expected_row':water};save()
                     raise Wait('WAIT_RECONCILE','Derived water bottle slot changed before conversion')
                 client().checked('select_item',item='minecraft:potion',slot=water['slot'])
-                operation('water_to_owned_mud',lambda:client().request('interact',pos=pos,face=face,expected_state=DIRT,expected_hand='minecraft:potion'),
+                operation('water_to_owned_mud',lambda:client().request('interact',pos=pos,face=face,expected_state=actual,expected_hand='minecraft:potion'),
                           lambda a,b:block(pos)==MUD and inventory_counts(a)['minecraft:potion']-inventory_counts(b)['minecraft:potion']==1
                           and inventory_counts(b)['minecraft:glass_bottle']-inventory_counts(a)['minecraft:glass_bottle']==1)
+                book['derived_water_slot']=None;save()
             face=approach_faces(client(),pos,MUD,('up','north','south','west','east'),seconds=45)
             tools=[r for r in state()['inventory'] if r.get('slot',99)<36 and r.get('item') in ('minecraft:diamond_shovel','minecraft:netherite_shovel') and r.get('durability',0)>=33]
             if not tools:raise Wait('WAIT_TOOL','A real durable mud shovel is required')

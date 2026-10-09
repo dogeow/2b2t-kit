@@ -6,10 +6,12 @@ from material_jobs.protocol import JobBlocked
 class Client:
     def __init__(self,water=0,source='Block{minecraft:water}[level=0]',error=None):
         self.water=water;self.source=source;self.error=error;self.calls=[]
+        self.pos=[43.5,63.1,879.5]
     def status(self):
-        return {'inventory':[{'slot':0,'item':'minecraft:water_bucket'if self.water else'minecraft:bucket','count':1}]}
+        return {'pos':self.pos,'inventory':[{'slot':0,'item':'minecraft:water_bucket'if self.water else'minecraft:bucket','count':1}]}
     def checked(self,op,**params):
         self.calls.append((op,params))
+        if op=='navigate':self.pos=list(params['target'])
         if op=='scan':return {'phase':'done','blocks':[{'state':self.source}]}
         if op=='bucket_fill':
             if self.error:raise self.error
@@ -37,5 +39,10 @@ class Tests(unittest.TestCase):
         c=Client(error=RuntimeError('unknown original result'))
         with self.assertRaisesRegex(RuntimeError,'unknown'):fill(self.backend(c),1)
         self.assertEqual(1,sum(op=='bucket_fill'for op,_ in c.calls))
+    def test_adjacent_higher_floor_uses_horizontal_leg_before_sandbank_descent(self):
+        c=Client();c.pos=[42.26,64,878.5]
+        fill(self.backend(c),1)
+        moves=[p['target']for op,p in c.calls if op=='navigate']
+        self.assertEqual([[43.5,64,879.5],[43.5,63.1,879.5]],moves)
 
 if __name__=='__main__':unittest.main()

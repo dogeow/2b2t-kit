@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from material_jobs.mud_pipeline import run,DIRT,MUD,AIR,CAULDRON
+from material_jobs.mud_pipeline import run,DIRT,GRASS,MUD,AIR,CAULDRON
 from material_jobs.protocol import JobPaused,JobBlocked
 from recipe_catalog import RecipeCatalog
 
@@ -28,6 +28,7 @@ class Client:
     def __init__(self,counts):
         self.rows=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':64} for i in range(36)]
         self.selected=0;self.calls=[];self.bad_mine=False;self.uncertain_mine=False
+        self.pos=[102.5,64,100.5]
         self.blocks={(100,63,100):'Block{minecraft:stone}',(103,64,100):'Block{minecraft:water_cauldron}[level=3]'}
         slots={'minecraft:diamond_sword':0,'minecraft:diamond_shovel':1,'minecraft:dirt':12,
                'minecraft:glass_bottle':13,'minecraft:wheat':14,'minecraft:water_bucket':15}
@@ -58,6 +59,7 @@ class Client:
         return {'world_session':self.world,'server':'simpcraft.com','dimension':'minecraft:overworld',
                 'connected':True,'health':20,'food':20,'guard_armed':True,'guard_pve_only':True,
                 'guard_busy':False,'under_water':False,'manual_movement':False,'flight':True,
+                'pos':list(self.pos),
                 'inventory':copy.deepcopy(self.rows),'entities':[],'hand':copy.deepcopy(self.rows[self.selected])}
     def checked(self,op,**kw):
         if op!='select_item':return self.request(op,**kw)
@@ -72,6 +74,8 @@ class Client:
         return {'phase':'done'}
     def request(self,op,**kw):
         self.calls.append((op,kw))
+        if op=='navigate':
+            self.pos=list(kw['target']);return {'phase':'done'}
         if op=='scan':
             result=[]
             for p,s in self.blocks.items():
@@ -105,6 +109,7 @@ class Client:
             original=self.blocks[pos];self.blocks[pos]=AIR
             if not self.bad_mine:
                 if original==MUD:self.add('minecraft:mud',1)
+                elif original==GRASS:self.add('minecraft:dirt',1)
                 elif original.startswith('Block{minecraft:wheat}'):
                     self.add('minecraft:wheat',1);self.add('minecraft:wheat_seeds',2)
             return {'phase':'done'}
@@ -153,6 +158,68 @@ class MudPipelineTest(unittest.TestCase):
     def test_current_finished_stock_is_absolute_not_added_target(self):
         self.c.add('minecraft:mud_bricks',4)
         self.assertEqual(4,self.go()['after']);self.assertEqual([],self.b.calls)
+    def test_bottle_is_filled_before_owned_dirt_placement_to_reduce_grass_growth_window(self):
+        original=self.c.request
+        def grow(op,**params):
+            result=original(op,**params)
+            if op=='interact' and params.get('expected_hand')=='minecraft:glass_bottle' and self.c.blocks.get((100,64,100))==DIRT:
+                self.c.blocks[(100,64,100)]=GRASS
+            return result
+        self.c.request=grow
+        self.assertEqual('done',self.go('minecraft:mud',1)['phase'])
+        conversions=[p for op,p in self.c.calls if op=='interact' and p.get('expected_hand')=='minecraft:potion']
+        self.assertEqual([DIRT],[p['expected_state'] for p in conversions])
+        self.assertEqual(1,self.c.count('minecraft:mud'))
+    def test_only_journal_owned_grass_is_normally_recovered_and_replaced_with_retained_water(self):
+        def access(c,pos,expected,faces,**kw):
+            if expected==DIRT:raise RuntimeError('known pre-use access failure')
+            return 'up'
+        with patch('work_access.approach_faces',side_effect=access):
+            with self.assertRaises(RuntimeError):run(self.c,self.profile,'minecraft:mud',1,self.root/'job',lambda:None)
+        self.c.blocks[(100,64,100)]=GRASS
+        self.assertEqual('done',self.go('minecraft:mud',1)['phase'])
+        digs=[p['expected_state'] for op,p in self.c.calls if op=='mine_block']
+        self.assertEqual([GRASS,MUD],digs)
+        self.assertEqual(1,len([p for op,p in self.c.calls if op=='interact'and p.get('expected_hand')=='minecraft:glass_bottle']))
+    def test_current_derived_water_slot_is_retained_across_access_failure(self):
+        def access(c,pos,expected,faces,**kw):
+            if expected==DIRT:raise RuntimeError('known pre-use access failure')
+            return 'up'
+        with patch('work_access.approach_faces',side_effect=access):
+            with self.assertRaises(RuntimeError):
+                run(self.c,self.profile,'minecraft:mud',1,self.root/'job',lambda:None)
+        before=len([p for op,p in self.c.calls if op=='interact'and p.get('expected_hand')=='minecraft:glass_bottle'])
+        self.assertEqual('done',self.go('minecraft:mud',1)['phase'])
+        after=len([p for op,p in self.c.calls if op=='interact'and p.get('expected_hand')=='minecraft:glass_bottle'])
+        self.assertEqual(before,after)
+    def test_unowned_grass_work_cell_remains_protected(self):
+        self.c.blocks[(100,64,100)]=GRASS
+        self.assertEqual('WAIT_SOURCE',self.go('minecraft:mud',1)['code'])
+        self.assertFalse(any(op in ('interact','mine_block')for op,_ in self.c.calls))
+    def test_pickup_pose_inside_work_cell_moves_to_registered_stand_before_placement(self):
+        self.c.pos=[100.5,64,100.5]
+        self.profile['mud_station']['approach']=[102.5,64,100.5]
+        self.assertEqual('done',self.go('minecraft:mud',1)['phase'])
+        moves=[p for op,p in self.c.calls if op=='navigate']
+        self.assertEqual([102.5,64,100.5],moves[0]['target'])
+    def test_inside_cell_without_registered_adjacent_stand_never_places(self):
+        self.c.pos=[100.5,64,100.5]
+        self.assertEqual('WAIT_SOURCE',self.go('minecraft:mud',1)['code'])
+        self.assertFalse(any(op=='interact'and p.get('expected_hand')=='minecraft:dirt'for op,p in self.c.calls))
+    def test_owned_grass_recovery_uses_ordinary_shovel_even_if_silk_touch_is_more_durable(self):
+        def access(c,pos,expected,faces,**kw):
+            if expected==DIRT:raise RuntimeError('known pre-use access failure')
+            return 'up'
+        with patch('work_access.approach_faces',side_effect=access):
+            with self.assertRaises(RuntimeError):run(self.c,self.profile,'minecraft:mud',1,self.root/'job',lambda:None)
+        self.c.blocks[(100,64,100)]=GRASS
+        empty=next(r for r in self.c.rows if not r['count']);empty.update(item='minecraft:diamond_shovel',count=1,max_stack=1)
+        tools=[r for r in self.c.rows if r['item']=='minecraft:diamond_shovel'and r['count']]
+        tools[0]['durability']=1000;tools[0]['enchantments']=[{'id':'minecraft:silk_touch','level':1}]
+        tools[1]['durability']=500
+        self.assertEqual('done',self.go('minecraft:mud',1)['phase'])
+        first=next(p for op,p in self.c.calls if op=='select_item'and p.get('item')=='minecraft:diamond_shovel')
+        self.assertEqual(tools[1]['slot'],first['slot'])
     def test_consumed_water_bucket_can_be_fetched_again_in_one_four_cell_call(self):
         self.c.blocks[(103,64,100)]=CAULDRON
         self.c.add('minecraft:water_bucket',-1)

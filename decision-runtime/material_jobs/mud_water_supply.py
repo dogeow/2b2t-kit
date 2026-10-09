@@ -18,6 +18,12 @@ def fill(backend, target):
     backend.checkpoint();scan=c.checked('scan',min=pos,max=pos,details=True)
     if len(scan['blocks'])!=1 or scan['blocks'][0]['state']!=cfg['expected_state']:
         raise JobBlocked('Registered mud sea-water source changed; no use sent')
+    # A diagonal descent sweeps neighbouring one-block-higher ground. Keep the
+    # actual current height for the short horizontal leg, then descend only
+    # inside the registered clear sand-bank column.
+    pose=c.status()['pos']
+    if pose[1]>approach[1]+.25 and math.hypot(pose[0]-approach[0],pose[2]-approach[2])>.25:
+        c.checked('navigate',target=[approach[0],pose[1],approach[2]],arrival=.15,air_only=True,seconds=20)
     c.checked('navigate',target=approach,arrival=.15,air_only=True,seconds=20)
     c.checked('select_item',item='minecraft:bucket')
     receipt=c.checked('bucket_fill',pos=pos,expected_state=cfg['expected_state'],expected_hand='minecraft:bucket')
