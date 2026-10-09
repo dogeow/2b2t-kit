@@ -32,7 +32,8 @@ class EdgeLightingTests(unittest.TestCase):
   self.assertTrue(verified_native_guard_binding({**state,'runtime_version':'1.7.88'}))
   self.assertFalse(verified_native_guard_binding({**state,'kit_version':'2026.10.9.1'}))
   self.assertTrue(verified_native_guard_binding({**state,'runtime_version':'1.7.90'}))
-  self.assertFalse(verified_native_guard_binding({**state,'runtime_version':'1.7.91'}))
+  self.assertTrue(verified_native_guard_binding({**state,'runtime_version':'1.7.91'}))
+  self.assertFalse(verified_native_guard_binding({**state,'runtime_version':'1.7.92'}))
  def test_native_guard_binding_rejects_missing_or_untyped_busy_signal(self):
   state={'kit_version':'2026.10.9.2','runtime_version':'1.7.89','runtime_host_api':3}
   for value in (None,0,1,'false'):

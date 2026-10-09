@@ -34,7 +34,8 @@ final class BorerCombatPeek {
    route=CombatPeekPath.find(new CombatPeekPath.World(){
     public boolean clear(BlockPos q){return cache.computeIfAbsent(q,k->BorerCombatPeek.this.clear(c,k));}
     public boolean edge(BlockPos a,BlockPos b){return c.level.noCollision(p,body(feet(a)).expandTowards(feet(b).subtract(feet(a))));}
-    public boolean visible(BlockPos q){return firingPositionFarEnough(feet(q).distanceToSqr(origin))&&withinAttackRange(c,enemy,feet(q))
+    public boolean visible(BlockPos q){return firingPositionFarEnough(feet(q).distanceToSqr(origin))
+     &&sideAngleUseful(feet(q),enemy.position())&&withinAttackRange(c,enemy,feet(q))
      &&bodyVisible(c,enemy,feet(q).add(0,p.getEyeHeight(),0));}
    },start,12,3000);
    if(route.isEmpty())return false;
@@ -58,7 +59,8 @@ final class BorerCombatPeek {
   // Seeing the head through a gap does not prove the host's arrow trajectory
   // reaches the body. Only the actual current firing position can renew it.
   boolean ranged=BorerThreats.isRangedCombatThreat(enemy,c.player)||engine.rangedCombat.usableGuardBow(c);
-  return firingSolutionVerified(ranged,!ranged||engine.host.borerBowAim(c,enemy)!=null);
+  return sideAngleUseful(c.player.position(),enemy.position())
+   &&firingSolutionVerified(ranged,!ranged||engine.host.borerBowAim(c,enemy)!=null);
  }
  void reapply(Minecraft c){if(active&&look!=null&&c.screen==null)RotationAim.apply(c.player,look);}
  void close(Minecraft c){if(!active)return;engine.pauseGuardMovement(c);flight.closeKeepingFlight();active=false;look=null;route=List.of();}
@@ -82,6 +84,11 @@ final class BorerCombatPeek {
        engine.rangedCombat.usableGuardBow(c),distance);
  }
  static boolean firingPositionFarEnough(double squaredDistance){return Double.isFinite(squaredDistance)&&squaredDistance>=2.25;}
+ /** A failed almost-vertical shot needs a real side angle, not another tiny reposition. */
+ static boolean sideAngleUseful(Vec3 feet,Vec3 enemy){
+  if(!GuardWeaponPolicy.finiteVector(feet)||!GuardWeaponPolicy.finiteVector(enemy))return false;
+  return feet.y-enemy.y<6||Math.hypot(feet.x-enemy.x,feet.z-enemy.z)>=6;
+ }
  static boolean firingSolutionVerified(boolean ranged,boolean feasible){return !ranged||feasible;}
  private static boolean bodyVisible(Minecraft c,LivingEntity enemy,Vec3 eye){
   var box=enemy.getBoundingBox();

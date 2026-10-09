@@ -17,7 +17,7 @@ TRAVEL_FOOT_OFFSET=.195
 def verified_native_guard_binding(state):
     return (isinstance(state,dict)
         and (state.get('kit_version'),state.get('runtime_version'))in
-            (('2026.10.9.1','1.7.88'),('2026.10.9.2','1.7.88'),('2026.10.9.2','1.7.89'),('2026.10.9.2','1.7.90'))
+            (('2026.10.9.1','1.7.88'),('2026.10.9.2','1.7.88'),('2026.10.9.2','1.7.89'),('2026.10.9.2','1.7.90'),('2026.10.9.2','1.7.91'))
         and state.get('runtime_host_api')==3 and type(state.get('guard_busy'))is bool)
 
 
