@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from stack_recipe import plan_batch,settled_result,execute
+from stack_recipe import plan_batch,settled_result,execute,supported
 from craft_grid import InventoryCapacity
 
 
@@ -23,6 +23,17 @@ SPEC={'recipe_id':'white_concrete_powder','output':'minecraft:white_concrete_pow
       'ingredients':{'minecraft:sand':[1,2,3,4],'minecraft:gravel':[5,6,7,8],'minecraft:white_dye':[9]}}
 
 class StackRecipeTest(unittest.TestCase):
+    def test_wood_bulk_allowlist_requires_the_exact_no_remainder_four_to_three_recipe(self):
+        good={'output':'minecraft:cherry_wood','produces':3,'width':2,
+              'ingredients':{'minecraft:cherry_log':[1,2,3,4]}}
+        self.assertTrue(supported(good))
+        self.assertTrue(supported({**good,'width':3,'ingredients':{'minecraft:cherry_log':[1,2,4,5]}}))
+        for changes in ({'produces':4},{'width':None},
+                        {'ingredients':{'minecraft:cherry_log':[1,2,3,3]}},
+                        {'ingredients':{'minecraft:oak_log':[1,2,3,4]}},
+                        {'output':'minecraft:stripped_cherry_wood'}):
+            self.assertFalse(supported({**good,**changes}))
+
     def test_inputs_moved_to_grid_create_required_output_capacity(self):
         s=fixture([('sand',32)]*4+[('gravel',32)]*4+[('white_dye',32)])
         p=plan_batch(s,SPEC,32)

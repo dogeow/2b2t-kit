@@ -15,8 +15,14 @@ STACKABLE_OUTPUTS={'minecraft:bone_meal','minecraft:white_dye','minecraft:white_
     'minecraft:oak_planks','minecraft:spruce_planks','minecraft:cherry_planks','minecraft:diorite',
     'minecraft:stick','minecraft:arrow','minecraft:furnace','minecraft:blast_furnace','minecraft:andesite','minecraft:polished_andesite',
     'minecraft:polished_deepslate','minecraft:deepslate_bricks','minecraft:deepslate_tiles'}
+WOOD_INPUTS={'minecraft:cherry_wood':'minecraft:cherry_log',
+             'minecraft:stripped_cherry_wood':'minecraft:stripped_cherry_log'}
 
 def supported(spec):
+    if spec.get('output') in WOOD_INPUTS:
+        raw=WOOD_INPUTS[spec['output']]
+        cells=[1,2,3,4] if spec.get('width')==2 else [1,2,4,5] if spec.get('width')==3 else None
+        return bool(cells and spec.get('produces')==3 and spec.get('ingredients')=={raw:cells})
     return spec.get('output') in STACKABLE_OUTPUTS
 
 

@@ -13,6 +13,21 @@ from recipe_catalog import RecipeCatalog
 
 
 class CherryBatchCapacityTest(unittest.TestCase):
+    def test_four_log_wood_recipe_batches_all_nineteen_rounds_and_preserves_27_logs(self):
+        for raw,output in [('minecraft:cherry_log','minecraft:cherry_wood'),
+                           ('minecraft:stripped_cherry_log','minecraft:stripped_cherry_wood')]:
+            slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]
+            slots[9].update(item=raw,count=64,max_stack=64)
+            slots[10].update(item=raw,count=39,max_stack=64)
+            state={'menu':{'slots':slots},'inventory':[{**r,'slot':i}for i,r in enumerate(slots[9:45])]}
+            before=copy.deepcopy(state)
+            batch=_inventory_batch(state,{'output':output,'produces':3,'width':2,
+                                          'ingredients':{raw:[1,2,3,4]}},57)
+            self.assertEqual((19,57),(batch['rounds'],batch['produced']))
+            self.assertEqual([19]*4,[r['count']for r in batch['actions']])
+            self.assertEqual(27,103-sum(r['count']for r in batch['actions']))
+            self.assertEqual(before,state)
+
     def test_torches_use_one_exact_batch_with_two_different_consumable_inputs(self):
         slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]
         slots[9].update(item='minecraft:charcoal',count=22,max_stack=64)
