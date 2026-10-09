@@ -4053,7 +4053,7 @@ public final class AutomationBridge {
             m.addProperty("anvil_too_expensive",anvil.getCost()>=40&&!c.player.hasInfiniteMaterials());
         }
         j.add("menu",m);j.addProperty("map_audit_protocol",1);j.addProperty("map_create_protocol",1);
-        j.addProperty("projection_air_seed_protocol",1);j.addProperty("air_place",MeteorModules.isActive(MeteorModules.AIR_PLACE));
+        j.addProperty("projection_air_seed_protocol",1);j.addProperty("projection_air_seed_axis_protocol",1);j.addProperty("air_place",MeteorModules.isActive(MeteorModules.AIR_PLACE));
         j.addProperty("projection_scaffold_fill_protocol",1);
         j.addProperty("bucket_water_protocol",1);
         j.addProperty("material_slaughter_protocol",SlaughterPolicy.PROTOCOL);

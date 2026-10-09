@@ -2,7 +2,7 @@
 
 `projection_air_seed_protocol=1` 是宿主接口；安装包含此接口的主包后需要完整重启，热加载引擎不能新增入口。
 
-当前材料租约需要健康、空闲、PvE 防护。已选投影必须锁定；玩家应已安全飞到种子正常交互距离内，主手拿着该格投影所需的完整普通方块。Meteor **player.AirPlace** 和 Flight 必须已开启，接口不会切换模块或设置。
+当前材料租约需要健康、空闲、PvE 防护。已选投影必须锁定；玩家应已安全飞到种子正常交互距离内，主手拿着该格所需材料。Flight 必须已开启，接口不会切换模块或设置。新轴向协议宿主直接复用 AirPlace 的交互原语，不要求开启独立 AirPlace 模块，避免为了调用接口修改用户配置。
 
 ```python
 result = client.request(
@@ -14,9 +14,11 @@ result = client.request(
 )
 ```
 
-目标须是当前已加载服务器区块中的实际空气，投影内可见、无实体、无视线遮挡。接口仅支持无属性、无重力、无流体、无方块实体的完整方块；不负责移动、切换材料或大面积铺设。
+目标须是当前已加载服务器区块中的实际空气，投影内可见、无实体、无视线遮挡。接口支持无属性普通完整方块，以及只带 `axis` 的柱形完整方块；仍拒绝重力、流体和方块实体。带 `projection_air_seed_axis_protocol=1` 的新宿主按投影轴向选择交互面，无需临时支撑；不负责移动、切换材料或大面积铺设。
 
-构造的 hit 与实际 Meteor AirPlace 相同：指定目标格、格中心、玩家水平朝向的反面、inside=false。它直接调用一次 Meteor `BlockUtils.interact(hit, MAIN_HAND, true)`，不使用模块旧红框缓存，也不依赖相机 UI 的静默旋转。不会伪造方块、成功状态或物品。
+去皮木料还允许精确对应的未去皮原料作为中间态，例如投影 `stripped_cherry_wood[axis=y]` 可请求 `expected_item=minecraft:cherry_wood`、`expected_state=Block{minecraft:cherry_wood}[axis=y]`。仅对应的 wood/log/stem/hyphae 关系被接受；其他木种或 log/wood 混用会被拒绝。回执分别记录 `projected_state` 和放置的 `expected_state`，`requires_stripping=true` 不计为投影完成；后续必须正常斧头去皮并复核最终状态。
+
+构造的 hit 沿用实际 Meteor AirPlace：指定目标格、格中心、inside=false。普通方块采用玩家水平朝向的反面，柱形方块采用投影轴的正向面（Y 为 UP）。它直接调用一次 Meteor `BlockUtils.interact(hit, MAIN_HAND, true)`，不使用模块旧红框缓存，也不依赖相机 UI 的静默旋转。不会伪造方块、成功状态或物品。
 
 确认需要当前连接收到该格的匹配服务器方块更新、实际状态仍正确、所需材料数量恰好减少一，并稳定等待八个客户端 tick。最多等待一百 tick；纠正包会取消确认，未确认返回 `waiting`，不会发送第二次。同一世界会话、同一格的已尝试种子不能自动重开。
 

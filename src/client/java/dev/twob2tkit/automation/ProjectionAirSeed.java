@@ -6,6 +6,7 @@ import dev.twob2tkit.builder.LitematicaAccess;
 import dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
@@ -14,6 +15,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.FallingBlock;
+import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.AABB;
@@ -30,7 +32,8 @@ final class ProjectionAirSeed {
     private final TerrainServerConfirmation confirmation;
     private final String world,requestId,placementKey;
     private final BlockPos target;
-    private final BlockState expected;
+    private final BlockState expected,projected;
+    private final Direction face;
     private final Item item;
     private final int selectedSlot,beforeCount;
     private final float health;
@@ -50,17 +53,22 @@ final class ProjectionAirSeed {
         if(!loading.isEmpty())throw new IllegalStateException(loading);
         var schematic=LitematicaAccess.schematicWorld();
         if(schematic==null)throw new IllegalStateException("Air seed projection world is unavailable");
-        expected=schematic.getBlockState(target);
-        if(expected.isAir()||!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty(),
+        projected=schematic.getBlockState(target);
+        expected=placementState(projected,string(request,"expected_item"));
+        boolean axisOnly=expected.getBlock() instanceof RotatedPillarBlock
+            &&expected.getProperties().size()==1&&expected.hasProperty(RotatedPillarBlock.AXIS);
+        if(expected.isAir()||!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty()||axisOnly,
                 expected.isCollisionShapeFullBlock(schematic,target),expected.getBlock() instanceof FallingBlock,
                 expected.getBlock() instanceof EntityBlock)||!expected.getFluidState().isEmpty()
                 ||!expected.toString().equals(string(request,"expected_state")))
-            throw new IllegalStateException("Air seed requires the exact projected plain full cube without gravity, fluid or block entity");
+            throw new IllegalStateException("Air seed requires the exact projected full cube or its axis-correct unstripped wood precursor");
+        face=axisOnly?Direction.fromAxisAndDirection(expected.getValue(RotatedPillarBlock.AXIS),Direction.AxisDirection.POSITIVE)
+            :c.player.getMotionDirection().getOpposite();
         item=expected.getBlock().asItem();
         if(!BuiltInRegistries.ITEM.getKey(item).toString().equals(string(request,"expected_item")))
             throw new IllegalStateException("Air seed expected item does not match the projection");
-        if(!MeteorModules.isActive(MeteorModules.AIR_PLACE)||!MeteorModules.isActive(MeteorModules.FLIGHT))
-            throw new IllegalStateException("Current Meteor player.AirPlace and Flight must already be active");
+        if(!MeteorModules.isActive(MeteorModules.FLIGHT))
+            throw new IllegalStateException("Current Meteor Flight must already be active");
         if(c.screen!=null||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty()
             ||c.player.isUsingItem()||c.options.keyUse.isDown()||c.player.isInWater()||c.player.isInLava()||c.player.isOnFire())
             throw new IllegalStateException("Air seed requires an idle dry inventory and released use key");
@@ -70,6 +78,22 @@ final class ProjectionAirSeed {
         interact=Class.forName("meteordevelopment.meteorclient.utils.world.BlockUtils")
             .getMethod("interact",BlockHitResult.class,InteractionHand.class,boolean.class);
         confirmation.begin(world,requestId,STAGE,target,expected.toString());
+    }
+
+    static BlockState placementState(BlockState projected,String requestedItem) {
+        if(BuiltInRegistries.ITEM.getKey(projected.getBlock().asItem()).toString().equals(requestedItem))return projected;
+        String wanted=BuiltInRegistries.BLOCK.getKey(projected.getBlock()).toString();
+        if(!(projected.getBlock() instanceof RotatedPillarBlock)||projected.getProperties().size()!=1
+                ||!projected.hasProperty(RotatedPillarBlock.AXIS)||!wanted.startsWith("minecraft:stripped_")
+                ||!wanted.equals("minecraft:stripped_"+requestedItem.replaceFirst("^minecraft:",""))
+                ||!requestedItem.startsWith("minecraft:")
+                ||!(wanted.endsWith("_log")||wanted.endsWith("_wood")||wanted.endsWith("_stem")||wanted.endsWith("_hyphae")))
+            throw new IllegalStateException("Air seed item is neither the projection item nor its unstripped wood precursor");
+        var rawItem=BuiltInRegistries.ITEM.getValue(net.minecraft.resources.Identifier.parse(requestedItem));
+        if(!(rawItem instanceof BlockItem raw)||!(raw.getBlock() instanceof RotatedPillarBlock)
+                ||raw.getBlock().defaultBlockState().getProperties().size()!=1)
+            throw new IllegalStateException("Air seed unstripped item is not an axis-only wood block");
+        return raw.getBlock().defaultBlockState().setValue(RotatedPillarBlock.AXIS,projected.getValue(RotatedPillarBlock.AXIS));
     }
 
     private static String string(JsonObject request,String key) {
@@ -102,7 +126,7 @@ final class ProjectionAirSeed {
         var current=LitematicaAccess.lockedBuildSelection();
         var schematic=LitematicaAccess.schematicWorld();
         if(!current.key().equals(placementKey)||!current.contains(target)||!LitematicaAccess.inVisibleLayer(target)
-                ||schematic==null||!expected.equals(schematic.getBlockState(target)))
+                ||schematic==null||!projected.equals(schematic.getBlockState(target)))
             throw new IllegalStateException("Air seed projection or exact target changed");
     }
     private void validateBeforeSend(Minecraft c) {
@@ -126,9 +150,9 @@ final class ProjectionAirSeed {
     void sendOnce(Minecraft c) throws ReflectiveOperationException {
         if(sent)throw new IllegalStateException("Air seed use was already attempted; no resend allowed");
         validateBeforeSend(c);
-        if(!MeteorModules.isActive(MeteorModules.AIR_PLACE)||!MeteorModules.isActive(MeteorModules.FLIGHT))
-            throw new IllegalStateException("AirPlace or Flight changed before seed send");
-        var hit=new BlockHitResult(Vec3.atCenterOf(target),c.player.getMotionDirection().getOpposite(),target,false);
+        if(!MeteorModules.isActive(MeteorModules.FLIGHT))
+            throw new IllegalStateException("Flight changed before seed send");
+        var hit=new BlockHitResult(Vec3.atCenterOf(target),face,target,false);
         confirmation.sent(world,requestId,STAGE,target);sent=true;
         try{interact.invoke(null,hit,InteractionHand.MAIN_HAND,true);}
         catch(InvocationTargetException uncertain){throw new IllegalStateException("One Meteor seed interaction was attempted; outcome unknown and no resend allowed",uncertain.getCause());}
@@ -147,7 +171,7 @@ final class ProjectionAirSeed {
         if(!sent||!serverChunk(c)||c.player.getHealth()<health||c.screen!=null
             ||c.player.getInventory().getSelectedSlot()!=selectedSlot
             ||!c.player.getMainHandItem().isEmpty()&&!c.player.getMainHandItem().is(item)
-            ||!MeteorModules.isActive(MeteorModules.AIR_PLACE)||!MeteorModules.isActive(MeteorModules.FLIGHT))return Outcome.WAITING;
+            ||!MeteorModules.isActive(MeteorModules.FLIGHT))return Outcome.WAITING;
         boolean acknowledged=confirmation.confirmed(world,requestId,STAGE,target);
         if(ProjectionAirSeedPolicy.confirmed(acknowledged,expected.equals(c.level.getBlockState(target)),
             beforeCount,afterCount,ackTick,tick))return Outcome.DONE;
@@ -158,6 +182,8 @@ final class ProjectionAirSeed {
     JsonObject snapshot(boolean complete) {
         var out=new JsonObject();out.addProperty("request_id",requestId);out.addProperty("world_session",world);
         out.addProperty("placement_key",placementKey);out.addProperty("expected_state",expected.toString());
+        out.addProperty("projected_state",projected.toString());out.addProperty("projection_matches",complete&&expected.equals(projected));
+        out.addProperty("requires_stripping",!expected.equals(projected));out.addProperty("face",face.name().toLowerCase(java.util.Locale.ROOT));
         var coordinates=new com.google.gson.JsonArray();coordinates.add(target.getX());coordinates.add(target.getY());coordinates.add(target.getZ());out.add("target",coordinates);
         out.addProperty("use_count",sent?1:0);out.addProperty("item",BuiltInRegistries.ITEM.getKey(item).toString());
         out.addProperty("inventory_before",beforeCount);out.addProperty("inventory_after",afterCount);
