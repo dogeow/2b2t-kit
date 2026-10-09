@@ -222,6 +222,7 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
     lit_neighbour=(not supports or hostile_clearance>0)and bool(dark)
     if lit_neighbour:
         supports=[p for p,r in cells.items()if safe_support(r,require_dark=False)
+                  and (target_bounds is None or target_low[1]<=p[1]<=target_high[1])
                   and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)
                   and any(sum(abs(a-b)for a,b in zip(p,q))<=11 for q in dark)]
     result=[]

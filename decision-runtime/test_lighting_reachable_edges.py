@@ -8,6 +8,13 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_flat_target_neighbour_lights_do_not_fall_back_to_a_lower_floor(self):
+  target=(0,64,0);lower=(-3,63,0)
+  cells={target:{**floor(target),'state':'Block{minecraft:oak_planks}'},
+         lower:{**floor(lower),'zombie_block_light_risk':False,'spawn_block_light':3}}
+  planned=edge_candidates(cells,[-5,58,-5],[5,90,5],[.5,80,.5],
+      target_bounds={'min':[0,64,0],'max':[0,64,0]})
+  self.assertEqual([],planned)
  def test_targeted_dark_floor_can_use_a_lit_support_farther_from_hostiles(self):
   dark=(0,64,0);lit=(-9,64,0)
   cells={dark:floor(dark),lit:{**floor(lit),'zombie_block_light_risk':False,'spawn_block_light':3}}
