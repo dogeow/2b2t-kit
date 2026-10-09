@@ -13,6 +13,23 @@ from recipe_catalog import RecipeCatalog
 
 
 class CherryBatchCapacityTest(unittest.TestCase):
+    def test_torches_use_one_exact_batch_with_two_different_consumable_inputs(self):
+        slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]
+        slots[9].update(item='minecraft:charcoal',count=22,max_stack=64)
+        slots[10].update(item='minecraft:stick',count=64,max_stack=64)
+        slots[11].update(item='minecraft:torch',count=11,max_stack=64)
+        state={'menu':{'slots':slots},'inventory':[{**r,'slot':i}for i,r in enumerate(slots[9:45])]}
+        spec={'output':'minecraft:torch','produces':4,'width':2,'ingredients':{'minecraft:charcoal':[1],'minecraft:stick':[3]}}
+        batch=_inventory_batch(state,spec,99)
+        self.assertEqual((22,88),(batch['rounds'],batch['produced']))
+        self.assertEqual([22,22],[a['count']for a in batch['actions']])
+        self.assertEqual([22,64,11],[slots[i]['count']for i in (9,10,11)])
+    def test_gold_block_unpacking_can_return_more_than_one_output_stack(self):
+        slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]
+        slots[9].update(item='minecraft:gold_block',count=10,max_stack=64)
+        state={'menu':{'slots':slots},'inventory':[{**r,'slot':i}for i,r in enumerate(slots[9:45])]}
+        batch=_inventory_batch(state,{'output':'minecraft:gold_ingot','produces':9,'width':2,'ingredients':{'minecraft:gold_block':[1]}},90)
+        self.assertEqual((10,90),(batch['rounds'],batch['produced']))
     def test_full_backpack_can_consume_all_fifteen_logs_for_sixty_planks(self):
         slots = [{'slot': i, 'item': 'minecraft:stick', 'count': 64, 'max_stack': 64}
                  for i in range(45)]

@@ -89,3 +89,15 @@ class SmallCellTest(unittest.TestCase):
         c=Client()
         with patch.object(craft_grid,'k',c),patch.object(craft_recipe,'k',c):result=place_cell(c,state,copy.deepcopy(state['menu']['slots'][10]),1,1)
         self.assertEqual(3,len(calls));self.assertEqual(1,result['menu']['slots'][1]['count']);self.assertEqual(63,result['menu']['slots'][10]['count']);self.assertEqual(0,result['menu']['cursor']['count'])
+
+class GoldenAppleBatchTest(unittest.TestCase):
+    def test_sixteen_apples_use_exactly_128_gold_in_one_bounded_workbench_batch(self):
+        state=fixture([('gold_ingot',64),('gold_ingot',64),('apple',16)],empty=2)
+        spec={'output':'minecraft:golden_apple','produces':1,'width':3,
+              'ingredients':{'minecraft:gold_ingot':[1,2,3,4,6,7,8,9],'minecraft:apple':[5]}}
+        before=copy.deepcopy(state)
+        batch=plan_batch(state,spec,32)
+        self.assertEqual((16,16),(batch['rounds'],batch['produced']))
+        self.assertEqual(128,sum(a['count']for a in batch['actions']if a['item']=='minecraft:gold_ingot'))
+        self.assertEqual(16,sum(a['count']for a in batch['actions']if a['item']=='minecraft:apple'))
+        self.assertEqual(before,state)
