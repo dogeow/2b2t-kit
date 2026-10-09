@@ -8,6 +8,20 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_elevated_station_preserves_normal_reach_and_current_clear_route(self):
+  cells={(0,64,0):floor((0,64,0))}
+  planned=edge_candidates(cells,[-4,62,-4],[4,90,4],[2.5,80,.5],station_height=3.3)
+  self.assertTrue(planned)
+  self.assertTrue(all(abs(row['station'][1]-67.3)<.0001 for row in planned))
+  self.assertTrue(all(ray_clear(cells,[row['station'][0],row['station'][1]+1.42,row['station'][2]],(0,64,0))for row in planned))
+ def test_elevated_station_cannot_cross_an_observed_low_ceiling(self):
+  cells={(0,64,0):floor((0,64,0))}
+  cells.update({(x,67,z):floor((x,67,z))for x in range(-4,5)for z in range(-4,5)})
+  planned=edge_candidates(cells,[-4,62,-4],[4,90,4],[2.5,80,.5],station_height=3.3)
+  self.assertFalse(any(row['support']==[0,64,0]for row in planned))
+ def test_station_height_cannot_extend_reach_or_use_untyped_values(self):
+  for value in (0,3.31,True,float('nan'),'3.3'):
+   with self.assertRaises(ValueError):edge_candidates({},[-4,62,-4],[4,90,4],[2.5,80,.5],station_height=value)
  def test_station_selection_avoids_a_real_passive_animal_before_flying_to_it(self):
   cells={(0,64,0):floor((0,64,0))};low=[-4,62,-4];high=[4,90,4];start=[2.5,80,.5]
   first=edge_candidates(cells,low,high,start)[0]['station']

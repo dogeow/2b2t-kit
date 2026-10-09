@@ -198,7 +198,9 @@ def lowest_transit_height(cells,start,entry,ceiling):
     return None
 
 
-def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False,entities=None):
+def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False,entities=None,station_height=1.1):
+    if type(station_height)not in (int,float)or not math.isfinite(station_height)or not 1.1<=station_height<=3.3:
+        raise ValueError('Station height must remain within verified normal block reach')
     low, high = bounds(low, high)
     validate_native_details(cells)
     dark = [p for p,r in cells.items() if r.get('zombie_block_light_risk')is True
@@ -222,7 +224,7 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
             sx,sz=x+dx,z+dz
             if not low[0]<=sx<=high[0] or not low[2]<=sz<=high[2]:
                 continue
-            station=[sx+.5,y+1.1,sz+.5]
+            station=[sx+.5,y+station_height,sz+.5]
             if entities is not None:
                 pre_low=[min(support[i],math.floor(station[i]-(.35 if i!=1 else 0)))for i in range(3)]
                 pre_high=[max(target[i],math.floor(station[i]+(.35 if i!=1 else 1.81+1.62)))+1 for i in range(3)]
@@ -254,7 +256,9 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
 
 
 class ReachableEdgeLightingRun(LightingRun):
-    def __init__(self,*args,surface_only=False,native_guard_only=False,**kwargs):
+    def __init__(self,*args,surface_only=False,native_guard_only=False,station_height=1.1,**kwargs):
+        if type(station_height)not in (int,float)or not math.isfinite(station_height)or not 1.1<=station_height<=3.3:
+            raise ValueError('Station height must remain within verified normal block reach')
         if type(native_guard_only)is not bool:raise ValueError('Native guard mode must be explicit boolean')
         if native_guard_only:
             initial=args[5]if len(args)>5 else kwargs['initial']
@@ -264,6 +268,7 @@ class ReachableEdgeLightingRun(LightingRun):
         super().__init__(*args,**kwargs);self.surface_only=surface_only
         self.report['surface_only']=surface_only
         self.native_guard_only=native_guard_only;self.report['native_guard_only']=native_guard_only
+        self.station_height=station_height;self.report['station_height']=station_height
         self.last_entry_route=None
         self.keep_low_between_placements=False
     def counts(self,cells):
@@ -377,7 +382,7 @@ class ReachableEdgeLightingRun(LightingRun):
             self.report['after']=counts;self.save()
             if not counts['unprotected_dark_floor']:break
             candidates=edge_candidates(cells,self.low,self.high,self.fresh()['pos'],self.protected,
-                surface_only=self.surface_only,entities=reply['scan_entities'])
+                surface_only=self.surface_only,entities=reply['scan_entities'],station_height=getattr(self,'station_height',1.1))
             if not candidates:break
             self.place_edge(candidates[0],i)
         if counts['unprotected_dark_floor']==0:
