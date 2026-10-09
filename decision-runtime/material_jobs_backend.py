@@ -85,8 +85,8 @@ class JobClient(MaterialClient):
         self.owner = owner
         super().__init__(*args, **kwargs)
 
-    def raw(self):
-        state = super().raw()
+    def raw(self, wait_seconds=None):
+        state = super().raw(wait_seconds=wait_seconds)
         self.owner.latest = state
         self.owner.poll_control()
         return state

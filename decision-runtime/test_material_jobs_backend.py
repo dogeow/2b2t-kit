@@ -1247,6 +1247,16 @@ class BackendTest(unittest.TestCase):
             self.assertEqual('done',client.request('material_job_pause',release=True)['phase'])
         request.assert_called_once()
 
+    def test_job_client_nonblocking_raw_preserves_owner_control_polling(self):
+        state={'time':123}
+        client=backend.JobClient.__new__(backend.JobClient)
+        client.owner=SimpleNamespace(latest=None,poll_control=Mock())
+        with patch('material_client.MaterialClient.raw',return_value=state) as read:
+            self.assertIs(state,client.raw(wait_seconds=0))
+        read.assert_called_once_with(wait_seconds=0)
+        self.assertIs(state,client.owner.latest)
+        client.owner.poll_control.assert_called_once()
+
     def test_warehouse_hint_recounts_loose_and_packed_contents_once(self):
         rows=[{'item':'minecraft:bone_block','count':10},{'item':'minecraft:blue_shulker_box','count':1,'contains':[{'item':'minecraft:bone_block','count':64}]},
               {'item':'minecraft:air','count':0}]
