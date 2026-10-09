@@ -214,6 +214,15 @@ final class BorerRangedCombat {
         }
         // A verified safe peek must reach attack range before its expired
         // attack budget can be renewed. Re-rising mid-route would undo it.
+        // Endermen cannot be shot. An expired bow budget must not bypass
+        // looking down or a currently legal sword counterattack.
+        var angryEnderman=session.targets().stream().filter(e->e instanceof EnderMan enderman
+            &&enderman.isCreepy()&&enderman.isAlive()&&e.level()==c.level&&c.level.getEntity(e.getId())==e)
+            .min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
+        if(angryEnderman!=null&&nearby.stream().noneMatch(e->e.isAlive()
+                &&(e instanceof Creeper||BorerThreats.isRangedCombatThreat(e,p)))){
+            target=angryEnderman;return defendEnderman(c);
+        }
         if(engine.standaloneGuard && !peek.active() && safetyRise(c,missingRestored))return true;
 		if (next == null) {
             rangedMode(false);
