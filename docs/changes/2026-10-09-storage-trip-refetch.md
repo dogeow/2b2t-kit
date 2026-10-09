@@ -11,3 +11,5 @@
 证据：`work/live-20261004/warehouse-map-cargo-room-3f1f-003/actual-small-material-storage.json`、`actual-warehouse-fetch.json`、`progress.json`、`native-high-keep.json`；编排语法检查通过。完整地图及真实像素验收仍未完成。
 
 原生两棵樱花树本轮新增74根原木，实际随身96→170，临时垫块0。离树直线上升被原生接口在派发前拒绝，回执明确已知且无未确认请求；沿用同一原任务，复用 `owned_air_escape.escape_side` 扫描侧移再升高，实际高空驻留通过。错误回执保留，另存恢复证明。后续本地树批次已复用此离树入口。证明：`user-planted-cherry-batch-3f1f-002/actual-collected-inventory-frames.json`、`treebatch002-known-side-finish-3f1f-001/escape/verified.json`、`native-high-keep.json`。
+
+本轮木板合成实物19→275，原木170→106；既有原生投影施工新增265格，完整现场守恒与原生高空停车通过。对完整16384格图像及128格参考行的实际扫描复算为6754/16512，剩9758格。樱花木板剩312格，其中311格可正常施工、1格保留旧未知回执。证明：`map-treebatch002-carried-craft-3f1f-002/`、`map-treebatch002-followthrough-3f1f-002/full-final-scene-recount.json`、`stock-print/print-run/progress.json`。下一轮本地串行程序已开始，继续既有采集、合成、施工入口，无通用翻箱步骤。完整地图未完成。
