@@ -148,9 +148,10 @@ def run_one(c,target,out,checkpoint,*,max_caps=4,resume_confirmed=None,consumabl
             # unresolved pickup balance; never label it restored or count it
             # as carried stock. Every support must still be physically AIR.
             after=inventory_counts(state()).get('minecraft:dirt',0)
-            if not dirt_before-len(plan['caps'])<=after<=dirt_before:
+            if after<dirt_before-len(plan['caps']):
                 raise RuntimeError('Dirt consumption exceeds confirmed placed caps')
-            book.update(dirt_after=after,unrecovered_dirt_at_finish=dirt_before-after)
+            book.update(dirt_after=after,unrecovered_dirt_at_finish=max(0,dirt_before-after),
+                        additional_dirt_received=max(0,after-dirt_before))
             save();return
         for attempt in range(12):
             q=state();held=inventory_counts(q).get('minecraft:dirt',0)
@@ -252,5 +253,6 @@ def run_one(c,target,out,checkpoint,*,max_caps=4,resume_confirmed=None,consumabl
     if at(list(target))!=EXPECTED:raise RuntimeError('Completed wood changed during cap cleanup')
     after=inventory_counts(state()).get('minecraft:dirt',0)
     book.update(complete=True,actual_new_cells=1,dirt_restored=after==dirt_before,
-                dirt_after=after,unrecovered_dirt_at_finish=dirt_before-after,
+                dirt_after=after,unrecovered_dirt_at_finish=max(0,dirt_before-after),
+                additional_dirt_received=max(0,after-dirt_before),
                 all_caps_removed=True);save();return book

@@ -165,4 +165,19 @@ class CapsTest(unittest.TestCase):
    self.assertTrue(result['complete']);self.assertTrue(result['all_caps_removed'])
    self.assertFalse(result['dirt_restored']);self.assertEqual(2,result['unrecovered_dirt_at_finish'])
    self.assertEqual(13,result['dirt_after']);self.assertEqual(1,c.items[caps.RAW]);self.assertEqual(2,len(c.blocks))
+ def test_late_dirt_from_prior_work_is_recorded_as_extra_not_current_recovery(self):
+  class ExtraClient(Client):
+   def request(self,op,**kw):
+    r=super().request(op,**kw)
+    if op=='mine_block':self.items['minecraft:dirt']+=1
+    return r
+  with tempfile.TemporaryDirectory()as root:
+   c=ExtraClient(root)
+   def finish(client,**kw):
+    c.blocks[tuple(TARGET)]=caps.EXPECTED;c.items[caps.RAW]-=1
+    return {'completed':[{'pos':TARGET}],'deferred':[]}
+   with patch.object(caps,'approach_faces',return_value='up'),patch.object(caps,'wait_known_idle',side_effect=lambda c:c.status()),patch.object(caps,'finish_beams',side_effect=finish):
+    result=caps.run_one(c,TARGET,Path(root)/'run',c.status,consumable_dirt=True)
+   self.assertTrue(result['all_caps_removed']);self.assertFalse(result['dirt_restored'])
+   self.assertEqual(17,result['dirt_after']);self.assertEqual(2,result['additional_dirt_received']);self.assertEqual(0,result['unrecovered_dirt_at_finish'])
 if __name__=='__main__':unittest.main()
