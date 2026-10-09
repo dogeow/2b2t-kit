@@ -12,7 +12,8 @@ final class GuardEscapePolicy {
             && currentWorld.equals(leaseWorld) && currentWorld.equals(requestWorld)
             && leaseJob != null && !leaseJob.isBlank() && leaseJob.equals(requestJob)
             && currentRevision > 0 && leaseRevision == currentRevision
-            && expectedRevision == currentRevision - 1;
+            // stopWorkForScript syncs the admitted request to the new lease revision.
+            && expectedRevision == currentRevision;
     }
 
     static boolean allowed(boolean materialLease, boolean guardArmed,

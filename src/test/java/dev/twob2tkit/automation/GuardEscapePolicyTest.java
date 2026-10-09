@@ -5,11 +5,21 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GuardEscapePolicyTest {
     @Test void onlyExactLiveMaterialLeaseCanPreemptCombat() {
-        assertTrue(GuardEscapePolicy.currentLease("world-a",11,"world-a",11,"world-a",10,"job-a","job-a"));
-        assertFalse(GuardEscapePolicy.currentLease("world-b",11,"world-a",11,"world-a",10,"job-a","job-a"));
-        assertFalse(GuardEscapePolicy.currentLease("world-a",11,"world-a",10,"world-a",10,"job-a","job-a"));
-        assertFalse(GuardEscapePolicy.currentLease("world-a",11,"world-a",11,"world-a",9,"job-a","job-a"));
-        assertFalse(GuardEscapePolicy.currentLease("world-a",11,"world-a",11,"world-a",10,"job-a","job-b"));
+        assertTrue(GuardEscapePolicy.currentLease("world-a",11,"world-a",11,"world-a",11,"job-a","job-a"));
+        assertFalse(GuardEscapePolicy.currentLease("world-b",11,"world-a",11,"world-a",11,"job-a","job-a"));
+        assertFalse(GuardEscapePolicy.currentLease("world-a",11,"world-a",10,"world-a",11,"job-a","job-a"));
+        assertFalse(GuardEscapePolicy.currentLease("world-a",11,"world-a",11,"world-a",10,"job-a","job-a"));
+        assertFalse(GuardEscapePolicy.currentLease("world-a",11,"world-a",11,"world-a",12,"job-a","job-a"));
+        assertFalse(GuardEscapePolicy.currentLease("world-a",11,"world-a",11,"world-b",11,"job-a","job-a"));
+        assertFalse(GuardEscapePolicy.currentLease("world-a",11,"world-a",11,"world-a",11,"job-a","job-b"));
+    }
+    @Test void defensiveRiseUsesRevisionSyncedAfterNavigationHandoff() {
+        long admittedRevision=1269;
+        long currentRevision=admittedRevision+1;
+        assertTrue(GuardEscapePolicy.currentLease("world-a",currentRevision,"world-a",currentRevision,
+            "world-a",currentRevision,"job-a","job-a"));
+        assertFalse(GuardEscapePolicy.currentLease("world-a",currentRevision,"world-a",currentRevision,
+            "world-a",admittedRevision,"job-a","job-a"));
     }
     @Test void onlyOwnedVerticalRiseCanInterruptDefense() {
         assertTrue(GuardEscapePolicy.allowed(true,true,10,63,20,10.5,85,20.5));

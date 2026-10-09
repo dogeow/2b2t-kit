@@ -442,13 +442,20 @@ class LightingRun:
                 and entity.get('alive') is not False
                 and not (type(entity.get('health')) in (int, float) and entity['health'] <= 0)]
 
+    def guard_blocking(self,state):
+        if getattr(self,'native_guard_only',False):
+            # This opt-in uses the current armed Kit guard's own threat
+            # decision; an absent/untyped signal never permits construction.
+            return state.get('guard_busy')is not False
+        return state.get('guard_busy')is True or bool(self.active_hostiles(state))
+
     def wait_for_guard(self, *, work=True, stage='placement', seconds=60):
         """Wait for the existing protection owner; never send combat or movement."""
         deadline = time.monotonic() + seconds
         started, samples = None, 0
         while True:
             state = self.fresh(work=work)
-            busy = state.get('guard_busy') is True or bool(self.active_hostiles(state))
+            busy = self.guard_blocking(state)
             if not busy:
                 if started is not None:
                     self.report.setdefault('guard_waits', []).append({
@@ -637,7 +644,7 @@ class LightingRun:
             if pre['scan_entities']:
                 raise LightingBlocked('Current entity occupies support/target/body placement column')
             latest = self.fresh()
-            if (latest.get('guard_busy') or self.active_hostiles(latest)
+            if (self.guard_blocking(latest)
                     or not self.at_station(latest, (x, y, z))
                     or (latest.get('hand') or {}).get('item') != TORCH):
                 continue

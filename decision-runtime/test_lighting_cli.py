@@ -498,6 +498,27 @@ class LightingPlanningTests(unittest.TestCase):
             self.assertEqual(client.finished, 0)
             self.assertEqual(runner.report['guard_waits'][0]['outcome'], 'bounded_wait_unresolved')
 
+    def test_native_guard_mode_avoids_waiting_for_a_nonengaged_nearby_hostile(self):
+        calm={**snapshot(tick=100),'guard_busy':False,
+              'entities':[{'type':'minecraft:zombie','hostile':True,'health':20,'visible':False,'pos':[3.5,56,3.5]}]}
+        with tempfile.TemporaryDirectory()as folder:
+            client=ObservedClient(folder,[calm]);runner=lighting.LightingRun(client,LOW,HIGH,1,folder,snapshot())
+            runner.native_guard_only=True
+            self.assertEqual(runner.wait_for_guard(),calm)
+            self.assertEqual(client.operations,['snapshot']);self.assertEqual(client.interactions,0)
+            self.assertTrue(runner.active_hostiles(calm),'The observation remains intact; no fabricated death')
+
+    def test_native_guard_mode_still_waits_for_combat_and_refuses_unknown_signal(self):
+        busy={**snapshot(tick=100),'guard_busy':True}
+        calm={**snapshot(tick=101),'guard_busy':False,'entities':[{'hostile':True,'health':20}]}
+        with tempfile.TemporaryDirectory()as folder:
+            client=ObservedClient(folder,[busy,calm]);runner=lighting.LightingRun(client,LOW,HIGH,1,folder,snapshot())
+            runner.native_guard_only=True
+            with patch('lighting_cli.time.sleep'):self.assertEqual(runner.wait_for_guard(),calm)
+            self.assertEqual(client.operations,['snapshot','snapshot']);self.assertEqual(client.interactions,0)
+            self.assertTrue(runner.guard_blocking({**calm,'guard_busy':None}))
+            self.assertTrue(runner.guard_blocking({**calm,'guard_busy':0}))
+
     def test_normal_thirty_second_combat_waits_until_dead_without_lighting_input(self):
         hostile={'type':'minecraft:drowned','hostile':True,'health':20,'alive':True}
         first={**snapshot(tick=100),'entities':[hostile]}

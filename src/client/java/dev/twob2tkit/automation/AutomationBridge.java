@@ -1167,7 +1167,7 @@ public final class AutomationBridge {
         if(active==null)rescue.addProperty("id","native-air-"+UUID.randomUUID());
         rescue.addProperty("task_session",str(supervisionLease,"job_session"));
         rescue.addProperty("world_session",session(c));
-        rescue.addProperty("expected_revision",controlRevision-1);
+        rescue.addProperty("expected_revision",controlRevision);
         rescue.add("target",JSON.toJsonTree(new double[]{target.x,target.y,target.z}));
         rescue.addProperty("auto_air_return",true);
         rescue.addProperty("interrupted_op",previous);

@@ -1,6 +1,6 @@
 import unittest
-from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass,interaction_surface
-from lighting_cli import safe_noncolliding_plant,floor_step_lift
+from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass,interaction_surface,blocking_lighting_entities
+from lighting_cli import safe_noncolliding_plant,floor_step_lift,LightingBlocked
 
 def floor(pos):
  return {'pos':list(pos),'state':'Block{minecraft:dirt}','solid':True,'fluid':False,
@@ -8,6 +8,27 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_station_selection_avoids_a_real_passive_animal_before_flying_to_it(self):
+  cells={(0,64,0):floor((0,64,0))};low=[-4,62,-4];high=[4,90,4];start=[2.5,80,.5]
+  first=edge_candidates(cells,low,high,start)[0]['station']
+  cow={'type':'minecraft:cow','alive':True,'hostile':False,
+       'bounds':{'min':[first[0]-.45,65,first[2]-.45],'max':[first[0]+.45,66.4,first[2]+.45]}}
+  planned=edge_candidates(cells,low,high,start,entities=[cow])
+  self.assertTrue(planned);self.assertNotEqual(planned[0]['station'],first)
+  self.assertEqual(edge_candidates(cells,low,high,start,entities=[{'type':'minecraft:cow'}]),[])
+ def test_real_drop_beside_torch_face_does_not_block_normal_block_interaction(self):
+  item={'type':'minecraft:item','alive':True,'hostile':False,
+        'pos':[760810.1187,75.,798071.5811]}
+  orb={**item,'type':'minecraft:experience_orb'}
+  self.assertEqual(blocking_lighting_entities([item,orb]),[])
+  for kind in ('minecraft:zombie','minecraft:cow','minecraft:player','minecraft:armor_stand'):
+   row={**item,'type':kind}
+   self.assertEqual(blocking_lighting_entities([row]),[row])
+ def test_unknown_or_contradictory_drop_details_remain_blocking(self):
+  for row in ({'type':'minecraft:item'},None,{'type':'minecraft:item','alive':True,'hostile':True},
+              {'type':'minecraft:experience_orb','alive':'true','hostile':False}):
+   self.assertEqual(blocking_lighting_entities([row]),[row])
+  with self.assertRaises(LightingBlocked):blocking_lighting_entities(None)
  def test_intermediate_short_grass_is_a_ray_obstacle_even_when_walkable(self):
   grass={'pos':[1,65,0],'state':'Block{minecraft:short_grass}','passable':True,'solid':False,'fluid':False,'block_entity':False,'replaceable':True}
   self.assertFalse(ray_clear({(1,65,0):grass},[2.5,66.52,.5],(0,64,0)))
