@@ -8,6 +8,24 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_targeted_dark_floor_can_use_a_lit_support_farther_from_hostiles(self):
+  dark=(0,64,0);lit=(-9,64,0)
+  cells={dark:floor(dark),lit:{**floor(lit),'zombie_block_light_risk':False,'spawn_block_light':3}}
+  mob={'type':'minecraft:zombie','alive':True,'hostile':True,'pos':[2.5,65,.5],
+       'bounds':{'min':[2.2,65,.2],'max':[2.8,66.95,.8]}}
+  planned=edge_candidates(cells,[-13,62,-4],[5,90,4],[.5,80,.5],entities=[mob],
+      target_bounds={'min':[0,62,0],'max':[0,90,0]},hostile_clearance=12)
+  self.assertTrue(planned);self.assertTrue(all(r['support']==list(lit)and r['lit_neighbour']for r in planned))
+  self.assertTrue(all(__import__('math').hypot(r['station'][0]-2.5,r['station'][2]-.5)>=12 for r in planned))
+ def test_targeted_scan_does_not_rank_unrelated_dark_support_as_the_goal(self):
+  cells={(0,64,0):floor((0,64,0)),(12,64,0):floor((12,64,0))}
+  planned=edge_candidates(cells,[-4,62,-4],[16,90,4],[.5,80,.5],
+      target_bounds={'min':[-1,62,-1],'max':[1,90,1]})
+  self.assertTrue(planned);self.assertTrue(all(r['support']==[0,64,0]for r in planned))
+ def test_hostile_clearance_and_target_bounds_reject_unknown_scope(self):
+  for value in (True,-1,41,float('nan')):
+   with self.assertRaises(ValueError):edge_candidates({},[-4,62,-4],[4,90,4],[.5,80,.5],hostile_clearance=value)
+  with self.assertRaises(ValueError):edge_candidates({},[-4,62,-4],[4,90,4],[.5,80,.5],target_bounds={'min':[-5,62,-4],'max':[4,90,4]})
  def test_native_guard_binding_accepts_only_verified_host_engine_pairs(self):
   state={'kit_version':'2026.10.9.2','runtime_version':'1.7.89','runtime_host_api':3,'guard_busy':False}
   self.assertTrue(verified_native_guard_binding(state))

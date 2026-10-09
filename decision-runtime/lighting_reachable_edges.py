@@ -204,16 +204,22 @@ def lowest_transit_height(cells,start,entry,ceiling):
     return None
 
 
-def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False,entities=None,station_height=1.1):
+def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False,entities=None,station_height=1.1,target_bounds=None,hostile_clearance=0):
     if type(station_height)not in (int,float)or not math.isfinite(station_height)or not 1.1<=station_height<=3.3:
         raise ValueError('Station height must remain within verified normal block reach')
     low, high = bounds(low, high)
+    if type(hostile_clearance)not in (int,float)or not math.isfinite(hostile_clearance)or not 0<=hostile_clearance<=40:
+        raise ValueError('Hostile station clearance must be explicit and bounded')
+    target_low,target_high=(bounds(target_bounds['min'],target_bounds['max'])if target_bounds is not None else (low,high))
+    if any(target_low[i]<low[i]or target_high[i]>high[i]for i in range(3)):
+        raise ValueError('Target lighting bounds must be contained in the complete scan')
     validate_native_details(cells)
     dark = [p for p,r in cells.items() if r.get('zombie_block_light_risk')is True
             and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)
+            and all(target_low[i]<=p[i]<=target_high[i]for i in range(3))
             and(not surface_only or exterior_surface_support(cells,p))]
     supports=[p for p in dark if safe_dark_support(cells[p])]
-    lit_neighbour=not supports and bool(dark)
+    lit_neighbour=(not supports or hostile_clearance>0)and bool(dark)
     if lit_neighbour:
         supports=[p for p,r in cells.items()if safe_support(r,require_dark=False)
                   and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)
@@ -231,6 +237,11 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
             if not low[0]<=sx<=high[0] or not low[2]<=sz<=high[2]:
                 continue
             station=[sx+.5,y+station_height,sz+.5]
+            if hostile_clearance>0:
+                threats=[e for e in (entities or [])if not isinstance(e,dict)or e.get('hostile')is True]
+                if any(not isinstance(e,dict)or not isinstance(e.get('pos'),list)or len(e['pos'])!=3
+                    or any(type(v)not in (int,float)or not math.isfinite(v)for v in e['pos'])
+                    or math.hypot(station[0]-e['pos'][0],station[2]-e['pos'][2])<hostile_clearance for e in threats):continue
             if entities is not None:
                 pre_low=[min(support[i],math.floor(station[i]-(.35 if i!=1 else 0)))for i in range(3)]
                 pre_high=[max(target[i],math.floor(station[i]+(.35 if i!=1 else 1.81+1.62)))+1 for i in range(3)]
@@ -262,7 +273,7 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
 
 
 class ReachableEdgeLightingRun(LightingRun):
-    def __init__(self,*args,surface_only=False,native_guard_only=False,station_height=1.1,**kwargs):
+    def __init__(self,*args,surface_only=False,native_guard_only=False,station_height=1.1,target_bounds=None,hostile_clearance=0,**kwargs):
         if type(station_height)not in (int,float)or not math.isfinite(station_height)or not 1.1<=station_height<=3.3:
             raise ValueError('Station height must remain within verified normal block reach')
         if type(native_guard_only)is not bool:raise ValueError('Native guard mode must be explicit boolean')
@@ -274,11 +285,21 @@ class ReachableEdgeLightingRun(LightingRun):
         self.report['surface_only']=surface_only
         self.native_guard_only=native_guard_only;self.report['native_guard_only']=native_guard_only
         self.station_height=station_height;self.report['station_height']=station_height
+        self.target_bounds=target_bounds;self.hostile_clearance=hostile_clearance
+        if type(hostile_clearance)not in (int,float)or not math.isfinite(hostile_clearance)or not 0<=hostile_clearance<=40:
+            raise ValueError('Hostile station clearance must be explicit and bounded')
+        if target_bounds is not None:
+            lo,hi=bounds(target_bounds['min'],target_bounds['max'])
+            if any(lo[i]<self.low[i]or hi[i]>self.high[i]for i in range(3)):raise ValueError('Target bounds exceed scan')
+        self.report['target_bounds']=target_bounds;self.report['hostile_clearance']=hostile_clearance
         self.last_entry_route=None
         self.keep_low_between_placements=False
     def counts(self,cells):
+        complete_cells=cells
+        target=getattr(self,'target_bounds',None)
+        if target is not None:cells={p:r for p,r in cells.items()if all(target['min'][i]<=p[i]<=target['max'][i]for i in range(3))}
         if not self.surface_only:return risk_counts(cells,self.protected)
-        selected={p:r for p,r in cells.items()if r.get('zombie_spawn_floor')and exterior_surface_support(cells,p)}
+        selected={p:r for p,r in cells.items()if r.get('zombie_spawn_floor')and exterior_surface_support(complete_cells,p)}
         return risk_counts(selected,self.protected)
     def follow_route(self,route,state):
         for waypoint in compress_axis_route(route):
@@ -387,7 +408,8 @@ class ReachableEdgeLightingRun(LightingRun):
             self.report['after']=counts;self.save()
             if not counts['unprotected_dark_floor']:break
             candidates=edge_candidates(cells,self.low,self.high,self.fresh()['pos'],self.protected,
-                surface_only=self.surface_only,entities=reply['scan_entities'],station_height=getattr(self,'station_height',1.1))
+                surface_only=self.surface_only,entities=reply['scan_entities'],station_height=getattr(self,'station_height',1.1),
+                target_bounds=getattr(self,'target_bounds',None),hostile_clearance=getattr(self,'hostile_clearance',0))
             if not candidates:break
             self.place_edge(candidates[0],i)
         if counts['unprotected_dark_floor']==0:
