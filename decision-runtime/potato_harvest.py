@@ -116,7 +116,7 @@ def _same_except(before, after, allowed):
 
 
 
-def _registered_wheat(c, request, journal):
+def _registered_wheat(c, request, journal, known_replant=None):
     """The harvest uses an existing explicit planting registry, never invents one."""
     root = getattr(c, 'root', None)
     if root is None:
@@ -181,10 +181,11 @@ def _registered_wheat(c, request, journal):
                     or not isinstance(observed.get('scan_entities'),list)
                     or observed.get('unloaded_chunks',0)):
                 raise FarmWait('WAIT_REGISTERED_FARM','Current complete field scope or inventory changed')
-            records={_key(pos):{'planted':True}for pos in layout['cells']}
+            records={_key(pos):{'planted':pos!=known_replant}for pos in layout['cells']}
             rows=survey_rows(observed,layout,records)
             if any(_properties(rows.get(tuple(pos),{}),'farmland','moisture',7)is None
-                   or _properties(rows.get((pos[0],pos[1]+1,pos[2]),{}),'wheat','age',7)is None
+                   or (pos==known_replant and (pos[0],pos[1]+1,pos[2])in rows
+                       or pos!=known_replant and _properties(rows.get((pos[0],pos[1]+1,pos[2]),{}),'wheat','age',7)is None)
                    for pos in layout['cells']):
                 raise FarmWait('WAIT_REGISTERED_FARM','Every original cell must still be wheat on actual farmland')
             frames.append(observed);last=observed['time']
@@ -194,7 +195,7 @@ def _registered_wheat(c, request, journal):
         write_json(current_proof,{'world_session':c.world,'scope':scope,'registry':str(registry),
             'original_registry_sha256':hashlib.sha256(original_registry).hexdigest(),
             'original_planting_sha256':hashlib.sha256(original_planting).hexdigest(),
-            'original_bytes_unchanged':True,'new_planting_credit':0,'frames':frames})
+            'original_bytes_unchanged':True,'new_planting_credit':0,'known_current_harvested_empty_cell':known_replant,'frames':frames})
     write_json(active, {'schema': 1, 'scope': scope, 'world_session': c.world, 'journal': str(Path(journal).resolve())})
     return {'registry': str(registry), 'planting_journal': str(planted_path), 'field_key': key,
             'current_field_proof':str(current_proof)if current_proof else None}
@@ -202,7 +203,7 @@ def _registered_wheat(c, request, journal):
 
 def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
         bonemeal_budget=16, max_bonemeal_per_cell=4, pickup_seconds=6,
-        pickup=None, sleep=time.sleep, monotonic=time.monotonic, _recover_only=False):
+        pickup=None, plant_access=None, sleep=time.sleep, monotonic=time.monotonic, _recover_only=False):
     """Grow optionally, harvest only fresh age=7, prove pickup, then reseed once.
 
     request['bonemeal'] must be True to use bone meal. Journal reuse continues
@@ -225,6 +226,8 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
         raise ValueError('Bone meal authorization must be boolean')
     if pickup is not None and not callable(pickup):
         raise ValueError('Pickup must be an explicitly supplied callback or None')
+    if plant_access is not None and not callable(plant_access):
+        raise ValueError('Plant access must be an explicitly supplied callback or None')
     directory = Path(out); directory.mkdir(parents=True, exist_ok=True)
     scope = {'server': c.server.strip().lower().removesuffix(':25565'),
              'layout': layout, 'bonemeal': request.get('bonemeal', False)}
@@ -255,6 +258,8 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
     if book.get('scope') != scope or book.get('world_session') != c.world:
         return result('WAIT_CONTROL', 'Saved harvest belongs to another world/scope')
     resume = book.get('pending')
+    if resume and resume.get('plant_access_pending'):
+        return result('WAIT_RECONCILE','Earlier planting access remains unresolved; no movement replay')
     if resume and resume.get('operation') not in ('await_loot', 'await_replant'):
         return result('WAIT_RECONCILE', 'A saved single action is unresolved; no replay is sent')
     if _recover_only and (not resume or resume.get('operation') not in ('await_loot', 'await_replant')):
@@ -266,7 +271,16 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
             raise FarmWait('WAIT_SAFETY', 'Injury marker is unavailable')
         if wheat:
             _lease(c, initial, hurt)
-            book['registration'] = _registered_wheat(c, request, path)
+            known_replant=None
+            if resume and resume.get('operation')in ('await_replant','await_loot'):
+                p=resume.get('pos');record=book.get('cells',{}).get(_key(p),{})if isinstance(p,list)else{}
+                witness=resume if resume.get('operation')=='await_loot'else record.get('harvest',{})
+                if (p not in layout['harvest_cells'] or not witness.get('native_mining_confirmed')
+                        or resume.get('operation')=='await_replant'and witness.get('remaining_count')!=0
+                        or resume.get('operation')=='await_loot'and witness.get('crop_removed')is not True):
+                    raise FarmWait('WAIT_RECONCILE','Current empty-cell restoration lacks confirmed original harvest/pickup')
+                known_replant=p
+            book['registration'] = _registered_wheat(c, request, path, known_replant)
             book.pop('active_journal', None)
 
         def status():
@@ -525,6 +539,12 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
                 ready = result('REPLANT_READY', 'Known loot reconciled by reads; one saved harvested cell awaits reseed')
                 ready.update(recoverable_known_loot=True, known_loot=[], remaining_count=0)
                 return ready
+            if plant_access is not None:
+                if book['pending'].get('plant_access_pending'):
+                    raise FarmWait('WAIT_RECONCILE','Earlier planting access remains unresolved; no movement replay')
+                book['pending']['plant_access_pending']={'stage':'before_plant','pos':pos[:],'before_time':status()['time']};save()
+                answer=plant_access(c,pos,status(),'before_plant');status()
+                book['pending']['plant_access_pending']=None;record['plant_access_before']=str(type(answer).__name__);save()
             select(seed); before, rows, _ = survey(pos, pre_ids)
             if crop in rows or _counts(before)[seed] < 5:
                 raise FarmWait('WAIT_RECONCILE', 'Fresh air, farmland and actual reseed stock plus reserve are required')
@@ -544,6 +564,9 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
                 raise FarmWait('WAIT_RECONCILE', 'Reseed needs exactly one actual planting item consumed and two fresh age-zero frames')
             record['plant'] = {**book['pending'], 'observed_times': times, 'after_counts': dict(_counts(after))}
             record['replanted'] = True; book['pending'] = None; resume = None; save()
+            if plant_access is not None:
+                book['pending']={'operation':'plant_access_return','pos':pos[:],'stage':'after_plant'};save()
+                plant_access(c,pos,status(),'after_plant');status();book['pending']=None;save()
         final, _, _ = survey()
         book[descriptor.quantity_key+'_after'] = _counts(final)[seed]
         if wheat:book['wheat_after'] = _counts(final)[produce]

@@ -84,6 +84,22 @@ class PotatoLootFlightTest(unittest.TestCase):
             client,observation,drop=self.prepare();client.entities[0]['stack']['item']=item;drop['stack']['item']=item
             with self.assertRaises(FarmWait):make_pickup([0,63,0])(client,drop,observation)
             self.assertEqual([],self.moves(client))
+    def test_known_wheat_seed_at_lower_edge_uses_observed_dry_column_then_returns(self):
+        client,_,drop=self.prepare();client.entities[0].update(pos=[-2.1,62.9375,.5],stack={'item':'minecraft:wheat_seeds','count':2})
+        drop={**copy.deepcopy(client.entities[0]),'remaining_count':2};observation=client.status()
+        client.rows[(-3,62,0)]={'pos':[-3,62,0],'state':'Block{minecraft:farmland}[moisture=7]',
+            'fluid':False,'block_entity':False,'solid':False,'passable':True}
+        original=client.request
+        def scan(op,**params):
+            answer=original(op,**params)
+            if op=='scan':
+                total=__import__('math').prod(b-a+1 for a,b in zip(params['min'],params['max']))
+                answer.update(phase='done',scan_cells_read=total,scan_total_cells=total)
+            return answer
+        client.request=scan
+        result=make_pickup([0,63,0],crop='wheat')(client,drop,observation)
+        moves=self.moves(client);self.assertEqual(4,len(moves));self.assertAlmostEqual(63.1375,moves[1]['target'][1])
+        self.assertEqual([.5,64.6,.5],moves[-1]['target']);self.assertTrue(result['movement_only'])
 
 
 if __name__ == '__main__': unittest.main()

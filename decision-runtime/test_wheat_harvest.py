@@ -135,6 +135,36 @@ class WheatHarvestTests(unittest.TestCase):
         self.assertTrue(all(record['harvest']['native_mining_confirmed'] for record in book['cells'].values()))
         self.assertTrue(all(record['wheat_gain']==1 and record['seed_gain']==2 for record in book['cells'].values()))
         self.assertTrue(all(len(record['plant']['observed_times'])==2 for record in book['cells'].values()))
+    def test_owned_plant_access_runs_once_before_use_and_after_confirmed_reseed(self):
+        stages=[]
+        def access(c,pos,state,stage):
+            stages.append((stage,pos[:],c.plant_calls))
+            c.extra['pos']=[pos[0]+.5,pos[1]+1.6,pos[2]+.5]if stage=='before_plant'else[.5,64.6,.5]
+            return {'movement_only':True}
+        result=self.execute({**REQUEST,'cells':[[1,63,0]]},plant_access=access)
+        self.assertEqual('done',result['phase'],result)
+        self.assertEqual([('before_plant',[1,63,0],0),('after_plant',[1,63,0],1)],stages)
+        self.assertEqual(1,self.client.plant_calls)
+    def test_unknown_plant_access_keeps_single_attempt_and_never_replays_movement(self):
+        attempted=[]
+        def access(*args):attempted.append(True);raise RuntimeError('unknown original movement')
+        request={**REQUEST,'cells':[[1,63,0]]}
+        first=self.execute(request,plant_access=access)
+        self.assertEqual('await_replant',self.book(first)['pending']['operation'])
+        self.assertTrue(self.book(first)['pending']['plant_access_pending'])
+        second=self.execute(request,plant_access=access)
+        self.assertEqual('WAIT_RECONCILE',second['code']);self.assertEqual(1,len(attempted));self.assertEqual(0,self.client.plant_calls)
+    def test_explicit_reverification_resumes_only_confirmed_current_harvested_empty_cell(self):
+        self.client.pickup_delay=None
+        request={**REQUEST,'cells':[[1,63,0]],'reverify_registered_field':True}
+        first=self.execute(request,pickup_seconds=.5)
+        self.assertEqual('await_loot',self.book(first)['pending']['operation'])
+        for entity in list(self.client.entities):
+            self.client.credit(entity['stack']['item'],entity['stack']['count'])
+        self.client.entities=[];self.client.pending_pickup=None
+        second=self.execute(request)
+        self.assertEqual('done',second['phase'],second)
+        self.assertEqual(1,sum(op=='mine_block'for op,_ in self.client.calls));self.assertEqual(1,self.client.plant_calls)
 
     def test_zero_seed_drops_are_not_guessed_from_wheat_and_preserve_four_seed_reserve(self):
         self.client.seeds=0

@@ -5,6 +5,23 @@ from potato_farm import FarmWait, POTATO, crop_descriptor, plan
 from potato_harvest import _lease
 
 
+def make_plant_access(center, *, radius=2, checkpoint=lambda:None):
+    """Normal flight above one confirmed harvested AIR cell, then center return."""
+    layout=plan({'authorized':True,'center':center,'radius':radius,'crop':'wheat'})
+    home=[center[0]+.5,center[1]+1.6,center[2]+.5]
+    def access(c,pos,observation,stage):
+        if pos not in layout['cells']or stage not in ('before_plant','after_plant'):
+            raise FarmWait('WAIT_ROUTE','Plant access must stay in the exact original field')
+        checkpoint();_lease(c,observation,observation['recent_hurt_at'])
+        target=[pos[0]+.5,pos[1]+1.6,pos[2]+.5]if stage=='before_plant'else home
+        reply=c.checked('navigate',target=target,arrival=.15,seconds=15,air_only=True)
+        actual=c.status();checkpoint();_lease(c,actual,observation['recent_hurt_at'])
+        if math.dist(actual['pos'],target)>.6:
+            raise FarmWait('WAIT_RECONCILE','Actual planting access pose is unproved; no repeated flight')
+        return {'request_id':reply.get('id'),'movement_only':True,'stage':stage}
+    return access
+
+
 def make_pickup(center, *, radius=2, checkpoint=lambda: None, crop='potato'):
     """Return run(pickup=...) for a caller already hovering above source water.
 
@@ -24,7 +41,7 @@ def make_pickup(center, *, radius=2, checkpoint=lambda: None, crop='potato'):
 
     def bounded(pos):
         return (point(pos) and all(layout['scan_min'][i] <= pos[i] < layout['scan_max'][i]+1 for i in (0, 2))
-                and center[1] <= pos[1] <= center[1]+2)
+                and center[1]-(1 if descriptor.name=='wheat'else 0) <= pos[1] <= center[1]+2)
 
     def pickup(c, drop, observation):
         uuid = drop.get('uuid'); stack = drop.get('stack') or {}
@@ -60,12 +77,37 @@ def make_pickup(center, *, radius=2, checkpoint=lambda: None, crop='potato'):
                 or not point(fresh.get('pos')) or math.dist(fresh['pos'], home) > .65):
             raise FarmWait('WAIT_LOOT', 'Known UUID/stack or bounded center-hover context changed')
         target = [current['pos'][0], home[1], current['pos'][2]]
+        lower=None
+        if home[1]-current['pos'][1]>1.3:
+            lo=[math.floor(target[0])-1,center[1]-2,math.floor(target[2])-1]
+            hi=[lo[0]+2,center[1]+3,lo[2]+2]
+            scan=c.request('scan',min=lo,max=hi,details=True);safe(scan)
+            total=math.prod(b-a+1 for a,b in zip(lo,hi))
+            if (scan.get('phase')!='done'or scan.get('world_session')!=c.world
+                    or scan.get('scan_cells_read')!=total or scan.get('scan_total_cells')!=total):
+                raise FarmWait('WAIT_LOOT','Lower field-edge pickup needs a complete current dry support scan')
+            rows={tuple(r['pos']):r for r in scan.get('blocks',[])}
+            x,z=math.floor(target[0]),math.floor(target[2]);y=math.floor(current['pos'][1]-.001)
+            floor=rows.get((x,y,z),{})
+            if (floor.get('fluid')is not False or floor.get('block_entity')is not False
+                    or not (floor.get('state')in ('Block{minecraft:dirt}','Block{minecraft:grass_block}[snowy=false]')
+                            or floor.get('state','').startswith('Block{minecraft:farmland}[moisture='))
+                    or any(r.get('fluid')or r.get('block_entity')for p,r in rows.items()if p[0]==x and p[2]==z and p[1]>y)):
+                raise FarmWait('WAIT_LOOT','Lower field edge changed or has water/container hazards')
+            target=[x+.5,home[1],z+.5]
+            lower=[x+.5,current['pos'][1]+.2,z+.5]
         claimed.add(uuid)  # Helper journals this callback before invocation.
         safe(c.status())
         outward = c.checked('navigate', target=target, arrival=.25, seconds=10, air_only=True)
         reached = c.request('snapshot'); safe(reached)
         if not point(reached.get('pos')) or math.dist(reached['pos'], target) > .6:
             raise FarmWait('WAIT_RECONCILE', 'Outward flight arrival is unproved; no movement replay')
+        if lower is not None:
+            c.checked('navigate',target=lower,arrival=.1,seconds=10,air_only=True)
+            actual=c.request('snapshot');safe(actual)
+            if math.dist(actual['pos'],lower)>.4:
+                raise FarmWait('WAIT_RECONCILE','Lower field-edge arrival is unproved')
+            c.checked('navigate',target=target,arrival=.15,seconds=10,air_only=True)
         safe(c.status())
         inward = c.checked('navigate', target=home, arrival=.25, seconds=10, air_only=True)
         returned = c.request('snapshot'); safe(returned)
