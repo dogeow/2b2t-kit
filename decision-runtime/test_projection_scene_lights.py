@@ -1,9 +1,29 @@
 import copy
 import unittest
-from projection_scene_lights import registered_map_light
+from projection_scene_lights import registered_map_light, completed_map_light_positions
+from lighting_cli import EVIDENCE
 
 
 class RegisteredMapLightTests(unittest.TestCase):
+    def test_completed_reports_require_current_world_and_exact_placement_evidence(self):
+        row = {'target':[4,65,8], 'world_session':'current', 'state':'verified',
+               'later_verified_frames':2, 'observed_block_state':'Block{minecraft:torch}',
+               'evidence_scope':EVIDENCE, 'interaction_request':'one', 'task_session':'task',
+               'before_stock':7, 'after_stock':6}
+        report = {'world_session':'current', 'state':'bounded_run_finished',
+                  'park_native_confirmed':True, 'placed':[row]}
+        self.assertEqual(frozenset({(4,65,8)}), completed_map_light_positions([report], 'current', 64))
+        for change in ({'world_session':'old'}, {'park_native_confirmed':False}, {'state':'running'}):
+            with self.assertRaises(ValueError):
+                completed_map_light_positions([{**report, **change}], 'current', 64)
+        for change in ({'world_session':'old'}, {'target':[4,64,8]}, {'after_stock':5},
+                       {'later_verified_frames':1}, {'evidence_scope':'prediction'},
+                       {'observed_block_state':'Block{minecraft:wall_torch}'}, {'interaction_request':''}):
+            with self.assertRaises(ValueError):
+                completed_map_light_positions([{**report, 'placed':[{**row, **change}]}], 'current', 64)
+        with self.assertRaises(ValueError):
+            completed_map_light_positions([report, report], 'current', 64)
+
     def setUp(self):
         self.light = {'pos': [4, 65, 8], 'state': 'Block{minecraft:torch}',
                       'passable': True, 'solid': False, 'fluid': False,
