@@ -966,6 +966,12 @@ public final class AutomationBridge {
     }
     private static int ticks, deadline, desiredCount;
     private static int ownedMaterialMenu=-1;
+    public static void serverFurnaceContent(Object sender,int menuId,java.util.List<ItemStack> items){
+        EmptyFurnaceRecovery.content(Minecraft.getInstance(),sender,menuId,items);
+    }
+    public static void serverFurnaceSlot(Object sender,int menuId,int slot,ItemStack item){
+        EmptyFurnaceRecovery.slot(Minecraft.getInstance(),sender,menuId,slot,item);
+    }
     private static JsonObject guardScope;
     private static boolean guardBusy,healthRecoveryHold,materialDefensiveRise;
     private static long lastFoodRecoveryWarning;
@@ -1638,6 +1644,9 @@ public final class AutomationBridge {
                 catch(Exception e){finish(c,"waiting",e.getMessage());return true;}
             }
             if(!state(c,target).equals(str(active,"expected_state"))){finish(c,"error","mining target changed");return true;}
+            if(active.has("recover_empty_furnace")&&active.get("recover_empty_furnace").getAsBoolean())
+                try{EmptyFurnaceRecovery.validateMining(c,active,target);}
+                catch(Exception changed){finish(c,"waiting",changed.getMessage());return true;}
             Vec3 aim=blockAim(target,active);if(c.player.getEyePosition().distanceTo(aim)>c.player.blockInteractionRange()-.2){finish(c,"waiting","mining target moved out of reach");return true;}RotationAim.Look look=RotationAim.lookAt(c.player,aim);RotationAim.apply(c.player,look);
             BlockHitResult hit=c.level.clip(new ClipContext(c.player.getEyePosition(),aim,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,c.player));
             if(!hit.getBlockPos().equals(target)){finish(c,"waiting","mining target is occluded");return true;}
@@ -2526,6 +2535,7 @@ public final class AutomationBridge {
                             dryPavingAckTarget(r));
                         dryPavingConfirmedTick=-1;
                     }
+                    EmptyFurnaceRecovery.opening(c,currentMaterialRequest(c,r)?str(r,"task_session"):"",pos);
                     c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,checkedHit);settle(r,terrainReplace||dryPaving?80:8);
                 }catch(Exception e){finish(c,"error",e.getMessage());}
             });
@@ -2561,6 +2571,10 @@ public final class AutomationBridge {
                     throw new IllegalStateException("Snowball harvesting requires the selected non-Silk-Touch diamond or netherite shovel with 33 durability");
             }
             boolean recovery=command.equals("recover_shulker");
+            if(r.has("recover_empty_furnace")&&(!r.get("recover_empty_furnace").isJsonPrimitive()
+                    ||!r.getAsJsonPrimitive("recover_empty_furnace").isBoolean()))
+                throw new IllegalArgumentException("Empty furnace retrieval flag must be boolean");
+            boolean furnaceRecovery=command.equals("mine_block")&&r.has("recover_empty_furnace")&&r.get("recover_empty_furnace").getAsBoolean();
             boolean underwater=r.has("underwater_gravel")&&r.get("underwater_gravel").getAsBoolean();
             if(underwater){
                 if(supervisionLease==null||!str(supervisionLease,"kind").equals("materials")
@@ -2585,7 +2599,7 @@ public final class AutomationBridge {
             }
             boolean allowed=ContainerRecoveryPolicy.allowed(BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(pos).getBlock()).toString(),recovery,c.player.getInventory().getFreeSlot()>=0?1:0);
             if(recovery && !allowed)throw new IllegalStateException("Shulker retrieval requires an actual shulker box and a free inventory slot");
-            if(c.level.getBlockEntity(pos)!=null && !allowed)throw new IllegalStateException("Block entities and containers are protected");
+            if(c.level.getBlockEntity(pos)!=null && !allowed && !furnaceRecovery)throw new IllegalStateException("Block entities and containers are protected");
             if(c.level.getBlockState(pos).getDestroySpeed(c.level,pos)<0 || c.level.isEmptyBlock(pos))throw new IllegalStateException("Target is not mineable");
             if(c.player.onGround() && c.player.blockPosition().below().equals(pos)){
                 boolean ownedMaterial=supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")
@@ -2598,6 +2612,8 @@ public final class AutomationBridge {
             }
             if(!underwater)for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
             if(c.player.getEyePosition().distanceTo(blockAim(pos,r))>c.player.blockInteractionRange()-.2)throw new IllegalStateException("Mining target out of reach");
+            if(furnaceRecovery)EmptyFurnaceRecovery.prepare(c,r,pos,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy
+                &&c.player.getHealth()>=19&&c.player.getFoodData().getFoodLevel()>=18&&!KitKeys.manualMovementDown(c));
             KitClient.stopWork("切换到指定方块修正");
             if(terrainReplace)terrainServerConfirmation.begin(session(c),str(r,"id"),
                 str(r,"terrain_replace_stage"),terrainAckTarget(r),terrainAckExpected(r));
@@ -4053,6 +4069,7 @@ public final class AutomationBridge {
             m.addProperty("anvil_too_expensive",anvil.getCost()>=40&&!c.player.hasInfiniteMaterials());
         }
         j.add("menu",m);j.addProperty("map_audit_protocol",1);j.addProperty("map_create_protocol",1);
+        j.addProperty("empty_furnace_recovery_protocol",1);j.add("empty_furnace_recovery",EmptyFurnaceRecovery.snapshot(c));
         j.addProperty("projection_air_seed_protocol",1);j.addProperty("projection_air_seed_axis_protocol",1);j.addProperty("air_place",MeteorModules.isActive(MeteorModules.AIR_PLACE));
         j.addProperty("projection_scaffold_fill_protocol",1);
         j.addProperty("bucket_water_protocol",1);

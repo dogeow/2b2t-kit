@@ -2,6 +2,7 @@
 import math
 import time
 import json
+from container_hand import select_container_hand
 
 
 class OutdoorChestChanged(RuntimeError):
@@ -40,8 +41,7 @@ def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=
         raise OutdoorChestChanged(pos, block_id, expected, rows)
     if any(r['pos'][1]>y and r['state']!='Block{minecraft:air}' for r in rows):
         raise RuntimeError('Chest landing column is obstructed')
-    if client.status()['hand']['item']!='minecraft:diamond_sword':
-        client.checked('select_item',item='minecraft:diamond_sword')
+    hand=select_container_hand(client)
     # Cruise can finish with horizontal momentum and a one-block arrival radius.
     # Use the collision-aware block approach before disabling Flight to land.
     client.checked('approach_block',pos=pos,face='up',expected_state=expected,stand_distance=.65,seconds=90)
@@ -53,7 +53,7 @@ def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=
         if state.get('on_ground') and math.hypot(state['velocity'][0],state['velocity'][2])<.03:break
         if time.monotonic()>=until:raise RuntimeError('Chest approach did not settle on the ground')
         time.sleep(.15)
-    client.checked('interact',pos=pos,face='up',expected_state=expected,expected_hand='minecraft:diamond_sword')
+    client.checked('interact',pos=pos,face='up',expected_state=expected,expected_hand=hand)
     state = wait_container_contents(client,'ChestMenu',require_nonempty=not allow_empty)
     return {**state, '_verified_chest': {'pos': list(pos), 'state': expected}}
 

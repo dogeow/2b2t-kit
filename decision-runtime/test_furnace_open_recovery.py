@@ -21,6 +21,7 @@ class Client:
         self.scan_revision=self.rev;self.scan_change=lambda index,reply:None
         self.approach_reply={'phase':'done'}
         self.state={'connected':True,'world_session':self.world,'control_revision':self.rev,
+            'hand':{'item':'minecraft:bow'},'inventory':[{'slot':0,'item':'minecraft:diamond_sword','count':1}],
             'manual_movement':False,'screen':'','health':20,'guard_armed':True,'guard_pve_only':True,
             'guard_busy':False,'safety_hold':{'active':False},
             'menu':{'id':0,'type':'InventoryMenu','cursor':{'item':'minecraft:air','count':0}},
@@ -39,7 +40,7 @@ class Client:
         self.scan_change(self.scans,reply);return reply
     def checked(self,op,**params):
         self.actions.append((op,params));assert op in ('select_item','interact')
-        if op=='select_item':return {'phase':'done'}
+        if op=='select_item':self.state['hand']['item']=params['item'];return {'phase':'done'}
         self.last='interact-'+str(len(self.actions))
         if self.errors:
             error=self.errors.pop(0)
@@ -114,6 +115,21 @@ class FurnaceOpenRecoveryTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'Target block changed'):self.opening(c)
         self.assertEqual(3,c.scans);self.assertEqual(2,len(self.uses(c)))
         self.assertFalse(any(op in ('slot_click','distribute') for op,_ in c.actions))
+
+    def test_exact_predispatch_occluded_face_uses_one_fresh_other_face(self):
+        c=Client(rows=[FALSE]*4,errors=[RuntimeError('Target interaction face is occluded or out of reach')])
+        with patch('furnace_batches.approach_faces',side_effect=['up','north']) as approach, \
+             patch('furnace_batches.wait_container_contents',return_value={'opened':True}):
+            self.assertEqual({'opened':True},snapshot(c,POS))
+        self.assertEqual(['up','north'],[p['face']for p in self.uses(c)])
+        self.assertNotIn('up',approach.call_args_list[1].args[3])
+
+    def test_foreign_or_unknown_occluded_face_receipt_never_issues_another_use(self):
+        for change in (lambda p:p.update(request_id='foreign'),lambda p:p.update(phase='waiting'),
+                       lambda p:p['params'].update(face='south')):
+            c=Client(rows=[FALSE]*4,errors=[RuntimeError('Target interaction face is occluded or out of reach')]);c.proof_change=change
+            with self.assertRaises(RuntimeError):self.opening(c)
+            self.assertEqual(1,len(self.uses(c)))
 
 
 class FurnaceAccessLitTest(unittest.TestCase):

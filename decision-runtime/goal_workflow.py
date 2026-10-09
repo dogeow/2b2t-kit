@@ -5,6 +5,7 @@ from material_client import Handoff
 from build_supervisor import stocks
 from recipe_catalog import RecipeCatalog
 import craft_recipe
+from container_hand import select_container_hand
 from material_manufacture import manufacture as manufacture_targets
 
 def audit(client,label):
@@ -21,8 +22,8 @@ def open_workbench(client,pos,near_depot=None):
     rows=client.request('scan',min=pos,max=pos)['blocks']
     if len(rows)!=1 or rows[0]['state']!='Block{minecraft:crafting_table}':raise RuntimeError('Workbench position changed')
     client.checked('approach_block',pos=pos,face='up',expected_state=rows[0]['state'],seconds=180)
-    client.checked('select_item',item='minecraft:diamond_sword')
-    client.checked('interact',pos=pos,face='up',expected_state=rows[0]['state'],expected_hand='minecraft:diamond_sword')
+    hand=select_container_hand(client)
+    client.checked('interact',pos=pos,face='up',expected_state=rows[0]['state'],expected_hand=hand)
     until=time.monotonic()+5
     while time.monotonic()<until:
         menu=client.status()['menu']

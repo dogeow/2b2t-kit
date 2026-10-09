@@ -10,6 +10,7 @@ from kit_runtime.journal import write_json
 from container_access import wait_container_contents
 from smelting_fuel import FuelCatalog, policy as fuel_policy, select_fuels, recipe_jar_for_client
 from types import SimpleNamespace
+from container_hand import select_container_hand
 
 
 def _furnace_row(client,pos,*,same_world=False):
@@ -25,16 +26,16 @@ def _furnace_row(client,pos,*,same_world=False):
     return rows[0]
 
 
-def _owned_open_rejection(client,error,params):
+def _owned_open_rejection(client,error,params,expected_detail='Target block changed'):
     proof=getattr(client,'last_terminal_evidence',{})
     task,world=getattr(client,'task',None),getattr(client,'world',None)
     sent=proof.get('params',{}) if isinstance(proof,dict) else {}
-    return (str(error)=='Target block changed' and isinstance(task,str) and bool(task)
+    return (str(error)==expected_detail and isinstance(task,str) and bool(task)
             and isinstance(world,str) and bool(world) and isinstance(sent,dict)
             and proof.get('request_id')==getattr(client,'last',None) and bool(proof.get('request_id'))
             and proof.get('world_session')==world and proof.get('task_session')==task
             and proof.get('op')=='interact' and proof.get('phase')=='error'
-            and proof.get('detail')=='Target block changed' and sent.get('task_session')==task
+            and proof.get('detail')==expected_detail and sent.get('task_session')==task
             and all(sent.get(key)==value for key,value in params.items()))
 
 
@@ -64,21 +65,33 @@ def snapshot(client,pos):
     row=_furnace_row(client,pos,same_world=True);identity=row['state']
     face=approach_faces(client,list(pos),identity,('up','north','south','west','east'),seconds=45,
                         allow_state_change=_lit_only_transition)
-    client.checked('select_item',item='minecraft:diamond_sword')
+    hand=select_container_hand(client)
     # Refresh after selection's acknowledgement delay, immediately before use.
     row=_furnace_row(client,pos,same_world=True)
     if row['state']!=identity and not _lit_only_transition(identity,row['state']):
         raise RuntimeError('Owned ordinary furnace identity changed before opening')
-    params={'pos':list(pos),'face':face,'expected_state':row['state'],'expected_hand':'minecraft:diamond_sword'}
+    params={'pos':list(pos),'face':face,'expected_state':row['state'],'expected_hand':hand}
     try:client.checked('interact',**params)
     except RuntimeError as error:
         # This exact native rejection occurs before any useItemOn is sent.
         # Unknown/time-out/foreign replies never grant permission for another use.
-        if not _owned_open_rejection(client,error,params) or not _closed_material_owner(client):raise
-        fresh=_furnace_row(client,pos,same_world=True)
-        if not _lit_only_transition(row['state'],fresh['state']) or not _closed_material_owner(client):raise
-        params['expected_state']=fresh['state']
-        client.checked('interact',**params)  # One bounded re-open, not a loading/slot-click retry.
+        occluded='Target interaction face is occluded or out of reach'
+        if _owned_open_rejection(client,error,params,occluded) and _closed_material_owner(client):
+            fresh=_furnace_row(client,pos,same_world=True)
+            if fresh['state']!=row['state'] and not _lit_only_transition(row['state'],fresh['state']):raise
+            if not _closed_material_owner(client):raise
+            alternatives=tuple(f for f in ('up','north','south','west','east') if f!=face)
+            face=approach_faces(client,list(pos),fresh['state'],alternatives,seconds=45,
+                                allow_state_change=_lit_only_transition)
+            fresh=_furnace_row(client,pos,same_world=True)
+            if not _closed_material_owner(client):raise
+            params.update(face=face,expected_state=fresh['state'])
+        else:
+            if not _owned_open_rejection(client,error,params) or not _closed_material_owner(client):raise
+            fresh=_furnace_row(client,pos,same_world=True)
+            if not _lit_only_transition(row['state'],fresh['state']) or not _closed_material_owner(client):raise
+            params['expected_state']=fresh['state']
+        client.checked('interact',**params)  # One new use only after proof that the old use was never dispatched.
     return wait_container_contents(client,'FurnaceMenu',require_nonempty=False)
 
 

@@ -21,12 +21,14 @@ public abstract class BucketInventoryUpdatesMixin {
     }
     @Inject(method="handleContainerSetSlot",at=@At("TAIL"))
     private void kit$bucketSlot(ClientboundContainerSetSlotPacket packet,CallbackInfo info) {
+        AutomationBridge.serverFurnaceSlot(this, packet.getContainerId(), packet.getSlot(), packet.getItem());
         if((Object)this==Minecraft.getInstance().getConnection()&&packet.getContainerId()==0)
             AutomationBridge.serverBucketInventory(this,0,packet.getSlot(),false,packet.getItem());
     }
     @Inject(method="handleContainerContent",at=@At("TAIL"))
     private void kit$bucketContent(ClientboundContainerSetContentPacket packet,CallbackInfo info) {
         var c=Minecraft.getInstance();
+        AutomationBridge.serverFurnaceContent(this, packet.containerId(), packet.items());
         if((Object)this!=c.getConnection()||c.player==null||packet.containerId()!=0)return;
         int slot=36+c.player.getInventory().getSelectedSlot();
         if(slot>=36&&slot<45&&slot<packet.items().size())

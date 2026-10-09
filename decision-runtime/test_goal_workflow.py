@@ -8,15 +8,16 @@ from goal_workflow import open_workbench,subset_matches,build_phase,station_targ
 
 class Client:
     def __init__(self, approach_fails=False):
-        self.calls=[];self.opened=False;self.approach_fails=approach_fails
+        self.calls=[];self.opened=False;self.approach_fails=approach_fails;self.hand='minecraft:bow'
     def status(self):
-        return {'inventory':[{'item':'minecraft:diamond_sword','count':1}],
+        return {'hand':{'item':self.hand},'inventory':[{'slot':0,'item':'minecraft:diamond_sword','count':1}],
                 'menu':{'type':'CraftingMenu' if self.opened else 'InventoryMenu'}}
     def fetch(self,*args):self.calls.append('near_depot');return {'phase':'done'}
     def request(self,op,**args):
         self.calls.append(op);return {'blocks':[{'state':'Block{minecraft:crafting_table}'}]}
     def checked(self,op,**args):
         self.calls.append(op)
+        if op=='select_item':self.hand=args['item']
         if op=='approach_block' and self.approach_fails:raise RuntimeError('No clear path')
         if op=='interact':self.opened=True
 
@@ -57,6 +58,12 @@ class WorkbenchTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):open_workbench(c,[10,65,20])
         self.assertNotIn('interact',c.calls)
         self.assertFalse(c.opened)
+    def test_workbench_opens_with_the_carried_netherite_sword(self):
+        class Netherite(Client):
+            def status(self):
+                state=super().status();state['inventory'][0]['item']='minecraft:netherite_sword';return state
+        c=Netherite();open_workbench(c,[10,65,20]);self.assertTrue(c.opened)
+        self.assertEqual('minecraft:netherite_sword',c.hand)
 
 
 class BuildProgressTests(unittest.TestCase):
