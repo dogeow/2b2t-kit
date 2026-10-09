@@ -204,7 +204,12 @@ def lowest_transit_height(cells,start,entry,ceiling):
     return None
 
 
-def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False,entities=None,station_height=1.1,target_bounds=None,hostile_clearance=0):
+def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False,entities=None,station_height=1.1,target_bounds=None,hostile_clearance=0,support_predicate=None):
+    if support_predicate is not None and not callable(support_predicate):
+        raise ValueError('Explicit support policy must be callable')
+    def supported(row,dark):
+        return (support_predicate(row,dark)is True if support_predicate is not None
+                else safe_support(row,require_dark=dark))
     if type(station_height)not in (int,float)or not math.isfinite(station_height)or not 1.1<=station_height<=3.3:
         raise ValueError('Station height must remain within verified normal block reach')
     low, high = bounds(low, high)
@@ -218,10 +223,10 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
             and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)
             and all(target_low[i]<=p[i]<=target_high[i]for i in range(3))
             and(not surface_only or exterior_surface_support(cells,p))]
-    supports=[p for p in dark if safe_dark_support(cells[p])]
+    supports=[p for p in dark if supported(cells[p],True)]
     lit_neighbour=(not supports or hostile_clearance>0)and bool(dark)
     if lit_neighbour:
-        supports=[p for p,r in cells.items()if safe_support(r,require_dark=False)
+        supports=[p for p,r in cells.items()if supported(r,False)
                   and (target_bounds is None or target_low[1]<=p[1]<=target_high[1])
                   and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)
                   and any(sum(abs(a-b)for a,b in zip(p,q))<=11 for q in dark)]
@@ -274,7 +279,10 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
 
 
 class ReachableEdgeLightingRun(LightingRun):
-    def __init__(self,*args,surface_only=False,native_guard_only=False,station_height=1.1,target_bounds=None,hostile_clearance=0,**kwargs):
+    def __init__(self,*args,surface_only=False,native_guard_only=False,station_height=1.1,target_bounds=None,hostile_clearance=0,support_predicate=None,support_policy_name=None,**kwargs):
+        if support_predicate is not None and (not callable(support_predicate)
+                or not isinstance(support_policy_name,str) or not support_policy_name):
+            raise ValueError('Explicit support policy requires a callable and recorded name')
         if type(station_height)not in (int,float)or not math.isfinite(station_height)or not 1.1<=station_height<=3.3:
             raise ValueError('Station height must remain within verified normal block reach')
         if type(native_guard_only)is not bool:raise ValueError('Native guard mode must be explicit boolean')
@@ -283,6 +291,7 @@ class ReachableEdgeLightingRun(LightingRun):
             if not verified_native_guard_binding(initial):
                 raise LightingBlocked('Native guard mode requires the verified current Kit/runtime binding')
         super().__init__(*args,**kwargs);self.surface_only=surface_only
+        self.support_predicate=support_predicate;self.report['support_policy']=support_policy_name or 'natural_safe_supports'
         self.report['surface_only']=surface_only
         self.native_guard_only=native_guard_only;self.report['native_guard_only']=native_guard_only
         self.station_height=station_height;self.report['station_height']=station_height
@@ -351,7 +360,10 @@ class ReachableEdgeLightingRun(LightingRun):
         hi=[max(target[i],math.floor(station[i]+(.35 if i!=1 else 1.81+1.62)))for i in range(3)]
         current=self.scan(lo,hi,f'edge-pre-{index}.json');cells=scan_cells(current,lo,hi,self.c.world)
         row=cells.get(support)
-        if (not row or row['state']!=candidate['support_state']or not safe_support(row,require_dark=not candidate.get('lit_neighbour',False))
+        allowed=(self.support_predicate(row,not candidate.get('lit_neighbour',False))is True
+                 if row is not None and self.support_predicate is not None
+                 else row is not None and safe_support(row,require_dark=not candidate.get('lit_neighbour',False)))
+        if (not row or row['state']!=candidate['support_state']or not allowed
                 or tuple(target)in cells and not replaceable_short_grass(cells[tuple(target)]) or candidate_protected(support,target,self.protected)
                 or blocking_lighting_entities(current['scan_entities'])):
             raise LightingBlocked('Current adjacent support/target/entity proof changed')
@@ -410,7 +422,8 @@ class ReachableEdgeLightingRun(LightingRun):
             if not counts['unprotected_dark_floor']:break
             candidates=edge_candidates(cells,self.low,self.high,self.fresh()['pos'],self.protected,
                 surface_only=self.surface_only,entities=reply['scan_entities'],station_height=getattr(self,'station_height',1.1),
-                target_bounds=getattr(self,'target_bounds',None),hostile_clearance=getattr(self,'hostile_clearance',0))
+                target_bounds=getattr(self,'target_bounds',None),hostile_clearance=getattr(self,'hostile_clearance',0),
+                support_predicate=getattr(self,'support_predicate',None))
             if not candidates:break
             self.place_edge(candidates[0],i)
         if counts['unprotected_dark_floor']==0:

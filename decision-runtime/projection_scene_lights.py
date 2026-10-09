@@ -3,6 +3,25 @@
 from lighting_cli import EVIDENCE
 
 
+def matching_map_support(row, expected, image_y, require_dark=True):
+    """Only an exact current pixel in the caller's verified immutable model."""
+    if not isinstance(row,dict):
+        return False
+    pos=row.get('pos')
+    if (not isinstance(pos,list) or len(pos)!=3 or any(type(v)is not int for v in pos)
+            or pos[1]!=image_y or not isinstance(expected,dict)):
+        return False
+    goal=expected.get(tuple(pos))
+    state=goal.get('state') if isinstance(goal,dict) else goal
+    return bool(isinstance(state,str) and state!='Block{minecraft:air}' and row.get('state')==state
+        and row.get('solid')is True and row.get('fluid')is False and row.get('block_entity')is False
+        and row.get('zombie_spawn_floor')is True
+        and type(row.get('spawn_block_light'))is int and 0<=row['spawn_block_light']<=15
+        and type(row.get('monster_spawn_block_light_limit'))is int and 0<=row['monster_spawn_block_light_limit']<=15
+        and (not require_dark or row.get('zombie_block_light_risk')is True
+             and row['spawn_block_light']<=row['monster_spawn_block_light_limit']))
+
+
 def completed_map_light_positions(reports, world, image_y):
     """Accept only completed current-world normal standing-torch placements."""
     positions = set()

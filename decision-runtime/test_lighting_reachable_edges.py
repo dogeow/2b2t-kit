@@ -8,6 +8,14 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_explicit_exact_model_support_can_light_wood_without_relaxing_default_policy(self):
+  from projection_scene_lights import matching_map_support
+  pos=(0,64,0);row={**floor(pos),'state':'Block{minecraft:oak_planks}'};cells={pos:row}
+  lo=[-4,58,-4];hi=[4,90,4];start=[.5,80,.5]
+  self.assertEqual([],edge_candidates(cells,lo,hi,start))
+  expected={pos:row['state']};policy=lambda r,dark:matching_map_support(r,expected,64,dark)
+  self.assertTrue(edge_candidates(cells,lo,hi,start,support_predicate=policy))
+  self.assertEqual([],edge_candidates(cells,lo,hi,start,support_predicate=lambda r,d:None))
  def test_flat_target_neighbour_lights_do_not_fall_back_to_a_lower_floor(self):
   target=(0,64,0);lower=(-3,63,0)
   cells={target:{**floor(target),'state':'Block{minecraft:oak_planks}'},

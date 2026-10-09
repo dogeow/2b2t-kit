@@ -1,10 +1,21 @@
 import copy
 import unittest
-from projection_scene_lights import registered_map_light, completed_map_light_positions
+from projection_scene_lights import registered_map_light, completed_map_light_positions, matching_map_support
 from lighting_cli import EVIDENCE
 
 
 class RegisteredMapLightTests(unittest.TestCase):
+    def test_exact_map_wood_support_never_generalizes_to_other_buildings_or_unsafe_pixels(self):
+        expected={(4,64,8):'Block{minecraft:oak_planks}'}
+        row={'pos':[4,64,8],'state':'Block{minecraft:oak_planks}','solid':True,'fluid':False,
+             'block_entity':False,'zombie_spawn_floor':True,'spawn_block_light':0,
+             'monster_spawn_block_light_limit':0,'zombie_block_light_risk':True}
+        self.assertTrue(matching_map_support(row,expected,64))
+        for change in ({'pos':[5,64,8]},{'state':'Block{minecraft:cherry_planks}'},{'fluid':True},
+                       {'block_entity':True},{'solid':False},{'spawn_block_light':1}):
+            self.assertFalse(matching_map_support({**row,**change},expected,64))
+        self.assertFalse(matching_map_support(row,{},64))
+        self.assertFalse(matching_map_support(row,expected,63))
     def test_completed_reports_require_current_world_and_exact_placement_evidence(self):
         row = {'target':[4,65,8], 'world_session':'current', 'state':'verified',
                'later_verified_frames':2, 'observed_block_state':'Block{minecraft:torch}',
