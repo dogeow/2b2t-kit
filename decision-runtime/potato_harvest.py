@@ -161,7 +161,8 @@ def _registered_wheat(c, request, journal):
                 raise error
     current_proof=None
     if reverify:
-        if planted.get('complete')is not True:
+        if (planted.get('complete')is not True or any(
+                planted.get('cells',{}).get(_key(pos),{}).get('planted')is not True for pos in layout['cells'])):
             raise FarmWait('WAIT_RECONCILE','Only an originally completed field can be reverified')
         # Do not rewrite the old world or planting receipts. Re-read every
         # registered cell through this exact current material owner instead.

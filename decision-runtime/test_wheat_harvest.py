@@ -200,6 +200,16 @@ class WheatHarvestTests(unittest.TestCase):
         self.client.request=partial
         result=self.execute({**REQUEST,'reverify_registered_field':True})
         self.assertEqual('WAIT_REGISTERED_FARM',result['code']);self.assertFalse(self.actions())
+    def test_explicit_reverification_cannot_bypass_original_harvest_or_other_unregistered_cells(self):
+        prior=self.root/'prior-harvest.json';prior.write_text(json.dumps({'pending':{'operation':'harvest'}}))
+        active=self.client.registry.parent/'harvest-active.json';active.write_text(json.dumps({'journal':str(prior)}))
+        result=self.execute({**REQUEST,'reverify_registered_field':True})
+        self.assertEqual('WAIT_RECONCILE',result['code']);self.assertFalse(self.client.calls)
+        active.unlink();planted=json.loads(self.client.plant_journal.read_text())
+        planted['cells'][_key(farm_plan(REQUEST)['cells'][0])]['planted']=False
+        self.client.plant_journal.write_text(json.dumps(planted))
+        result=self.execute({**REQUEST,'cells':[[1,63,0]],'reverify_registered_field':True})
+        self.assertEqual('WAIT_RECONCILE',result['code']);self.assertFalse(self.client.calls)
 
     def test_only_mature_wheat_on_actual_farmland_is_eligible(self):
         for changed in ('grass','young','other-crop'):
