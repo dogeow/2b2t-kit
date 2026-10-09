@@ -13,6 +13,24 @@ from recipe_catalog import RecipeCatalog
 
 
 class CherryBatchCapacityTest(unittest.TestCase):
+    def test_exact_mud_recipes_use_one_balanced_inventory_batch(self):
+        slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]
+        slots[9].update(item='minecraft:mud',count=32,max_stack=64)
+        slots[10].update(item='minecraft:wheat',count=32,max_stack=64)
+        state={'menu':{'slots':slots},'inventory':[{**r,'slot':i}for i,r in enumerate(slots[9:45])]}
+        before=copy.deepcopy(state)
+        packed={'output':'minecraft:packed_mud','produces':1,'width':2,
+                'ingredients':{'minecraft:mud':[1],'minecraft:wheat':[2]}}
+        batch=_inventory_batch(state,packed,32)
+        self.assertEqual((32,32),(batch['rounds'],batch['produced']))
+        self.assertEqual([32,32],[r['count']for r in batch['actions']]);self.assertEqual(before,state)
+        slots[9].update(item='minecraft:packed_mud',count=32);slots[10].update(item='minecraft:air',count=0,max_stack=1)
+        state['inventory']=[{**r,'slot':i}for i,r in enumerate(slots[9:45])]
+        bricks={'output':'minecraft:mud_bricks','produces':4,'width':2,
+                'ingredients':{'minecraft:packed_mud':[1,2,3,4]}}
+        batch=_inventory_batch(state,bricks,32)
+        self.assertEqual((8,32),(batch['rounds'],batch['produced']))
+        self.assertEqual([8]*4,[r['count']for r in batch['actions']])
     def test_four_log_wood_recipe_batches_all_nineteen_rounds_and_preserves_27_logs(self):
         for raw,output in [('minecraft:cherry_log','minecraft:cherry_wood'),
                            ('minecraft:stripped_cherry_log','minecraft:stripped_cherry_wood')]:

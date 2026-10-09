@@ -23,6 +23,19 @@ SPEC={'recipe_id':'white_concrete_powder','output':'minecraft:white_concrete_pow
       'ingredients':{'minecraft:sand':[1,2,3,4],'minecraft:gravel':[5,6,7,8],'minecraft:white_dye':[9]}}
 
 class StackRecipeTest(unittest.TestCase):
+    def test_mud_bulk_allowlist_requires_exact_no_remainder_inputs_and_outputs(self):
+        packed={'output':'minecraft:packed_mud','produces':1,'width':2,
+                'ingredients':{'minecraft:mud':[1],'minecraft:wheat':[2]}}
+        self.assertTrue(supported(packed))
+        for change in ({'produces':2},{'width':1},
+                       {'ingredients':{'minecraft:mud':[1],'minecraft:water_bucket':[2]}},
+                       {'ingredients':{'minecraft:mud':[1],'minecraft:wheat':[1]}}):
+            self.assertFalse(supported({**packed,**change}))
+        bricks={'output':'minecraft:mud_bricks','produces':4,'width':2,
+                'ingredients':{'minecraft:packed_mud':[1,2,3,4]}}
+        self.assertTrue(supported(bricks));self.assertTrue(supported({**bricks,'width':3,'ingredients':{'minecraft:packed_mud':[1,2,4,5]}}))
+        self.assertFalse(supported({**bricks,'produces':1}))
+        self.assertFalse(supported({**bricks,'ingredients':{'minecraft:mud':[1,2,3,4]}}))
     def test_wood_bulk_allowlist_requires_the_exact_no_remainder_four_to_three_recipe(self):
         good={'output':'minecraft:cherry_wood','produces':3,'width':2,
               'ingredients':{'minecraft:cherry_log':[1,2,3,4]}}

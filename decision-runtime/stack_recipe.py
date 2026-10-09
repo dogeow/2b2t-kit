@@ -19,6 +19,16 @@ WOOD_INPUTS={'minecraft:cherry_wood':'minecraft:cherry_log',
              'minecraft:stripped_cherry_wood':'minecraft:stripped_cherry_log'}
 
 def supported(spec):
+    if spec.get('output')=='minecraft:packed_mud':
+        ingredients=spec.get('ingredients')or{}
+        return bool(spec.get('width')in (2,3)and spec.get('produces')==1
+            and set(ingredients)=={'minecraft:mud','minecraft:wheat'}
+            and all(isinstance(v,list)and len(v)==1 for v in ingredients.values())
+            and sorted(cell for values in ingredients.values()for cell in values)==[1,2])
+    if spec.get('output')=='minecraft:mud_bricks':
+        cells=[1,2,3,4]if spec.get('width')==2 else[1,2,4,5]if spec.get('width')==3 else None
+        return bool(cells and spec.get('produces')==4
+            and spec.get('ingredients')=={'minecraft:packed_mud':cells})
     if spec.get('output') in WOOD_INPUTS:
         raw=WOOD_INPUTS[spec['output']]
         cells=[1,2,3,4] if spec.get('width')==2 else [1,2,4,5] if spec.get('width')==3 else None
