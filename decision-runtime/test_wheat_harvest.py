@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -60,6 +61,10 @@ class WheatHarvestClient(FarmClient):
                             self.credit(drop['stack']['item'],drop['stack']['count']);self.entities.remove(drop)
                     self.pending_pickup=None
             answer=super().request(op,**params)
+            self.last='wheat-scan-'+str(len(self.calls))
+            total=math.prod(b-a+1 for a,b in zip(params['min'],params['max']))
+            answer.update(id=self.last,phase='done',scan_cells_read=total,scan_total_cells=total,
+                          scan_start_revision=self.rev,scan_end_revision=self.rev)
             for entity in answer['scan_entities']:entity.pop('stack',None)
             return answer
         if op=='select_item':
@@ -166,6 +171,35 @@ class WheatHarvestTests(unittest.TestCase):
         planted=json.loads(self.client.plant_journal.read_text());planted['pending']={'operation':'plant'}
         self.client.plant_journal.write_text(json.dumps(planted))
         result=self.execute();self.assertEqual('WAIT_RECONCILE',result['code']);self.assertFalse(self.client.calls)
+
+    def test_explicit_current_field_reverification_preserves_old_world_receipts(self):
+        registry=json.loads(self.client.registry.read_text());registry['world_session']='old-world'
+        planted=json.loads(self.client.plant_journal.read_text());planted['world_session']='old-world'
+        self.client.registry.write_text(json.dumps(registry));self.client.plant_journal.write_text(json.dumps(planted))
+        old_registry=self.client.registry.read_bytes();old_planting=self.client.plant_journal.read_bytes()
+        result=self.execute({**REQUEST,'reverify_registered_field':True})
+        self.assertEqual('done',result['phase'],result)
+        self.assertEqual(old_registry,self.client.registry.read_bytes())
+        self.assertEqual(old_planting,self.client.plant_journal.read_bytes())
+        proof=Path(self.book(result)['registration']['current_field_proof'])
+        self.assertTrue(proof.exists());self.assertEqual(2,len(json.loads(proof.read_text())['frames']))
+    def test_cross_world_without_explicit_reverify_and_changed_field_never_harvest(self):
+        registry=json.loads(self.client.registry.read_text());registry['world_session']='old-world'
+        planted=json.loads(self.client.plant_journal.read_text());planted['world_session']='old-world'
+        self.client.registry.write_text(json.dumps(registry));self.client.plant_journal.write_text(json.dumps(planted))
+        result=self.execute();self.assertEqual('WAIT_REGISTERED_FARM',result['code']);self.assertFalse(self.actions())
+        self.client.rows[(1,64,0)]['state']='Block{minecraft:potatoes}[age=7]'
+        result=self.execute({**REQUEST,'reverify_registered_field':True})
+        self.assertEqual('waiting',result['phase']);self.assertFalse(self.actions())
+    def test_explicit_field_reverification_rejects_incomplete_native_scan_before_harvest(self):
+        original=self.client.request
+        def partial(op,**params):
+            reply=original(op,**params)
+            if op=='scan':reply['scan_cells_read']-=1
+            return reply
+        self.client.request=partial
+        result=self.execute({**REQUEST,'reverify_registered_field':True})
+        self.assertEqual('WAIT_REGISTERED_FARM',result['code']);self.assertFalse(self.actions())
 
     def test_only_mature_wheat_on_actual_farmland_is_eligible(self):
         for changed in ('grass','young','other-crop'):

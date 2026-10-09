@@ -126,18 +126,22 @@ def _registered_wheat(c, request, journal):
              'dimension': 'minecraft:overworld', 'layout': layout}
     key = hashlib.sha256(json.dumps(scope, sort_keys=True).encode()).hexdigest()[:16]
     registry = Path(root)/'farms'/key/'registry.json'
+    reverify=request.get('reverify_registered_field',False)
+    if type(reverify)is not bool:
+        raise ValueError('Registered-field re-verification must be explicit boolean')
     try:
         if registry.stat().st_size > 1_000_000:
             raise ValueError('Registry exceeds limit')
         saved = json.loads(registry.read_text())
-        if saved.get('scope') != scope or saved.get('world_session') != c.world:
+        if saved.get('scope') != scope or not reverify and saved.get('world_session') != c.world:
             raise ValueError('Registry belongs to another layout/world')
         directory = Path(saved['directory'])
         planted_path = directory/('wheat-farm-'+key+'.json')
         if planted_path.stat().st_size > 4_000_000:
             raise ValueError('Planting journal exceeds limit')
         planted = json.loads(planted_path.read_text())
-        if planted.get('scope') != scope or planted.get('world_session') != c.world:
+        if (planted.get('scope') != scope or planted.get('world_session') != saved.get('world_session')
+                or not reverify and planted.get('world_session') != c.world):
             raise ValueError('Planting journal scope differs')
     except (OSError, ValueError, TypeError, KeyError) as error:
         raise FarmWait('WAIT_REGISTERED_FARM', 'Existing wheat planting registration is unavailable: '+str(error)) from error
@@ -155,8 +159,44 @@ def _registered_wheat(c, request, journal):
                 error = FarmWait('WAIT_RECONCILE', 'Another original wheat harvest is unresolved; reuse '+str(prior_path))
                 error.active_journal = str(prior_path)
                 raise error
+    current_proof=None
+    if reverify:
+        if planted.get('complete')is not True:
+            raise FarmWait('WAIT_RECONCILE','Only an originally completed field can be reverified')
+        # Do not rewrite the old world or planting receipts. Re-read every
+        # registered cell through this exact current material owner instead.
+        original_registry=registry.read_bytes();original_planting=planted_path.read_bytes()
+        before=c.status();hurt=before.get('recent_hurt_at');_lease(c,before,hurt)
+        frames=[];last=before['time'];counts=_counts(before)
+        cell_count=math.prod(b-a+1 for a,b in zip(layout['scan_min'],layout['scan_max']))
+        for _ in range(2):
+            observed=c.request('scan',min=layout['scan_min'],max=layout['scan_max'],details=True)
+            _lease(c,observed,hurt)
+            if (observed.get('phase')!='done' or observed.get('id')!=getattr(c,'last',None)
+                    or observed.get('scan_cells_read')!=cell_count or observed.get('scan_total_cells')!=cell_count
+                    or observed.get('scan_start_revision')!=c.rev or observed.get('scan_end_revision')!=c.rev
+                    or observed.get('time',0)<=last or _counts(observed)!=counts
+                    or not valid_entity_scope(observed.get('scan_entity_scope'))
+                    or not isinstance(observed.get('scan_entities'),list)
+                    or observed.get('unloaded_chunks',0)):
+                raise FarmWait('WAIT_REGISTERED_FARM','Current complete field scope or inventory changed')
+            records={_key(pos):{'planted':True}for pos in layout['cells']}
+            rows=survey_rows(observed,layout,records)
+            if any(_properties(rows.get(tuple(pos),{}),'farmland','moisture',7)is None
+                   or _properties(rows.get((pos[0],pos[1]+1,pos[2]),{}),'wheat','age',7)is None
+                   for pos in layout['cells']):
+                raise FarmWait('WAIT_REGISTERED_FARM','Every original cell must still be wheat on actual farmland')
+            frames.append(observed);last=observed['time']
+        if registry.read_bytes()!=original_registry or planted_path.read_bytes()!=original_planting:
+            raise FarmWait('WAIT_RECONCILE','Original registration changed during current field re-verification')
+        current_proof=Path(journal).with_suffix('.current-field-proof.json')
+        write_json(current_proof,{'world_session':c.world,'scope':scope,'registry':str(registry),
+            'original_registry_sha256':hashlib.sha256(original_registry).hexdigest(),
+            'original_planting_sha256':hashlib.sha256(original_planting).hexdigest(),
+            'original_bytes_unchanged':True,'new_planting_credit':0,'frames':frames})
     write_json(active, {'schema': 1, 'scope': scope, 'world_session': c.world, 'journal': str(Path(journal).resolve())})
-    return {'registry': str(registry), 'planting_journal': str(planted_path), 'field_key': key}
+    return {'registry': str(registry), 'planting_journal': str(planted_path), 'field_key': key,
+            'current_field_proof':str(current_proof)if current_proof else None}
 
 
 def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
