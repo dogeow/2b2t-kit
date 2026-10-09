@@ -117,6 +117,20 @@ final class BorerRangedCombat {
         // permits other work; returning into reach/LOS makes this gate false immediately.
         boolean previouslyYielding=separation.yielding();
         if(!missingRestored && safeVerticalSeparation(c,nearby)){
+            boolean allAbsent=session.pending()&&session.targets().stream()
+                .allMatch(e->c.level.getEntity(e.getId())!=e);
+            double projectedY=p.getY()+Math.min(0,p.getDeltaMovement().y)*10;
+            double verifiedClearance=session.targets().stream().mapToDouble(e->{
+                var seen=separation.lastVerified(c.level,e.getUUID());
+                return seen==null?Double.NaN:projectedY-seen.topY();
+            }).min().orElse(Double.NaN);
+            if(GuardWeaponPolicy.missingTargetDisengage(engine.standaloneGuard,session.timedOut(),
+                    missingRestored,allAbsent,verifiedClearance)){
+                engine.fileLog(c,"area-defense-disengage-unobserved-safe uuids="
+                    +session.targets().stream().map(e->e.getUUID().toString()).toList()
+                    +" verified_clearance="+verifiedClearance+" confirmed_deaths=0");
+                end(c);return false;
+            }
             safetyRise.cancel();
             if(!previouslyYielding){
                 engine.fileLog(c,"area-defense-safe-deferred unresolved="+session.targets().size()+" confirmed_deaths=0");
@@ -198,7 +212,7 @@ final class BorerRangedCombat {
         }
         // A verified safe peek must reach attack range before its expired
         // attack budget can be renewed. Re-rising mid-route would undo it.
-        if(engine.standaloneGuard && !peek.active() && safetyRise(c))return true;
+        if(engine.standaloneGuard && !peek.active() && safetyRise(c,missingRestored))return true;
 		if (next == null) {
             rangedMode(false);
             releaseMiningMelee();
@@ -659,18 +673,27 @@ final class BorerRangedCombat {
             if(unarmed&&(distance<12||clearance<6))separation.revokeUnarmed(c.level,e.getUUID());
             currentlyObserved.add(e.getUUID());
             return new BorerCombatSeparation.Threat(true,ordinary,p.hasLineOfSight(e),swelling,
-                distance,clearance,false,unarmed);
+                distance,clearance,false,unarmed,harmlessSubmergedMelee(c,e,projectedY));
         }).toList();
-        boolean otherThreat=nearby.stream().anyMatch(e->e.isAlive()&&(
+        boolean otherThreat=nearby.stream().anyMatch(e->e.isAlive()&&!harmlessSubmergedMelee(c,e,projectedY)&&(
             BorerDefensePolicy.eligible(true,true,p.hasLineOfSight(e),rank(p,e),p.distanceTo(e))||creeperAlert(c,e)));
         boolean healthyDryClear=p.getHealth()>=19&&p.hurtTime==0&&!BorerThreats.recentlyHurt(p)
-            &&!BorerThreats.shouldYieldToCombat(p)&&!p.isInWater()&&!p.isInLava()&&!p.isOnFire()
+            &&!BorerThreats.shouldYieldToCombat(p)&&!incomingProjectile(c)&&!p.isInWater()&&!p.isInLava()&&!p.isOnFire()
             &&safeAir(c,p.blockPosition())&&safeAir(c,p.blockPosition().above())&&c.level.noCollision(p,p.getBoundingBox())
             &&clearSeparationBody(c);
         boolean safe=separation.observe(c.level,p.tickCount,BorerCombatSeparation.safe(engine.standaloneGuard,
             Boolean.TRUE.equals(BorerFlight.meteorFlightActive()),healthyDryClear,false,otherThreat,threats));
         if(safe)separation.verifyDeferred(c.level,currentlyObserved);
         return safe;
+    }
+    private boolean harmlessSubmergedMelee(Minecraft c,LivingEntity e,double projectedY){
+        var p=c.player;
+        boolean current=e.level()==c.level&&c.level.getEntity(e.getId())==e&&e.isAlive()
+            &&currentServerChunk(c,e.blockPosition())&&GuardWeaponPolicy.finiteBox(e.getBoundingBox());
+        boolean unarmed=ordinaryZombie(p,e)&&e.getMainHandItem().isEmpty()&&e.getOffhandItem().isEmpty();
+        return GuardWeaponPolicy.harmlessSubmergedMelee(current,unarmed,e.isInWater(),
+            !p.isInWater()&&!p.isInLava(),BorerThreats.currentReceivedMobHit(e,p),
+            projectedY-e.getBoundingBox().maxY);
     }
     private boolean clearSeparationBody(Minecraft c){
         var p=c.player;
@@ -737,7 +760,7 @@ final class BorerRangedCombat {
             return groundDefenseAfterRiseFailure(c, "flight_failed", "升空失败");
 		}
 	}
-    private boolean safetyRise(Minecraft c){
+    private boolean safetyRise(Minecraft c,boolean missingRestored){
         var p=c.player;
         if(c.level!=combatWorld||c.screen!=null||BorerAreaRunner.physicalMovementHeld(c,c.options.keyUp,c.options.keyDown,
             c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint)){
@@ -745,7 +768,9 @@ final class BorerRangedCombat {
         }
         var observed=session.targets().stream().filter(e->e instanceof Enemy&&e.isAlive()&&e.level()==c.level
             &&c.level.getEntity(e.getId())==e&&currentServerChunk(c,e.blockPosition())).toList();
-        if(observed.isEmpty()){safetyRise.cancel();return false;}
+        boolean missingRetreat=GuardWeaponPolicy.missingTargetRise(engine.standaloneGuard,
+            session.pending(),session.timedOut(),missingRestored,observed.size());
+        if(observed.isEmpty()&&!missingRetreat){safetyRise.cancel();return false;}
         boolean usableBow=usableGuardBow(c);
         var near=observed.stream().filter(e->GuardWeaponPolicy.safetyRiseNeeded(engine.standaloneGuard,true,true,
             session.contains(e.getUUID()),BorerThreats.isRangedCombatThreat(e,p),session.canAttack(e.getUUID()),
@@ -755,7 +780,8 @@ final class BorerRangedCombat {
             .min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
         boolean unarmedRanged=near!=null&&GuardWeaponPolicy.rangedWithoutWeaponRise(engine.standaloneGuard,true,true,
             session.contains(near.getUUID()),BorerThreats.isRangedCombatThreat(near,p),usableBow,p.distanceTo(near));
-        double rise=safetyRise.remaining(c.level,p.getY(),p.tickCount,near!=null,unarmedRanged?32:12);
+        double rise=safetyRise.remaining(c.level,p.getY(),p.tickCount,near!=null||missingRetreat,
+            unarmedRanged||missingRetreat?32:12);
         if(rise<=.25)return false;
         if(p.tickCount<safetyRiseRetryAfter&&p.getHealth()>=14)return false;
         cancelDraw(c);releaseZombieMelee();rangedMode(true);engine.pauseGuardMovement(c);

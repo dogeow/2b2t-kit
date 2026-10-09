@@ -2,6 +2,34 @@ package dev.twob2tkit.runtime.engine;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class GuardWeaponPolicyTest {
+ @Test void aWaterZombieFarBelowCannotBlockDryWorkButTridentAndHitsKeepDefense(){
+  assertTrue(GuardWeaponPolicy.harmlessSubmergedMelee(true,true,true,true,false,6));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedMelee(true,true,true,true,false,5.999));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedMelee(true,false,true,true,false,20));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedMelee(true,true,true,true,true,20));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedMelee(true,true,true,false,false,20));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedMelee(false,true,true,true,false,20));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedMelee(true,true,false,true,false,20));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedMelee(true,true,true,true,false,Double.NaN));
+ }
+ @Test void expiredUnobservedStandaloneFightRetreatsWithoutTreatingAbsenceAsDeath(){
+  assertTrue(GuardWeaponPolicy.missingTargetRise(true,true,true,false,0));
+  assertFalse(GuardWeaponPolicy.missingTargetRise(false,true,true,false,0));
+  assertFalse(GuardWeaponPolicy.missingTargetRise(true,false,true,false,0));
+  assertFalse(GuardWeaponPolicy.missingTargetRise(true,true,false,false,0));
+  assertFalse(GuardWeaponPolicy.missingTargetRise(true,true,true,true,0));
+  assertFalse(GuardWeaponPolicy.missingTargetRise(true,true,true,false,1));
+ }
+ @Test void unknownTargetsCannotDisengageWithoutTheVerifiedHighClearance(){
+  assertTrue(GuardWeaponPolicy.missingTargetDisengage(true,true,false,true,32));
+  assertFalse(GuardWeaponPolicy.missingTargetDisengage(true,true,false,true,31.999));
+  assertFalse(GuardWeaponPolicy.missingTargetDisengage(true,true,false,true,Double.NaN));
+  assertFalse(GuardWeaponPolicy.missingTargetDisengage(true,true,false,true,Double.POSITIVE_INFINITY));
+  assertFalse(GuardWeaponPolicy.missingTargetDisengage(false,true,false,true,60));
+  assertFalse(GuardWeaponPolicy.missingTargetDisengage(true,false,false,true,60));
+  assertFalse(GuardWeaponPolicy.missingTargetDisengage(true,true,true,true,60));
+  assertFalse(GuardWeaponPolicy.missingTargetDisengage(true,true,false,false,60));
+ }
 	@Test void independentZombieFallbackCannotUseGroundSword(){
 		assertFalse(GuardWeaponPolicy.groundSwordAllowed(true,true));
 		assertTrue(GuardWeaponPolicy.groundSwordAllowed(true,false));

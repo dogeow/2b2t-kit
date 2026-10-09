@@ -50,6 +50,22 @@ final class GuardWeaponPolicy {
 		return Math.max(0.0, desired - playerY);
 	}
     static boolean riseFailureNeedsExit(double health) { return health < 14; }
+    /** Missing identities are not dead; an expired standalone fight may retreat. */
+    static boolean missingTargetRise(boolean standalone,boolean pending,boolean expired,
+                                     boolean restoredMissing,int currentTargets){
+        return standalone&&pending&&expired&&!restoredMissing&&currentTargets==0;
+    }
+    /** Called only after the existing current-world quiet/body/threat separation proof. */
+    static boolean missingTargetDisengage(boolean standalone,boolean expired,boolean restoredMissing,
+                                         boolean allAbsent,double verifiedClearance){
+        return standalone&&expired&&!restoredMissing&&allAbsent
+            &&Double.isFinite(verifiedClearance)&&verifiedClearance>=32;
+    }
+    static boolean harmlessSubmergedMelee(boolean current,boolean unarmedZombie,boolean mobInWater,
+                                         boolean playerDry,boolean receivedHit,double predictedClearance){
+        return current&&unarmedZombie&&mobInWater&&playerDry&&!receivedHit
+            &&Double.isFinite(predictedClearance)&&predictedClearance>=6;
+    }
     static boolean safetyRiseNeeded(boolean standalone,boolean current,boolean aliveHostile,boolean engaged,
                                     boolean ranged,boolean canAttack,boolean visible,double distance){
         return standalone&&current&&aliveHostile&&engaged&&Double.isFinite(distance)&&distance>=0&&distance<=12

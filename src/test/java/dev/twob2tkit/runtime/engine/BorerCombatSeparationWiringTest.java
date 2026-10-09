@@ -5,6 +5,15 @@ import org.objectweb.asm.tree.*;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 class BorerCombatSeparationWiringTest {
+    @Test void harmlessWaterExceptionReadsCurrentWeaponsWaterAndDamageAndKeepsTheQuietGate()throws Exception{
+        var c=calls("BorerRangedCombat","harmlessSubmergedMelee");
+        assertTrue(c.containsAll(List.of("getEntity","isAlive","currentServerChunk","finiteBox",
+            "ordinaryZombie","getMainHandItem","getOffhandItem","isEmpty","isInWater","currentReceivedMobHit","getBoundingBox")));
+        var tick=calls("BorerRangedCombat","tick");
+        assertTrue(tick.indexOf("safeVerticalSeparation")<tick.indexOf("missingTargetDisengage"));
+        assertTrue(tick.contains("lastVerified"));
+        assertTrue(calls("BorerRangedCombat","safeVerticalSeparation").contains("incomingProjectile"));
+    }
     private MethodNode method(String cls,String name)throws Exception{var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/runtime/engine/"+cls+".class")){assertNotNull(in);new ClassReader(in).accept(node,0);}return node.methods.stream().filter(m->m.name.equals(name)).findFirst().orElseThrow();}
     private List<String> calls(String cls,String name)throws Exception{
         var result=new ArrayList<String>();

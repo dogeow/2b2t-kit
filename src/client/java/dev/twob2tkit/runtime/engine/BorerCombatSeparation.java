@@ -6,7 +6,12 @@ import java.util.*;
 final class BorerCombatSeparation {
     static final int QUIET_TICKS=20;
     record Threat(boolean observed,boolean ordinaryCreeper,boolean visible,boolean swelling,
-                  double distance,double clearanceBelowFeet,boolean previouslyVerifiedSafe,boolean unarmedZombie) {
+                  double distance,double clearanceBelowFeet,boolean previouslyVerifiedSafe,boolean unarmedZombie,
+                  boolean harmlessSubmergedMelee) {
+        Threat(boolean observed,boolean ordinaryCreeper,boolean visible,boolean swelling,double distance,double clearanceBelowFeet,
+               boolean previouslyVerifiedSafe,boolean unarmedZombie){
+            this(observed,ordinaryCreeper,visible,swelling,distance,clearanceBelowFeet,previouslyVerifiedSafe,unarmedZombie,false);
+        }
         Threat(boolean observed,boolean ordinaryCreeper,boolean visible,boolean swelling,double distance,double clearanceBelowFeet){
             this(observed,ordinaryCreeper,visible,swelling,distance,clearanceBelowFeet,false,false);
         }
@@ -28,7 +33,7 @@ final class BorerCombatSeparation {
                     &&(t.observed ? t.distance>=8.25&&t.clearanceBelowFeet>=4
                         : t.previouslyVerifiedSafe&&t.distance>=24&&t.clearanceBelowFeet>=16))
                     ||(t.unarmedZombie&&!t.ordinaryCreeper
-                        &&(t.observed ? t.distance>=12&&t.clearanceBelowFeet>=6
+                        &&(t.observed ? (t.distance>=12||t.harmlessSubmergedMelee)&&t.clearanceBelowFeet>=6
                             : t.previouslyVerifiedSafe&&t.distance>=24&&t.clearanceBelowFeet>=16))));
     }
     /** Only a currently tracked entity may update this evidence; removed entity references are never sampled. */

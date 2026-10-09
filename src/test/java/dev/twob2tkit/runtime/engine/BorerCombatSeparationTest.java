@@ -4,6 +4,17 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 class BorerCombatSeparationTest {
+    @Test void aCurrentlyObservedSubmergedUnarmedMobMayBeIgnoredFromSixBlocksAboveItsBody(){
+        var underwater=new BorerCombatSeparation.Threat(true,false,true,false,8,6,false,true,true);
+        assertTrue(BorerCombatSeparation.safe(true,true,true,false,false,List.of(underwater)));
+        assertFalse(BorerCombatSeparation.safe(true,true,false,false,false,List.of(underwater)));
+        assertFalse(BorerCombatSeparation.safe(true,true,true,false,true,List.of(underwater)));
+        for(var unsafe:List.of(new BorerCombatSeparation.Threat(true,false,true,false,8,5.99,false,true,true),
+                new BorerCombatSeparation.Threat(true,false,true,false,8,6,false,false,true),
+                new BorerCombatSeparation.Threat(false,false,false,false,8,6,true,true,true),
+                new BorerCombatSeparation.Threat(true,false,true,false,8,6,false,true,false)))
+            assertFalse(BorerCombatSeparation.safe(true,true,true,false,false,List.of(unsafe)));
+    }
     private final BorerCombatSeparation gate=new BorerCombatSeparation();
     private final Object world=new Object();
     private BorerCombatSeparation.Threat hidden(){return new BorerCombatSeparation.Threat(true,true,false,false,8.5,6.8);}
