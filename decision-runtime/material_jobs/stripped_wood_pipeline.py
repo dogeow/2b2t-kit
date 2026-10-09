@@ -325,9 +325,15 @@ def _run(c, profile, item, target_count, out, checkpoint, *, carried):
     axe_ready(axe)
     if scan(site)[0]!=RAW_STATE:raise JobPaused('Owned log changed before normal axe use')
     begin('strip_owned',cell=site['cell'],raw_state=RAW_STATE,axe=axe)
+    shield=None
+    menu=state().get('menu',{})
+    if menu.get('type')=='InventoryMenu' and len(menu.get('slots',[]))==46 and menu['slots'][45].get('item')=='minecraft:shield':
+        from axe_offhand import AxeOffhand
+        shield=AxeOffhand(c,out/('axe-offhand-'+str(time.time_ns()))).park()
     stripped=c.request('interact',pos=site['cell'],face=face,expected_state=RAW_STATE,expected_hand=axe['item'])
     if stripped.get('phase')!='done':return wait('wait_receipt','Axe use unknown; no retry or cleanup mutation')
     observed(site,STRIPPED_STATE,lambda stock:stock.get(RAW,0)==raw_before-1 and stock.get(STRIPPED,0)==stripped_before)
+    if shield is not None:shield.restore()
     latest=state()
     current_axe=next((r for r in latest['inventory'] if r.get('slot')==latest.get('selected_slot')),None)
     if not current_axe or axe_identity(current_axe)!=axe_identity(axe):raise JobPaused('Actual axe metadata changed while stripping')

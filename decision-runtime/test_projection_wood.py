@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 from projection_wood import log_target,anchors,use_with_margin,finish_beams,post_work,POST_ITEM
 from unittest.mock import patch
+from types import SimpleNamespace
 
 class PostClient:
  def __init__(self,out,targets=None):
@@ -64,6 +65,22 @@ class PostClient:
   raise AssertionError(op)
 
 class WoodTest(unittest.TestCase):
+ def test_offhand_shield_is_restored_only_after_confirmed_axe_transformation(self):
+  for confirmed in (True,False):
+   with tempfile.TemporaryDirectory()as folder:
+    c=PostClient(folder,targets=[[1,1,0]]);c.apply_interaction=confirmed
+    status=c.status
+    def with_shield():
+     s=status();slots=[{}for _ in range(46)];slots[45]={'item':'minecraft:shield','count':1}
+     s['menu']={'type':'InventoryMenu','slots':slots};return s
+    c.status=with_shield
+    guard=SimpleNamespace(restore=unittest.mock.Mock());holder=SimpleNamespace(park=lambda:guard)
+    with patch('axe_offhand.AxeOffhand',return_value=holder),patch('projection_wood.approach_faces',return_value='up'):
+     if confirmed:
+      self.assertEqual(1,len(finish_beams(c,limit=1,target_item=POST_ITEM,target_axis='y')['completed']));guard.restore.assert_called_once()
+     else:
+      with self.assertRaisesRegex(RuntimeError,'not confirmed'):finish_beams(c,limit=1,target_item=POST_ITEM,target_axis='y')
+      guard.restore.assert_not_called()
  def row(self,actual='Block{minecraft:air}'):
   return {'pos':[2,3,4],'expected':'Block{minecraft:stripped_spruce_log}[axis=x]','actual':actual,'kind':'missing','fluid':False,'adjacent_fluid':False,'block_entity':False}
  def test_same_axis_raw_logs_can_be_stripped_but_wrong_axis_is_preserved(self):

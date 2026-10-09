@@ -2,7 +2,7 @@
 
 No schematic substitution, commands, temporary scaffolds or existing-block removal.
 """
-import json,math
+import json,math,time
 from projection_completion import block_state
 from material_plan import inventory_counts
 from work_access import approach_faces,ApproachUnavailable
@@ -202,10 +202,25 @@ def finish_beams(client,limit=16,*,expected_key=None,expected_world=None,expecte
         client.checked('select_item',item=axe['item'],slot=axe['slot'])
         strip_audit=[None]
         def still_raw():strip_audit[0]=_exact_target(client,strip_row,log_target(strip_row),selection,world,server,dimension)
-        try:use_with_margin(client,pos,raw_state,axe['item'],('up','south','north','east','west','down'),still_raw)
-        except ApproachUnavailable:deferred.add(tuple(pos));continue
-        post_scan=cell_at(client,pos)
-        if post_scan['state']!=row['expected']:raise RuntimeError('Stripping not confirmed; do not replay axe use')
+        # Vanilla 26.1.2 AxeItem passes use while an offhand blocking item is
+        # present. Keep the shield through travel/placement; store it only for
+        # the normal axe use, then restore the exact same stack immediately.
+        shield=None
+        menu=client.status().get('menu',{})
+        if menu.get('type')=='InventoryMenu' and len(menu.get('slots',[]))==46 and menu['slots'][45].get('item')=='minecraft:shield':
+            from axe_offhand import AxeOffhand
+            shield=AxeOffhand(client,client.out/('axe-offhand-'+str(time.time_ns()))).park()
+        restore_shield=False
+        try:
+            try:use_with_margin(client,pos,raw_state,axe['item'],('up','south','north','east','west','down'),still_raw)
+            except ApproachUnavailable:
+                restore_shield=True;deferred.add(tuple(pos));continue
+            post_scan=cell_at(client,pos)
+            if post_scan['state']!=row['expected']:raise RuntimeError('Stripping not confirmed; do not replay axe use')
+            restore_shield=True
+        finally:
+            if shield is not None and restore_shield and getattr(client,'unconfirmed_native_request',None) is None:
+                shield.restore()
         completed.append({'pos':pos,'expected':row['expected'],'before_state':row['actual'],
                           'raw_state':raw_state,'post_scan_state':post_scan['state'],
                           'placed_raw':not plan['strip'],'placement_audit_at':placement_audit[0],
