@@ -33,6 +33,8 @@ final class BorerRangedCombat {
     private int shieldLogTick=Integer.MIN_VALUE;
     private int evidenceLogTick=Integer.MIN_VALUE;
     private String evidenceLogKey="";
+    private int separationLogTick=Integer.MIN_VALUE;
+    private String separationLogKey="";
     private final GuardZombieApproach zombieApproach=new GuardZombieApproach();
     private Object combatWorld;
 	private String holdReason = "";
@@ -681,8 +683,17 @@ final class BorerRangedCombat {
             &&!BorerThreats.shouldYieldToCombat(p)&&!incomingProjectile(c)&&!p.isInWater()&&!p.isInLava()&&!p.isOnFire()
             &&safeAir(c,p.blockPosition())&&safeAir(c,p.blockPosition().above())&&c.level.noCollision(p,p.getBoundingBox())
             &&clearSeparationBody(c);
-        boolean safe=separation.observe(c.level,p.tickCount,BorerCombatSeparation.safe(engine.standaloneGuard,
-            Boolean.TRUE.equals(BorerFlight.meteorFlightActive()),healthyDryClear,false,otherThreat,threats));
+        boolean flight=Boolean.TRUE.equals(BorerFlight.meteorFlightActive());
+        boolean decision=BorerCombatSeparation.safe(engine.standaloneGuard,flight,healthyDryClear,false,otherThreat,threats);
+        if(session.pending()&&!decision){
+            String key=engine.standaloneGuard+"|"+flight+"|"+healthyDryClear+"|"+otherThreat+"|"+threats;
+            if(!key.equals(separationLogKey)||(long)p.tickCount-separationLogTick>=100){
+                separationLogKey=key;separationLogTick=p.tickCount;
+                engine.fileLog(c,"guard-separation-blocked standalone="+engine.standaloneGuard+" flight="+flight
+                    +" healthy_dry_body="+healthyDryClear+" other_threat="+otherThreat+" threats="+threats);
+            }
+        }
+        boolean safe=separation.observe(c.level,p.tickCount,decision);
         if(safe)separation.verifyDeferred(c.level,currentlyObserved);
         return safe;
     }
@@ -1074,7 +1085,9 @@ final class BorerRangedCombat {
             +(current?" id="+mob.getId()+" uuid="+mob.getUUID()+" mob="+mob.position()+" mob_box="+mob.getBoundingBox()
                 +" mob_main="+net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(mob.getMainHandItem().getItem())
                 +" mob_off="+net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(mob.getOffhandItem().getItem())
-                +" mob_health="+mob.getHealth()+" ranged="+BorerThreats.isRangedCombatThreat(mob,p)+" distance="+p.distanceTo(mob)
+                +" mob_health="+mob.getHealth()+" mob_type="+net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(mob.getType())
+                +" mob_water="+mob.isInWater()+" server_chunk="+currentServerChunk(c,mob.blockPosition())
+                +" ranged="+BorerThreats.isRangedCombatThreat(mob,p)+" distance="+p.distanceTo(mob)
                 +" visible="+visible+" can_attack="+attack:" mob=unknown")
             +" damage_msg="+(source==null?"unknown":source.getMsgId())
             +" damage_trident="+(source!=null&&source.is(net.minecraft.world.damagesource.DamageTypes.TRIDENT))
