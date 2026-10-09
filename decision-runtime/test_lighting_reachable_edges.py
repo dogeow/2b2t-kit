@@ -1,4 +1,6 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass,interaction_surface,blocking_lighting_entities,verified_native_guard_binding
 from lighting_cli import safe_noncolliding_plant,floor_step_lift,LightingBlocked
 
@@ -8,6 +10,30 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_guard_displacement_after_selection_reapproaches_once_before_any_use_intent(self):
+  from lighting_reachable_edges import ReachableEdgeLightingRun
+  station=[.5,67.3,.5];rows=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':64}for i in range(36)]
+  rows[0].update(item='minecraft:torch',count=8);good={'pos':station,'inventory':rows}
+  displaced={**good,'pos':[.5,72,.5]}
+  run=ReachableEdgeLightingRun.__new__(ReachableEdgeLightingRun);run.report={};run.save=Mock()
+  run.c=SimpleNamespace(checked=Mock());run.approach_edge_station=Mock()
+  run.wait_for_guard=Mock(side_effect=[good,good,displaced,displaced,good,good])
+  self.assertIs(good,run.ready_edge_station({'station':station},0))
+  self.assertEqual(2,run.approach_edge_station.call_count)
+  self.assertEqual(2,run.c.checked.call_count)
+  self.assertTrue(all(c.args[0]=='select_item'for c in run.c.checked.call_args_list))
+  self.assertFalse(run.report['station_replans'][0]['placement_intent_created'])
+ def test_repeated_guard_displacement_or_empty_torch_stock_never_uses_an_item(self):
+  from lighting_reachable_edges import ReachableEdgeLightingRun
+  station=[.5,67.3,.5];rows=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':64}for i in range(36)]
+  rows[0].update(item='minecraft:torch',count=8);good={'pos':station,'inventory':rows}
+  bad={**good,'pos':[.5,72,.5]}
+  run=ReachableEdgeLightingRun.__new__(ReachableEdgeLightingRun);run.report={};run.save=Mock()
+  run.c=SimpleNamespace(checked=Mock());run.approach_edge_station=Mock()
+  run.wait_for_guard=Mock(side_effect=[good,good,bad,bad,good,bad])
+  with self.assertRaises(LightingBlocked):run.ready_edge_station({'station':station},0)
+  self.assertEqual(2,run.approach_edge_station.call_count)
+  self.assertTrue(all(c.args[0]=='select_item'for c in run.c.checked.call_args_list))
  def test_explicit_exact_model_support_can_light_wood_without_relaxing_default_policy(self):
   from projection_scene_lights import matching_map_support
   pos=(0,64,0);row={**floor(pos),'state':'Block{minecraft:oak_planks}'};cells={pos:row}

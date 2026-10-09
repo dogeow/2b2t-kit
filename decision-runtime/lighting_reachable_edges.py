@@ -344,18 +344,32 @@ class ReachableEdgeLightingRun(LightingRun):
         self.report.setdefault('routes',[]).append({'kind':'observed_entry_transit','index':index,'height':high_y})
         self.follow_route([[state['pos'][0],high_y,state['pos'][2]],
                            [entry[0],high_y,state['pos'][2]],[entry[0],high_y,entry[2]]]+route,state)
+    def ready_edge_station(self,candidate,index):
+        """At most one new approach after a guard rise, before any use intent."""
+        station=candidate['station']
+        for attempt in range(2):
+            state=self.wait_for_guard(stage='before_edge_station')
+            self.approach_edge_station(candidate,state,index)
+            state=self.wait_for_guard(stage='before_edge_selection')
+            if math.dist(state['pos'],station)>.6:
+                if attempt==0:
+                    self.report.setdefault('station_replans',[]).append({'index':index,'stage':'before_selection',
+                        'actual_pos':state['pos'],'target':station,'placement_intent_created':False})
+                    self.save();continue
+                raise LightingBlocked('Actual adjacent station changed after one checked re-approach')
+            self.c.checked('select_item',item=TORCH)
+            state=self.wait_for_guard(stage='before_edge_interaction')
+            if stock(state)<1:raise LightingBlocked('Exact torch stock changed before use intent')
+            if math.dist(state['pos'],station)<=.6:return state
+            if attempt==0:
+                self.report.setdefault('station_replans',[]).append({'index':index,'stage':'after_selection',
+                    'actual_pos':state['pos'],'target':station,'placement_intent_created':False})
+                self.save();continue
+        raise LightingBlocked('Adjacent station changed after one checked re-approach; no use dispatched')
     def place_edge(self,candidate,index):
         support=tuple(candidate['support']);target=candidate['target'];station=candidate['station'];route=candidate['entry_route'];entry=route[0]
-        state=self.wait_for_guard(stage='before_edge_station')
-        return_high=max(state['pos'][1],self.high[1]-2)
-        self.approach_edge_station(candidate,state,index)
-        state=self.wait_for_guard(stage='before_edge_selection')
-        if math.dist(state['pos'],station)>.6:
-            raise LightingBlocked('Actual adjacent station changed')
-        self.c.checked('select_item',item=TORCH)
-        state=self.wait_for_guard(stage='before_edge_interaction')
-        if math.dist(state['pos'],station)>.6 or stock(state)<1:
-            raise LightingBlocked('Adjacent station or exact torch stock changed')
+        return_high=max(self.fresh()['pos'][1],self.high[1]-2)
+        state=self.ready_edge_station(candidate,index)
         lo=[min(support[i],math.floor(station[i]-(.35 if i!=1 else 0)))for i in range(3)]
         hi=[max(target[i],math.floor(station[i]+(.35 if i!=1 else 1.81+1.62)))for i in range(3)]
         current=self.scan(lo,hi,f'edge-pre-{index}.json');cells=scan_cells(current,lo,hi,self.c.world)
