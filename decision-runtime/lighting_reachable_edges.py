@@ -14,6 +14,12 @@ from lighting_cli import (LightingRun, LightingBlocked, TORCH, EVIDENCE, bounds,
 
 TRAVEL_FOOT_OFFSET=.195
 
+def verified_native_guard_binding(state):
+    return (isinstance(state,dict)
+        and (state.get('kit_version'),state.get('runtime_version'))in
+            (('2026.10.9.1','1.7.88'),('2026.10.9.2','1.7.88'),('2026.10.9.2','1.7.89'))
+        and state.get('runtime_host_api')==3 and type(state.get('guard_busy'))is bool)
+
 
 def ray_clear(cells, eye, support):
     aim = (support[0]+.5, support[1]+1-.001, support[2]+.5)
@@ -262,8 +268,7 @@ class ReachableEdgeLightingRun(LightingRun):
         if type(native_guard_only)is not bool:raise ValueError('Native guard mode must be explicit boolean')
         if native_guard_only:
             initial=args[5]if len(args)>5 else kwargs['initial']
-            if (initial.get('kit_version') not in ('2026.10.9.1','2026.10.9.2')or initial.get('runtime_version')!='1.7.88'
-                    or initial.get('runtime_host_api')!=3 or type(initial.get('guard_busy'))is not bool):
+            if not verified_native_guard_binding(initial):
                 raise LightingBlocked('Native guard mode requires the verified current Kit/runtime binding')
         super().__init__(*args,**kwargs);self.surface_only=surface_only
         self.report['surface_only']=surface_only

@@ -1,5 +1,5 @@
 import unittest
-from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass,interaction_surface,blocking_lighting_entities
+from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass,interaction_surface,blocking_lighting_entities,verified_native_guard_binding
 from lighting_cli import safe_noncolliding_plant,floor_step_lift,LightingBlocked
 
 def floor(pos):
@@ -8,6 +8,18 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_native_guard_binding_accepts_only_verified_host_engine_pairs(self):
+  state={'kit_version':'2026.10.9.2','runtime_version':'1.7.89','runtime_host_api':3,'guard_busy':False}
+  self.assertTrue(verified_native_guard_binding(state))
+  self.assertTrue(verified_native_guard_binding({**state,'runtime_version':'1.7.88'}))
+  self.assertFalse(verified_native_guard_binding({**state,'kit_version':'2026.10.9.1'}))
+  self.assertFalse(verified_native_guard_binding({**state,'runtime_version':'1.7.90'}))
+ def test_native_guard_binding_rejects_missing_or_untyped_busy_signal(self):
+  state={'kit_version':'2026.10.9.2','runtime_version':'1.7.89','runtime_host_api':3}
+  for value in (None,0,1,'false'):
+   self.assertFalse(verified_native_guard_binding({**state,'guard_busy':value}))
+  self.assertFalse(verified_native_guard_binding(state))
+  self.assertFalse(verified_native_guard_binding(None))
  def test_elevated_station_preserves_normal_reach_and_current_clear_route(self):
   cells={(0,64,0):floor((0,64,0))}
   planned=edge_candidates(cells,[-4,62,-4],[4,90,4],[2.5,80,.5],station_height=3.3)
