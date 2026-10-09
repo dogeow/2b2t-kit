@@ -13,3 +13,5 @@
 原生两棵樱花树本轮新增74根原木，实际随身96→170，临时垫块0。离树直线上升被原生接口在派发前拒绝，回执明确已知且无未确认请求；沿用同一原任务，复用 `owned_air_escape.escape_side` 扫描侧移再升高，实际高空驻留通过。错误回执保留，另存恢复证明。后续本地树批次已复用此离树入口。证明：`user-planted-cherry-batch-3f1f-002/actual-collected-inventory-frames.json`、`treebatch002-known-side-finish-3f1f-001/escape/verified.json`、`native-high-keep.json`。
 
 本轮木板合成实物19→275，原木170→106；既有原生投影施工新增265格，完整现场守恒与原生高空停车通过。对完整16384格图像及128格参考行的实际扫描复算为6754/16512，剩9758格。樱花木板剩312格，其中311格可正常施工、1格保留旧未知回执。证明：`map-treebatch002-carried-craft-3f1f-002/`、`map-treebatch002-followthrough-3f1f-002/full-final-scene-recount.json`、`stock-print/print-run/progress.json`。下一轮本地串行程序已开始，继续既有采集、合成、施工入口，无通用翻箱步骤。完整地图未完成。
+
+下一轮在砍树前发现仅2个背包空位，五叠各2块木板占位。未开始砍树且已有精确导航完成回执；同一原任务通过既有库存转移接口合并为一叠10块，数量守恒，空位增至6。无需回仓库。随后同一任务继续原生砍树。证明：`treebatch003-capacity-chop-finish-3f1f-001/actual-backpack-compaction.json`。后续只读等待合成/打印编排保留，当前采集未冒充完成。
