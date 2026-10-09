@@ -26,6 +26,7 @@ import dev.twob2tkit.borer.TunnelBorer;
 public final class CombatWatch {
 	private final KitConfig config;
 	private float lastHealth = -1.0F;
+    private float lastBaseHealth=-1.0F,lastAbsorption=-1.0F;
 	private boolean wasDead;
 
 	/** 按配置构造战斗监视。 */
@@ -38,6 +39,7 @@ public final class CombatWatch {
 		if (client.player == null || client.level == null) {
 			wasDead = false;
 			lastHealth = -1.0F;
+            lastBaseHealth=lastAbsorption=-1.0F;
 			return;
 		}
 		LocalPlayer player = client.player;
@@ -57,9 +59,13 @@ public final class CombatWatch {
 		float health = player.getHealth() + player.getAbsorptionAmount();
 		if (lastHealth < 0.0F) {
 			lastHealth = health;
+            lastBaseHealth=player.getHealth();lastAbsorption=player.getAbsorptionAmount();
 			return;
 		}
-		if (health < lastHealth - 0.05F) {
+        boolean expired=CombatHealthPolicy.absorptionExpired(lastBaseHealth,lastAbsorption,
+            player.getHealth(),player.getAbsorptionAmount(),player.hasEffect(net.minecraft.world.effect.MobEffects.ABSORPTION),
+            player.hurtTime>0||player.invulnerableTime>10);
+		if (health < lastHealth - 0.05F && !expired) {
 			String attacker = attackerName(client, player);
 			boolean env = isEnvironmentalHurt(client, player);
 			config.lastAttackTimeEpochMillis = System.currentTimeMillis();
@@ -83,11 +89,13 @@ public final class CombatWatch {
 			if (AfkLogoutPolicy.hitLogsOut(fishing) && shouldGuardLogout()
 				&& BorerThreats.currentHurtIsFromMob(player)) {
 				lastHealth = health;
+                lastBaseHealth=player.getHealth();lastAbsorption=player.getAbsorptionAmount();
 				KitClient.safeLogout(client, "被" + attacker + "打中，钓鱼挂机下线");
 				return;
 			}
 		}
 		lastHealth = health;
+        lastBaseHealth=player.getHealth();lastAbsorption=player.getAbsorptionAmount();
 	}
 
 	/** 记下死亡点、杀手与活动。 */
