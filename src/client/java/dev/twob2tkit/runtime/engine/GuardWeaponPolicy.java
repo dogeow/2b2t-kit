@@ -66,6 +66,13 @@ final class GuardWeaponPolicy {
         return current&&unarmedZombie&&mobInWater&&playerDry&&!receivedHit
             &&Double.isFinite(predictedClearance)&&predictedClearance>=6;
     }
+    static boolean harmlessSubmergedCreeper(boolean current,boolean ordinary,boolean mobInWater,
+                                            boolean playerDry,boolean receivedHit,boolean visible,
+                                            boolean swelling,double distance,double predictedClearance){
+        return current&&ordinary&&mobInWater&&playerDry&&!receivedHit&&!visible&&!swelling
+            &&Double.isFinite(distance)&&distance>=12
+            &&Double.isFinite(predictedClearance)&&predictedClearance>=2;
+    }
     static boolean safetyRiseNeeded(boolean standalone,boolean current,boolean aliveHostile,boolean engaged,
                                     boolean ranged,boolean canAttack,boolean visible,double distance){
         return standalone&&current&&aliveHostile&&engaged&&Double.isFinite(distance)&&distance>=0&&distance<=12

@@ -142,7 +142,15 @@ final class BorerRangedCombat {
         }
         if(missingRestored)separation.observe(c.level,p.tickCount,false);
         if(!missingRestored&&separation.verifying()){
-            safetyRise.cancel();
+            // Keep the already planned rise through the quiet window. Cancelling
+            // it here releases Flight, drops below the safety margin and starts
+            // a new rise every few ticks while another navigator waits below.
+            if(safetyRise.active()&&escaping
+                    &&clearWholeRise(c,Math.max(.25,safetyRise.target()-p.getY()))){
+                engine.pauseGuardMovement(c);escapeFlight.speed(.16);c.options.keyJump.setDown(true);
+                session.pause(p.tickCount);engine.mobs.raiseShield(c,p);
+                engine.status="继续当前安全升空目标，确认脱离后恢复施工";return true;
+            }
             releaseControls(c);session.pause(p.tickCount);engine.mobs.raiseShield(c,p);
             engine.status="已离开爆炸范围，正在确认安全高度";return true;
         }
@@ -685,9 +693,11 @@ final class BorerRangedCombat {
             if(unarmed&&(distance<12||clearance<6))separation.revokeUnarmed(c.level,e.getUUID());
             currentlyObserved.add(e.getUUID());
             return new BorerCombatSeparation.Threat(true,ordinary,p.hasLineOfSight(e),swelling,
-                distance,clearance,false,unarmed,harmlessSubmergedMelee(c,e,projectedY));
+                distance,clearance,false,unarmed,harmlessSubmergedMelee(c,e,projectedY),
+                harmlessSubmergedCreeper(c,e,projectedY));
         }).toList();
-        boolean otherThreat=nearby.stream().anyMatch(e->e.isAlive()&&!harmlessSubmergedMelee(c,e,projectedY)&&(
+        boolean otherThreat=nearby.stream().anyMatch(e->e.isAlive()&&!harmlessSubmergedMelee(c,e,projectedY)
+            &&!harmlessSubmergedCreeper(c,e,projectedY)&&(
             BorerDefensePolicy.eligible(true,true,p.hasLineOfSight(e),rank(p,e),p.distanceTo(e))||creeperAlert(c,e)));
         boolean healthyDryClear=p.getHealth()>=19&&p.hurtTime==0&&!BorerThreats.recentlyHurt(p)
             &&!BorerThreats.shouldYieldToCombat(p)&&!incomingProjectile(c)&&!p.isInWater()&&!p.isInLava()&&!p.isOnFire()
@@ -715,6 +725,15 @@ final class BorerRangedCombat {
         return GuardWeaponPolicy.harmlessSubmergedMelee(current,unarmed,e.isInWater(),
             !p.isInWater()&&!p.isInLava(),BorerThreats.currentReceivedMobHit(e,p),
             projectedY-e.getBoundingBox().maxY);
+    }
+    private boolean harmlessSubmergedCreeper(Minecraft c,LivingEntity e,double projectedY){
+        if(!(e instanceof Creeper creeper))return false;
+        var p=c.player;
+        boolean current=e.level()==c.level&&c.level.getEntity(e.getId())==e&&e.isAlive()
+            &&currentServerChunk(c,e.blockPosition())&&GuardWeaponPolicy.finiteBox(e.getBoundingBox());
+        return GuardWeaponPolicy.harmlessSubmergedCreeper(current,!creeper.isPowered(),e.isInWater(),
+            !p.isInWater()&&!p.isInLava(),BorerThreats.currentReceivedMobHit(e,p),p.hasLineOfSight(e),swelling(creeper),
+            new Vec3(p.getX(),projectedY,p.getZ()).distanceTo(e.position()),projectedY-e.getBoundingBox().maxY);
     }
     private boolean clearSeparationBody(Minecraft c){
         var p=c.player;

@@ -4,6 +4,17 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 class BorerCombatSeparationTest {
+    @Test void currentDistantWaterCreeperStillRequiresQuietBodyScopeAndOtherThreatChecks(){
+        var water=new BorerCombatSeparation.Threat(true,true,false,false,12.5,2.3,false,false,false,true);
+        assertTrue(safe(water));
+        assertFalse(safe(new BorerCombatSeparation.Threat(false,true,false,false,12.5,2.3,true,false,false,true)));
+        assertFalse(safe(new BorerCombatSeparation.Threat(true,true,true,false,12.5,2.3,false,false,false,true)));
+        assertFalse(safe(new BorerCombatSeparation.Threat(true,true,false,true,12.5,2.3,false,false,false,true)));
+        assertFalse(safe(new BorerCombatSeparation.Threat(true,true,false,false,11.9,2.3,false,false,false,true)));
+        assertFalse(BorerCombatSeparation.safe(true,true,true,false,true,List.of(water)));
+        for(int tick=0;tick<20;tick++)assertFalse(gate.observe(world,tick,safe(water)));
+        assertTrue(gate.observe(world,20,safe(water)));
+    }
     @Test void aCurrentlyObservedSubmergedUnarmedMobMayBeIgnoredFromSixBlocksAboveItsBody(){
         var underwater=new BorerCombatSeparation.Threat(true,false,true,false,8,6,false,true,true);
         assertTrue(BorerCombatSeparation.safe(true,true,true,false,false,List.of(underwater)));

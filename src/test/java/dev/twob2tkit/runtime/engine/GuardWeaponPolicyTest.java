@@ -2,6 +2,19 @@ package dev.twob2tkit.runtime.engine;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class GuardWeaponPolicyTest {
+ @Test void distantHiddenOrdinaryWaterCreeperCannotBlockDryWorkButUnsafeEvidenceDoes(){
+  assertTrue(GuardWeaponPolicy.harmlessSubmergedCreeper(true,true,true,true,false,false,false,12,2));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(false,true,true,true,false,false,false,20,8));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(true,false,true,true,false,false,false,20,8));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(true,true,false,true,false,false,false,20,8));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(true,true,true,false,false,false,false,20,8));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(true,true,true,true,true,false,false,20,8));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(true,true,true,true,false,true,false,20,8));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(true,true,true,true,false,false,true,20,8));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(true,true,true,true,false,false,false,11.99,8));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(true,true,true,true,false,false,false,20,1.99));
+  assertFalse(GuardWeaponPolicy.harmlessSubmergedCreeper(true,true,true,true,false,false,false,Double.NaN,8));
+ }
  @Test void aWaterZombieFarBelowCannotBlockDryWorkButTridentAndHitsKeepDefense(){
   assertTrue(GuardWeaponPolicy.harmlessSubmergedMelee(true,true,true,true,false,6));
   assertFalse(GuardWeaponPolicy.harmlessSubmergedMelee(true,true,true,true,false,5.999));

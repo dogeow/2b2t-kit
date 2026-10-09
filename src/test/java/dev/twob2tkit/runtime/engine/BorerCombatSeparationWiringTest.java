@@ -5,6 +5,12 @@ import org.objectweb.asm.tree.*;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 class BorerCombatSeparationWiringTest {
+    @Test void waterCreeperExceptionReadsCurrentTrackedEntityWaterFuseLosAndDamage()throws Exception{
+        assertTrue(calls("BorerRangedCombat","harmlessSubmergedCreeper").containsAll(List.of(
+            "getEntity","isAlive","currentServerChunk","finiteBox","isPowered","isInWater",
+            "isInLava","currentReceivedMobHit","hasLineOfSight","swelling","getBoundingBox")));
+        assertTrue(calls("BorerRangedCombat","safeVerticalSeparation").contains("harmlessSubmergedCreeper"));
+    }
     @Test void harmlessWaterExceptionReadsCurrentWeaponsWaterAndDamageAndKeepsTheQuietGate()throws Exception{
         var c=calls("BorerRangedCombat","harmlessSubmergedMelee");
         assertTrue(c.containsAll(List.of("getEntity","isAlive","currentServerChunk","finiteBox",
