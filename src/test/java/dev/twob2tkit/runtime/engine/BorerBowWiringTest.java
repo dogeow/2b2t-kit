@@ -10,6 +10,18 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Inspect real bytecode hooks without initializing Minecraft's client singleton. */
 class BorerBowWiringTest {
+    @Test void shieldActuallyUsesItsHandAndArcherCyclePrecedesBowSelection()throws Exception{
+        var shield=calls(method(ROOT+"runtime/engine/BorerMobs","raiseShield"));
+        assertTrue(shield.containsAll(List.of("getUseItem","useItem","isUsingItem")));
+        assertTrue(shield.indexOf("useItem")<shield.lastIndexOf("setDown"));
+        var tick=calls(method(ROOT+"runtime/engine/BorerRangedCombat","tick"));
+        assertTrue(tick.indexOf("shieldAction")<tick.indexOf("selectBow"));
+        var wait=calls(method(ROOT+"runtime/engine/BorerRangedCombat","shieldWait"));
+        assertTrue(wait.indexOf("cancelDraw")<wait.indexOf("raiseShield"));
+        var release=calls(method(ROOT+"runtime/engine/BorerRangedCombat","prepareRelease"));
+        assertTrue(release.indexOf("incomingProjectile")<release.indexOf("send"));
+        assertTrue(release.contains("shot"));
+    }
     private static final String ROOT = "dev/twob2tkit/";
     @Test void cameraHookTargetsExistingGameMethodAndRunsAtTail() throws Exception {
         assertNotNull(method("net/minecraft/client/Camera", "alignWithEntity", "(F)V"));

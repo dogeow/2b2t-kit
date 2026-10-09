@@ -28,6 +28,9 @@ final class BorerRangedCombat {
     private int trialCreeperRouteIndex;
     private String trialCreeperFlightEvidence = "";
     private final GuardWeaponPolicy.SafetyRise safetyRise=new GuardWeaponPolicy.SafetyRise();
+    private final GuardShieldCycle shieldCycle=new GuardShieldCycle();
+    private String shieldLogKey="";
+    private int shieldLogTick=Integer.MIN_VALUE;
     private int evidenceLogTick=Integer.MIN_VALUE;
     private String evidenceLogKey="";
     private final GuardZombieApproach zombieApproach=new GuardZombieApproach();
@@ -258,6 +261,10 @@ final class BorerRangedCombat {
             return true;
         }
         if (miningMeleeLease) resetMiningMelee();
+        var shieldAction=shieldAction(c);
+        if(shieldAction==GuardShieldCycle.Action.BLOCK){
+            shieldWait(c);return true;
+        }
 
 		boolean zombieOnly=engine.standaloneGuard
 			&&ordinaryZombie(p,target)&&onlyZombiesNearby(c,nearby);
@@ -275,6 +282,7 @@ final class BorerRangedCombat {
 			RotationAim.apply(p, look);
 			if (p.getAttackStrengthScale(0) >= 0.95F) {
 				c.gameMode.attack(p, target); p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+				shieldCycle.shot(p.tickCount);
 			}
 			engine.status = "优先反击 " + target.getName().getString();
 			return true;
@@ -291,7 +299,7 @@ final class BorerRangedCombat {
 			cooldown--;
 			Vec3 nextAim = engine.host.borerBowAim(c, target);
 			look = RotationAim.lookAt(p, nextAim == null ? target.getEyePosition() : nextAim); lookTick = p.tickCount;
-			RotationAim.apply(p, look); return true;
+			RotationAim.apply(p, look); engine.mobs.raiseShield(c,p);return true;
 		}
 		if (!selectBow(c) || p.getProjectile(p.getMainHandItem()).isEmpty()) {
 			cancelDraw(c);
@@ -1095,6 +1103,40 @@ final class BorerRangedCombat {
         return rank(p,enemy)==2&&BorerDefensePolicy.trackedBowEligible(enemy instanceof Enemy,
             enemy.isAlive(),visible,session.contains(enemy.getUUID()),usableGuardBow(c),distance);
     }
+    private GuardShieldCycle.Action shieldAction(Minecraft c){
+        var p=c.player;
+        String type=target==null?"":net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(target.getType()).getPath();
+        boolean archer=java.util.Set.of("skeleton","stray","bogged","pillager").contains(type);
+        boolean enabled=engine.standaloneGuard&&archer&&engine.host.borerShieldOnMob()
+            &&p.getOffhandItem().is(Items.SHIELD);
+        return shieldCycle.update(target==null?null:target.getUUID(),p.tickCount,enabled,
+            p.isBlocking()&&p.getUseItem().is(Items.SHIELD),p.getOffhandItem().getDamageValue(),
+            incomingProjectile(c),p.hurtTime>0);
+    }
+    private boolean incomingProjectile(Minecraft c){
+        var p=c.player;
+        for(var projectile:c.level.getEntitiesOfClass(net.minecraft.world.entity.projectile.Projectile.class,
+                p.getBoundingBox().inflate(24))){
+            if(!projectile.isAlive()||c.level.getEntity(projectile.getId())!=projectile||projectile.getOwner()==p)continue;
+            if(GuardShieldCycle.incoming(projectile.position(),projectile.getDeltaMovement(),
+                p.getBoundingBox(),p.getDeltaMovement()))return true;
+        }
+        return false;
+    }
+    private void shieldWait(Minecraft c){
+        cancelDraw(c);rangedMode(true);engine.pauseGuardMovement(c);
+        if(target!=null){look=RotationAim.lookAt(c.player,target.getEyePosition());lookTick=c.player.tickCount;RotationAim.apply(c.player,look);}
+        engine.mobs.raiseShield(c,c.player);
+        String key=target.getUUID()+":"+c.player.isBlocking()+":"+c.player.getOffhandItem().getDamageValue();
+        if(!key.equals(shieldLogKey)||(long)c.player.tickCount-shieldLogTick>=40){
+            shieldLogKey=key;shieldLogTick=c.player.tickCount;
+            engine.fileLog(c,"guard-shield-cycle phase=block uuid="+target.getUUID()
+                +" using_shield="+(c.player.isUsingItem()&&c.player.getUseItem().is(Items.SHIELD))
+                +" actually_blocking="+c.player.isBlocking()+" shield_damage="+c.player.getOffhandItem().getDamageValue()
+                +" health="+c.player.getHealth());
+        }
+        engine.status=c.player.isBlocking()?"举盾挡箭，等待一次反击窗口":"正在举起副手盾，施工暂停";
+    }
     /** Endermen evade projectiles: use only normal in-range sword attacks, never a bow/chase. */
     private boolean defendEnderman(Minecraft c){
         var p=c.player;
@@ -1169,6 +1211,7 @@ final class BorerRangedCombat {
         miningMeleeLease = false;
     }
 	private void releaseControls(Minecraft c) {
+		shieldCycle.reset();
 		zombieApproach.reset();
         releaseZombieMelee();
 		peek.close(c);
@@ -1213,6 +1256,11 @@ final class BorerRangedCombat {
 	/** Called immediately before vanilla RELEASE_USE_ITEM, not when the key was merely scheduled to be released. */
 	boolean prepareRelease(Minecraft c) {
 		if (!drawing && !releasePending) return true;
+        if(c.player!=null&&c.level!=null&&c.screen==null&&shieldCycle.enabled()&&incomingProjectile(c)){
+            // Cancel this scheduled bow release. The next normal combat tick
+            // raises the shield; do not let this callback release a new hand use.
+            shieldCycle.shot(c.player.tickCount);cancelDraw(c);return false;
+        }
 		if (c.player == null || c.level == null || c.screen != null || target == null
 			|| c.level.getEntity(target.getId()) != target || !target.isAlive() || !session.canAttack(target.getUUID())
 			|| !c.player.hasLineOfSight(target) || !visibleHost()) { cancelDraw(c); return false; }
@@ -1227,6 +1275,7 @@ final class BorerRangedCombat {
 		// This is the same rotation already applied to the player and visible camera, never a silent aim packet.
 		p.connection.send(new net.minecraft.network.protocol.game.ServerboundMovePlayerPacket.Rot(look.yaw(), look.pitch(), p.onGround(), p.horizontalCollision));
 		drawing = false; releasePending = false; cooldown = 6; viewWaitTicks = 0;
+		shieldCycle.shot(p.tickCount);
 		engine.status = "放箭反击 " + target.getName().getString();
 		engine.fileLog(c, "area-defense-shot id=" + target.getId() + " rank=" + rank(c.player,target) + " visible=true look=" + look
 			+ " target=" + target.position() + " " + engine.host.borerBowDiagnostics());

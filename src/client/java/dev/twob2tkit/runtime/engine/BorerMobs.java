@@ -295,8 +295,18 @@ final class BorerMobs {
 		boolean off = player.getOffhandItem().is(Items.SHIELD);
 		boolean main = player.getMainHandItem().is(Items.SHIELD);
 		if (!off && !main) return;
+		if (player.isUsingItem() && !player.getUseItem().is(Items.SHIELD)
+                && !player.getUseItem().is(Items.BOW)) return;
+        // The use key prefers a main-hand bow. Explicit normal off-hand use is
+        // required so holding a bow can still genuinely activate the shield.
+        if(!player.isUsingItem()||!player.getUseItem().is(Items.SHIELD)){
+            if(player.isUsingItem())player.stopUsingItem();
+            if(client.gameMode==null)return;
+            client.gameMode.useItem(player,off?net.minecraft.world.InteractionHand.OFF_HAND:
+                net.minecraft.world.InteractionHand.MAIN_HAND);
+        }
 		client.options.keyUse.setDown(true);
-		engine.holdingShield = true;
+		engine.holdingShield = player.isUsingItem()&&player.getUseItem().is(Items.SHIELD);
 	}
 
 	/** 放下副手盾。 */
