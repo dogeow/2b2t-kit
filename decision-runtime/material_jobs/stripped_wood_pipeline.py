@@ -1,6 +1,7 @@
 """Produce stripped cherry wood in an explicitly owned temporary work cell.
 
-Target is approved-depot finished total. Normal support placement -> axe use ->
+Targets explicitly count either approved-depot or carried finished wood.
+Normal support placement -> axe use ->
 normal mining -> real dropped-item pickup produces each stripped log. Generic
 interact has no dedicated per-action server ACK, so receipts say live-loaded
 state observation; the final native pickup/inventory delta proves the material.
@@ -25,6 +26,7 @@ STRIPPED = 'minecraft:stripped_cherry_log'
 OUTPUT = 'minecraft:stripped_cherry_wood'
 OUTPUTS = frozenset({OUTPUT})
 TARGET_SCOPE = 'approved_depot_total'
+CARRIED_SCOPE = 'absolute_backpack_total'
 MAX_TARGET_COUNT = 100000
 RAW_STATE = 'Block{minecraft:cherry_log}[axis=y]'
 STRIPPED_STATE = 'Block{minecraft:stripped_cherry_log}[axis=y]'
@@ -72,29 +74,50 @@ def recipe(backend):
 
 
 def run(c, profile, item, target_count, out, checkpoint):
+    return _run(c, profile, item, target_count, out, checkpoint, carried=False)
+
+
+def run_carried(c, profile, item, target_count, out, checkpoint):
+    """Use existing carried logs; keep finished wood without a depot round trip."""
+    backend = getattr(c, 'stripped_wood_backend', None) or getattr(c, 'material_backend', None)
+    request = getattr(backend, 'request', {})
+    if (type(target_count) is not int or not 1 <= target_count <= 2304
+            or getattr(backend, 'client', None) is not c or getattr(backend, 'profile', None) != profile
+            or request.get('mode') != 'item' or request.get('targets', {}).get(item) != target_count
+            or request.get('context', {}).get('world_session') != c.world):
+        return _wait('wait_source', 'Bind this item-mode carried target to the existing client/world',
+                     target_scope=CARRIED_SCOPE)
+    return _run(c, profile, item, target_count, out, checkpoint, carried=True)
+
+
+def _run(c, profile, item, target_count, out, checkpoint, *, carried):
+    scope = CARRIED_SCOPE if carried else TARGET_SCOPE
+    stock_key = 'expected_backpack' if carried else 'expected_depot'
+    def wait(code, detail, **proof):
+        return _wait(code, detail, **proof, target_scope=scope)
     if item not in OUTPUTS or type(target_count) is not int or not 1 <= target_count <= MAX_TARGET_COUNT:
-        return _wait('unsupported_stripped_wood', 'This adapter produces actual stripped_cherry_wood only')
+        return wait('unsupported_stripped_wood', 'This adapter produces actual stripped_cherry_wood only')
     backend = (getattr(c, 'stripped_wood_backend', None) or getattr(c, 'wood_backend', None)
                or getattr(c, 'material_backend', None))
     if (backend is None or getattr(backend, 'client', None) is not c or getattr(backend, 'profile', None) != profile
             or getattr(backend, 'request', {}).get('mode') == 'projection'):
-        return _wait('wait_source', 'Bind the existing item-mode Backend.client; no controller is created')
+        return wait('wait_source', 'Bind the existing item-mode Backend.client; no controller is created')
     depots = profile.get('depots')
-    if (not isinstance(depots, list) or not depots
+    if not carried and (not isinstance(depots, list) or not depots
             or any(not isinstance(p,list) or len(p)!=3 or any(type(v) is not int for v in p) for p in depots)
             or len({tuple(p) for p in depots}) != len(depots)):
-        return _wait('wait_source', 'Distinct approved canonical depot inventories are required')
+        return wait('wait_source', 'Distinct approved canonical depot inventories are required')
     verified_recipe = recipe(backend)
-    if verified_recipe is None:return _wait('wait_recipe', 'Current JAR does not verify4 stripped cherry logs ->3 wood')
+    if verified_recipe is None:return wait('wait_recipe', 'Current JAR does not verify4 stripped cherry logs ->3 wood')
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
     path = out / 'stripped-wood-pipeline.json'
     spec = {'world_session': c.world, 'item': item, 'target': target_count,
-            'target_scope': 'approved_depot_total', 'depots': depots}
+            'target_scope': scope, 'depots': [] if carried else depots}
     if path.exists():
         job = json.loads(path.read_text())
-        if any(job.get(k) != v for k, v in spec.items()):return _wait('wait_receipt', 'Other scope/target journal retained')
-        if job.get('pending'):return _wait('wait_receipt', 'Unknown prior mutation retained; no replay', pending=job['pending'])
-    else:job = {'schema':1, **spec, 'pending':None, 'expected_depot':None, 'owned_cell':None, 'events':[], 'source_round':0}
+        if any(job.get(k) != v for k, v in spec.items()):return wait('wait_receipt', 'Other scope/target journal retained')
+        if job.get('pending'):return wait('wait_receipt', 'Unknown prior mutation retained; no replay', pending=job['pending'])
+    else:job = {'schema':1, **spec, 'pending':None, stock_key:None, 'owned_cell':None, 'events':[], 'source_round':0}
     def save():write_json(path, job)
     def state():
         checkpoint(); s = c.status()
@@ -110,6 +133,11 @@ def run(c, profile, item, target_count, out, checkpoint):
     def begin(kind, **data):job['pending']={'kind':kind, **data};save()
     def known(kind, **data):job['events'].append({'kind':kind, **data});job['pending']=None;save()
     def depot():
+        if carried:
+            s = state(); count = inventory_counts(s).get(OUTPUT, 0)
+            return count, {'world_session': c.world, 'target_scope': scope,
+                           'observed_at': s.get('time'), 'backpack_count': count,
+                           'evidence': 'actual_main_backpack_not_depot_stock'}
         backend.prepare_travel(); backend.stage_near_base(depots)
         proof=audit(c, depots, [OUTPUT])
         if proof.get('complete') is not True or proof.get('world_session') != c.world:raise JobPaused('Depot audit incomplete')
@@ -215,47 +243,55 @@ def run(c, profile, item, target_count, out, checkpoint):
         register(c,cleanup_key,cleanup_owned)
         cleanup_owned()  # Only a prior confirmed owned state, never an uncertain pending action.
         complete(c,cleanup_key)
-        return _wait('owned_cell_restored','Confirmed temporary work block was retrieved; no new strip started')
+        return wait('owned_cell_restored','Confirmed temporary work block was retrieved; no new strip started')
     current, proof=depot()
-    if job['expected_depot'] is not None and current!=job['expected_depot']:
-        return _wait('wait_depot','Finished stock changed outside journal',expected=job['expected_depot'],observed=current)
-    job['expected_depot']=current;save()
-    if current>=target_count:return {'phase':'done','item':OUTPUT,'target_scope':'approved_depot_total','depot_count':current,'audit':proof}
+    if job[stock_key] is not None and current!=job[stock_key]:
+        return wait('wait_stock' if carried else 'wait_depot','Finished stock changed outside journal',expected=job[stock_key],observed=current)
+    job[stock_key]=current;save()
+    if current>=target_count:
+        return {'phase':'done','item':OUTPUT,'target_scope':scope,
+                ('backpack_count' if carried else 'depot_count'):current,
+                ('stock_observation' if carried else 'audit'):proof}
     held=stocks(); finished=held.get(OUTPUT,0)
-    if finished:
+    if finished and not carried:
         amount=min(finished,target_count-current);begin('deposit',before=finished,depot=current,amount=amount)
         result=exchange(c,depots,deposit={OUTPUT:finished-amount})
         after=stocks().get(OUTPUT,0); new, proof=depot()
         if not 0<=finished-after<=amount or new-current!=finished-after:
-            return _wait('wait_receipt','Deposit conservation unknown; pending retained')
-        job['expected_depot']=new;known('deposited',moved=finished-after,audit=proof,exchange=result)
+            return wait('wait_receipt','Deposit conservation unknown; pending retained')
+        job[stock_key]=new;known('deposited',moved=finished-after,audit=proof,exchange=result)
         return {'phase':'done' if new>=target_count else 'waiting','code':'complete' if new>=target_count else 'batch_delivered',
                 'target_scope':'approved_depot_total','depot_count':new,'carried_surplus':after}
     if held.get(STRIPPED,0)>=4:
         rounds=min(4,held[STRIPPED]//4,math.ceil((target_count-current)/3))
         produced=rounds*3
-        if room_for_item(state(),OUTPUT)<produced:return _wait('wait_capacity','Make space without discarding items')
+        if room_for_item(state(),OUTPUT)<produced:return wait('wait_capacity','Make space without discarding items')
         target=held.get(OUTPUT,0)+produced;begin('craft',target=target,inputs=rounds*4,recipe=verified_recipe['recipe_id'])
         result=backend.craft({OUTPUT:target});after=stocks()
         if (result.get('phase')!='done' or after.get(OUTPUT,0)-held.get(OUTPUT,0)!=produced
                 or held.get(STRIPPED,0)-after.get(STRIPPED,0)!=rounds*4):
-            return _wait('wait_receipt','Actual4-to3 recipe result unknown; pending retained')
+            return wait('wait_receipt','Actual4-to3 recipe result unknown; pending retained')
+        if carried:job[stock_key]=after.get(OUTPUT,0)
         known('crafted',produced=produced,inputs=rounds*4,recipe=verified_recipe['recipe_id'],result=result)
-        return _wait('batch_crafted','Actual stripped wood is carried; next call deposits it',produced=produced)
+        return wait('batch_crafted', 'Actual stripped wood is carried; next call verifies finished stock'
+                    if carried else 'Actual stripped wood is carried; next call deposits it', produced=produced)
+    if carried and not held.get(RAW,0):
+        return wait('wait_source', 'No carried cherry log; no depot fetch or supplier started',
+                    requirements={RAW:4})
     site=worksite(profile)
-    if site is None:return _wait('wait_worksite','Configure an explicitly owned AIR work cell over a dry noninteractive support')
-    if room_for_item(state(),STRIPPED)<1:return _wait('wait_capacity','Reserve a slot for the actual stripped log drop')
+    if site is None:return wait('wait_worksite','Configure an explicitly owned AIR work cell over a dry noninteractive support')
+    if room_for_item(state(),STRIPPED)<1:return wait('wait_capacity','Reserve a slot for the actual stripped log drop')
     backend.prepare_travel();backend.stage_near_base([site['cell']])
     cell_state,_=scan(site)
-    if cell_state!='AIR':return _wait('wait_worksite','Work cell is not AIR; existing user blocks are never stripped or removed')
+    if cell_state!='AIR':return wait('wait_worksite','Work cell is not AIR; existing user blocks are never stripped or removed')
     axe=choose_axe(state())
-    if axe is None:return _wait('wait_tool','A real normal axe with at least4 durability is required')
+    if axe is None:return wait('wait_tool','A real normal axe with at least4 durability is required')
     if not held.get(RAW,0):
         begin('fetch_raw',target=4)
         fetched=backend.fetch({RAW:4});held=stocks()
         if (not isinstance(fetched,dict) or fetched.get('phase') not in ('done','waiting')
                 or fetched.get('phase')=='waiting' and not isinstance(fetched.get('missing'),dict)):
-            return _wait('wait_receipt','Raw source transfer unconfirmed')
+            return wait('wait_receipt','Raw source transfer unconfirmed')
         known('raw_fetched',receipt=fetched)
         if not held.get(RAW,0):
             from .wood_pipeline import run as wood_run
@@ -266,31 +302,31 @@ def run(c, profile, item, target_count, out, checkpoint):
             try:supplied=wood_run(c,profile,RAW,4,source_dir,checkpoint)
             finally:
                 if changed and getattr(c,'wood_backend',None) is backend:delattr(c,'wood_backend')
-            if supplied.get('code')=='wait_receipt':return _wait('wait_receipt','Cherry supplier has uncertain work; retain it',source=supplied)
+            if supplied.get('code')=='wait_receipt':return wait('wait_receipt','Cherry supplier has uncertain work; retain it',source=supplied)
             if supplied.get('phase')=='done' or supplied.get('code')=='batch_delivered':
                 job['source_round']=job.get('source_round',0)+1  # A new source job only after known stock delivery.
             known('raw_supplier',receipt=supplied)
-            return _wait('wait_source','Cherry logs not yet carried; next call fetches only verified actual supply',source=supplied)
+            return wait('wait_source','Cherry logs not yet carried; next call fetches only verified actual supply',source=supplied)
     # One and only one supported raw log is placed, stripped and retrieved.
     held=stocks();raw_before=held.get(RAW,0); stripped_before=held.get(STRIPPED,0)
     face=approach_faces(c,site['support'],site['support_state'],('up',),seconds=30,stand_distance=1.8)
     select(RAW)
-    if scan(site)[0]!='AIR':return _wait('wait_worksite','Work cell changed before placement')
+    if scan(site)[0]!='AIR':return wait('wait_worksite','Work cell changed before placement')
     begin('place_raw',cell=site['cell'],raw_before=raw_before,stripped_before=stripped_before)
     reply=c.request('interact',pos=site['support'],face=face,expected_state=site['support_state'],expected_hand=RAW)
-    if reply.get('phase')!='done':return _wait('wait_receipt','Supported placement unknown; no second placement')
+    if reply.get('phase')!='done':return wait('wait_receipt','Supported placement unknown; no second placement')
     observed(site,RAW_STATE,lambda stock:stock.get(RAW,0)==raw_before-1 and stock.get(STRIPPED,0)==stripped_before)
     job['owned_cell']={'confirmed':True,'world_session':c.world,'cell':site['cell'],'state':RAW_STATE}
     known('placed_owned',raw_consumed=1,observed_state=RAW_STATE,proof_scope='live_loaded_state_and_exact_raw_inventory_delta')
     cleanup_key='stripped-wood:'+str(path.resolve());register(c,cleanup_key,cleanup_owned)
     axe=choose_axe(state())
-    if axe is None:return _wait('wait_tool','Axe changed after owned placement; safe owned cleanup remains registered')
+    if axe is None:return wait('wait_tool','Axe changed after owned placement; safe owned cleanup remains registered')
     face=approach_faces(c,site['cell'],RAW_STATE,('up','north','south','east','west'),seconds=30,stand_distance=1.8)
     axe_ready(axe)
     if scan(site)[0]!=RAW_STATE:raise JobPaused('Owned log changed before normal axe use')
     begin('strip_owned',cell=site['cell'],raw_state=RAW_STATE,axe=axe)
     stripped=c.request('interact',pos=site['cell'],face=face,expected_state=RAW_STATE,expected_hand=axe['item'])
-    if stripped.get('phase')!='done':return _wait('wait_receipt','Axe use unknown; no retry or cleanup mutation')
+    if stripped.get('phase')!='done':return wait('wait_receipt','Axe use unknown; no retry or cleanup mutation')
     observed(site,STRIPPED_STATE,lambda stock:stock.get(RAW,0)==raw_before-1 and stock.get(STRIPPED,0)==stripped_before)
     latest=state()
     current_axe=next((r for r in latest['inventory'] if r.get('slot')==latest.get('selected_slot')),None)
@@ -300,9 +336,9 @@ def run(c, profile, item, target_count, out, checkpoint):
           proof_scope='normal_axe_interaction_then_live_loaded_state; not a dedicated packet ACK')
     retrieve_owned(site,STRIPPED_STATE,STRIPPED,stripped_before)
     begin('verify_conversion',raw_before=raw_before,stripped_before=stripped_before)
-    if stocks().get(RAW,0)!=raw_before-1:return _wait('wait_receipt','Raw-log net consumption differs from one owned conversion')
+    if stocks().get(RAW,0)!=raw_before-1:return wait('wait_receipt','Raw-log net consumption differs from one owned conversion')
     known('conversion_verified',raw_consumed=1,stripped_log_gained=1)
     complete(c,cleanup_key)
-    return _wait('stripped_log_produced','One actual stripped cherry log collected; wood crafting remains separate',
+    return wait('stripped_log_produced','One actual stripped cherry log collected; wood crafting remains separate',
                  raw_consumed=1,stripped_log_gained=1,work_cell_restored=True,
                  build_limit='stripped_cherry_wood has axis properties; this adapter does not claim plain Scaffold placement support')

@@ -1,12 +1,37 @@
 import unittest
 from types import SimpleNamespace
-from owned_air_escape import blocks_segment,side_candidates,wait_known_idle
+from owned_air_escape import blocks_segment,side_candidates,wait_known_idle,pickup_only_inventory
 
 
 def solid(x,y,z):return {'pos':[x,y,z],'passable':False,'fluid':False}
 
 
 class CanopyEscapeTest(unittest.TestCase):
+    def inventory(self):
+        rows=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(43)]
+        rows[0]={'slot':0,'item':'minecraft:cherry_sapling','count':62,'max_stack':64}
+        rows[1]={'slot':1,'item':'minecraft:diamond_axe','count':1,'max_stack':1,'durability':100}
+        return rows
+
+    def test_late_plain_declared_pickups_can_fill_and_split_without_changing_tools(self):
+        from copy import deepcopy
+        before=self.inventory();after=deepcopy(before)
+        after[0]['count']=64;after[2]={'slot':2,'item':'minecraft:cherry_sapling','count':4,'max_stack':64}
+        self.assertTrue(pickup_only_inventory(before,after,{'minecraft:cherry_sapling'}))
+        self.assertFalse(pickup_only_inventory(before,after,set()))
+        after[1]['durability']=99
+        self.assertFalse(pickup_only_inventory(before,after,{'minecraft:cherry_sapling'}))
+
+    def test_pickup_allowlist_rejects_loss_other_items_components_or_partial_inventory(self):
+        from copy import deepcopy
+        before=self.inventory()
+        for mutate in (lambda rows:rows[0].update(count=61),
+                       lambda rows:rows[0].update(custom_name='changed'),
+                       lambda rows:rows[2].update(item='minecraft:diamond',count=1,max_stack=64),
+                       lambda rows:rows.pop()):
+            after=deepcopy(before);mutate(after)
+            self.assertFalse(pickup_only_inventory(before,after,{'minecraft:cherry_sapling'}))
+
     def test_block_outside_body_corridor_does_not_block_side_flight(self):
         self.assertFalse(blocks_segment(solid(33,69,882),[32.5,69,882.5],[24.5,69,882.5]))
         self.assertTrue(blocks_segment(solid(31,70,882),[32.5,69,882.5],[24.5,69,882.5]))

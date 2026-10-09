@@ -50,16 +50,44 @@ def wait_known_idle(c,seconds=6,idle_predicate=None):
         time.sleep(.05)
 
 
-def escape_side(c,out,target_y=130):
+def pickup_only_inventory(before, after, allowed):
+    """Allow only positive plain64 pickup deltas explicitly named by the caller."""
+    if not allowed:return after == before
+    def split(rows):
+        if (not isinstance(rows,list) or len(rows)!=43 or any(not isinstance(r,dict)for r in rows)
+                or {r.get('slot') for r in rows}!=set(range(43))):
+            raise ValueError('Complete inventory required for pickup-only comparison')
+        protected=[];counts={item:0 for item in allowed}
+        for row in rows:
+            if not row.get('count'):continue
+            if row.get('slot',43)<36 and row.get('item') in allowed:
+                if (set(row)!={'slot','item','count','max_stack'} or row['max_stack']!=64
+                        or type(row['count'])is not int or not 1<=row['count']<=64):
+                    raise ValueError('Only ordinary plain64 pickups may grow during escape')
+                counts[row['item']]+=row['count']
+            else:
+                protected.append(json.dumps({k:v for k,v in row.items()if k!='slot'},sort_keys=True))
+        return sorted(protected),counts
+    try:
+        old,old_counts=split(before);new,new_counts=split(after)
+    except (ValueError,TypeError,KeyError):return False
+    return old==new and all(new_counts[item]>=old_counts[item]for item in allowed)
+
+
+def escape_side(c,out,target_y=130,*,pickup_items=()):
     """No new owner or heartbeat; native navigation rechecks each physical sweep."""
     from lighting_cli import swept_entities
     out=Path(out);out.mkdir(parents=True,exist_ok=False)
     initial=wait_known_idle(c)
     inventory=deepcopy(initial['inventory'])
+    allowed=frozenset(pickup_items)
+    if any(not isinstance(item,str)or not item.startswith('minecraft:')for item in allowed):
+        raise ValueError('Explicit Minecraft pickup item IDs required')
     def current():
         state=c.status()
         if (state['health']!=20 or state['food']<18 or state['screen'] or state['manual_movement']
-                or not state['guard_armed'] or not state['guard_pve_only'] or state['inventory']!=inventory):
+                or not state['guard_armed'] or not state['guard_pve_only']
+                or not pickup_only_inventory(inventory,state['inventory'],allowed)):
             raise RuntimeError('Canopy escape survival, input or inventory changed')
         return state
     def save(name,value):(out/name).write_text(json.dumps(value,ensure_ascii=False,indent=2))
@@ -100,6 +128,8 @@ def escape_side(c,out,target_y=130):
     if math.dist(final['pos'],high_target)>.3 or not final['flight'] or final['pos'][1]-ground<20:
         raise RuntimeError('Native high arrival is unproved')
     proof={'world_session':c.world,'task_session':c.task,'lease_id':c.heartbeat.id,
-           'ground_clearance':final['pos'][1]-ground,'inventory_unchanged':True,'current':final}
+           'ground_clearance':final['pos'][1]-ground,
+           'inventory_unchanged':final['inventory']==inventory,
+           'allowed_pickup_items':sorted(allowed),'current':final}
     save('verified.json',proof)
     return proof

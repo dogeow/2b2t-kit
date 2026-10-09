@@ -122,6 +122,60 @@ class StrippedWoodPipelineTest(unittest.TestCase):
     def journal(self):return json.loads((self.base/'run'/'stripped-wood-pipeline.json').read_text())
     def mutations(self,c):return [op for op,args in c.calls if op!='scan']
 
+    def run_carried(self, c, target=3):
+        c.stripped_wood_backend.request = {'mode':'item', 'targets':{wood.OUTPUT:target},
+                                         'context':{'world_session':c.world}}
+        return wood.run_carried(c,self.profile,wood.OUTPUT,target,self.base/'carried',lambda:None)
+
+    def test_carried_stock_and_craft_rounding_never_audit_or_deposit(self):
+        c=self.client({wood.STRIPPED:4})
+        with patch.object(wood,'audit',side_effect=AssertionError('unexpected warehouse audit')), \
+             patch.object(wood,'exchange',side_effect=AssertionError('unexpected deposit')):
+            result=self.run_carried(c,2)
+            self.assertEqual('batch_crafted',result['code'])
+            self.assertEqual(wood.CARRIED_SCOPE,result['target_scope'])
+            result=self.run_carried(c,2)
+            self.assertEqual('done',result['phase']);self.assertEqual(3,result['backpack_count'])
+            self.assertEqual(3,c.held[wood.OUTPUT]);self.assertEqual({},c.depot)
+            self.assertEqual([('craft',{wood.OUTPUT:3})],c.stripped_wood_backend.calls)
+
+    def test_carried_conversion_keeps_one_client_and_restores_its_work_cell(self):
+        c=self.client({wood.RAW:4})
+        with patch.object(wood,'audit',side_effect=AssertionError('unexpected warehouse audit')), \
+             patch.object(wood,'exchange',side_effect=AssertionError('unexpected deposit')):
+            for _ in range(4):
+                result=self.run_carried(c)
+                self.assertEqual('stripped_log_produced',result['code'])
+                self.assertEqual('AIR',c.cell)
+            self.assertEqual('batch_crafted',self.run_carried(c)['code'])
+            self.assertEqual('done',self.run_carried(c)['phase'])
+            self.assertEqual(0,c.held[wood.RAW]);self.assertEqual(3,c.held[wood.OUTPUT])
+            self.assertFalse(any(call[0]=='fetch' for call in c.stripped_wood_backend.calls))
+
+    def test_carried_missing_logs_and_foreign_request_do_not_fetch_or_act(self):
+        c=self.client()
+        result=self.run_carried(c)
+        self.assertEqual('wait_source',result['code']);self.assertEqual([],c.calls)
+        self.assertEqual([],c.stripped_wood_backend.calls)
+        c.stripped_wood_backend.request['context']['world_session']='other'
+        result=wood.run_carried(c,self.profile,wood.OUTPUT,3,self.base/'foreign',lambda:None)
+        self.assertEqual('wait_source',result['code']);self.assertEqual([],c.calls)
+
+    def test_carried_unknown_strip_remains_frozen_across_calls(self):
+        c=self.client({wood.RAW:1});c.strip_unknown=True
+        self.assertEqual('wait_receipt',self.run_carried(c)['code'])
+        before=list(c.calls)
+        self.assertEqual('wait_receipt',self.run_carried(c)['code']);self.assertEqual(before,c.calls)
+
+    def test_carried_output_change_and_depot_journal_cannot_be_reused(self):
+        c=self.client({wood.STRIPPED:4});self.run_carried(c)
+        c.held[wood.OUTPUT]=4
+        self.assertEqual('wait_stock',self.run_carried(c)['code'])
+        before=list(c.calls)
+        self.assertEqual('wait_receipt',wood.run(c,self.profile,wood.OUTPUT,3,
+                         self.base/'carried',lambda:None)['code'])
+        self.assertEqual(before,c.calls)
+
     def test_owned_worksite_requires_dry_plain_support_and_explicit_integer_coordinates(self):
         self.assertEqual([10,63,10],wood.worksite(self.profile)['support'])
         for changes in ({'owned':False},{'cell':[10,64.0,10]},{'cell':[True,64,10]},

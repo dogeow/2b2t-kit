@@ -1243,6 +1243,8 @@ class Backend:
         carried=bool(route.get('carried_target_scope') and target_scope==route['carried_target_scope'])
         if target_scope!=route['target_scope'] and not carried:
             raise ValueError('Expected target_scope='+route['target_scope']+' for '+item)
+        if carried and route.get('carried_modes') and self.request.get('mode') not in route['carried_modes']:
+            raise JobBlocked('This carried pipeline requires an explicit item-mode request')
         maximum=route['max_carried_target_count'] if carried else route['max_target_count']
         if type(target_count) is not int or not 1<=target_count<=maximum:
             raise ValueError('Invalid target count for '+item)

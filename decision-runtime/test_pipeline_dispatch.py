@@ -89,6 +89,27 @@ class PipelineDispatchTests(unittest.TestCase):
             dispatch.run(self.backend, 'minecraft:stone', 64, self.out, self.checkpoint)
         self.backend.ensure_client.assert_not_called()
 
+    def test_carried_stripped_wood_dispatch_reuses_item_client_and_rejects_projection_first(self):
+        item='minecraft:stripped_cherry_wood';scope='absolute_backpack_total'
+        self.backend.request={'mode':'projection'}
+        with self.assertRaises(JobBlocked):self.call(item,scope,57)
+        self.backend.ensure_client.assert_not_called();self.checkpoint.assert_not_called()
+        self.backend.request={'mode':'item'}
+        with patch.object(dispatch.stripped_wood_pipeline,'run_carried',return_value={'phase':'waiting'})as family:
+            self.assertEqual('waiting',self.call(item,scope,57)['phase'])
+            family.assert_called_once_with(self.client,self.backend.profile,item,57,self.out,self.checkpoint)
+            self.assertIs(self.backend,self.client.stripped_wood_backend)
+
+    def test_carried_stripped_limit_and_backend_mode_are_checked_before_controller(self):
+        self.backend.request={'mode':'item'}
+        with self.assertRaises(ValueError):self.call('minecraft:stripped_cherry_wood','absolute_backpack_total',2305)
+        self.backend.ensure_client.assert_not_called()
+        backend=Backend.__new__(Backend);backend.request={'mode':'projection'}
+        backend.ensure_client=Mock();backend.checkpoint=Mock()
+        with self.assertRaises(JobBlocked):
+            backend.run_pipeline('minecraft:stripped_cherry_wood',57,self.out,target_scope='absolute_backpack_total')
+        backend.ensure_client.assert_not_called();backend.checkpoint.assert_not_called()
+
     def test_invalid_or_family_oversize_counts_reject_before_controller(self):
         cases = [('minecraft:stone', 'approved_depot_total', 1_000_001),
                  ('minecraft:oak_log', 'approved_depot_total', 100_001),

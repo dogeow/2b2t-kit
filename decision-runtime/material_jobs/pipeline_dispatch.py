@@ -30,8 +30,10 @@ def describe(item):
     module, _, scope, _, maximum = _route(item)
     result={'item': item, 'family': module.__name__.rsplit('.', 1)[-1].removesuffix('_pipeline'),
             'target_scope': scope, 'max_target_count': maximum}
-    if item==mineral_pipeline.IRON or item in wood_pipeline.PLANKS:
+    if item==mineral_pipeline.IRON or item in wood_pipeline.PLANKS or item in stripped_wood_pipeline.OUTPUTS:
         result.update(carried_target_scope=CARRIED_SCOPE,max_carried_target_count=2304)
+    if item in stripped_wood_pipeline.OUTPUTS:
+        result['carried_modes'] = ['item']
     return result
 
 
@@ -61,6 +63,8 @@ def run(backend, item, target_count, out, checkpoint, target_scope):
     carried=bool(route.get('carried_target_scope') and target_scope==route['carried_target_scope'])
     if target_scope != expected_scope and not carried:
         raise ValueError('Expected target_scope=' + expected_scope + ' for ' + item)
+    if carried and route.get('carried_modes') and backend.request.get('mode') not in route['carried_modes']:
+        raise JobBlocked('This carried pipeline requires an explicit item-mode request')
     if carried:maximum=route['max_carried_target_count']
     if type(target_count) is not int or not 1 <= target_count <= maximum:
         raise ValueError('Invalid target count for ' + item)
