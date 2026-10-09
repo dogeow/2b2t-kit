@@ -149,4 +149,20 @@ class CapsTest(unittest.TestCase):
    with patch.object(caps,'approach_faces',return_value='up'),patch.object(caps,'wait_known_idle',side_effect=lambda c:c.status()),patch.object(caps,'finish_beams',side_effect=finish),patch.object(caps,'_travel',side_effect=pickup_route)as route:
     self.assertTrue(caps.run_one(c,TARGET,Path(root)/'run',c.status)['complete']);self.assertEqual(1,route.call_count)
    self.assertEqual(15,c.items['minecraft:dirt']);self.assertFalse(any(op in ('collect_item','navigate')for op,_ in c.calls))
+ def test_explicit_consumable_dirt_records_actual_spent_soil_and_still_removes_every_cap(self):
+  class SpentDirtClient(Client):
+   def request(self,op,**kw):
+    r=super().request(op,**kw)
+    if op=='mine_block':self.items['minecraft:dirt']-=1
+    return r
+  with tempfile.TemporaryDirectory()as root:
+   c=SpentDirtClient(root)
+   def finish(client,**kw):
+    c.blocks[tuple(TARGET)]=caps.EXPECTED;c.items[caps.RAW]-=1
+    return {'completed':[{'pos':TARGET}],'deferred':[]}
+   with patch.object(caps,'approach_faces',return_value='up'),patch.object(caps,'wait_known_idle',side_effect=lambda c:c.status()),patch.object(caps,'finish_beams',side_effect=finish):
+    result=caps.run_one(c,TARGET,Path(root)/'run',c.status,consumable_dirt=True)
+   self.assertTrue(result['complete']);self.assertTrue(result['all_caps_removed'])
+   self.assertFalse(result['dirt_restored']);self.assertEqual(2,result['unrecovered_dirt_at_finish'])
+   self.assertEqual(13,result['dirt_after']);self.assertEqual(1,c.items[caps.RAW]);self.assertEqual(2,len(c.blocks))
 if __name__=='__main__':unittest.main()

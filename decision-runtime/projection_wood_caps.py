@@ -54,12 +54,14 @@ def plan_caps(target,observed,matched,low,high,max_caps=4):
     return None
 
 
-def run_one(c,target,out,checkpoint,*,max_caps=4,resume_confirmed=None):
+def run_one(c,target,out,checkpoint,*,max_caps=4,resume_confirmed=None,consumable_dirt=False):
+    if type(consumable_dirt)is not bool:raise ValueError('Dirt consumption mode must be explicit boolean')
     out=Path(out);out.mkdir(parents=True,exist_ok=False)
     before=checkpoint();key=before['projection_selection']['key'];world=c.world
     low=before['projection_selection']['min'];high=before['projection_selection']['max']
     book={'schema':1,'world_session':world,'task_session':c.task,'placement_key':key,
-          'target':list(target),'pending':None,'owned_caps':[],'complete':False}
+          'target':list(target),'pending':None,'owned_caps':[],'complete':False,
+          'consumable_dirt':consumable_dirt}
     def save():write_json(out/'progress.json',book)
     save()
     def state():
@@ -141,6 +143,15 @@ def run_one(c,target,out,checkpoint,*,max_caps=4,resume_confirmed=None):
             if r.get('phase')!='done':raise RuntimeError('Cap mining not confirmed; no second mine')
             if at(pos)!='AIR':raise RuntimeError('Mined cap AIR not confirmed; no repeat')
             book['owned_caps'].remove(pos);book['pending']=None;save()
+        if consumable_dirt:
+            # Ordinary temporary soil may be spent. Preserve the actual
+            # unresolved pickup balance; never label it restored or count it
+            # as carried stock. Every support must still be physically AIR.
+            after=inventory_counts(state()).get('minecraft:dirt',0)
+            if not dirt_before-len(plan['caps'])<=after<=dirt_before:
+                raise RuntimeError('Dirt consumption exceeds confirmed placed caps')
+            book.update(dirt_after=after,unrecovered_dirt_at_finish=dirt_before-after)
+            save();return
         for attempt in range(12):
             q=state();held=inventory_counts(q).get('minecraft:dirt',0)
             if held==dirt_before:return
@@ -156,9 +167,23 @@ def run_one(c,target,out,checkpoint,*,max_caps=4,resume_confirmed=None):
             hi=[lo[0]+2,max(68,math.ceil(drop['pos'][1]+3)),lo[2]+2]
             area=scan(lo,hi);water=[v['pos'][1]+1 for v in area['blocks']if v['fluid']and 'minecraft:water' in v['state']]
             if water:point[1]=max(water)+.1
+            # A water current can move the drop below a completed plate cell.
+            # Pick from a real adjacent AIR body column, not through the plate.
+            candidates=[]
+            for dx in (-1,0,1):
+                for dz in (-1,0,1):
+                    candidate=[point[0]+dx,point[1],point[2]+dz]
+                    if math.hypot(candidate[0]-drop['pos'][0],candidate[2]-drop['pos'][2])>1.2:continue
+                    if not any(not v['fluid']and blocks_segment(v,candidate,candidate)for v in area['blocks']):
+                        candidates.append(candidate)
+            if not candidates:raise RuntimeError('No observed AIR body column beside dirt drop; balance retained')
+            point=min(candidates,key=lambda p:math.hypot(p[0]-drop['pos'][0],p[2]-drop['pos'][2]))
             trace=[];_travel(c,[point[0],max(67,q['pos'][1]),point[2]],state,trace,keep_cruise=True)
             q=state()
             if inventory_counts(q).get('minecraft:dirt',0)==dirt_before:return
+            current_drop=next((e for e in q.get('entities',[])if e.get('uuid')==drop['uuid']),None)
+            if current_drop is None or math.hypot(current_drop['pos'][0]-point[0],current_drop['pos'][2]-point[2])>1.2:
+                continue # Freshly plan the current entity; no stale descent.
             lo=[math.floor(min(a,b)-.35)for a,b in zip(q['pos'],point)]
             hi=[math.ceil(max(a,b)+(1.81 if i==1 else .35))for i,(a,b)in enumerate(zip(q['pos'],point))]
             corridor=scan(lo,hi)
@@ -225,4 +250,7 @@ def run_one(c,target,out,checkpoint,*,max_caps=4,resume_confirmed=None):
     settled(list(target),EXPECTED,RAW,wood_before-1);book['pending']=None;save()
     cleanup();complete(c,cleanup_key)
     if at(list(target))!=EXPECTED:raise RuntimeError('Completed wood changed during cap cleanup')
-    book.update(complete=True,actual_new_cells=1,dirt_restored=True,all_caps_removed=True);save();return book
+    after=inventory_counts(state()).get('minecraft:dirt',0)
+    book.update(complete=True,actual_new_cells=1,dirt_restored=after==dirt_before,
+                dirt_after=after,unrecovered_dirt_at_finish=dirt_before-after,
+                all_caps_removed=True);save();return book
