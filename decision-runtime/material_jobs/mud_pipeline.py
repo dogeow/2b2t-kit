@@ -298,7 +298,7 @@ def run(c,profile,item,target_count,out,checkpoint):
                 if current!=water:
                     book['pending']={'kind':'water_slot_identity','expected_row':water};save()
                     raise Wait('WAIT_RECONCILE','Derived water bottle slot changed before conversion')
-                client().checked('select_item',item='minecraft:potion',slot=water['slot'])
+                select('minecraft:potion',water['slot'])
                 operation('water_to_owned_mud',lambda:client().request('interact',pos=pos,face=face,expected_state=actual,expected_hand='minecraft:potion'),
                           lambda a,b:block(pos)==MUD and inventory_counts(a)['minecraft:potion']-inventory_counts(b)['minecraft:potion']==1
                           and inventory_counts(b)['minecraft:glass_bottle']-inventory_counts(a)['minecraft:glass_bottle']==1)
