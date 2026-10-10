@@ -770,7 +770,9 @@ class MaterialJob:
         if self.backend is None:
             raise ValueError('A concrete backend must be attached before execution')
         try:
-            self._write('planning','读取投影缺料清单（本次首次）' if self.request['mode']=='projection' else '核对背包与材料')
+            phase = ('复用已保存的投影缺料清单' if getattr(self.backend, 'parked_ledger_reused', False)
+                     else '读取投影缺料清单（本次首次）')
+            self._write('planning', phase if self.request['mode']=='projection' else '核对背包与材料')
             self._observe(initial=True)
             self._recover()
             while True:

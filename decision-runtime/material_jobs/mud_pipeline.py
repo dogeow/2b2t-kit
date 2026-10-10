@@ -196,13 +196,17 @@ def run(c,profile,item,target_count,out,checkpoint):
             raise Wait('WAIT_SOURCE','Configure an explicitly owned dry mud work cell')
         rows=scan([pos[0]-1,support[1],pos[2]-1],[pos[0]+1,pos[1]+1,pos[2]+1])
         floor=next((r for r in rows if r['pos']==support),None)
-        if (floor is None or floor['state']!=cfg['support_state'] or floor.get('solid') is not True
+        natural_support = (floor is not None and floor['state'] in (DIRT, GRASS)
+                           and cfg['support_state'] in (DIRT, GRASS))
+        if (floor is None or floor['state']!=cfg['support_state'] and not natural_support or floor.get('solid') is not True
                 or any(r.get('fluid') is not False or r.get('block_entity') is not False for r in rows)):
             raise Wait('WAIT_SOURCE','Owned mud station is wet, changed or unsafe')
         actual=next((r['state'] for r in rows if r['pos']==pos),AIR)
         if actual!=AIR and (not book['owned_cell'] or actual not in (DIRT,GRASS,MUD)):
             raise Wait('WAIT_SOURCE','Preserve pre-existing work-cell blocks')
-        return cfg,pos,support,actual
+        # Interact against the exact newly observed support, including the
+        # natural dirt/grass transition; never send the older expected state.
+        return dict(cfg, support_state=floor['state']),pos,support,actual
     def bottle(preflight=False):
         retained=book.get('derived_water_slot')
         if retained is not None:

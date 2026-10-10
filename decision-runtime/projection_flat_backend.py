@@ -108,11 +108,14 @@ class FlatMapBackend(Backend):
             raise ValueError('Flat-map adapter requires an explicit projection task')
         policy(request.get('flat_map'))  # Validate before constructing the existing backend.
         super().__init__(request, automation, out, checkpoint)
+        from projection_flat_continuity import restore
+        restore(self, self.latest)
 
     def observe(self):
         state = super().observe()
         ledger = getattr(self, 'flat_ledger', None)
-        if (ledger is not None and ledger.audit.get('material_ledger') and not ledger.audit['mismatches']
+        if (ledger is not None and (ledger.audit.get('material_ledger') or getattr(self, 'parked_ledger_reused', False))
+                and not ledger.audit['mismatches']
                 and not self.busy and not self.checking and not self.cleaning):
             # Never let the scheduler complete a projection from cached totals.
             audit = self.refresh_audit()
@@ -147,7 +150,50 @@ class FlatMapBackend(Backend):
         if layout.key != projection_key:
             raise JobBlocked('地图画目标投影已改变')
         self.flat_layout = layout
+        self.flat_model = model
         return layout
+
+    def try_direct_registered_travel(self, client, target, checkpoint, trace, *, keep_cruise):
+        """A straight diagonal between this map and its registered mud station.
+
+        Native swept-volume limits still apply. Collinear legs remain below
+        that limit; no axis detours or repeated broad Python corridor scans.
+        """
+        if self.request['flat_map'].get('direct_registered_map_routes') is not True:
+            return False
+        state = client.status(); selection = state.get('projection_selection') or {}
+        station = self.profile.get('mud_station') or {}
+        work = station.get('pos')
+        if (selection.get('key') != self.request['projection_key'] or station.get('authorized') is not True
+                or not isinstance(work, list) or len(work) != 3):
+            return False
+        low, high = selection.get('min'), selection.get('max')
+        if not low or not high:
+            return False
+        on_map = lambda p: low[0]-3 <= p[0] <= high[0]+4 and low[2]-3 <= p[2] <= high[2]+4
+        at_work = lambda p: math.hypot(p[0]-work[0]-.5, p[2]-work[2]-.5) <= 6
+        here = state['pos']
+        if (not (on_map(here) and at_work(target) or at_work(here) and on_map(target))
+                or min(here[1], target[1]) < high[1]+8 or abs(here[1]-target[1]) > 2
+                or math.dist(here, target) > 256):
+            return False
+        from material_jobs.navigation import settled_state
+        for segment in range(8):
+            checkpoint(); here = client.status()['pos']; distance = math.dist(here, target)
+            if distance <= .55:
+                return True
+            ratio = min(1., 48 / distance)
+            point = [a + (b-a)*ratio for a, b in zip(here, target)]
+            # Native player sweep is bounded to8192 cells; the largest48-cell
+            # diagonal here stays below2500 including body dimensions.
+            reply = client.request('navigate', target=point, arrival=.25, air_only=True, seconds=45)
+            trace.append({'event': 'direct_registered_map_segment', 'segment': segment+1,
+                          'from': here, 'target': point, 'final_target': list(target),
+                          'native_reply': reply})
+            if reply.get('phase') != 'done':
+                raise JobBlocked('登记地图直线航段未确认；不重放导航')
+            settled_state(client, point, .55)
+        raise JobBlocked('登记地图直线航段上限已到，保留原目标')
 
     def _ledger(self, client, layout):
         ledger = getattr(self, 'flat_ledger', None)
@@ -245,6 +291,7 @@ class FlatMapBackend(Backend):
 
     def _window(self, client, layout, actual, plan, directory):
         from material_jobs.acquisition import _travel
+        started = time.monotonic()
         self._safe_flat(client, layout)
         if client.status().get('projection_batch', {}).get('active'):
             raise JobBlocked('既有施工掩码尚未清除；不覆盖它')
@@ -270,6 +317,7 @@ class FlatMapBackend(Backend):
         else:
             _travel(client, plan['station'], self.checkpoint, trace, keep_cruise=False)
         write_json(directory / 'travel.json', trace)
+        travel_seconds = time.monotonic() - started
         state = self._safe_flat(client, layout)
         if math.dist(state['pos'], plan['station']) > .75:
             raise JobBlocked('地图画施工站位尚未实际到达；不设置掩码或消耗材料')
@@ -341,8 +389,18 @@ class FlatMapBackend(Backend):
             if cleared.get('projection_batch', {}).get('active') is not False:
                 raise JobBlocked('窗口结束但掩码清除未确认')
         journal.update(pending=None, complete=True, physical_positions=[list(p) for p in sorted(changed)],
-                       inventory_before=stock_before, inventory_after=stock_before - len(changed))
+                       inventory_before=stock_before, inventory_after=stock_before - len(changed),
+                       elapsed_seconds=time.monotonic()-started, travel_seconds=travel_seconds)
         save()
+        try:
+            from projection_efficiency import WindowEfficiency
+            if not hasattr(self, 'window_efficiency'):
+                self.window_efficiency = WindowEfficiency()
+            review = self.window_efficiency.add(journal)
+            if review is not None:
+                write_json(self.out / 'efficiency-review.json', review)
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass  # Diagnostics must not interrupt a proved placement or ask for a retry.
         return after, len(changed)
 
     def build(self, projection_key):
@@ -448,7 +506,16 @@ class FlatMapBackend(Backend):
             write_json(self.out / 'flat-unconfirmed-finish.json', {'pending_windows': pending,
                        'safe_to_replan': False, 'movement_or_mask_cleanup_sent': False})
             raise JobBlocked('地图画原窗口尚未核验；保留原生防护，不执行移动或清理')
-        return super().finish()
+        client = getattr(self, 'client', None)
+        result = super().finish()
+        if client is not None:
+            try:
+                from live_snapshot import read_fresh
+                from projection_flat_continuity import save
+                save(self, client, read_fresh(self.root))
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+                pass  # Optional cache must never turn a confirmed park into a retry.
+        return result
 
 
 def create_backend(request, automation, out, checkpoint):

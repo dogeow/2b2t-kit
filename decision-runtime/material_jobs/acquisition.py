@@ -670,6 +670,9 @@ def _travel(c, target, checkpoint, trace, guard_budget=None, route_scope=None, *
     if type(keep_cruise) is not bool:
         raise ValueError('Travel cruise retention must be explicit boolean')
     checkpoint()
+    direct = getattr(getattr(c, 'owner', None), 'try_direct_registered_travel', None)
+    if route_scope is None and callable(direct) and direct(c, target, checkpoint, trace, keep_cruise=keep_cruise):
+        return
     segments, plan = _segmented_targets(c, target, route_scope)
     segmented = plan is not None
     if segmented:

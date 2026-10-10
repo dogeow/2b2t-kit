@@ -158,6 +158,21 @@ class MudPipelineTest(unittest.TestCase):
     def test_current_finished_stock_is_absolute_not_added_target(self):
         self.c.add('minecraft:mud_bricks',4)
         self.assertEqual(4,self.go()['after']);self.assertEqual([],self.b.calls)
+
+    def test_registered_dirt_support_may_naturally_grow_grass_without_being_mined(self):
+        self.profile['mud_station']['support_state'] = DIRT
+        self.c.blocks[(100,63,100)] = GRASS
+        result = self.go()
+        self.assertEqual((result['phase'], self.c.count('minecraft:mud_bricks')), ('done',4))
+        self.assertEqual(self.c.blocks[(100,63,100)], GRASS)
+        self.assertFalse(any(op == 'mine_block' and params.get('pos') == [100,63,100]
+                             for op,params in self.c.calls))
+
+    def test_dirt_support_alias_does_not_accept_other_changed_floor_material(self):
+        self.profile['mud_station']['support_state'] = DIRT
+        result = self.go()
+        self.assertEqual(result['code'], 'WAIT_SOURCE')
+        self.assertFalse(any(op in ('mine_block','interact') for op,_ in self.c.calls))
     def test_inventory_staging_precedes_mud_work_and_keeps_unknown_receipt(self):
         self.b.prepare_mud_inventory=lambda:{'phase':'waiting','code':'WAIT_WORKSPACE'}
         result=self.go()

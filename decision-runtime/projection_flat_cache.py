@@ -17,7 +17,8 @@ class FlatMaterialLedger:
         self.actual = layout.observed(audit)
         self.audit = deepcopy(audit)
         self.baseline_at = audit['observed_at']
-        self.windows = 0
+        previous = audit.get('material_ledger', {}).get('verified_windows', 0)
+        self.windows = previous if type(previous) is int and previous >= 0 else 0
 
     def accept(self, after, count, record, *, evidence_path):
         """Credit only the journal committed after ACK, scan, stock and cleanup."""
