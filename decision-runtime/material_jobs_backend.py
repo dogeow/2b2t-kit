@@ -964,7 +964,9 @@ class Backend:
             raise JobBlocked('泥流水线工作槽未完整确认')
         free=sum(not r.get('count',0)for r in rows)
         if free>=minimum:return {'phase':'done','prepared':True,'free_slots':free}
-        from material_stack_consolidation import run as consolidate
+        from material_stack_consolidation import run as consolidate,run_inventory
+        merged=run_inventory(self,'minecraft:glass_bottle',minimum)
+        if merged is not None:return {**merged,'prepared':True,'code':'WORKSPACE_READY'}
         consolidated=consolidate(self,'minecraft:mud_bricks',minimum)
         if consolidated is not None:
             return {**consolidated,'prepared':True,'code':'WORKSPACE_READY'}
