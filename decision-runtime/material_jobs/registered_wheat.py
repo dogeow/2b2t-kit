@@ -47,14 +47,20 @@ def run(backend,target,out,checkpoint):
                 old=json.loads(prior.read_text());pending=old.get('pending')or{}
                 saved_layout=old.get('scope',{}).get('layout',{})
                 evidence=pending.get('prior_plant_rejected_without_use')
-                if (old.get('world_session')==c.world and pending.get('operation')=='await_replant'
-                        and evidence and old.get('scope',{}).get('server')==server_key(c.server)
+                harvest_witness=old.get('cells',{}).get(','.join(map(str,pending.get('pos',[]))),{}).get('harvest',{})
+                known_loot=(pending.get('operation')=='await_loot' and pending.get('native_mining_confirmed') is True
+                            and pending.get('crop_removed') is True)
+                known_replant=(pending.get('operation')=='await_replant' and evidence
+                               and harvest_witness.get('native_mining_confirmed') is True
+                               and harvest_witness.get('remaining_count')==0)
+                if (old.get('world_session')==c.world and (known_loot or known_replant)
+                        and old.get('scope',{}).get('server')==server_key(c.server)
                         and saved_layout.get('center')==layout['center']
                         and saved_layout.get('radius')==layout['radius'] and saved_layout.get('crop')=='wheat'):
-                    proof=json.loads(Path(evidence).read_text()).get('proof',{})
+                    proof=json.loads(Path(evidence).read_text()).get('proof',{})if evidence else {}
                     from wheat_plant_reconcile import HOST,HOST_CLASS_SHA
                     host=proof.get('host_contract')or{}
-                    if (proof.get('outcome')!='rejected_without_use' or proof.get('world_session')!=c.world
+                    if known_replant and (proof.get('outcome')!='rejected_without_use' or proof.get('world_session')!=c.world
                             or proof.get('original_attempt_not_done') is not True or proof.get('seed_debit')!=0
                             or host.get('kit_version')!=HOST or host.get('class_sha256')!=HOST_CLASS_SHA
                             or proof.get('pos')!=pending['pos']):
@@ -62,11 +68,12 @@ def run(backend,target,out,checkpoint):
                     request={**request,'cells':saved_layout['harvest_cells']}
                     harvest_out=prior.parent;reused=(prior,pending['pos'])
                     write_json(home/'reused-original-harvest.json',{'journal':str(prior),'proof':evidence,
-                               'original_action_replayed':False,'inventory_credit':0})
+                               'original_action_replayed':False,'known_stage':pending['operation'],'inventory_credit':0})
             # This existing primitive proves original complete planting, no old
             # pending harvest, and two current complete crop/farmland frames.
             _registered_wheat(c,{**request,'cells':layout['cells']},reused[0]if reused else home/'preflight.json',
-                              known_replant=reused[1]if reused else None,bind_active=False)
+                              known_replant=reused[1]if reused else None,bind_active=False,
+                              known_loot=pending if reused and pending.get('operation')=='await_loot'else None)
             scan=c.checked('scan',min=layout['scan_min'],max=layout['scan_max'],details=True)
             expected=1
             for low,high in zip(layout['scan_min'],layout['scan_max']):expected*=high-low+1

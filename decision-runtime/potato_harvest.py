@@ -100,7 +100,8 @@ def _owned_drops(state, active, before_ids, known_loot, *, crop='potato'):
                 or type(stack.get('count')) is not int or not 1 <= stack['count'] <= 64
                 or not isinstance(pos, list) or len(pos) != 3
                 or any(type(v) not in (int, float) or not math.isfinite(v) for v in pos)
-                or math.dist(pos, [origin[0]+.5, origin[1]+1.5, origin[2]+.5]) > 2
+                or math.dist(pos, [origin[0]+.5, origin[1]+1.5, origin[2]+.5]) >
+                   (3 if uuid in known_loot else 2)
                 or uuid in known_loot and stack['item'] != known_loot[uuid]['item']):
             raise FarmWait('WAIT_ENTITY', 'Only fresh identified near-target '+descriptor.name+' loot may intersect the field')
         owned.append({'uuid': uuid, 'id': row['id'], 'type': 'minecraft:item', 'item': stack['item'],
@@ -116,7 +117,7 @@ def _same_except(before, after, allowed):
 
 
 
-def _registered_wheat(c, request, journal, known_replant=None, *, bind_active=True):
+def _registered_wheat(c, request, journal, known_replant=None, *, bind_active=True, known_loot=None):
     """The harvest uses an existing explicit planting registry, never invents one."""
     root = getattr(c, 'root', None)
     if type(bind_active) is not bool:raise ValueError('Active harvest binding must be explicit boolean')
@@ -170,20 +171,39 @@ def _registered_wheat(c, request, journal, known_replant=None, *, bind_active=Tr
         original_registry=registry.read_bytes();original_planting=planted_path.read_bytes()
         before=c.status();hurt=before.get('recent_hurt_at');_lease(c,before,hurt)
         frames=[];last=before['time'];counts=_counts(before)
+        known_capture=(isinstance(known_loot,dict) and known_loot.get('operation')=='await_loot'
+                       and known_loot.get('native_mining_confirmed') is True
+                       and known_loot.get('crop_removed') is True and known_loot.get('pos')==known_replant)
+        allowed_loot={'minecraft:wheat','minecraft:wheat_seeds'}
         cell_count=math.prod(b-a+1 for a,b in zip(layout['scan_min'],layout['scan_max']))
         for _ in range(2):
             observed=c.request('scan',min=layout['scan_min'],max=layout['scan_max'],details=True)
             _lease(c,observed,hurt)
+            current_counts=_counts(observed)
+            same_stock=current_counts==counts
+            if known_capture:
+                same_stock=(all(current_counts[i]==counts[i]for i in counts.keys()|current_counts.keys()if i not in allowed_loot)
+                            and all(current_counts[i]>=counts[i] and
+                                    current_counts[i]-known_loot['before_counts'].get(i,0)<=
+                                    known_loot.get('observed_drop_totals',{}).get(i,0)for i in allowed_loot))
             if (observed.get('phase')!='done' or observed.get('id')!=getattr(c,'last',None)
                     or observed.get('scan_cells_read')!=cell_count or observed.get('scan_total_cells')!=cell_count
                     or observed.get('scan_start_revision')!=c.rev or observed.get('scan_end_revision')!=c.rev
-                    or observed.get('time',0)<=last or _counts(observed)!=counts
+                    or observed.get('time',0)<=last or not same_stock
                     or not valid_entity_scope(observed.get('scan_entity_scope'))
                     or not isinstance(observed.get('scan_entities'),list)
                     or observed.get('unloaded_chunks',0)):
                 raise FarmWait('WAIT_REGISTERED_FARM','Current complete field scope or inventory changed')
             records={_key(pos):{'planted':pos!=known_replant}for pos in layout['cells']}
-            rows=survey_rows(observed,layout,records)
+            soil_state=observed
+            if known_capture:
+                known={d['uuid']:d for d in known_loot.get('owned_loot',[])}
+                if any(row.get('type')=='minecraft:item' and row.get('uuid')not in known
+                       for row in observed.get('scan_entities',[])):
+                    raise FarmWait('WAIT_ENTITY','Known-loot recovery cannot adopt a new item identity')
+                _owned_drops(observed,known_replant,set(known_loot.get('pre_drop_ids',[])),known,crop='wheat')
+                soil_state={**observed,'scan_entities':[]}
+            rows=survey_rows(soil_state,layout,records)
             if any(_properties(rows.get(tuple(pos),{}),'farmland','moisture',7)is None
                    or (pos==known_replant and (pos[0],pos[1]+1,pos[2])in rows
                        or pos!=known_replant and _properties(rows.get((pos[0],pos[1]+1,pos[2]),{}),'wheat','age',7)is None)
@@ -282,7 +302,8 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
                         or resume.get('operation')=='await_loot'and witness.get('crop_removed')is not True):
                     raise FarmWait('WAIT_RECONCILE','Current empty-cell restoration lacks confirmed original harvest/pickup')
                 known_replant=p
-            book['registration'] = _registered_wheat(c, request, path, known_replant)
+            book['registration'] = _registered_wheat(c, request, path, known_replant,
+                                                     known_loot=resume if resume and resume.get('operation')=='await_loot'else None)
             book.pop('active_journal', None)
 
         def status():

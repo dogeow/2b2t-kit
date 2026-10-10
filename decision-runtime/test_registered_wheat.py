@@ -125,5 +125,19 @@ class Tests(unittest.TestCase):
         self.assertEqual(4,sum(v.get('replanted')is True for v in final['cells'].values()))
         self.assertEqual('plant',final['rejected_plant_history'][0]['original_pending']['operation'])
 
+    def test_known_await_loot_reuses_original_harvest_without_a_second_break_of_that_cell(self):
+        from potato_farm import plan
+        self.c.pickup_delay=None
+        request={**REQUEST,'cells':plan(REQUEST)['cells'][:4],'reverify_registered_field':True}
+        first=native_harvest(self.c,request,self.root/'original-harvest',
+                            sleep=self.clock.sleep,monotonic=self.clock.monotonic)
+        journal=Path(first['journal']);saved=json.loads(journal.read_text());pos=saved['pending']['pos']
+        self.assertEqual('await_loot',saved['pending']['operation'])
+        self.c.pickup_delay=1;self.c.pending_pickup=1
+        result=self.execute();self.assertEqual('done',result['phase'],result)
+        self.assertEqual(4,inventory_counts(self.c.status())[WHEAT])
+        self.assertEqual(1,sum(op=='mine_block'and kw['pos']==[pos[0],pos[1]+1,pos[2]]for op,kw in self.c.calls))
+        self.assertIsNone(json.loads(journal.read_text())['pending'])
+
 
 if __name__=='__main__':unittest.main()

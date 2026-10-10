@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 
 from potato_farm import WHEAT_SEEDS, plan as farm_plan, _key
-from potato_harvest import BONE, plan, recover_known_loot, run
+from potato_harvest import BONE, plan, recover_known_loot, run, _owned_drops
 from test_potato_farm import FarmClient, SPEC, row
 from test_potato_harvest import Clock
 
@@ -302,6 +302,19 @@ class WheatHarvestTests(unittest.TestCase):
         self.client.entities=[{'uuid':'old-seeds','id':999,'type':'minecraft:item','pos':[1.5,64,.5],
                                'stack':{'item':WHEAT_SEEDS,'count':2}}]
         result=self.execute();self.assertEqual('WAIT_ENTITY',result['code']);self.assertFalse(self.actions())
+
+    def test_known_seed_drift_at_field_edge_stays_exactly_owned_and_unknown_identity_is_rejected(self):
+        from potato_farm import ENTITY_SCOPE,FarmWait
+        entity={'uuid':'seed','id':9,'type':'minecraft:item','pos':[.16,63.,2.12],
+                'stack':{'item':WHEAT_SEEDS,'count':3}}
+        scoped={k:v for k,v in entity.items()if k!='stack'}
+        state={'scan_entity_scope':ENTITY_SCOPE,'scan_entities':[scoped],'entities':[entity]}
+        known={'seed':{'floor':[1,63,1],'item':WHEAT_SEEDS}}
+        result=_owned_drops(state,[1,63,1],set(),known,crop='wheat')
+        self.assertEqual(('seed',3),(result[0]['uuid'],result[0]['count']))
+        with self.assertRaises(FarmWait):_owned_drops(state,[1,63,1],set(),{},crop='wheat')
+        entity['pos']=[8.,63.,2.12];scoped['pos']=entity['pos']
+        with self.assertRaises(FarmWait):_owned_drops(state,[1,63,1],set(),known,crop='wheat')
 
     def test_pickup_callback_receipt_is_not_inventory_proof_and_each_uuid_is_offered_once(self):
         self.client.pickup_delay=None;offered=[]
