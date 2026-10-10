@@ -373,6 +373,22 @@ class MudPipelineTest(unittest.TestCase):
     def test_known_four_cell_budget_not_false_completion(self):
         result=self.go('minecraft:mud',8)
         self.assertEqual('WAIT_MUD_BATCH',result['code']);self.assertEqual(4,self.c.count('minecraft:mud'))
+    def test_projection_stock_visit_makes_sixteen_verified_bricks_without_completing_the_larger_goal(self):
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        self.c.add('minecraft:dirt',12);self.c.add('minecraft:wheat',16)
+        original=self.b.fetch
+        def refill(target):
+            if target=={'minecraft:water_bucket':1}:
+                self.c.add('minecraft:water_bucket',1);return {'phase':'done'}
+            return original(target)
+        self.b.fetch=refill
+        result=self.go(target=64)
+        self.assertEqual('WAIT_MUD_BATCH',result['code']);self.assertTrue(result['safe_to_leave'])
+        self.assertEqual(16,self.c.count('minecraft:mud_bricks'))
+        book=json.loads((self.root/'job/mud-pipeline.json').read_text())
+        self.assertEqual(64,book['target']);self.assertIsNone(book['pending']);self.assertFalse(book['owned_cell'])
+        self.assertIsNone(book['derived_water_slot']);self.assertFalse(book.get('complete',False))
 
     def test_large_brick_goal_uses_four_carried_wheat_before_waiting_for_more(self):
         result=self.go('minecraft:mud_bricks',120)

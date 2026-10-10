@@ -46,11 +46,12 @@ def _level(state):
 
 
 def run(c,profile,item,target_count,out,checkpoint):
-    """Make at most four raw mud cells per invocation with matching recipe demand.
+    """Make a bounded mud stock visit with four-cell recipe/input sub-batches.
 
     Fetch uses actual depots. Natural mud/wheat reuse the bounded colored-source
     worker with explicit authorized profiles and fresh dry scans. The synthetic
-    station may excavate only its own newly placed dirt/mud; existing blocks and
+    Item tasks retain four cells; projection stock visits allow sixteen cells
+    and a bounded256-action budget. The station may excavate only its own dirt/mud; existing blocks and
     unidentified inventory potions are preserved.
     """
     if item not in ITEMS or type(target_count) is not int or not 1<=target_count<=MAX_TARGET_COUNT:
@@ -71,6 +72,8 @@ def run(c,profile,item,target_count,out,checkpoint):
     if any(book.get(k)!=v for k,v in scope.items()):raise JobPaused('Mud journal scope changed')
     if book.get('pending'):
         return {'phase':'waiting','code':'WAIT_RECONCILE','detail':'Previous mud action unknown; no replay','journal':str(path)}
+    cell_budget=16 if backend.request.get('mode')=='projection' else 4
+    action_budget=256 if cell_budget==16 else 64
     catalog=RecipeCatalog(profile['recipe_jar']);actions=0;fetched=set();new_mud=0
 
     def client():return backend.ensure_client()
@@ -109,7 +112,7 @@ def run(c,profile,item,target_count,out,checkpoint):
         book['derived_water_slot']=moved[0];save()
     def operation(kind,fn,validate=None):
         nonlocal actions
-        if actions>=64:raise Wait('WAIT_BUDGET','Bounded mud action budget reached')
+        if actions>=action_budget:raise Wait('WAIT_BUDGET','Bounded mud action budget reached')
         before=state();book['pending']={'kind':kind,'before':dict(inventory_counts(before))}
         save();checkpoint();result=fn();actions+=1;after=state()
         book['pending'].update(returned_receipt=result,after=dict(inventory_counts(after)));save()
@@ -266,11 +269,11 @@ def run(c,profile,item,target_count,out,checkpoint):
             _travel(c,[work[0]+.5,max(c.status()['pos'][1],work[1]+24),work[2]+.5],checkpoint,trace,keep_cruise=True)
             write_json(out/'registered-mud-station-loading-travel.json',trace)
         while stock()['minecraft:mud']<target:
-            if new_mud>=4:raise Wait('WAIT_MUD_BATCH','Four owned mud cells completed; next call rechecks sources')
+            if new_mud>=cell_budget:raise Wait('WAIT_MUD_BATCH','Owned mud stock batch completed; next call rechecks sources')
             cfg,pos,support,actual=station()
             if actual==AIR:
                 current=state();held=inventory_counts(current)
-                dirt_target=min(4-new_mud,target-held['minecraft:mud'])
+                dirt_target=min(4,cell_budget-new_mud,target-held['minecraft:mud'])
                 # Carry this invocation's real demand together. A new dirt
                 # stack consumes an empty slot; leave room for the mud output.
                 output_room=room_for_item(current,'minecraft:mud')
