@@ -298,6 +298,42 @@ class WheatHarvestTests(unittest.TestCase):
         result=self.execute();self.assertEqual('WAIT_LOOT',result['code']);self.assertEqual(0,self.client.plant_calls)
         self.assertEqual({WHEAT},{d['item'] for d in result['known_loot']})
 
+    def test_explicit_missing_seed_balance_restores_crop_without_crediting_lost_seed(self):
+        self.client.pickup_items={WHEAT};reads=[0]
+        def gone(c):
+            if any(e['stack']['item']==WHEAT_SEEDS for e in c.entities):
+                reads[0]+=1
+                if reads[0]>=3:c.entities=[e for e in c.entities if e['stack']['item']!=WHEAT_SEEDS]
+        self.client.on_scan=gone
+        result=self.execute({**REQUEST,'cells':[[1,63,0]]},allow_unrecovered_seed_loss=True)
+        self.assertEqual('done',result['phase'],result)
+        book=self.book(result);self.assertEqual(1,result['wheat_gain'])
+        self.assertEqual(-1,result['seed_gain']);self.assertEqual(7,book['seeds_after'])
+        history=book['unrecovered_seed_history'];self.assertEqual(2,history[0]['count'])
+        self.assertEqual(0,history[0]['seed_inventory_credit']);self.assertEqual(1,self.client.plant_calls)
+
+    def test_missing_seed_without_explicit_policy_remains_waiting_without_replant(self):
+        self.client.pickup_items={WHEAT};reads=[0]
+        def gone(c):
+            if any(e['stack']['item']==WHEAT_SEEDS for e in c.entities):
+                reads[0]+=1
+                if reads[0]>=3:c.entities=[e for e in c.entities if e['stack']['item']!=WHEAT_SEEDS]
+        self.client.on_scan=gone
+        result=self.execute({**REQUEST,'cells':[[1,63,0]]})
+        self.assertEqual('WAIT_LOOT',result['code']);self.assertEqual(0,self.client.plant_calls)
+        self.assertNotIn('unrecovered_seed_history',self.book(result))
+
+    def test_explicit_seed_loss_policy_never_credits_an_unpicked_grain(self):
+        self.client.pickup_items=set();reads=[0]
+        def gone(c):
+            if c.entities:
+                reads[0]+=1
+                if reads[0]>=3:c.entities=[]
+        self.client.on_scan=gone
+        result=self.execute({**REQUEST,'cells':[[1,63,0]]},allow_unrecovered_seed_loss=True)
+        self.assertEqual('WAIT_LOOT',result['code']);self.assertEqual(0,self.client.plant_calls)
+        self.assertNotIn('unrecovered_seed_history',self.book(result))
+
     def test_unknown_or_preexisting_drops_block_without_becoming_owned_pickups(self):
         self.client.entities=[{'uuid':'old-seeds','id':999,'type':'minecraft:item','pos':[1.5,64,.5],
                                'stack':{'item':WHEAT_SEEDS,'count':2}}]

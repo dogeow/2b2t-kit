@@ -106,6 +106,7 @@ def run(backend,target,out,checkpoint):
             cells=request['cells']if reused else mature[:min(4,target-before)]
             args=(c,{**request,'cells':cells},harvest_out,checkpoint)
             options={'max_cells':4,'bonemeal_budget':0,
+                     'allow_unrecovered_seed_loss':True,
                      'pickup':make_pickup(center,radius=layout['radius'],checkpoint=checkpoint,crop='wheat'),
                      'plant_access':make_plant_access(center,radius=layout['radius'],checkpoint=checkpoint)}
             result=harvest(*args,**options)
