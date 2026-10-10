@@ -1,6 +1,7 @@
 """Borrow completed Kit wheat fields and the existing harvest/reseed primitive."""
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from kit_runtime.journal import write_json
@@ -118,6 +119,23 @@ def run(backend,target,out,checkpoint):
                     harvest_out=prior.parent;reused=(prior,pending['pos'])
                     write_json(home/'reused-original-harvest.json',{'journal':str(prior),'proof':evidence,
                                'original_action_replayed':False,'known_stage':pending['operation'],'inventory_credit':0})
+            from farm_reseed import read as read_farm_record
+            original=read_farm_record(registry);planting=read_farm_record(
+                Path(original['directory'])/('wheat-farm-'+registry.parent.name+'.json'))
+            if (planting.get('scope')!=original.get('scope') or planting.get('world_session')!=original.get('world_session')
+                    or planting.get('complete')is not True or planting.get('pending') or planting.get('cleanup_pending')):
+                return wait('WAIT_RECONCILE','Original wheat planting/cleanup is unresolved')
+            if active.exists() and (old.get('pending')or old.get('cleanup_pending')) and reused is None:
+                return wait('WAIT_RECONCILE','Original harvest is unresolved; no new field travel')
+            center=layout['center']
+            if math.hypot(c.status()['pos'][0]-center[0],c.status()['pos'][2]-center[2])>32:
+                backend.prepare_travel()
+                from .navigation import lift_for_travel
+                from .acquisition import _travel
+                lift_for_travel(c);trace=[]
+                _travel(c,[center[0]+.5,max(c.status()['pos'][1],center[1]+24),center[2]+.5],
+                        checkpoint,trace,keep_cruise=True)
+                write_json(home/'registered-field-loading-travel.json',trace)
             # This existing primitive proves original complete planting, no old
             # pending harvest, and two current complete crop/farmland frames.
             def preflight():

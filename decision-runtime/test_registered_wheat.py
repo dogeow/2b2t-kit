@@ -66,6 +66,24 @@ class Tests(unittest.TestCase):
         self.c.plant_journal.write_text(json.dumps(b));before=self.c.plant_journal.read_bytes()
         result=self.execute();self.assertEqual('WAIT_RECONCILE',result['code'])
         self.assertFalse(self.c.calls);self.assertEqual(before,self.c.plant_journal.read_bytes())
+    def test_far_field_is_loaded_before_current_crop_scans(self):
+        self.c.extra['pos']=[100,100,100]
+        center=json.loads(self.c.registry.read_text())['scope']['layout']['center']
+        def travel(c,target,*args,**kw):c.extra['pos']=list(target)
+        original=self.c.request
+        def request(op,**kw):
+            if op=='scan':self.assertLessEqual(abs(self.c.extra['pos'][0]-center[0]),3)
+            return original(op,**kw)
+        self.c.request=request
+        with patch('material_jobs.acquisition._travel',side_effect=travel),patch('material_jobs.navigation.lift_for_travel'):
+            from material_jobs.registered_wheat import run
+            # Reuse execute's existing injected harvest and planner fixtures.
+            with patch('material_jobs.registered_wheat._registered_wheat',side_effect=lambda *a,**k:None), \
+                    patch('material_jobs.registered_wheat.harvest',return_value={'phase':'waiting','journal':str(self.root/'unknown.json')}):
+                (self.root/'unknown.json').write_text('{"pending":{}}')
+                result=run(self.backend,4,self.root/'far-source',lambda:None)
+        self.assertEqual('WAIT_RECONCILE',result['code'])
+        self.assertTrue((self.root/'far-source/field-00/registered-field-loading-travel.json').exists())
 
     def test_source_world_is_reverified_without_rewriting_the_original_planting_world(self):
         for p in (self.c.registry,self.c.plant_journal):
