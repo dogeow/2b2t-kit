@@ -9,3 +9,5 @@ Backend.acquire 对本次已知 route_geometry_blocked 可调用该原语，在�
 当前 CLI 已正常只读登记 [760777,55,797984]..[760778,68,797985]，对应竖井 [760777,69,797984]..[760778,77,797985]，实测 12 个目标矿块，尚未计入库存。实机证据：work/live-20261004/kit-diorite-entry-repair-register-39bb-001/registration-proof.json。
 
 229 项相关回归通过；最终同一分支接入后又针对后端／入口／平面地图验证。真正采集与新的地图放置继续验证，完整地图仍未完成。用户新增要求已保存为记忆：操作经验必须持续集成到 Kit，后续地图画与其它操作使用 Kit 自主完成。
+
+实机补充：登记入口及矿区预加载组合已实际成功。Kit 清理登记天然竖井后采得 12 个闪长岩，背包 2→14，源任务 completed 14/14、ai_calls=0；退出矿坑后取得原生 KEEP_PVE_GUARD 并自动衔接完整图面任务。证据在 work/live-20261004/map-source12-then-full-kit-39bb-008/actual_source_terminal.json 与 actual_diorite_after_source.json。该材料尚未计入图面放置，本次尚未完成全图与地图像素验收。
