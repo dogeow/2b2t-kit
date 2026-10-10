@@ -1069,6 +1069,26 @@ def _resource_ledger(path, item, *, create=False):
     return ledger
 
 
+def _empty_resource_placeholder(ledger):
+    """Only a known empty discovery shell; holds and unknown metadata are evidence."""
+    allowed={'schema','item','tiles','route_failures','algorithm_version','search_progress',
+             'history','extensions','extension_history','route_failure_history'}
+    if set(ledger)-allowed or any(ledger.get(key,{}) for key in
+            ('tiles','route_failures','history','extensions','extension_history','route_failure_history')):
+        return False
+    version=ledger.get('algorithm_version',1)
+    if type(version)is not int or not 1<=version<=32:return False
+    progress=ledger.get('search_progress',{})
+    if (not isinstance(progress,dict)or set(progress)-{
+            'new_tiles','scanned_total','has_more','ledger','algorithm_version'}):return False
+    if any(type(progress.get(key,0))is not int or progress.get(key,0)!=0
+           for key in ('new_tiles','scanned_total')):return False
+    if 'has_more'in progress and type(progress['has_more'])is not bool:return False
+    if 'ledger'in progress and (not isinstance(progress['ledger'],str)or len(progress['ledger'])>4096):return False
+    return ('algorithm_version'not in progress or type(progress['algorithm_version'])is int
+            and progress['algorithm_version']==version)
+
+
 def _resource_ledger_scope_path(directory, server, dimension, item):
     """Use normalized server identity and migrate only equivalent alias ledgers."""
     directory=Path(directory)
@@ -1095,7 +1115,26 @@ def _resource_ledger_scope_path(directory, server, dimension, item):
                 for path,ledger in loaded]
     reference=normalized[0][1]
     if any(ledger!=reference for _,ledger in normalized[1:]):
-        raise Unavailable('同一服务器存在冲突的资源发现记录；停止并保留全部现场')
+        evidence=[ledger for _,ledger in normalized if not _empty_resource_placeholder(ledger)]
+        if not evidence or any(ledger!=evidence[0] for ledger in evidence[1:]):
+            raise Unavailable('同一服务器存在冲突的资源发现记录；停止并保留全部现场')
+        # Discard no observation or route hold. A zero-tile alias is a shell,
+        # not conflicting resource evidence; preserve every original byte first.
+        reference=evidence[0]
+        archive=directory/'alias-reconciliations'/(canonical_scope+'-'+str(time.time_ns()))
+        archive.mkdir(parents=True,exist_ok=False)
+        originals={}
+        for path,_ in loaded:
+            data=path.read_bytes();(archive/path.name).write_bytes(data)
+            originals[path.name]=hashlib.sha256(data).hexdigest()
+        write_json(archive/'reconciliation.json',{
+            'kind':'empty_server_alias_placeholder','server':canonical_server,
+            'dimension':dimension,'item':item,'canonical_file':canonical.name,
+            'original_files_sha256':originals,'resource_records_merged':False,
+            'resource_observations_or_route_holds_removed':False})
+        write_json(canonical,reference)
+        for path in candidates:path.unlink()
+        return canonical
     if canonical.exists():
         for path in candidates:path.unlink()
         return canonical
