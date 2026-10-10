@@ -280,6 +280,13 @@ class MudPipelineTest(unittest.TestCase):
     def test_known_four_cell_budget_not_false_completion(self):
         result=self.go('minecraft:mud',8)
         self.assertEqual('WAIT_MUD_BATCH',result['code']);self.assertEqual(4,self.c.count('minecraft:mud'))
+
+    def test_large_brick_goal_uses_four_carried_wheat_before_waiting_for_more(self):
+        result=self.go('minecraft:mud_bricks',120)
+        self.assertEqual('waiting',result['phase'])
+        self.assertEqual(4,self.c.count('minecraft:mud_bricks'))
+        self.assertFalse(result.get('complete',False))
+        self.assertFalse(any(call[0]=='fetch' and call[1].get('minecraft:wheat',0)>4 for call in self.b.calls))
     def test_fetch_missing_wheat_waits_without_world_mutation(self):
         self.c.add('minecraft:wheat',-4)
         result=self.go()

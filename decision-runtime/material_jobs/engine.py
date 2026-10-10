@@ -605,6 +605,20 @@ class MaterialJob:
         key = fingerprint([operation, args,relevant]) if operation=='build' else fingerprint([operation,progress_args])
         self.no_progress[key] = 0 if progressed else self.no_progress[key] + 1
         if operation != 'fetch' and self.no_progress[key] >= 2:
+            ready=getattr(self.backend,'has_ready_projection_output',None)
+            if (operation=='run_pipeline' and self.request['mode']=='projection'
+                    and receipt.get('safe_to_leave') is True
+                    and callable(ready) and ready(self.snapshot)):
+                # A known source wait can leave useful finished stock behind.
+                # Build that real stock instead of repeating the blocked leaf;
+                # the incomplete pipeline receipt remains incomplete.
+                actual=inventory_counts(self.snapshot)
+                needed=self.snapshot.get('projection_audit',{}).get('replacement_items',{})
+                self.pending_ready_build={i:n for i,n in actual.items() if i in needed and n>2}
+                self.prerequisites.clear()
+                self._write(requirements={})
+                self._event('pipeline_source_wait_build_carried_stock',stock=self.pending_ready_build)
+                return receipt
             raise JobBlocked('同一步骤两次没有实际进展，已停止重复动作')
         return receipt
 

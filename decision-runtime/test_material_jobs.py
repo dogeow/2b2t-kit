@@ -755,6 +755,50 @@ class MaterialJobsTest(unittest.TestCase):
         with self.assertRaisesRegex(JobBlocked, '两次没有实际进展'):
             job._call('build', ['ship'], 'building')
 
+    def test_known_pipeline_source_wait_builds_real_finished_stock_without_false_completion(self):
+        item='minecraft:mud_bricks'
+        b=FakeBackend(self.catalog,held={item:6},projection={item:120})
+        b.run_pipeline=lambda *args,**kwargs:{'phase':'waiting','code':'WAIT_WHEAT','safe_to_leave':True,
+                                              'target_scope':'absolute_backpack_total'}
+        b.has_ready_projection_output=lambda snapshot:True
+        def build(key):
+            b.held[item]-=4;b.projection[item]-=4;b.matched+=4
+            b.calls.append(('build',key,4));return {'phase':'waiting','placed':4}
+        b.build=build
+        job=self.job(b,self.request(projection=True));job._observe();job.prerequisites={item:120}
+        args=[item,120,'absolute_backpack_total',str(self.root/'leaf')]
+        first=job._call('run_pipeline',args,'gathering')
+        second=job._call('run_pipeline',args,'gathering')
+        self.assertEqual('waiting',first['phase']);self.assertEqual('waiting',second['phase'])
+        self.assertEqual({item:6},job.pending_ready_build);self.assertEqual({},job.prerequisites)
+        job._step(job._observe());self.assertEqual(('build','ship',4),b.calls[-1])
+        self.assertEqual(2,b.held[item]);self.assertEqual(4,b.matched)
+
+    def test_pipeline_source_wait_without_ready_material_still_stops(self):
+        item='minecraft:mud_bricks'
+        b=FakeBackend(self.catalog,held={item:2},projection={item:120})
+        b.run_pipeline=lambda *args,**kwargs:{'phase':'waiting','code':'WAIT_WHEAT','safe_to_leave':True,
+                                              'target_scope':'absolute_backpack_total'}
+        b.has_ready_projection_output=lambda snapshot:False
+        job=self.job(b,self.request(projection=True));job._observe()
+        args=[item,120,'absolute_backpack_total',str(self.root/'leaf')]
+        job._call('run_pipeline',args,'gathering')
+        with self.assertRaisesRegex(JobBlocked,'两次没有实际进展'):
+            job._call('run_pipeline',args,'gathering')
+
+    def test_pipeline_with_owned_work_cannot_leave_to_build_even_with_carried_stock(self):
+        item='minecraft:mud_bricks'
+        b=FakeBackend(self.catalog,held={item:6},projection={item:120})
+        b.run_pipeline=lambda *args,**kwargs:{'phase':'waiting','code':'WAIT_WATER_SOURCE',
+                                              'safe_to_leave':False,'target_scope':'absolute_backpack_total'}
+        b.has_ready_projection_output=lambda snapshot:True
+        job=self.job(b,self.request(projection=True));job._observe()
+        args=[item,120,'absolute_backpack_total',str(self.root/'leaf')]
+        job._call('run_pipeline',args,'gathering')
+        with self.assertRaisesRegex(JobBlocked,'两次没有实际进展'):
+            job._call('run_pipeline',args,'gathering')
+        self.assertIsNone(job.pending_ready_build)
+
     def test_item_jobs_ignore_finished_projection_receipts(self):
         b = FakeBackend(self.catalog, depot={'minecraft:sand':16})
         original = b.fetch

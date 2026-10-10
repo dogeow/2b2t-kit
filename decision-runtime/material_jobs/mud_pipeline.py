@@ -47,7 +47,7 @@ def _level(state):
 
 
 def run(c,profile,item,target_count,out,checkpoint):
-    """Make at most four raw mud cells per invocation and64 recipe inputs/batch.
+    """Make at most four raw mud cells per invocation with matching recipe demand.
 
     Fetch uses actual depots. Natural mud/wheat reuse the bounded colored-source
     worker with explicit authorized profiles and fresh dry scans. The synthetic
@@ -348,9 +348,14 @@ def run(c,profile,item,target_count,out,checkpoint):
         if book.get('complete'):
             return {'phase':'done' if start>=target_count else 'blocked','code':'COMPLETED_RECEIPT','journal':str(path)}
         while stock()[item]<target_count:
-            ensure(item,min(target_count,stock()[item]+64));fetched.clear()
+            # Match derived recipe demand to the real four-cell source budget.
+            # A large goal must not require 64 wheat before producing any stock.
+            increment=4 if item in ('minecraft:packed_mud','minecraft:mud_bricks') else 64
+            ensure(item,min(target_count,stock()[item]+increment));fetched.clear()
         after=stock()[item];book.update(complete=True,verified_output=after);save()
         return {'phase':'done','item':item,'before':start,'after':after,'gained':after-start,
                 'target_scope':TARGET_SCOPE,'journal':str(path)}
     except Wait as wait:
-        return {**wait.receipt,'target_scope':TARGET_SCOPE,'journal':str(path)}
+        return {**wait.receipt,'target_scope':TARGET_SCOPE,'journal':str(path),
+                'safe_to_leave':book.get('owned_cell') is False and book.get('pending') is None
+                                and book.get('derived_water_slot') is None}
