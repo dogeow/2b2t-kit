@@ -1405,6 +1405,10 @@ class Backend:
                     and item not in ('minecraft:sand','minecraft:dirt','minecraft:grass_block')
                     and item not in SNOW_PRODUCTS):
                 return {'phase':'blocked','detail':'此原料尚未提供自动采集方式：'+item}
+            if item in ('minecraft:diorite','minecraft:andesite','minecraft:granite'):
+                from local_rock_recipe import run as local_recipe
+                local=local_recipe(self,c,item,count,out)
+                if local is not None:return local
             if item in ('minecraft:dirt','minecraft:grass_block') or item in SNOW_PRODUCTS:
                 from material_jobs.dirt_harvest import _box
                 protected=self.profile.get('protected_regions')

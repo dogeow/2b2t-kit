@@ -171,10 +171,16 @@ class FlatMapBackend(Backend):
         if not low or not high:
             return False
         on_map = lambda p: low[0]-3 <= p[0] <= high[0]+4 and low[2]-3 <= p[2] <= high[2]+4
-        at_work = lambda p: math.hypot(p[0]-work[0]-.5, p[2]-work[2]-.5) <= 6
+        anchors = [[work[0]+.5, work[1]+1, work[2]+.5]]
+        for name in ('workbench_staging', 'supply_staging', 'park_target'):
+            point = self.profile.get(name)
+            if (isinstance(point, list) and len(point)==3
+                    and all(type(v) in (int,float) and math.isfinite(v) for v in point)):
+                anchors.append(point)
+        at_work = lambda p: any(math.hypot(p[0]-a[0], p[2]-a[2]) <= 6 for a in anchors)
         here = state['pos']
         if (not (on_map(here) and at_work(target) or at_work(here) and on_map(target))
-                or min(here[1], target[1]) < high[1]+8 or abs(here[1]-target[1]) > 2
+                or min(here[1], target[1]) < high[1]+8 or abs(here[1]-target[1]) > 8
                 or math.dist(here, target) > 256):
             return False
         from material_jobs.navigation import settled_state
@@ -184,8 +190,11 @@ class FlatMapBackend(Backend):
                 return True
             ratio = min(1., 48 / distance)
             point = [a + (b-a)*ratio for a, b in zip(here, target)]
-            # Native player sweep is bounded to8192 cells; the largest48-cell
-            # diagonal here stays below2500 including body dimensions.
+            while math.prod(abs(b-a)+padding for a,b,padding in zip(here,point,(1.6,2.8,1.6)))>8000:
+                ratio*=.75
+                point = [a+(b-a)*ratio for a,b in zip(here,target)]
+            # Preserve the native8192-cell swept-volume gate, including a
+            # conservative player/body margin for mildly sloped staging legs.
             reply = client.request('navigate', target=point, arrival=.25, air_only=True, seconds=45)
             trace.append({'event': 'direct_registered_map_segment', 'segment': segment+1,
                           'from': here, 'target': point, 'final_target': list(target),
