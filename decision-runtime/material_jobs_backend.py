@@ -925,15 +925,16 @@ class Backend:
                 'unavailable_sources':unavailable,'projection_key':key}
 
     def fetch_reserve_empty(self,state,targets,mud_context=False):
-        # A singleton bottle replaces its hand slot. Existing mud absorbs this
-        # small input batch; placing the dirt frees the input slot again before
-        # crafting. No new output stack is assumed to fit a full backpack.
+        # A singleton bottle replaces its hand slot. A single dirt input is
+        # entirely placed before mud is collected, releasing its slot. Larger
+        # dirt batches still need an existing mud stack for intermediate output.
         from material_trip_policy import room_for_item
         if mud_context and set(targets)=={'minecraft:dirt'} and 1<=targets['minecraft:dirt']<=4:
             rows=state.get('inventory',[])
             bottles=sum(r.get('count',0)for r in rows if r.get('slot',99)<36 and r.get('item')=='minecraft:glass_bottle')
             held=inventory_counts(state)
-            if (bottles==1 and held.get('minecraft:mud',0)>0
+            single_released_input=(targets['minecraft:dirt']==1 and not held.get('minecraft:dirt',0))
+            if (bottles==1 and (held.get('minecraft:mud',0)>0 or single_released_input)
                     and room_for_item(state,'minecraft:mud')>=max(1,targets['minecraft:dirt']-held.get('minecraft:dirt',0))):
                 return 0
         return 1

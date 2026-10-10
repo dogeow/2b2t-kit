@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from material_jobs.navigation import (_below_vertical_start, leave_quarry,
                                       quarry_exit_candidates, shaft_path,
                                       settled_state, leave_projection, lift_for_travel,
-                                      _escape_local_canopy)
+                                      _escape_local_canopy, _escape_open_trapdoor)
 from material_jobs.protocol import JobBlocked
 
 
@@ -42,6 +42,56 @@ class Clock:
     def __init__(self):self.now=0.;self.sleeps=[]
     def monotonic(self):return self.now
     def sleep(self,seconds):self.sleeps.append(seconds);self.now+=seconds
+
+
+class OpenTrapdoorExitTest(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.state={'world_session':'w','pos':[23.5,64.836,51.5],'health':20,
+                    'manual_movement':False,'guard_busy':False,'guard_armed':True,'guard_pve_only':True}
+        self.trap={'pos':[23,65,51],'state':'Block{minecraft:oak_trapdoor}[facing=east,half=bottom,open=true,powered=false,waterlogged=false]',
+                   'solid':False,'fluid':False,'block_entity':False,'passable':False}
+        self.floor={'pos':[24,63,51],'state':'Block{minecraft:grass_block}[snowy=false]',
+                    'solid':True,'fluid':False,'block_entity':False,'passable':False}
+        self.rows=[copy.deepcopy(self.trap),copy.deepcopy(self.floor)]
+        self.c=SimpleNamespace(world='w',out=Path(self.temp.name),checked=Mock(),
+            request=Mock(side_effect=lambda *a,**kw:{'phase':'done','world_session':'w','blocks':copy.deepcopy(self.rows)}))
+
+    def run_exit(self):
+        actual={**self.state,'pos':[24.5,64.,51.5]}
+        with patch('material_jobs.navigation.settled_state',side_effect=[self.state,actual]):
+            return _escape_open_trapdoor(self.c,self.state,[self.trap])
+
+    def test_one_normal_step_preserves_door_and_does_not_claim_parking(self):
+        self.assertEqual([24.5,64.,51.5],self.run_exit()['pos'])
+        self.c.checked.assert_called_once_with('walk',target=[24.5,64.,51.5],arrival=.25,seconds=12,restore_flight=False)
+        proof=json.loads(next(self.c.out.glob('open-trapdoor-exit-*.json')).read_text())
+        self.assertTrue(proof['door_states_preserved']);self.assertFalse(proof['parking_confirmed'])
+
+    def test_closed_wet_or_other_obstacle_does_not_enter_door_escape(self):
+        for change in ({'state':self.trap['state'].replace('open=true','open=false')},
+                       {'fluid':True},{'block_entity':True},{'state':'Block{minecraft:stone}'}):
+            trap={**self.trap,**change}
+            self.assertIsNone(_escape_open_trapdoor(self.c,self.state,[trap]))
+        self.c.checked.assert_not_called();self.c.request.assert_not_called()
+
+    def test_missing_floor_wet_floor_roof_or_container_never_moves(self):
+        cases=[[],[{**self.floor,'fluid':True}],[{**self.floor,'block_entity':True}],
+               [self.floor,{'pos':[24,90,51],'state':'Block{minecraft:stone}'}]]
+        for extra in cases:
+            with self.subTest(rows=extra):
+                self.rows=[copy.deepcopy(self.trap)]+copy.deepcopy(extra)
+                with self.assertRaises(JobBlocked):self.run_exit()
+        self.c.checked.assert_not_called()
+
+    def test_changed_trapdoor_world_manual_or_unknown_scan_never_moves(self):
+        self.rows[0]['state']=self.trap['state'].replace('open=true','open=false')
+        with self.assertRaises(JobBlocked):self.run_exit()
+        for change in ({'world_session':'other'},{'manual_movement':True},{'health':18},{'guard_armed':False}):
+            with self.assertRaises(JobBlocked):_escape_open_trapdoor(self.c,{**self.state,**change},[self.trap])
+        self.c.request=Mock(return_value={'phase':'waiting','world_session':'w','blocks':[]})
+        with self.assertRaises(JobBlocked):self.run_exit()
+        self.c.checked.assert_not_called()
 
 
 class SettledStateTest(unittest.TestCase):

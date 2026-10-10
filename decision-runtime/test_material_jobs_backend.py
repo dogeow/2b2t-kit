@@ -1633,6 +1633,30 @@ class BackendTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError)as raised:self.job.ensure_client()
             self.assertNotIsInstance(raised.exception,JobPaused);self.assertIsNone(self.job.client)
 
+    def test_single_dirt_input_releases_its_slot_before_first_mud_output(self):
+        from material_storage_index import select_sources
+        config=Path(self.temp.name)/'config';root=config/'twob2tkit/automation';root.mkdir(parents=True)
+        self.client.root=root
+        pos=[5,64,1]
+        (config/'twob2tkit.json').write_text(json.dumps({'storageSnapshots':[{
+            'server':'simpcraft.com','worldId':'','dimension':'minecraft:overworld',
+            'status':'active','contentsDirty':False,'blockId':'minecraft:chest','lastSeenEpochMillis':100,
+            'x':5,'y':64,'z':1,'containerPositions':[pos],
+            'items':[{'id':'minecraft:dirt','count':633}]}]}))
+        bag=inventory_rows({'minecraft:glass_bottle':1,'minecraft:packed_mud':3,'minecraft:wheat':4})
+        for row in bag[3:-1]:row.update(item='minecraft:stone',count=64,max_stack=64)
+        self.current['inventory']=bag
+        reserve=self.job.fetch_reserve_empty(self.current,{'minecraft:dirt':1},True)
+        self.assertEqual(0,reserve)
+        self.assertEqual([pos],select_sources(self.client,[pos],{'minecraft:dirt':1},reserve_empty=reserve)['positions'])
+        # More dirt leaves its stack occupied when the first mud arrives.
+        self.assertEqual(1,self.job.fetch_reserve_empty(self.current,{'minecraft:dirt':4},True))
+        self.assertEqual(1,self.job.fetch_reserve_empty(self.current,{'minecraft:dirt':1},False))
+        bag[0]['count']=2
+        self.assertEqual(1,self.job.fetch_reserve_empty(self.current,{'minecraft:dirt':1},True))
+        bag[0]['count']=1;bag[-1].update(item='minecraft:stone',count=64,max_stack=64)
+        self.assertEqual(1,self.job.fetch_reserve_empty(self.current,{'minecraft:dirt':1},True))
+
     def test_persistent_stock_search_visits_only_matching_box_and_uses_one_free_mud_input_slot(self):
         config=Path(self.temp.name)/'config';root=config/'twob2tkit/automation';root.mkdir(parents=True)
         self.client.root=root;self.job.root=root

@@ -318,12 +318,69 @@ def _escape_local_canopy(client):
     return actual
 
 
+def _escape_open_trapdoor(client, state, column):
+    """One normal ground step beside an open trapdoor; never toggle or mine it."""
+    from .acquisition import block_id
+    start=list(state['pos']);x,y,z=map(math.floor,start)
+    obstacles=[r for r in column if r['pos'][1]>=y and not r.get('passable',True)]
+    if (not obstacles or any(not block_id(r).endswith('_trapdoor')
+            or 'open=true' not in r.get('state','') or 'waterlogged=false' not in r.get('state','')
+            or r.get('fluid') is not False or r.get('block_entity') is not False for r in obstacles)):
+        return None
+    if (state.get('world_session')!=client.world or state.get('manual_movement')
+            or state.get('health',0)<19 or state.get('under_water') or state.get('guard_busy')
+            or not state.get('guard_armed') or not state.get('guard_pve_only')):
+        raise JobBlocked('活板门旁绕行的角色或防护状态未确认')
+    low,high=[x-1,y-1,z-1],[x+1,319,z+1]
+    reply=client.request('scan',min=low,max=high,details=True)
+    if (reply.get('phase') not in (None,'done') or reply.get('world_session')!=client.world
+            or not isinstance(reply.get('blocks'),list)):
+        raise JobBlocked('活板门附近落脚与完整升空列尚未确认')
+    cells={}
+    for row in reply['blocks']:
+        p=row.get('pos')
+        if (not isinstance(p,list) or len(p)!=3 or any(type(v)is not int for v in p)
+                or any(not low[i]<=p[i]<=high[i]for i in range(3)) or tuple(p)in cells):
+            raise JobBlocked('活板门旁绕行扫描含未知、重复或越界格')
+        cells[tuple(p)]=row
+    if any(cells.get(tuple(r['pos']),{}).get('state')!=r['state']for r in obstacles):
+        raise JobBlocked('活板门在出口扫描期间变化；保留现场')
+    target=None
+    for dx,dz in ((1,0),(-1,0),(0,1),(0,-1)):
+        cx,cz=x+dx,z+dz;floor=cells.get((cx,y-1,cz),{})
+        if (floor.get('solid')is True and floor.get('fluid')is False
+                and floor.get('block_entity')is False
+                and not any(p[0]==cx and p[2]==cz and p[1]>=y for p in cells)):
+            target=[cx+.5,float(y),cz+.5];break
+    if target is None:
+        raise JobBlocked('打开的活板门旁没有一格干燥落脚和完整露天列')
+    fresh=settled_state(client)
+    if (fresh.get('world_session')!=client.world or math.dist(fresh['pos'],start)>.2
+            or fresh.get('manual_movement') or fresh.get('health',0)<19
+            or not fresh.get('guard_armed') or not fresh.get('guard_pve_only')):
+        raise JobBlocked('活板门旁一步绕行前位置或防护已变化')
+    # Normal walking checks the actual partial collision shape. The destination
+    # has a full dry floor; this does not pretend the trapdoor voxel is air.
+    client.checked('walk',target=target,arrival=.25,seconds=12,restore_flight=False)
+    actual=settled_state(client,target,.55)
+    if actual.get('health',0)<19 or actual.get('world_session')!=client.world:
+        raise JobBlocked('活板门旁绕行后的角色状态变化，不继续上升')
+    write_json(client.out/('open-trapdoor-exit-%d.json'%time.time_ns()),{
+        'world_session':client.world,'from':start,'target':target,'actual':actual['pos'],
+        'door_states_preserved':True,'normal_walk_confirmed':True,'parking_confirmed':False})
+    return actual
+
+
 def local_park(client):
     """Pick the current column after exiting the hull; no fixed return flight."""
     leave_projection(client)
     state = settled_state(client)
     x, z = math.floor(state['pos'][0]), math.floor(state['pos'][2])
     rows = client.request('scan', min=[x, -64, z], max=[x, 319, z], details=True)['blocks']
+    escaped=_escape_open_trapdoor(client,state,rows)
+    if escaped is not None:
+        state=escaped;x,z=math.floor(state['pos'][0]),math.floor(state['pos'][2])
+        rows=client.request('scan',min=[x,-64,z],max=[x,319,z],details=True)['blocks']
     top = max((r['pos'][1]+1 for r in rows if r.get('fluid') or not r.get('passable', True)), default=None)
     if top is None or top+24 >= 319:
         raise JobBlocked('没有可核验的安全停靠高度')
