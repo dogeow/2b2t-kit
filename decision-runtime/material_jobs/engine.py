@@ -284,6 +284,9 @@ class MaterialJob:
         return self._peak_capacity(planned)['slots']
 
     def _fit_batch(self, item, final_count):
+        from .mud_batch import carried_visit_target
+        offer=carried_visit_target(self.request,getattr(self.backend,'profile',{}),self.snapshot,item,final_count)
+        if offer is not None:return offer
         amount = min(self._batch_limit(item), final_count - self.held.get(item, 0))
         direct_target = self.held.get(item, 0) + amount
         while amount > 0:

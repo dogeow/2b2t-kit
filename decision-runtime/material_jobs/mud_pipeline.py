@@ -87,6 +87,12 @@ def run(c,profile,item,target_count,out,checkpoint):
     cell_budget=16 if backend.request.get('mode')=='projection' else 4
     action_budget=256 if cell_budget==16 else 64
     catalog=RecipeCatalog(profile['recipe_jar']);actions=0;fetched=set();new_mud=0
+    from .mud_batch import carried_visit_target
+    bulk=carried_visit_target(backend.request,profile,c.status(),item,target_count) is not None
+    initial=inventory_counts(c.status());gain=max(0,target_count-initial[item])
+    visit_units=min(cell_budget,math.ceil(gain/4)*4)if item=='minecraft:mud_bricks'else 0
+    bulk_inputs_ready=False
+    bulk_wheat_ready=False
 
     def client():return backend.ensure_client()
     def state():
@@ -263,7 +269,7 @@ def run(c,profile,item,target_count,out,checkpoint):
         return added[0] # No generic old potion is classified as water from water_breathing=False.
 
     def make_mud(target):
-        nonlocal new_mud
+        nonlocal new_mud,bulk_inputs_ready
         natural=any(r.get('item')=='minecraft:mud' and r.get('authorized') is True for r in profile.get('colored_source_regions',[]))
         if natural:
             reply,_,_=operation('natural_mud',lambda:colored_sources.acquire(client(),'minecraft:mud',target,profile,out/'natural-mud',checkpoint))
@@ -274,6 +280,14 @@ def run(c,profile,item,target_count,out,checkpoint):
         if (cfg.get('authorized')is not True or not _point(work)or not _point(floor)
                 or work!=[floor[0],floor[1]+1,floor[2]]or not isinstance(cfg.get('support_state'),str)):
             raise Wait('WAIT_SOURCE','Configure an explicitly owned dry mud work cell')
+        if bulk and not bulk_inputs_ready:
+            # Prepare only the current16-cell visit. Actual recipes, each cell
+            # and all output deltas still use the existing four-unit worker.
+            desired=max(0,visit_units-inventory_counts(state())['minecraft:mud'])
+            fetch('minecraft:dirt',desired)
+            if inventory_counts(state())['minecraft:dirt']<desired:
+                raise Wait('WAIT_SOURCE','Registered dirt did not fill this real work visit',requirements={'minecraft:dirt':desired})
+            bulk_inputs_ready=True
         if math.hypot(state()['pos'][0]-work[0],state()['pos'][2]-work[2])>32:
             from .navigation import lift_for_travel
             from .acquisition import _travel
@@ -382,6 +396,7 @@ def run(c,profile,item,target_count,out,checkpoint):
             book['owned_cell']=False;save();new_mud+=1
 
     def ensure(output,target):
+        nonlocal bulk_wheat_ready
         fetch(output,target)
         held=stock()
         if held[output]>=target:return
@@ -391,7 +406,12 @@ def run(c,profile,item,target_count,out,checkpoint):
         rounds=math.ceil((target-held[output])/recipe.count)
         if output=='minecraft:mud_bricks':ensure('minecraft:packed_mud',rounds*4)
         else:
-            require_raw('minecraft:wheat',rounds)
+            if bulk:
+                if not bulk_wheat_ready:
+                    fetch('minecraft:wheat',visit_units);bulk_wheat_ready=True
+                if stock()['minecraft:wheat']<rounds:
+                    raise Wait('WAIT_SOURCE','Registered wheat is short for the next real recipe',requirements={'minecraft:wheat':rounds})
+            else:require_raw('minecraft:wheat',rounds)
             ensure('minecraft:mud',rounds)
         craft(output,target,recipe_id)
 

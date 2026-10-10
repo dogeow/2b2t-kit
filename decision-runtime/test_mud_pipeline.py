@@ -400,6 +400,25 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual(64,book['target']);self.assertIsNone(book['pending']);self.assertFalse(book['owned_cell'])
         self.assertIsNone(book['derived_water_slot']);self.assertFalse(book.get('complete',False))
 
+    def test_capacity_proved_projection_visit_fetches16_inputs_once_and_makes16_new_bricks(self):
+        self.sea_source();self.c.add('minecraft:dirt',-4);self.c.add('minecraft:wheat',-4)
+        self.c.add('minecraft:mud_bricks',2)
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        original=self.b.fetch
+        def stored(target):
+            if len(target)==1 and next(iter(target))in ('minecraft:dirt','minecraft:wheat'):
+                self.b.calls.append(('fetch',target));item,amount=next(iter(target.items()))
+                self.c.add(item,max(0,amount-self.c.count(item)));return {'phase':'done'}
+            return original(target)
+        self.b.fetch=stored
+        result=self.go(target=18)
+        self.assertEqual('done',result['phase']);self.assertEqual(18,self.c.count('minecraft:mud_bricks'))
+        self.assertEqual([{'minecraft:wheat':16}],[x[1]for x in self.b.calls if x[0]=='fetch'and 'minecraft:wheat'in x[1]])
+        self.assertEqual([{'minecraft:dirt':16}],[x[1]for x in self.b.calls if x[0]=='fetch'and 'minecraft:dirt'in x[1]])
+        self.assertEqual(16,sum(op=='bottle_fill'for op,_ in self.c.calls))
+        self.assertEqual(0,self.c.count('minecraft:wheat'));self.assertEqual(0,self.c.count('minecraft:dirt'))
+
     def test_large_brick_goal_uses_four_carried_wheat_before_waiting_for_more(self):
         result=self.go('minecraft:mud_bricks',120)
         self.assertEqual('waiting',result['phase'])
