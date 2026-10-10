@@ -829,6 +829,7 @@ def _cruise_band_clear(c, legs, here, cruise, checkpoint, trace, authorized, pad
                           'world_session':c.world,'request_id':getattr(c,'last',None),
                           'clear':not blocked,'coverage':'complete_padded_cruise_band_only_not_full_height'})
             if getattr(c,'out',None):
+                Path(c.out).mkdir(parents=True,exist_ok=True)
                 write_json(Path(c.out)/'cruise-band-latest.json',{'world_session':c.world,
                     'target':list(legs[-1][1]),'observations':observations,'placement_credit':0})
             if blocked:
