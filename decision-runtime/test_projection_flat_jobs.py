@@ -451,15 +451,16 @@ class FlatIntegrationTests(unittest.TestCase):
 
     def test_uncertain_return_keeps_segment_without_a_second_navigation(self):
         with tempfile.TemporaryDirectory() as tmp:
+            out=Path(tmp)/'projection-loading'
             current = state(4); current['pos'] = [-400.5,100,400.5]
             backend = FlatMapBackend.__new__(FlatMapBackend)
             backend.checkpoint = lambda: None
             client = SimpleNamespace(status=lambda:current)
             with patch('material_jobs.acquisition._travel', side_effect=RuntimeError('native outcome unknown')) as travel:
                 with self.assertRaisesRegex(RuntimeError, 'outcome unknown'):
-                    backend.travel_to_projection(client,[1.5,100,.5],'ship',Path(tmp))
+                    backend.travel_to_projection(client,[1.5,100,.5],'ship',out)
             travel.assert_called_once()
-            trace=json.loads((Path(tmp)/'model-loading-travel.json').read_text())
+            trace=json.loads((out/'model-loading-travel.json').read_text())
             self.assertEqual(trace[0]['final_target'],[1.5,100,.5])
             self.assertEqual(trace[0]['segment'],1)
 

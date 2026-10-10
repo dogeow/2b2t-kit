@@ -318,6 +318,8 @@ class FlatMapBackend(Backend):
         Each ordinary route below stays under the existing direct-route limit.
         """
         from material_jobs.acquisition import _travel, SEGMENT_ROUTE_LIMIT
+        out = Path(out)
+        out.mkdir(parents=True, exist_ok=True)
         trace = []
         try:
             for segment in range(16):
