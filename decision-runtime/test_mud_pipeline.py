@@ -287,6 +287,23 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual(4,self.c.count('minecraft:mud_bricks'))
         self.assertFalse(result.get('complete',False))
         self.assertFalse(any(call[0]=='fetch' and call[1].get('minecraft:wheat',0)>4 for call in self.b.calls))
+
+    def fill_inventory(self):
+        for r in self.c.rows:
+            if not r['count']:r.update(item='minecraft:cobblestone',count=64,max_stack=64)
+
+    def test_singleton_bottle_replaces_its_hand_slot_with_a_full_inventory(self):
+        self.c.add('minecraft:mud',1);self.fill_inventory()
+        result=self.go('minecraft:mud',2)
+        self.assertEqual('done',result['phase'],result);self.assertEqual(2,self.c.count('minecraft:mud'))
+        self.assertEqual(1,self.c.count('minecraft:glass_bottle'))
+        self.assertEqual(0,self.c.count('minecraft:potion'))
+
+    def test_stacked_bottle_still_needs_an_actual_empty_output_slot(self):
+        self.c.add('minecraft:glass_bottle',1);self.c.add('minecraft:mud',1);self.fill_inventory()
+        result=self.go('minecraft:mud',2)
+        self.assertEqual('WAIT_CAPACITY',result['code'])
+        self.assertFalse(any(op=='interact'and p.get('expected_hand')=='minecraft:glass_bottle'for op,p in self.c.calls))
     def test_fetch_missing_wheat_waits_without_world_mutation(self):
         self.c.add('minecraft:wheat',-4)
         result=self.go()

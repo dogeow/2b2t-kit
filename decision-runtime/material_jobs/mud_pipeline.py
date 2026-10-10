@@ -213,7 +213,11 @@ def run(c,profile,item,target_count,out,checkpoint):
                       lambda a,b:_level(block(pos))==3 and inventory_counts(a)['minecraft:water_bucket']-inventory_counts(b)['minecraft:water_bucket']==1
                       and inventory_counts(b)['minecraft:bucket']-inventory_counts(a)['minecraft:bucket']==1)
             current=block(pos);level=3
-        if room_for_item(state(),'minecraft:potion',stack_size=1)<1:raise Wait('WAIT_CAPACITY','Bottle output needs a real free slot')
+        client().checked('select_item',item='minecraft:glass_bottle')
+        selected=state();hand=selected.get('hand')or{}
+        replaces_hand=hand.get('item')=='minecraft:glass_bottle' and hand.get('count')==1
+        if not replaces_hand and room_for_item(selected,'minecraft:potion',stack_size=1)<1:
+            raise Wait('WAIT_CAPACITY','Stacked bottle output needs a real free slot')
         face=approach_faces(client(),pos,current,('north','south','east','west','up'),seconds=45)
         client().checked('select_item',item='minecraft:glass_bottle')
         expected_level=level-1
