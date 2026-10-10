@@ -83,6 +83,34 @@ def interaction_surface(cells,support,target):
     return (list(target),plant['state'])if replaceable_short_grass(plant)else(list(support),cells[tuple(support)]['state'])
 
 
+def air_light_reach(cells,dark,low,high):
+    """Observed air paths to spawn cells; proximity through terrain is not light reach.
+
+    This is conservative candidate planning, not a post-placement light claim.
+    Transparent solid blocks require a separate proof and are not inferred here.
+    """
+    def open_cell(p):
+        if any(p[i]<low[i]or p[i]>high[i]for i in range(3)):return False
+        row=cells.get(p)
+        return (row is None or safe_noncolliding_plant(row)
+            or block_id(row)in ('minecraft:torch','minecraft:wall_torch')
+                and row.get('passable')is True and row.get('fluid')is False
+                and row.get('block_entity')is False)
+    distance={};queue=deque()
+    for p in dark:
+        spawn=(p[0],p[1]+1,p[2])
+        if open_cell(spawn)and spawn not in distance:
+            distance[spawn]=0;queue.append(spawn)
+    while queue:
+        p=queue.popleft();step=distance[p]+1
+        if step>13:continue
+        for delta in ((1,0,0),(-1,0,0),(0,0,1),(0,0,-1),(0,1,0),(0,-1,0)):
+            nxt=tuple(p[i]+delta[i]for i in range(3))
+            if nxt in distance or not open_cell(nxt):continue
+            distance[nxt]=step;queue.append(nxt)
+    return distance
+
+
 def blocking_lighting_entities(rows):
     """Normal drops do not collide with a block use; preserve every other blocker."""
     if not isinstance(rows,list):
@@ -230,10 +258,12 @@ def edge_candidates(cells, low, high, start, protected=None,*,surface_only=False
                   and (target_bounds is None or target_low[1]<=p[1]<=target_high[1])
                   and not candidate_protected(p,(p[0],p[1]+1,p[2]),protected)
                   and any(sum(abs(a-b)for a,b in zip(p,q))<=11 for q in dark)]
+    reachable_light=air_light_reach(cells,dark,low,high)
     result=[]
     route_cache={}
     for support in supports:
         x,y,z=support;target=(x,y+1,z)
+        if target not in reachable_light:continue
         if (target in cells and not replaceable_short_grass(cells[target]))or y+1<low[1] or y+3>high[1]:
             continue
         stations=[]
@@ -426,6 +456,7 @@ class ReachableEdgeLightingRun(LightingRun):
     def work(self):
         self.reject_unknown_intents()
         self.keep_low_between_placements=True
+        previous_dark=None
         for i in range(self.limit):
             reply=self.scan(self.low,self.high,f'edge-survey-{i}.json')
             cells=scan_cells(reply,self.low,self.high,self.c.world)
@@ -434,11 +465,17 @@ class ReachableEdgeLightingRun(LightingRun):
             if i==0:self.report['before']=counts
             self.report['after']=counts;self.save()
             if not counts['unprotected_dark_floor']:break
+            if previous_dark is not None and counts['unprotected_dark_floor']>=previous_dark:
+                self.report['placement_without_light_progress']={
+                    'before_dark':previous_dark,'after_dark':counts['unprotected_dark_floor'],
+                    'further_placements_sent':False}
+                self.save();break
             candidates=edge_candidates(cells,self.low,self.high,self.fresh()['pos'],self.protected,
                 surface_only=self.surface_only,entities=reply['scan_entities'],station_height=getattr(self,'station_height',1.1),
                 target_bounds=getattr(self,'target_bounds',None),hostile_clearance=getattr(self,'hostile_clearance',0),
                 support_predicate=getattr(self,'support_predicate',None))
             if not candidates:break
+            previous_dark=counts['unprotected_dark_floor']
             self.place_edge(candidates[0],i)
         if counts['unprotected_dark_floor']==0:
             write_json(self.out/'edge-final-survey.json',reply)

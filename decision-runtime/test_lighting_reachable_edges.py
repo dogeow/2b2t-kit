@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
-from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass,interaction_surface,blocking_lighting_entities,verified_native_guard_binding
+from lighting_reachable_edges import edge_candidates,ray_clear,observed_exit_route,exterior_surface_support,replaceable_short_grass,interaction_surface,blocking_lighting_entities,verified_native_guard_binding,air_light_reach
 from lighting_cli import safe_noncolliding_plant,floor_step_lift,LightingBlocked
 
 def floor(pos):
@@ -10,6 +10,42 @@ def floor(pos):
  'zombie_block_light_risk':True,'spawn_block_light':0,'monster_spawn_block_light_limit':0}
 
 class EdgeLightingTests(unittest.TestCase):
+ def test_surface_torches_cannot_light_a_pocket_through_a_solid_roof(self):
+  low=[-4,60,-4];high=[4,72,4];dark=(0,60,0)
+  cells={dark:{**floor(dark),'state':'Block{minecraft:oak_planks}'}}
+  for x in range(-4,5):
+   for z in range(-4,5):
+    p=(x,63,z);cells[p]={**floor(p),'zombie_block_light_risk':False,'spawn_block_light':2}
+  self.assertNotIn((0,64,0),air_light_reach(cells,[dark],low,high))
+  self.assertEqual([],edge_candidates(cells,low,high,[.5,70,.5]))
+ def test_a_real_opening_can_connect_different_floor_heights(self):
+  low=[-4,60,-4];high=[4,72,4];dark=(0,60,0)
+  cells={dark:floor(dark)}
+  for x in range(-4,5):
+   for z in range(-4,5):
+    if (x,z)==(2,0):continue
+    p=(x,63,z);cells[p]={**floor(p),'zombie_block_light_risk':False,'spawn_block_light':2}
+  self.assertIn((0,64,0),air_light_reach(cells,[dark],low,high))
+ def test_light_planning_stays_inside_complete_scan_and_torch_range(self):
+  dark=(0,60,0);cells={dark:floor(dark)}
+  reachable=air_light_reach(cells,[dark],[0,60,0],[20,61,0])
+  self.assertIn((13,61,0),reachable);self.assertNotIn((14,61,0),reachable)
+  self.assertNotIn((-1,61,0),reachable);self.assertNotIn((0,62,0),reachable)
+ def test_zero_measured_improvement_does_not_spend_the_rest_of_the_batch(self):
+  from unittest.mock import patch
+  from lighting_reachable_edges import ReachableEdgeLightingRun
+  run=ReachableEdgeLightingRun.__new__(ReachableEdgeLightingRun)
+  run.reject_unknown_intents=Mock();run.limit=8;run.low=[0,60,0];run.high=[1,70,1]
+  run.c=SimpleNamespace(world='w');run.scan=Mock(return_value={'scan_entities':[]})
+  counts={'unprotected_dark_floor':30};run.counts=Mock(return_value=counts)
+  run.protected=[];run.report={};run.save=Mock();run.fresh=Mock(return_value={'pos':[.5,65,.5]})
+  run.surface_only=False;run.place_edge=Mock()
+  with patch('lighting_reachable_edges.scan_cells',return_value={}),\
+       patch('lighting_reachable_edges.edge_candidates',return_value=[{'support':[0,60,0]}]):
+   run.work()
+  self.assertEqual(1,run.place_edge.call_count)
+  self.assertEqual(30,run.report['remaining_unprotected_risk'])
+  self.assertFalse(run.report['placement_without_light_progress']['further_placements_sent'])
  def test_guard_displacement_after_selection_reapproaches_once_before_any_use_intent(self):
   from lighting_reachable_edges import ReachableEdgeLightingRun
   station=[.5,67.3,.5];rows=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':64}for i in range(36)]
