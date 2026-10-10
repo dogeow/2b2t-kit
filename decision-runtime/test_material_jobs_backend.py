@@ -1523,6 +1523,27 @@ class BackendTest(unittest.TestCase):
         saved=json.loads((self.root/'finish-deferred.json').read_text())
         self.assertFalse(saved['native_parking_confirmed']);self.assertFalse(saved['resource_actions_replayed'])
 
+    def test_foreign_item_interface_wait_keeps_heartbeat_until_clean_current_inventory_scope(self):
+        self.client.native_inflight=None
+        opened=copy.deepcopy(self.current);opened['screen']='InventoryScreen'
+        closed=copy.deepcopy(self.current);closed['screen']=''
+        closed['menu']={'id':0,'type':'InventoryMenu','cursor':{'count':0},'slots':[{'count':0}for _ in range(5)]}
+        closed['inventory_isolation']={'supported':True,'active':True}
+        with patch.object(backend,'read_fresh',side_effect=[opened,closed]),patch.object(backend.time,'sleep'):
+            backend.Backend.hold_failed_finish(self.job,JobPaused('preserve item interface'),retry_after_interface=True)
+        self.client.heartbeat.close.assert_not_called()
+        self.client.checked.assert_not_called();self.client.request.assert_not_called()
+
+    def test_foreign_item_interface_cleanup_retains_owned_guard_instead_of_triggering_watchdog_logout(self):
+        self.current['screen']='InventoryScreen'
+        self.job.close_owned_menu=Mock(side_effect=JobPaused('preserve item interface'))
+        self.job.hold_failed_finish=Mock(side_effect=JobPaused('wait until real control changes'))
+        with patch.object(backend,'read_fresh',return_value=self.current),patch('material_cleanup.run',return_value=[]):
+            with self.assertRaisesRegex(JobPaused,'real control changes'):self.job.finish()
+        self.job.hold_failed_finish.assert_called_once()
+        self.assertTrue(self.job.hold_failed_finish.call_args.kwargs['retry_after_interface'])
+        self.client.request.assert_not_called();self.client.checked.assert_not_called()
+
     def test_failed_finish_health_priority_still_exits_once(self):
         hurt=copy.deepcopy(self.current);hurt['health']=13
         with patch.object(backend,'read_fresh',side_effect=[self.current,hurt]), \

@@ -563,7 +563,7 @@ class Backend:
                 raise RuntimeError('原生动作尚未释放，保留结果，不发送停靠或退出')
             time.sleep(.1)
 
-    def hold_failed_finish(self, error):
+    def hold_failed_finish(self, error, *, retry_after_interface=False):
         """Keep a healthy failed cleanup owned; never replay its resource actions."""
         c = self.client
         try:
@@ -593,6 +593,18 @@ class Backend:
                     from safety_interlock import record_material_health_exit
                     record_material_health_exit(self.root, fresh, 'Low health while cleanup deferred: '+str(error))
                 raise JobBlocked('收尾等待期间血量过低，已安全退出并保留进度') from error
+            menu=fresh.get('menu') or {}
+            if (retry_after_interface and not fresh.get('screen')
+                    and menu.get('id')==0 and menu.get('type')=='InventoryMenu'
+                    and menu.get('cursor',{}).get('count')==0
+                    and len(menu.get('slots',[]))>=5
+                    and all(row.get('count')==0 for row in menu['slots'][:5])
+                    and fresh.get('inventory_isolation',{}).get('supported') is True
+                    and fresh.get('inventory_isolation',{}).get('active') is True
+                    and not fresh.get('navigating') and not fresh.get('native_material_busy')
+                    and not c.native_inflight):
+                c.rev=fresh['control_revision']
+                return
             time.sleep(.25)
 
     def prepare_travel(self):
@@ -1801,9 +1813,19 @@ class Backend:
                     point=[actual['pos'][0],actual['pos'][1]+1,actual['pos'][2]]
                 c.checked('material_job_park',park_target=point)
                 c.park_target = point
-            except (JobPaused,Handoff):
+            except (JobPaused,Handoff) as error:
                 # A user interface/control handoff cannot become a new logout
                 # request. The native lease watchdog keeps its safety role.
+                fresh=read_fresh(self.root)
+                if (owns_material_state(c,fresh) and fresh.get('screen')
+                        and fresh.get('health',0)>=14 and not fresh.get('safety_hold',{}).get('active')):
+                    retries=getattr(self,'interface_finish_retries',0)
+                    self.interface_finish_retries=retries+1
+                    # Closing the heartbeat under a foreign item screen leaves
+                    # a low material pose to the native logout watchdog. Keep
+                    # its live guard while preserving that exact interface.
+                    self.hold_failed_finish(error,retry_after_interface=retries<3)
+                    return self.finish()
                 c.heartbeat.close()
                 raise
             except (RuntimeError,OSError,ValueError,KeyError,TypeError) as error:
