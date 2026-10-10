@@ -1539,5 +1539,30 @@ class BackendTest(unittest.TestCase):
                 backend.Backend.hold_failed_finish(self.job,RuntimeError('park rejected'))
         self.client.request.assert_not_called();self.client.heartbeat.close.assert_not_called()
 
+    def test_geometry_entry_repair_keeps_old_hold_and_uses_new_verified_region(self):
+        from material_jobs.acquisition import _route_region_key
+        original={'item':'minecraft:diorite','min':[0,55,0],'max':[5,64,5],
+                  'source':'natural_survey','surface_y':64}
+        replacement={'item':'minecraft:diorite','min':[1,55,1],'max':[2,68,2],
+                     'source':'natural_survey','surface_y':77,
+                     'access_shaft':{'min':[1,69,1],'max':[2,77,2]}}
+        self.job.profile={'resource_regions':[original]};self.client.native_inflight=None
+        path=self.root/'acquisition-diorite.json'
+        book={'world_session':'w','item':'minecraft:diorite','visited':{
+            'old':{'state':'route_hold','route_code':'route_geometry_blocked',
+                   'world_session':'w','region_key':_route_region_key(original)}}}
+        path.write_text(json.dumps(book));raw=path.read_bytes()
+        with patch('material_jobs.entry_repair.observe',return_value={'planned':{'region':replacement}}) as observe:
+            self.assertTrue(self.job.repair_resource_entry(self.client,'minecraft:diorite',self.root))
+        observe.assert_called_once();self.assertEqual(raw,path.read_bytes())
+        self.assertEqual(replacement['access_shaft'],self.job.profile['resource_regions'][0]['access_shaft'])
+        self.client.checked.assert_not_called()
+
+    def test_unknown_acquisition_does_not_call_geometry_repair(self):
+        self.client.native_inflight={'request_id':'original-unknown'}
+        with patch('material_jobs.entry_repair.observe') as observe:
+            self.assertFalse(self.job.repair_resource_entry(self.client,'minecraft:diorite',self.root))
+        observe.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

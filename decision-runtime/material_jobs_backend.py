@@ -1306,6 +1306,9 @@ class Backend:
                     self.profile['resource_regions'].append(region)
             if any(r.get('item')==item for r in self.profile['resource_regions']):
                 receipt=acquire(c,item,count,self.profile,directory,self.checkpoint)
+                if (receipt.get('code')=='route_geometry_blocked'
+                        and self.repair_resource_entry(c,item,directory)):
+                    return acquire(c,item,count,self.profile,directory,self.checkpoint)
                 if receipt.get('code')!='no_safe_candidate':
                     return receipt
             found=discover(c,item,self.profile,self.root.parent/'material-resource-ledger',self.checkpoint)
@@ -1328,7 +1331,44 @@ class Backend:
                 return {'phase':'blocked','detail':'本轮已扫描未访问的资源区，未找到安全矿点；记录已保存，下次从新区域继续'}
             self.profile['resource_regions'].append(found)
             write_json(known,[r for r in self.profile['resource_regions'] if r.get('source')=='natural_survey' or r==found])
-            return acquire(c,item,count,self.profile,directory,self.checkpoint)
+            receipt=acquire(c,item,count,self.profile,directory,self.checkpoint)
+            if (receipt.get('code')=='route_geometry_blocked'
+                    and self.repair_resource_entry(c,item,directory)):
+                return acquire(c,item,count,self.profile,directory,self.checkpoint)
+            return receipt
+
+    def repair_resource_entry(self, client, item, directory):
+        """One current geometry repair; unknown/combat holds keep their priority."""
+        from material_jobs.acquisition import _route_region_key
+        from material_jobs.entry_repair import observe
+        path=Path(directory)/('acquisition-'+item.split(':')[-1]+'.json')
+        state=client.status()
+        if (client.native_inflight or state.get('navigating') or state.get('native_material_busy')
+                or not path.exists()):
+            return False
+        book=json.loads(path.read_text())
+        if (book.get('world_session')!=client.world or book.get('item')!=item
+                or any(v.get('state')=='inflight' for v in book.get('visited',{}).values())):
+            return False
+        keys={v.get('region_key') for v in book.get('visited',{}).values()
+              if v.get('state')=='route_hold' and v.get('route_code')=='route_geometry_blocked'
+              and v.get('world_session')==client.world}
+        original=next((r for r in self.profile.get('resource_regions',[])
+                       if r.get('item')==item and _route_region_key(r) in keys),None)
+        if original is None:return False
+        center=[(original['min'][i]+original['max'][i]+1)/2 for i in range(3)]
+        if math.hypot(state['pos'][0]-center[0],state['pos'][2]-center[2])>96:
+            return False
+        out=self.out/'entry-repairs'/('repair-'+str(time.time_ns()))
+        proof=observe(client,original,self.profile,out)
+        if proof['planned'] is None:return False
+        replacement={**proof['planned']['region'],'entry_repair_proof':str(out/'entry-repair-plan.json')}
+        if _route_region_key(replacement)==_route_region_key(original):return False
+        self.profile['resource_regions']=[replacement if r is original else r
+                                          for r in self.profile['resource_regions']]
+        write_json(self.out/'discovered-resources.json',
+                   [r for r in self.profile['resource_regions'] if r.get('source')=='natural_survey'])
+        return True
 
     def smelt(self, recipe, count):
         from material_jobs.processing import smelt
