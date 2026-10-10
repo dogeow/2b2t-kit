@@ -380,7 +380,12 @@ class MaterialJob:
                 raise JobBlocked('投影差料已有现货，但原生施工尚未确认可继续')
             self.batch_item = ranked[0]
             adviser = getattr(self.backend, 'advise_projection_supply', None)
-            enabled = getattr(self.backend, 'projection_jev_enabled', False) is True
+            # An explicit material priority is already the user's decision.
+            # Consulting an optional adviser would both override it and trigger
+            # that legacy path's extra full-map freshness scans.
+            preferred = self.request.get('preferred_materials', [])
+            enabled = (getattr(self.backend, 'projection_jev_enabled', False) is True
+                       and not any(item in ranked for item in preferred))
             offer = (material_choices(self.snapshot.get('projection_audit'),
                                       self.request['projection_key'], targets,
                                       self.held, ranked)

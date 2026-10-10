@@ -500,8 +500,11 @@ class MaterialJobsTest(unittest.TestCase):
         request = self.request(projection=True)
         request.update(preferred_materials=['minecraft:mud_bricks'], target_stack_sizes={'minecraft:mud_bricks': 64})
         job = self.job(b, request); job._observe(initial=True)
+        b.projection_jev_enabled = True
+        b.advise_projection_supply = Mock(side_effect=AssertionError('explicit priority needs no adviser or full rescan'))
         with patch.object(job, '_fit_batch', return_value=16):
             self.assertEqual(job._projection_batch(dict(b.projection)), {'minecraft:mud_bricks': 16})
+        b.advise_projection_supply.assert_not_called()
 
     def test_smelting_dependencies_are_completed_before_blast_furnace_craft(self):
         b = FakeBackend(self.catalog, held={'minecraft:furnace':2,'minecraft:iron_ingot':10,'minecraft:cobblestone':6})
