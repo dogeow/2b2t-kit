@@ -607,6 +607,10 @@ class Backend:
                 raise JobPaused('收尾等待期间控制权已变化，保留进度') from error
             if fresh.get('safety_hold', {}).get('active'):
                 raise JobPaused('原生健康防护已接管，保留进度') from error
+            # This is a live, observed owner waiting for cleanup, not a hung
+            # controller. Keep the heartbeat worker's ten-second liveness
+            # window open only while the exact current lease is still owned.
+            c.heartbeat.touch()
             if fresh.get('health', 0) < 14:
                 c.rev = fresh['control_revision']
                 try:

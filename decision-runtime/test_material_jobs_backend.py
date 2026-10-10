@@ -1056,7 +1056,7 @@ class BackendTest(unittest.TestCase):
         self.current=state()
         self.client=SimpleNamespace(world='w',task='task-a',rev=3,last='request-a',root=self.root,out=self.root,
                                     PARK_RADIUS_SQR=backend.MaterialClient.PARK_RADIUS_SQR,
-                                    heartbeat=SimpleNamespace(id='lease-a',close=Mock()),
+                                    heartbeat=SimpleNamespace(id='lease-a',close=Mock(),touch=Mock()),
                                     checked=Mock(return_value={'phase':'done'}),request=Mock(return_value={'phase':'done'}),
                                     finish=Mock(),status=Mock(side_effect=lambda:self.current))
         self.job=backend.Backend.__new__(backend.Backend)
@@ -1584,6 +1584,7 @@ class BackendTest(unittest.TestCase):
             with self.assertRaises(JobPaused):
                 backend.Backend.hold_failed_finish(self.job,RuntimeError('park rejected'))
         self.client.heartbeat.close.assert_not_called();self.client.request.assert_not_called()
+        self.client.heartbeat.touch.assert_called_once()
         saved=json.loads((self.root/'finish-deferred.json').read_text())
         self.assertFalse(saved['native_parking_confirmed']);self.assertFalse(saved['resource_actions_replayed'])
 

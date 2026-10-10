@@ -371,26 +371,39 @@ def _escape_open_trapdoor(client, state, column):
     return actual
 
 
+def _park_column(client,state):
+    """Scan every column touched by the real player body, including cell edges."""
+    p=state['pos']
+    low=[math.floor(p[0]-.31),-64,math.floor(p[2]-.31)]
+    high=[math.floor(p[0]+.31),319,math.floor(p[2]+.31)]
+    reply=client.request('scan',min=low,max=high,details=True)
+    if (reply.get('phase')not in (None,'done')or reply.get('world_session')!=client.world
+            or not isinstance(reply.get('blocks'),list)):
+        raise JobBlocked('实际身体覆盖的升空列尚未确认')
+    return reply['blocks']
+
+
 def local_park(client):
     """Pick the current column after exiting the hull; no fixed return flight."""
     leave_projection(client)
     state = settled_state(client)
     x, z = math.floor(state['pos'][0]), math.floor(state['pos'][2])
-    rows = client.request('scan', min=[x, -64, z], max=[x, 319, z], details=True)['blocks']
+    rows = _park_column(client,state)
     escaped=_escape_open_trapdoor(client,state,rows)
     if escaped is not None:
         state=escaped;x,z=math.floor(state['pos'][0]),math.floor(state['pos'][2])
-        rows=client.request('scan',min=[x,-64,z],max=[x,319,z],details=True)['blocks']
+        rows=_park_column(client,state)
     top = max((r['pos'][1]+1 for r in rows if r.get('fluid') or not r.get('passable', True)), default=None)
     if top is None or top+24 >= 319:
         raise JobBlocked('没有可核验的安全停靠高度')
-    if state['pos'][1] < top and any(r['pos'][1] >= state['pos'][1]+1.8
-                                    and not r.get('passable', True) for r in rows):
+    if state['pos'][1] < top and any(r['pos'][1] >= math.floor(state['pos'][1])
+                                    and (r.get('fluid')or not r.get('passable',True))
+                                    and not _below_vertical_start(r,state['pos'])for r in rows):
         # A canopy may cover the exact trunk column even though a nearby
         # surveyed ground route and open sky are available. Don't log out there.
         state=_escape_local_canopy(client)
         x,z=math.floor(state['pos'][0]),math.floor(state['pos'][2])
-        rows=client.request('scan',min=[x,-64,z],max=[x,319,z],details=True)['blocks']
+        rows=_park_column(client,state)
         top=max((r['pos'][1]+1 for r in rows if r.get('fluid') or not r.get('passable',True)),default=None)
         if top is None or top+24>=319 or state['pos'][1]<top:
             raise JobBlocked('绕出树冠后仍没有已验证的本地高空停靠路线')

@@ -150,6 +150,24 @@ class SettledStateTest(unittest.TestCase):
 
 
 class TravelTakeoffTest(unittest.TestCase):
+    def test_edge_position_scans_neighbouring_body_column_and_uses_ground_exit(self):
+        from material_jobs.navigation import local_park
+        ground={'pos':[10.366,63.,20.244]}
+        centered={'pos':[10.5,63.,20.5]}
+        floor={'pos':[10,62,20],'passable':False,'fluid':False}
+        roof={'pos':[10,68,19],'passable':False,'fluid':False}
+        client=SimpleNamespace(world='w',request=Mock(side_effect=[
+            {'phase':'done','world_session':'w','blocks':[floor,roof]},
+            {'phase':'done','world_session':'w','blocks':[floor]}]))
+        with patch('material_jobs.navigation.leave_projection'), \
+                patch('material_jobs.navigation._escape_open_trapdoor',return_value=None), \
+                patch('material_jobs.navigation._escape_local_canopy',return_value=centered)as escape, \
+                patch('material_jobs.navigation.settled_state',side_effect=[ground,centered]):
+            self.assertEqual([10.5,87,20.5],local_park(client))
+        escape.assert_called_once_with(client)
+        self.assertEqual([10,-64,19],client.request.call_args_list[0].kwargs['min'])
+        self.assertEqual([10,319,20],client.request.call_args_list[0].kwargs['max'])
+
     def test_chest_footing_uses_verified_vertical_takeoff_before_voxel_route(self):
         ground={'pos':[10.5,64.875,20.5],'flight':False,'on_ground':True}
         air={'pos':[10.5,88.8,20.5],'flight':True,'on_ground':False}
