@@ -5,6 +5,8 @@ class HudPlacementTest {
     @Test void withoutTooltipUsesTop(){assertEquals(8,HudPlacement.below(100,200,20,400));}
     @Test void keepsSixPixelGapBelowActualAndExpandingTooltip(){assertEquals(89,HudPlacement.below(100,200,20,400,new HudPlacement.Rect(140,4,100,32),new HudPlacement.Rect(120,4,180,79)));}
     @Test void horizontallySeparateTooltipDoesNotPushPanel(){assertEquals(8,HudPlacement.below(100,200,20,400,new HudPlacement.Rect(320,4,70,60)));}
+    @Test void bottomTooltipDoesNotHideTopTaskProgress(){assertEquals(8,HudPlacement.below(100,200,20,344,new HudPlacement.Rect(120,344,180,40)));}
+    @Test void lowerTooltipAndOldAnimationBoundsLeaveTopAvailable(){assertEquals(8,HudPlacement.below(100,200,20,344,new HudPlacement.Rect(120,290,180,40),new HudPlacement.Rect(120,344,180,40)));}
     @Test void tooTallHidesInsteadOfClampingOverTooltipOrCrosshair(){assertEquals(-1,HudPlacement.below(100,200,20,200,new HudPlacement.Rect(120,4,100,100)));}
     @Test void invalidOrEmptyBoundsIgnored(){assertEquals(8,HudPlacement.below(100,200,20,400,new HudPlacement.Rect(100,4,0,400),new HudPlacement.Rect(100,Double.NaN,100,40)));}
 }

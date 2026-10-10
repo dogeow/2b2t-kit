@@ -8,7 +8,8 @@ public final class HudPlacement {
     /** Jade rectangles already include its UI scale. Never clamp back into its occupied area. */
     public static int below(int x,int width,int height,int screenHeight,Rect... occupied) {
         int y=8;
-        for(Rect r:occupied)if(r!=null&&r.valid()&&x<r.x+r.width&&x+width>r.x)
+        for(Rect r:occupied)if(r!=null&&r.valid()&&x<r.x+r.width&&x+width>r.x
+                && r.y<=y+height+6 && r.y+r.height+6>=y)
             y=Math.max(y,(int)Math.ceil(r.y+r.height)+6);
         return y+height<=screenHeight/2-16?y:-1;
     }

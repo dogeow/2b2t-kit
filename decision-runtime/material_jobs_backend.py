@@ -373,7 +373,14 @@ class Backend:
         elif self.native_gravel_session:
             state['native_task_session'] = self.native_gravel_session
         self.latest = state
+        self.publish_progress(state)
         return state
+
+    def publish_progress(self, state):
+        from material_jobs.progress import MaterialProgress
+        if not hasattr(self, 'hud_progress'):
+            self.hud_progress = MaterialProgress(self.request, self.root, self.out)
+        self.hud_progress.publish(state)
 
     def projection_loading_target(self, client, selection):
         return [selection['max'][0]+4.5,
@@ -1793,6 +1800,8 @@ class Backend:
                    'observed_revision':state.get('control_revision'),'safe_to_replan':safe})
 
     def finish(self):
+        if getattr(self, 'hud_progress', None):
+            self.hud_progress.close()
         c = self.client
         if c is None:
             return
