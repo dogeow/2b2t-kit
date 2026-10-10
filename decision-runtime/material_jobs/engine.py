@@ -587,6 +587,20 @@ class MaterialJob:
             actual = inventory_counts(self.snapshot)
             if any(actual.get(item, 0) < count for item, count in output_targets.items()):
                 raise JobBlocked('流水线完成回执没有达到当前实际背包目标；保留原动作记录')
+            ready = getattr(self.backend, 'has_ready_projection_output', None)
+            if (self.request['mode'] == 'projection' and not self._work_active()
+                    and receipt.get('safe_to_leave') is not False
+                    and callable(ready) and ready(self.snapshot) is True):
+                needed = self.snapshot.get('projection_audit', {}).get('replacement_items', {})
+                verified = {item: actual[item] for item in output_targets
+                            if item in needed and actual.get(item, 0) > before['inventory'].get(item, 0)}
+                if verified:
+                    # A larger prerequisite returned by construction must not
+                    # bypass a completed small production visit's real output.
+                    # The existing ready-build path preserves the full map goal
+                    # and derives subsequent requirements from construction.
+                    self.pending_ready_build = verified
+                    self._event('pipeline_finished_build_carried_stock', stock=verified)
         if self.request['mode'] == 'projection' and self.active_advice:
             recorder = getattr(self.backend, 'record_projection_advice_outcome', None)
             if callable(recorder):

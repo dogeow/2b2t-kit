@@ -807,6 +807,58 @@ class MaterialJobsTest(unittest.TestCase):
         job._step(job._observe());self.assertEqual(('build','ship',4),b.calls[-1])
         self.assertEqual(2,b.held[item]);self.assertEqual(4,b.matched)
 
+    def test_completed_small_pipeline_prints_before_larger_build_prerequisite(self):
+        item='minecraft:mud_bricks'
+        b=FakeBackend(self.catalog,held={item:2},projection={item:116})
+        b.has_ready_projection_output=lambda snapshot:True
+        def produce(*args,**kwargs):
+            b.held[item]=18
+            return {'phase':'done','target_scope':'absolute_backpack_total'}
+        b.run_pipeline=produce
+        job=self.job(b,self.request(projection=True));job._observe();job.prerequisites={item:116}
+        job._call('run_pipeline',[item,18,'absolute_backpack_total',str(self.root/'leaf')],
+                  'gathering',{item:18})
+        self.assertEqual({item:18},job.pending_ready_build)
+        job._step({item:116})
+        self.assertEqual([('build','ship',18)],b.calls)
+        self.assertEqual(98,b.projection[item])
+        self.assertNotEqual('completed',job.state['state'])
+
+    def test_completed_pipeline_with_owned_work_cannot_schedule_build(self):
+        item='minecraft:mud_bricks'
+        for active in (True,False):
+            with self.subTest(active=active):
+                b=FakeBackend(self.catalog,held={item:2},projection={item:116})
+                b.has_ready_projection_output=lambda snapshot:True
+                def produce(*args,**kwargs):
+                    b.held[item]=18
+                    if active:b.pending={'owned':True}
+                    return {'phase':'done','target_scope':'absolute_backpack_total','safe_to_leave':False}
+                b.run_pipeline=produce
+                job=self.job(b,self.request(projection=True),name='owned'+str(active));job._observe()
+                if active:
+                    with self.assertRaisesRegex(JobBlocked,'未收回的在制品'):
+                        job._call('run_pipeline',[item,18,'absolute_backpack_total',str(self.root/'leaf')],
+                                  'gathering',{item:18})
+                else:
+                    job._call('run_pipeline',[item,18,'absolute_backpack_total',str(self.root/'leaf')],
+                              'gathering',{item:18})
+                self.assertIsNone(job.pending_ready_build)
+
+    def test_completed_pipeline_without_placeable_output_keeps_material_goal(self):
+        item='minecraft:mud_bricks'
+        b=FakeBackend(self.catalog,held={item:2},projection={item:116})
+        b.has_ready_projection_output=lambda snapshot:False
+        def produce(*args,**kwargs):
+            b.held[item]=18
+            return {'phase':'done','target_scope':'absolute_backpack_total'}
+        b.run_pipeline=produce
+        job=self.job(b,self.request(projection=True));job._observe();job.prerequisites={item:116}
+        job._call('run_pipeline',[item,18,'absolute_backpack_total',str(self.root/'leaf')],
+                  'gathering',{item:18})
+        self.assertIsNone(job.pending_ready_build)
+        self.assertEqual({item:116},job.prerequisites)
+
     def test_pipeline_source_wait_without_ready_material_still_stops(self):
         item='minecraft:mud_bricks'
         b=FakeBackend(self.catalog,held={item:2},projection={item:120})
