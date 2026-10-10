@@ -12,6 +12,7 @@ from kit_runtime.journal import write_json
 from material_plan import inventory_counts
 from potato_harvest import _registered_wheat
 from potato_loot_flight import make_plant_access
+from potato_farm import plan
 from .protocol import JobBlocked, server_key
 
 
@@ -49,7 +50,7 @@ def run(client, journal, out, checkpoint=lambda:None, *, pickup_proof=None):
         raise JobBlocked('原麦子请求身份缺失')
     original_reply=json.loads((Path(client.root)/('reply-'+rid+'.json')).read_text())
     state=client.status();pending,pos=historical_removal(book,original_reply,state)
-    registered=next(((q,r,l)for q,r,l in registered_fields(client)if pos in l['cells']),None)
+    registered=next(((q,r,plan(q))for q,r in registered_fields(client)if pos in plan(q)['cells']),None)
     if registered is None:raise JobBlocked('原空格不属于完整登记小麦田')
     request,registry,layout=registered;request={**request,'cells':layout['cells']}
     pointer=registry.parent/'harvest-active.json';pointer_raw=pointer.read_bytes();active=json.loads(pointer_raw)

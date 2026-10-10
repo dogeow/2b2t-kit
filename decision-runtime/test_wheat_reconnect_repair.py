@@ -1,6 +1,11 @@
 import copy
+import json
+from pathlib import Path
+from types import SimpleNamespace
+import tempfile
 import unittest
-from material_jobs.wheat_reconnect_repair import historical_removal
+from unittest.mock import Mock,patch
+from material_jobs.wheat_reconnect_repair import historical_removal,run
 from material_jobs.protocol import JobBlocked
 
 
@@ -32,6 +37,74 @@ class HistoricalRemovalTest(unittest.TestCase):
             values={'book':copy.deepcopy(self.book),'reply':copy.deepcopy(self.reply),'state':copy.deepcopy(self.state)}
             values[target].update(change)
             with self.subTest(target=target,change=change),self.assertRaises(JobBlocked):historical_removal(**values)
+
+
+class CurrentRestorationTest(HistoricalRemovalTest):
+    def setUp(self):
+        super().setUp()
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name);self.journal=self.root/'old-harvest.json'
+        self.book['pending'].update(receipt={'id':'materials-old'},before_counts={'minecraft:wheat':1},
+            observed_drop_totals={'minecraft:wheat':1},current_loot=[],owned_loot=[])
+        self.journal.write_text(json.dumps(self.book))
+        (self.root/'reply-materials-old.json').write_text(json.dumps(self.reply))
+        self.registry=self.root/'farm'/'registry.json';self.registry.parent.mkdir()
+        self.registry.write_text(json.dumps({'scope':{'server':'simpcraft.com','layout':{'crop':'wheat'}}}))
+        self.pointer=self.registry.parent/'harvest-active.json'
+        self.pointer.write_text(json.dumps({'journal':str(self.journal)}))
+        self.original=self.journal.read_bytes();self.original_pointer=self.pointer.read_bytes()
+        self.state.update(pos=[27.5,65.6,70.5],inventory=[{'slot':0,'item':'minecraft:wheat','count':2},
+            {'slot':1,'item':'minecraft:wheat_seeds','count':10}],entities=[])
+        self.crop='Block{minecraft:wheat}[age=2]';self.stamp=100;self.seed_uses=0
+        def scan(*args,**kwargs):
+            self.stamp+=1
+            rows=[{'pos':[27,64,70],'state':'Block{minecraft:farmland}[moisture=7]','fluid':False}]
+            if self.crop:rows.append({'pos':[27,65,70],'state':self.crop})
+            return {'phase':'done','world_session':'new','time':self.stamp,'blocks':rows}
+        def request(op,**kwargs):
+            self.assertEqual('interact',op);self.seed_uses+=1;self.crop='Block{minecraft:wheat}[age=0]'
+            self.state['inventory'][1]['count']-=1
+            return {'phase':'done','id':'new-seed'}
+        self.c=SimpleNamespace(world='new',root=self.root,status=lambda:copy.deepcopy(self.state),
+            checked=Mock(side_effect=scan),request=Mock(side_effect=request))
+        self.layout={'cells':[[27,64,70]],'center':[27,64,70],'radius':2}
+
+    def execute(self):
+        # The real registry iterator yields exactly two entries, request/path.
+        with patch('material_jobs.registered_wheat.registered_fields',return_value=iter([({'crop':'wheat'},self.registry)])), \
+             patch('material_jobs.wheat_reconnect_repair.plan',return_value=self.layout), \
+             patch('material_jobs.wheat_reconnect_repair._registered_wheat')as gate, \
+             patch('material_jobs.wheat_reconnect_repair.make_plant_access',return_value=Mock())as access, \
+             patch('work_access.approach_faces'):
+            result=run(self.c,self.journal,self.root/'restoration')
+        return result,gate,access
+
+    def test_already_present_current_crop_advances_pointer_without_seed_or_old_receipt_credit(self):
+        result,gate,access=self.execute()
+        self.assertTrue(result['complete']);self.assertEqual(0,result['new_reseed'])
+        self.assertEqual(0,self.seed_uses);access.assert_not_called()
+        self.assertIsNone(gate.call_args.kwargs['known_replant'])
+        self.assertEqual(self.original,self.journal.read_bytes())
+        self.assertFalse(result['historical_receipt_reclassified'])
+        current=Path(json.loads(self.pointer.read_text())['journal'])
+        self.assertEqual(result,json.loads(current.read_text()))
+
+    def test_empty_original_cell_requires_exact_seed_delta_and_two_new_crop_frames(self):
+        self.crop=None
+        result,gate,access=self.execute()
+        self.assertEqual(1,self.seed_uses);self.assertEqual(1,result['new_reseed'])
+        self.assertEqual(2,len(result['frames']));self.assertEqual(9,self.state['inventory'][1]['count'])
+        self.assertEqual(self.original,self.journal.read_bytes())
+        self.assertEqual([27,64,70],gate.call_args_list[0].kwargs['known_replant'])
+        self.assertEqual(2,gate.call_count)
+
+    def test_unknown_new_seed_use_retains_new_pending_and_original_active_pointer(self):
+        self.crop=None;self.c.request=Mock(return_value={'phase':'waiting','id':'unknown-seed'})
+        with self.assertRaises(JobBlocked):self.execute()
+        self.assertEqual(self.original,self.journal.read_bytes())
+        self.assertEqual(self.original_pointer,self.pointer.read_bytes())
+        book=json.loads((self.root/'restoration/current-cell-restoration.json').read_text())
+        self.assertEqual('new_seed_use',book['pending']['kind']);self.assertFalse(book['complete'])
 
 
 if __name__=='__main__':unittest.main()
