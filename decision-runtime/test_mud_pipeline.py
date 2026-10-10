@@ -292,6 +292,16 @@ class MudPipelineTest(unittest.TestCase):
         result=self.go()
         self.assertEqual('WAIT_SOURCE',result['code'])
         self.assertFalse(any(op in ('mine_block','interact') for op,_ in self.c.calls))
+    def test_missing_grain_uses_existing_backend_registered_field_handler(self):
+        self.c.add('minecraft:wheat',-4);calls=[]
+        def registered(target,out,checkpoint):
+            calls.append(target);return {'phase':'waiting','code':'WAIT_GROWTH','detail':'registered field immature'}
+        self.b.acquire_registered_wheat=registered
+        with patch('material_jobs.colored_sources.acquire') as generic:
+            result=self.go()
+        self.assertEqual('WAIT_GROWTH',result['code']);self.assertEqual([4],calls)
+        generic.assert_not_called();self.assertTrue(result['safe_to_leave'])
+        self.assertFalse(any(op in ('mine_block','interact')for op,_ in self.c.calls))
     def test_craft_catalog_restored_after_actual_backend_exception(self):
         self.c.add('minecraft:packed_mud',4);original=self.b.crafting_catalog
         with patch.object(self.b,'craft',side_effect=JobPaused('handoff')):

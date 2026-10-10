@@ -161,7 +161,9 @@ def run(c,profile,item,target_count,out,checkpoint):
                                lambda a,b:inventory_counts(b)[output]>=target)
         elif output=='minecraft:wheat':
             fetch('minecraft:wheat_seeds',1)
-            reply,_,_=operation('crop',lambda:colored_sources.acquire(client(),output,target,profile,out/'wheat',checkpoint))
+            registered=getattr(backend,'acquire_registered_wheat',None)
+            reply,_,_=operation('crop',lambda:registered(target,out/'wheat',checkpoint) if callable(registered)
+                               else colored_sources.acquire(client(),output,target,profile,out/'wheat',checkpoint))
         else:raise Wait('WAIT_SOURCE','Missing verified '+output,requirements={output:target})
         if stock()[output]<target:raise Wait(reply.get('code','WAIT_SOURCE'),reply.get('detail','Raw batch still short'),requirements={output:target})
 

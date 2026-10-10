@@ -116,9 +116,10 @@ def _same_except(before, after, allowed):
 
 
 
-def _registered_wheat(c, request, journal, known_replant=None):
+def _registered_wheat(c, request, journal, known_replant=None, *, bind_active=True):
     """The harvest uses an existing explicit planting registry, never invents one."""
     root = getattr(c, 'root', None)
+    if type(bind_active) is not bool:raise ValueError('Active harvest binding must be explicit boolean')
     if root is None:
         raise FarmWait('WAIT_REGISTERED_FARM', 'Registered wheat farm root is required')
     layout = farm_plan(request)
@@ -196,7 +197,8 @@ def _registered_wheat(c, request, journal, known_replant=None):
             'original_registry_sha256':hashlib.sha256(original_registry).hexdigest(),
             'original_planting_sha256':hashlib.sha256(original_planting).hexdigest(),
             'original_bytes_unchanged':True,'new_planting_credit':0,'known_current_harvested_empty_cell':known_replant,'frames':frames})
-    write_json(active, {'schema': 1, 'scope': scope, 'world_session': c.world, 'journal': str(Path(journal).resolve())})
+    if bind_active:
+        write_json(active, {'schema': 1, 'scope': scope, 'world_session': c.world, 'journal': str(Path(journal).resolve())})
     return {'registry': str(registry), 'planting_journal': str(planted_path), 'field_key': key,
             'current_field_proof':str(current_proof)if current_proof else None}
 

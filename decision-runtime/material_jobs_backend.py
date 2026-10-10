@@ -629,6 +629,10 @@ class Backend:
         from material_jobs.acquisition import _travel
         _travel(c,staging,self.checkpoint,[])
 
+    def acquire_registered_wheat(self, target, out, checkpoint):
+        from material_jobs.registered_wheat import run
+        return run(self,target,out,checkpoint)
+
     def fetch(self, targets):
         with self.action('fetch') as (c, out):
             if all(self.stock().get(i, 0) >= n for i, n in targets.items()):

@@ -1,0 +1,98 @@
+import json
+from pathlib import Path
+from types import SimpleNamespace
+import tempfile
+import unittest
+from unittest.mock import Mock,patch
+
+from material_jobs.registered_wheat import registered_fields,run
+from material_plan import inventory_counts
+from potato_harvest import _registered_wheat,run as native_harvest
+from test_wheat_harvest import WheatHarvestClient,REQUEST,WHEAT
+from test_potato_harvest import Clock
+
+
+class Tests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.c=WheatHarvestClient(self.root);self.clock=Clock()
+        self.backend=SimpleNamespace(ensure_client=lambda:self.c,fetch=Mock(return_value={'phase':'waiting'}),
+                                     prepare_travel=Mock())
+        def checked(op,**kw):
+            if op=='navigate':
+                self.c.extra['pos']=list(kw['target']);return {'phase':'done'}
+            return self.c.request(op,**kw)
+        self.c.checked=Mock(side_effect=checked)
+
+    def execute(self,target=4):
+        def harvest(*args,**kw):
+            return native_harvest(*args,**kw,sleep=self.clock.sleep,monotonic=self.clock.monotonic)
+        with patch('material_jobs.navigation.lift_for_travel'), \
+                patch('material_jobs.navigation.settled_state',return_value=self.c.status()), \
+                patch('material_jobs.acquisition._travel'), \
+                patch('material_jobs.registered_wheat.make_pickup',return_value=None), \
+                patch('material_jobs.registered_wheat.harvest',side_effect=harvest):
+            return run(self.backend,target,self.root/'source',lambda:None)
+
+    def test_borrow_existing_registry_harvests_four_actual_grains_and_replants_exact_cells(self):
+        original=self.c.registry.read_bytes();planting=self.c.plant_journal.read_bytes()
+        result=self.execute();self.assertEqual('done',result['phase'],result)
+        self.assertEqual(4,result['gained']);self.assertTrue(result['registered_field_replanted'])
+        self.assertEqual(4,inventory_counts(self.c.status())[WHEAT])
+        self.assertEqual(original,self.c.registry.read_bytes());self.assertEqual(planting,self.c.plant_journal.read_bytes())
+        actions=[op for op,_ in self.c.calls if op in ('mine_block','interact')]
+        self.assertEqual(4,actions.count('mine_block'));self.assertEqual(4,actions.count('interact'))
+
+    def test_small_field_batch_does_not_claim_a_larger_carried_goal(self):
+        result=self.execute(8);self.assertEqual(('waiting','SOURCE_BATCH',4),(result['phase'],result['code'],result['after']))
+
+    def test_original_pending_planting_blocks_all_new_actions(self):
+        b=json.loads(self.c.plant_journal.read_text());b['pending']={'operation':'plant'}
+        self.c.plant_journal.write_text(json.dumps(b));before=self.c.plant_journal.read_bytes()
+        result=self.execute();self.assertEqual('WAIT_RECONCILE',result['code'])
+        self.assertFalse(self.c.calls);self.assertEqual(before,self.c.plant_journal.read_bytes())
+
+    def test_source_world_is_reverified_without_rewriting_the_original_planting_world(self):
+        for p in (self.c.registry,self.c.plant_journal):
+            b=json.loads(p.read_text());b['world_session']='old';p.write_text(json.dumps(b))
+        original=self.c.registry.read_bytes();planting=self.c.plant_journal.read_bytes()
+        result=self.execute();self.assertEqual('done',result['phase'],result)
+        self.assertEqual(original,self.c.registry.read_bytes());self.assertEqual(planting,self.c.plant_journal.read_bytes())
+
+    def test_immature_registered_field_has_no_seed_fetch_flight_or_harvest(self):
+        for row in self.c.rows.values():
+            if 'minecraft:wheat}' in row['state']:row['state']='Block{minecraft:wheat}[age=3]'
+        result=self.execute();self.assertEqual('WAIT_GROWTH',result['code'])
+        self.backend.fetch.assert_not_called();self.backend.prepare_travel.assert_not_called()
+        self.assertFalse(any(op in ('mine_block','interact')for op,_ in self.c.calls))
+        self.assertFalse((self.c.registry.parent/'harvest-active.json').exists())
+
+    def test_insufficient_seeds_preserve_four_seed_reserve_and_do_not_mine(self):
+        self.c.inv[10]['count']=1
+        result=self.execute();self.assertEqual('WAIT_SEED',result['code'])
+        self.backend.fetch.assert_called_once_with({'minecraft:wheat_seeds':5})
+        self.backend.prepare_travel.assert_not_called()
+        self.assertFalse(any(op=='mine_block'for op,_ in self.c.calls))
+
+    def test_unresolved_harvest_is_not_exposed_as_a_safe_generic_source_wait(self):
+        self.c.pickup_delay=None
+        result=self.execute();self.assertEqual('WAIT_RECONCILE',result['code'],result)
+        books=list((self.root/'source').rglob('wheat-harvest-*.json'))
+        self.assertTrue(json.loads(books[0].read_text())['pending'])
+        self.assertEqual(1,sum(op=='mine_block'for op,_ in self.c.calls))
+
+    def test_wrong_server_or_missing_registration_never_creates_a_field(self):
+        self.c.server='other:25565'
+        self.assertEqual([],list(registered_fields(self.c)))
+        self.assertEqual('WAIT_REGISTERED_FARM',self.execute()['code']);self.assertFalse(self.c.calls)
+
+    def test_read_only_preflight_does_not_replace_the_active_harvest_pointer(self):
+        old=self.root/'old-harvest.json';old.write_text('{"pending":null}')
+        active=self.c.registry.parent/'harvest-active.json';active.write_text(json.dumps({'journal':str(old)}))
+        before=active.read_bytes()
+        _registered_wheat(self.c,{**REQUEST,'reverify_registered_field':True},self.root/'preflight.json',bind_active=False)
+        self.assertEqual(before,active.read_bytes())
+        self.assertFalse(any(op in ('mine_block','interact')for op,_ in self.c.calls))
+
+
+if __name__=='__main__':unittest.main()
