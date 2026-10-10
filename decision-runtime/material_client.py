@@ -325,6 +325,8 @@ class Client:
   session=InventorySession(self)
   for _ in range(128):
    s=self.status();before=stocks(s).get(item,0)
+   from material_storage_index import remember_current
+   remember_current(self,s)
    if before<=target if deposit else before>=target:return before
    menu=s['menu'];assert menu['type'] in ('ChestMenu','ShulkerBoxMenu') and menu['cursor']['count']==0
    boundary=len(menu['slots'])-36
@@ -347,7 +349,8 @@ class Client:
     if fresh['menu']['id']!=menu['id']:raise Handoff('Container changed during transfer')
     after=stocks(fresh).get(item,0)
     if (after<target if deposit else after>target):raise RuntimeError('Inventory transfer crossed its requested target')
-    if (after<before if deposit else after>before):break
+    if (after<before if deposit else after>before):
+     remember_current(self,fresh);break
     time.sleep(.2)
    else:raise RuntimeError('Inventory transfer not confirmed; no duplicate click')
   raise RuntimeError('Transfer limit reached')

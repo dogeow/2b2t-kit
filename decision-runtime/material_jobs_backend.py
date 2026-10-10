@@ -690,8 +690,10 @@ class Backend:
                     return receipt
                 finally:
                     write_json(out/'registered-mud-water-travel.json',trace)
-            self.prepare_travel()
-            self.stage_near_base(self.profile['depots'])
+            from material_storage_index import select_sources
+            reserve=self.fetch_reserve_empty(c.status(),targets,mud_context)
+            route=select_sources(c,self.profile['depots'],targets,reserve_empty=reserve)
+            write_json(out/'local-storage-search.json',route)
             # Resource pipelines fetch their explicit ingredient targets on the
             # same projection backend. Opportunistic finished projection stock
             # must not replace those targets or occupy their processing slots.
@@ -704,7 +706,9 @@ class Backend:
                 return ready
             visited = []
             unavailable = list(ready.get('unavailable_sources', [])) if ready is not None else []
-            for pos in ([] if ready is not None else self.profile['depots']):
+            if ready is None and route['positions']:
+                self.prepare_travel();self.stage_near_base(route['positions'])
+            for pos in ([] if ready is not None else route['positions']):
                 from construction_materials import supply_targets
                 from container_access import OutdoorChestChanged, open_grounded_chest, verify_opened_chest
                 self.checkpoint()
@@ -767,13 +771,14 @@ class Backend:
 
                 initial, stored, sizes = observed()
                 entry['observed_target_counts'] = {item:stored.get(item,0) for item in targets}
-                selected = supply_targets(initial, missing, stored, reserve_empty=1, stack_sizes=sizes)
+                reserve=self.fetch_reserve_empty(initial,targets,mud_context)
+                selected = supply_targets(initial, missing, stored, reserve_empty=reserve, stack_sizes=sizes)
                 for item, planned_target in selected.items():
                     fresh, source, sizes = observed()
                     # Recheck capacity after each transfer in case another
                     # module changed inventory; never spend the work slot.
                     target = supply_targets(fresh, {item:planned_target}, source,
-                                            reserve_empty=1, stack_sizes=sizes).get(item)
+                                            reserve_empty=reserve, stack_sizes=sizes).get(item)
                     if target is None:
                         continue
                     held = inventory_counts(fresh).get(item, 0)
@@ -795,9 +800,10 @@ class Backend:
                 return {**packed_receipt,'missing':missing,'unavailable_sources':unavailable}
             all_unavailable = bool(unavailable) and len(unavailable) == len(self.profile['depots'])
             detail = ('登记仓库均已失效，现场扫描已记录' if all_unavailable else
-                      '仓库现货已核对，部分登记箱失效' if unavailable else '仓库现货已核对')
+                      '仓库现货已核对，部分登记箱失效' if unavailable else
+                      '本地库存未找到可取物资，继续采集或加工' if not visited else '命中箱库存与取料已核对')
             result = {'phase':'waiting' if missing else 'done', 'detail':detail,
-                      'missing':missing, 'unavailable_sources':unavailable}
+                      'missing':missing, 'unavailable_sources':unavailable,'local_storage_search':route}
             if (mud_production and mud_item in missing and not unavailable
                     and len(visited)==len(self.profile['depots'])
                     and all(entry.get('observed_target_counts',{}).get(mud_item)==0 for entry in visited)):
@@ -836,7 +842,12 @@ class Backend:
         record={'schema':1,'token':token,'world_session':c.world,'projection_key':key,
                 'needed':needed,'before':before,'visited':visited,'complete':False}
         write_json(record_path,record)
-        for pos in self.profile['depots']:
+        from material_storage_index import select_sources
+        route=select_sources(c,self.profile['depots'],{**needed,**targets},reserve_empty=1)
+        record['local_storage_search']=route
+        if route['positions']:
+            self.prepare_travel();self.stage_near_base(route['positions'])
+        for pos in route['positions']:
             self.checkpoint()
             try:
                 state=open_grounded_chest(c,list(pos),allow_empty=True)
@@ -906,13 +917,32 @@ class Backend:
                 'missing':missing,'ready_for_build':bool(provided),'provided_finished':provided,
                 'unavailable_sources':unavailable,'projection_key':key}
 
+    def fetch_reserve_empty(self,state,targets,mud_context=False):
+        # A singleton bottle replaces its hand slot. Existing mud absorbs this
+        # small input batch; placing the dirt frees the input slot again before
+        # crafting. No new output stack is assumed to fit a full backpack.
+        from material_trip_policy import room_for_item
+        if mud_context and set(targets)=={'minecraft:dirt'} and 1<=targets['minecraft:dirt']<=4:
+            rows=state.get('inventory',[])
+            bottles=sum(r.get('count',0)for r in rows if r.get('slot',99)<36 and r.get('item')=='minecraft:glass_bottle')
+            held=inventory_counts(state)
+            if (bottles==1 and held.get('minecraft:mud',0)>0
+                    and room_for_item(state,'minecraft:mud')>=max(1,targets['minecraft:dirt']-held.get('minecraft:dirt',0))):
+                return 0
+        return 1
+
     def fetch_packed(self, targets):
         if not self.profile.get('ender_chest') or not self.profile.get('shulker_pad'):
             return
         from packed_supplies import (choose_box, open_box, take_box, REQUIRED_FREE_SLOTS,
                                      workspace_requirement, PackedWorkspaceRequired)
         from construction_materials import supply_targets
+        from material_storage_index import select_sources
         c = self.ensure_client()
+        if all(inventory_counts(c.status()).get(item,0)>=amount for item,amount in targets.items()):return
+        route=select_sources(c,[self.profile['ender_chest']],targets,ender=True)
+        if not route['positions']:return
+        self.prepare_travel();self.stage_near_base(route['positions'])
         for _ in range(27):
             held = self.stock()
             if all(held.get(i,0)>=n for i,n in targets.items()):

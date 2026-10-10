@@ -55,6 +55,8 @@ def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=
         time.sleep(.15)
     client.checked('interact',pos=pos,face='up',expected_state=expected,expected_hand=hand)
     state = wait_container_contents(client,'ChestMenu',require_nonempty=not allow_empty)
+    from material_storage_index import bind_source
+    bind_source(client,state,pos,block_id)
     return {**state, '_verified_chest': {'pos': list(pos), 'state': expected}}
 
 

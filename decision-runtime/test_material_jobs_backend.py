@@ -1633,4 +1633,39 @@ class BackendTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError)as raised:self.job.ensure_client()
             self.assertNotIsInstance(raised.exception,JobPaused);self.assertIsNone(self.job.client)
 
+    def test_persistent_stock_search_visits_only_matching_box_and_uses_one_free_mud_input_slot(self):
+        config=Path(self.temp.name)/'config';root=config/'twob2tkit/automation';root.mkdir(parents=True)
+        self.client.root=root;self.job.root=root
+        boxes=[[1,64,1],[5,64,1],[9,64,1]]
+        native=[{'server':'simpcraft.com','worldId':'','dimension':'minecraft:overworld',
+            'status':'active','contentsDirty':False,'blockId':'minecraft:chest','lastSeenEpochMillis':100,
+            'x':p[0],'y':p[1],'z':p[2],'containerPositions':[p],
+            'items':[{'id':'minecraft:dirt','count':10}]if i==1 else[]}for i,p in enumerate(boxes)]
+        (config/'twob2tkit.json').write_text(json.dumps({'storageSnapshots':native}))
+        self.job.profile={'depots':boxes,'mud_station':{'authorized':True}}
+        self.job.request.update(mode='projection',projection_key='map')
+        self.job.resource_pipeline_context={'item':'minecraft:mud_bricks','target_scope':'absolute_backpack_total',
+            'world_session':'w','projection_key':'map'}
+        bag=inventory_rows({'minecraft:mud':1,'minecraft:glass_bottle':1})
+        for r in bag[2:-1]:r.update(item='minecraft:stone',count=64,max_stack=64)
+        self.current['inventory']=bag
+        chest=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':64}for i in range(27)]
+        chest[0].update(item='minecraft:dirt',count=10)
+        self.current['menu']={'id':9,'type':'ChestMenu','cursor':{'count':0},
+            'slots':chest+[{**r,'slot':27+i}for i,r in enumerate(bag)]}
+        self.client.owned_material_menu=9
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
+        self.job.prepare_travel=Mock();self.job.fetch_packed=Mock(return_value=None)
+        self.job.stock=Mock(side_effect=lambda:dict(backend.inventory_counts(self.current)))
+        def transfer(item,target):
+            self.assertEqual(('minecraft:dirt',4),(item,target))
+            self.current['inventory'][-1].update(item=item,count=4,max_stack=64)
+            self.current['menu']['slots'][0]['count']-=4
+            self.current['menu']['slots'][-1].update(item=item,count=4,max_stack=64)
+        self.client.transfer=Mock(side_effect=transfer)
+        with patch('container_access.open_grounded_chest',side_effect=lambda c,p,**kw:copy.deepcopy(self.current))as opened:
+            result=self.job.fetch({'minecraft:dirt':4})
+        self.assertEqual('done',result['phase']);opened.assert_called_once_with(self.client,boxes[1],allow_empty=True)
+        self.client.transfer.assert_called_once();self.job.stage_near_base.assert_called_once_with([boxes[1]])
+
 if __name__=='__main__':unittest.main()

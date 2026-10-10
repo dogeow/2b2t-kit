@@ -104,6 +104,8 @@ def open_box(client,pos,kind):
     hand=select_container_hand(client)
     use_with_margin(client,pos,state,hand,('up','north','south','west','east','down'))
     s=wait_container_contents(client,kind)
+    from material_storage_index import bind_source
+    bind_source(client,s,pos,'minecraft:ender_chest'if kind=='ChestMenu'else 'minecraft:shulker_box')
     client.owned_material_menu=s['menu']['id'];return s
 
 def owned_drop(entities,item,pad,before_ids,known_uuid=None):
