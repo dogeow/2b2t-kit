@@ -20,7 +20,7 @@ from concrete_soil import resolve as resolve_support
 from drop_collection import collect_drop
 from .planning import COLORS
 from .protocol import JobBlocked, JobCancelled, JobPaused
-from smelting_fuel import FuelCatalog, policy as fuel_policy, select_fuels
+from smelting_fuel import FuelCatalog, policy as fuel_policy, select_batch_fuels
 
 
 class CheckpointClient:
@@ -105,6 +105,12 @@ def _load_batch(c, positions, spec, amount, journal, fuel_plan=None):
     if journal.exists():
         raise JobBlocked('已有装炉账本，不能重复投料')
     parts = distribution(amount, len(positions))
+    if fuel_plan is not None and 'source_distribution' in fuel_plan:
+        parts=fuel_plan['source_distribution']
+        if (not isinstance(parts,list) or len(parts)!=len(positions)
+                or any(type(n)is not int or not 0<=n<=64 for n in parts)
+                or sum(parts)!=amount):
+            raise JobBlocked('燃料分配的原料数量与整批目标不一致；未投炉')
     if fuel_plan is None:
         fuel_plan={'ready':True,'entries':[{'fuel_item':'minecraft:coal','fuel':math.ceil(n*spec['cooking_ticks']/1600),
                    'burn_ticks_per_fuel':1600} if n else None for n in parts],
@@ -227,7 +233,8 @@ def smelt(c, recipe, target_count, profile, out, checkpoint):
             parts = distribution(amount, len(positions))
             catalog=FuelCatalog(profile['recipe_jar'])
             keep,allowed=fuel_policy(catalog,profile,recipe,client)
-            fuels=select_fuels(catalog,held,parts,spec['cooking_ticks'],spec['source'],spec['output'],keep,allowed)
+            fuels=select_batch_fuels(catalog,held,parts,spec['cooking_ticks'],spec['source'],spec['output'],keep,allowed,
+                                     per_furnace=per_furnace)
             if not fuels['ready']:
                 return {'phase':'waiting', 'detail':'先补齐本批实际原料与合法燃料',
                         'requirements':fuels['requirements'],'fuel_choices':fuels,'journal':str(path)}

@@ -150,3 +150,39 @@ def select_fuels(catalog,stock,parts,cooking_ticks,source,output,keep=None,allow
             'requirements':dict(missing),'retained_counts':dict(keep),
             'recipe_input_reserved':{source:source_needed},'output_fuel_excluded':output,
             'evidence':catalog.evidence}
+
+
+def select_batch_fuels(catalog,stock,parts,cooking_ticks,source,output,keep=None,allowed=None,
+                       *, per_furnace=64):
+    """Keep balanced batches, but try whole fuel burns before asking for more fuel."""
+    if type(per_furnace) is not int or not 1<=per_furnace<=64:
+        raise ValueError('Per-furnace source limit must be1..64')
+    plan=select_fuels(catalog,stock,parts,cooking_ticks,source,output,keep,allowed)
+    plan['source_distribution']=list(parts)
+    if plan['ready']:
+        return plan
+    amount=sum(parts);count=len(parts)
+    fuels=list(allowed) if allowed is not None else [i for i in (COAL,CHARCOAL) if i in catalog.durations]
+    seen={tuple(parts)}
+    for item in fuels:
+        duration=catalog.durations[item]
+        if item==output or duration%cooking_ticks:
+            continue
+        unit=duration//cooking_ticks
+        if not 1<=unit<=per_furnace:
+            continue
+        burns=math.ceil(amount/unit);base,extra=divmod(burns,count)
+        candidate=[(base+(i<extra))*unit for i in range(count)]
+        # Remove the unused fraction of the last burn, preserving every input.
+        excess=sum(candidate)-amount
+        for i in range(count-1,-1,-1):
+            removed=min(excess,candidate[i]);candidate[i]-=removed;excess-=removed
+        if tuple(candidate) in seen or max(candidate)>per_furnace:
+            continue
+        seen.add(tuple(candidate))
+        alternative=select_fuels(catalog,stock,candidate,cooking_ticks,source,output,keep,allowed)
+        if alternative['ready']:
+            alternative['source_distribution']=candidate
+            alternative['balanced_distribution']=list(parts)
+            return alternative
+    return plan

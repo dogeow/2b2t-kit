@@ -5,7 +5,7 @@ import unittest
 import zipfile
 import json
 
-from smelting_fuel import FuelCatalog,select_fuels,policy,FUEL_CLASS
+from smelting_fuel import FuelCatalog,select_fuels,select_batch_fuels,policy,FUEL_CLASS
 
 JAR=Path('/Applications/.minecraft/versions/26.1.2/26.1.2.jar')
 COAL='minecraft:coal';CHARCOAL='minecraft:charcoal';LOG='minecraft:oak_log';PLANK='minecraft:oak_planks'
@@ -18,6 +18,32 @@ class FuelPlanTest(unittest.TestCase):
         p=select_fuels(self.catalog,{COAL:15,'minecraft:raw_iron':118},[20,20,20,20,19,19],200,'minecraft:raw_iron','minecraft:iron_ingot')
         self.assertFalse(p['ready']);self.assertEqual({COAL:18},p['requirements'])
         self.assertEqual({COAL:18},p['fuel_totals'])
+    def test_forty_stone_fits_five_charcoal_across_two_furnaces(self):
+        p=select_batch_fuels(self.catalog,{CHARCOAL:5,'minecraft:cobblestone':40},[20,20],200,
+                             'minecraft:cobblestone','minecraft:stone',allowed=[CHARCOAL])
+        self.assertTrue(p['ready']);self.assertEqual([24,16],p['source_distribution'])
+        self.assertEqual({CHARCOAL:5},p['fuel_totals'])
+        self.assertEqual([4800,3200],[e['required_cooking_ticks']for e in p['entries']])
+    def test_ready_balanced_batch_is_preserved(self):
+        p=select_batch_fuels(self.catalog,{CHARCOAL:6,'minecraft:cobblestone':40},[20,20],200,
+                             'minecraft:cobblestone','minecraft:stone',allowed=[CHARCOAL])
+        self.assertEqual([20,20],p['source_distribution']);self.assertTrue(p['ready'])
+    def test_aligned_batch_keeps_reserved_fuel_and_requires_real_input(self):
+        for stock,keep in [({CHARCOAL:5,'minecraft:cobblestone':40},{CHARCOAL:1}),
+                           ({CHARCOAL:5,'minecraft:cobblestone':39},{})]:
+            with self.subTest(stock=stock,keep=keep):
+                p=select_batch_fuels(self.catalog,stock,[20,20],200,'minecraft:cobblestone',
+                                     'minecraft:stone',keep,[CHARCOAL])
+                self.assertFalse(p['ready'])
+    def test_aligned_batch_can_leave_unneeded_furnaces_empty(self):
+        p=select_batch_fuels(self.catalog,{CHARCOAL:1,'minecraft:cobblestone':5},[1]*5,200,
+                             'minecraft:cobblestone','minecraft:stone',allowed=[CHARCOAL])
+        self.assertTrue(p['ready']);self.assertEqual([5,0,0,0,0],p['source_distribution'])
+        self.assertEqual({CHARCOAL:1},p['fuel_totals']);self.assertEqual([None]*4,p['entries'][1:])
+    def test_alignment_never_exceeds_source_slot_capacity(self):
+        p=select_batch_fuels(self.catalog,{CHARCOAL:5,'minecraft:cobblestone':40},[20,20],200,
+                             'minecraft:cobblestone','minecraft:stone',allowed=[CHARCOAL],per_furnace=20)
+        self.assertFalse(p['ready']);self.assertEqual([20,20],p['source_distribution'])
     def test_charcoal_is_real1600_fuel_not_a_coal_alias(self):
         p=select_fuels(self.catalog,{CHARCOAL:2,LOG:12},[12],200,LOG,'minecraft:terracotta')
         self.assertTrue(p['ready']);self.assertEqual(CHARCOAL,p['entries'][0]['fuel_item'])

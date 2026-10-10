@@ -65,6 +65,49 @@ class ProcessingFuelsTest(unittest.TestCase):
         held={}
         for row in c.status()['inventory']:held[row['item']]=held.get(row['item'],0)+row['count']
         self.assertEqual(2,held['minecraft:oak_planks']);self.assertEqual(12,held['minecraft:charcoal'])
+    def test_two_furnaces_load_and_collect_forty_stone_using_five_charcoal(self):
+        class ParallelCookingClient(CookingClient):
+            def open(self,pos):
+                # Each distinct fixture furnace consumes one fuel on insertion.
+                self.burned=1
+                return super().open(pos)
+        self.recipe={'recipe_id':'smelting/stone','source':'minecraft:cobblestone',
+                     'output':'minecraft:stone','fuel_allow_items':['minecraft:charcoal']}
+        self.profile['furnace_positions']=[[1,64,1],[4,64,1]]
+        c=ParallelCookingClient(source='minecraft:cobblestone',raw=(40,),fuel='minecraft:charcoal',
+                                fuels=(5,),output='minecraft:stone')
+        r=self.run_smelt(c,40);self.assertEqual('done',r['phase'],r)
+        job=json.loads((self.root/'job/batch-0001.json').read_text())
+        self.assertEqual([24,16],[e['loaded_source']for e in job['furnaces']])
+        self.assertEqual([3,2],[e['loaded_fuel']for e in job['furnaces']])
+        self.assertTrue(job['complete']);self.assertEqual(5,r['fuel_consumption']['minecraft:charcoal']['consumed'])
+        self.assertEqual(40,sum(e['count']for e in c.status()['inventory']if e['item']=='minecraft:stone'))
+        self.assertEqual(0,sum(e['count']for e in c.status()['inventory']if e['item']=='minecraft:charcoal'))
+    def test_bad_fuel_source_distribution_fails_before_opening_or_loading(self):
+        c=CookingClient();spec={'source':'minecraft:oak_log','output':'minecraft:charcoal',
+                              'recipe_id':'smelting/charcoal','cooking_ticks':200}
+        with patch('material_jobs.processing.snapshot')as opened:
+            with self.assertRaisesRegex(RuntimeError,'原料数量'):
+                processing._load_batch(c,[[1,64,1]],spec,12,self.root/'bad.json',
+                                       {'source_distribution':[11],'ready':True,'entries':[]})
+            opened.assert_not_called()
+        self.assertFalse((self.root/'bad.json').exists());self.assertEqual([],c.calls)
+    def test_unknown_aligned_batch_loading_never_reallocates_or_replays(self):
+        self.recipe={'recipe_id':'smelting/stone','source':'minecraft:cobblestone',
+                     'output':'minecraft:stone','fuel_allow_items':['minecraft:charcoal']}
+        self.profile['furnace_positions']=[[1,64,1],[4,64,1]]
+        c=CookingClient(source='minecraft:cobblestone',raw=(40,),fuel='minecraft:charcoal',
+                        fuels=(5,),output='minecraft:stone')
+        c.cook=False
+        def pause(client,args):
+            if client.active==(4,64,1)and args.get('slot')==1:
+                raise JobPaused('second aligned furnace fuel click unknown')
+        c.after_click=pause
+        with self.assertRaises(JobPaused):self.run_smelt(c,40)
+        path=self.root/'job/batch-0001.json';original=path.read_bytes();before=len(c.calls)
+        c.after_click=None;result=self.run_smelt(c,40)
+        self.assertEqual('blocked',result['phase']);self.assertEqual(before,len(c.calls))
+        self.assertEqual(original,path.read_bytes())
     def test_missing_planks_requirement_includes_exact_kept_amount(self):
         c=CookingClient(fuels=(1,));r=self.run_smelt(c)
         self.assertEqual('waiting',r['phase']);self.assertEqual({'minecraft:oak_planks':10},r['requirements'])
