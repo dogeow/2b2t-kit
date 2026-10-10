@@ -1564,5 +1564,27 @@ class BackendTest(unittest.TestCase):
             self.assertFalse(self.job.repair_resource_entry(self.client,'minecraft:diorite',self.root))
         observe.assert_not_called()
 
+    def test_far_registered_rock_source_loads_at_high_air_before_scanning(self):
+        r={'item':'minecraft:diorite','min':[200,55,0],'max':[201,68,1],
+           'source':'natural_survey','surface_y':77}
+        self.job.profile={'resource_regions':[r]}
+        with patch('material_jobs.navigation.lift_for_travel',return_value=self.current) as lift, \
+                patch('material_jobs.acquisition._resource_route_scope',return_value={'registered':'scope'}), \
+                patch('material_jobs.acquisition._travel') as travel:
+            self.job.stage_registered_resource(self.client,'minecraft:diorite',self.root)
+        lift.assert_called_once_with(self.client)
+        self.assertEqual([201.,145,1.],travel.call_args.args[1])
+        self.assertTrue(travel.call_args.kwargs['keep_cruise'])
+        self.client.request.assert_not_called()
+
+    def test_near_registered_source_and_nonrock_do_not_add_travel(self):
+        self.job.profile={'resource_regions':[{'item':'minecraft:diorite','min':[1,55,0],
+                          'max':[2,68,1],'source':'natural_survey','surface_y':77}]}
+        with patch('material_jobs.navigation.lift_for_travel') as lift, \
+                patch('material_jobs.acquisition._travel') as travel:
+            self.job.stage_registered_resource(self.client,'minecraft:diorite',self.root)
+            self.job.stage_registered_resource(self.client,'minecraft:wheat',self.root)
+        lift.assert_not_called();travel.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

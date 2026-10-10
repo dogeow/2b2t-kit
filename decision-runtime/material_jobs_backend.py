@@ -1305,6 +1305,7 @@ class Backend:
                 if region not in self.profile['resource_regions']:
                     self.profile['resource_regions'].append(region)
             if any(r.get('item')==item for r in self.profile['resource_regions']):
+                self.stage_registered_resource(c,item,out)
                 receipt=acquire(c,item,count,self.profile,directory,self.checkpoint)
                 if (receipt.get('code')=='route_geometry_blocked'
                         and self.repair_resource_entry(c,item,directory)):
@@ -1336,6 +1337,29 @@ class Backend:
                     and self.repair_resource_entry(c,item,directory)):
                 return acquire(c,item,count,self.profile,directory,self.checkpoint)
             return receipt
+
+    def stage_registered_resource(self, client, item, out):
+        """Load a registered rock source before asking for its real block scan."""
+        from material_jobs.acquisition import ROCK_SOURCES,_resource_route_scope,_travel
+        from material_jobs.navigation import lift_for_travel
+        if item not in ROCK_SOURCES:return
+        regions=[r for r in self.profile.get('resource_regions',[])
+                 if r.get('item')==item and r.get('source')=='natural_survey']
+        if not regions:return
+        state=client.status()
+        def centre(r):return [(r['min'][i]+r['max'][i]+1)/2 for i in range(3)]
+        region=min(regions,key=lambda r:math.hypot(centre(r)[0]-state['pos'][0],
+                                                   centre(r)[2]-state['pos'][2]))
+        point=centre(region)
+        if math.hypot(point[0]-state['pos'][0],point[2]-state['pos'][2])<=64:return
+        state=lift_for_travel(client)
+        point[1]=min(315,max(145,state['pos'][1],region.get('surface_y',region['max'][1])+24))
+        trace=[]
+        try:
+            _travel(client,point,self.checkpoint,trace,keep_cruise=True,
+                    route_scope=_resource_route_scope(self.profile,region))
+        finally:
+            write_json(Path(out)/'registered-resource-loading-travel.json',trace)
 
     def repair_resource_entry(self, client, item, directory):
         """One current geometry repair; unknown/combat holds keep their priority."""
