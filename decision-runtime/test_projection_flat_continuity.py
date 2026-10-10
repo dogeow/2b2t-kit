@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from projection_flat_backend import FlatMapBackend
 from projection_flat_continuity import NAME, restore, save
+from material_jobs.protocol import JobBlocked
 from test_projection_flat_jobs import model, layout_for, audit, state, ITEM
 
 
@@ -65,6 +66,75 @@ class ContinuityTests(unittest.TestCase):
             self.assertAlmostEqual((end[0]-20.5)*175, (end[2]-190.5)*15)
         current['pos'] = [500,90,500]
         self.assertFalse(backend.try_direct_registered_travel(client, [5.5,90,15.5], lambda: None, trace, keep_cruise=True))
+
+    def route_fixture(self, start):
+        backend = FlatMapBackend.__new__(FlatMapBackend)
+        backend.request = {'projection_key': 'ship', 'flat_map': {'direct_registered_map_routes': True}}
+        backend.profile = {'mud_station': {'authorized': True, 'pos': [20,64,190]},
+                           'workbench_staging': [20.5,85,190.5]}
+        current = {'pos': list(start), 'projection_selection': {'key': 'ship', 'min': [0,64,0], 'max': [40,64,30]}}
+        calls = []
+        def request(op, **params):
+            self.assertEqual(op, 'navigate'); self.assertTrue(params['air_only'])
+            before, after = list(current['pos']), list(params['target'])
+            self.assertLessEqual(sum((b-a)**2 for a,b in zip(before,after))**.5,48.000001)
+            self.assertLess((abs(after[0]-before[0])+1.6)*(abs(after[1]-before[1])+2.8)*
+                            (abs(after[2]-before[2])+1.6),8192)
+            calls.append((before,after)); current['pos'] = after
+            return {'phase':'done'}
+        return backend, SimpleNamespace(status=lambda: current, request=request), current, calls
+
+    def test_low_map_window_ascends_then_flies_directly_to_work_area(self):
+        start, target = [5.5,66.75,15.5], [20.5,85,190.5]
+        backend, client, current, calls = self.route_fixture(start)
+        trace = []
+        with patch('material_jobs.navigation.settled_state'):
+            self.assertTrue(backend.try_direct_registered_travel(client,target,lambda:None,trace,keep_cruise=False))
+        self.assertEqual(calls[0], (start,[5.5,85,15.5]))
+        self.assertEqual(current['pos'],target)
+        self.assertEqual(trace[0]['event'],'direct_registered_map_ascent')
+        for before, after in calls[1:]:
+            self.assertEqual(after[1],85)
+            self.assertAlmostEqual((after[0]-start[0])*175,(after[2]-start[2])*15)
+
+    def test_work_area_to_low_map_descends_only_at_final_xz(self):
+        start, target = [20.5,85,190.5], [5.5,66.75,15.5]
+        backend, client, current, calls = self.route_fixture(start)
+        trace = []
+        with patch('material_jobs.navigation.settled_state'):
+            self.assertTrue(backend.try_direct_registered_travel(client,target,lambda:None,trace,keep_cruise=False))
+        self.assertEqual(current['pos'],target)
+        self.assertEqual(trace[-1]['event'],'direct_registered_map_descent')
+        for before, after in calls[:-1]:
+            self.assertEqual(after[1],85)
+            self.assertAlmostEqual((after[0]-start[0])*175,(after[2]-start[2])*15)
+        self.assertEqual(calls[-1][0][::2],target[::2])
+
+    def test_keep_cruise_retains_height_and_never_descends_at_target(self):
+        backend, client, current, calls = self.route_fixture([20.5,85,190.5])
+        trace = []
+        with patch('material_jobs.navigation.settled_state'):
+            self.assertTrue(backend.try_direct_registered_travel(client,[5.5,66.75,15.5],lambda:None,trace,keep_cruise=True))
+        self.assertEqual(current['pos'],[5.5,85,15.5])
+        self.assertTrue(all(after[1]==85 for _,after in calls))
+
+    def test_blocked_ascent_cannot_send_horizontal_leg_or_fallback(self):
+        backend, client, current, calls = self.route_fixture([5.5,66.75,15.5])
+        def blocked(op, **params):
+            calls.append(params['target']); return {'phase':'error'}
+        client.request = blocked
+        with self.assertRaises(JobBlocked):
+            backend.try_direct_registered_travel(client,[20.5,85,190.5],lambda:None,[],keep_cruise=False)
+        self.assertEqual(calls,[[5.5,85,15.5]])
+
+    def test_ground_or_unregistered_work_area_keeps_existing_navigation(self):
+        backend, client, current, calls = self.route_fixture([5.5,64,15.5])
+        self.assertFalse(backend.try_direct_registered_travel(client,[20.5,85,190.5],lambda:None,[],keep_cruise=False))
+        current['pos'] = [5.5,66.75,15.5]
+        self.assertFalse(backend.try_direct_registered_travel(client,[100,85,190.5],lambda:None,[],keep_cruise=False))
+        backend.profile['mud_station']['authorized'] = False
+        self.assertFalse(backend.try_direct_registered_travel(client,[20.5,85,190.5],lambda:None,[],keep_cruise=False))
+        self.assertEqual(calls,[])
 
 
 if __name__ == '__main__': unittest.main()

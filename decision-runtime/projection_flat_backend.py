@@ -154,7 +154,7 @@ class FlatMapBackend(Backend):
         return layout
 
     def try_direct_registered_travel(self, client, target, checkpoint, trace, *, keep_cruise):
-        """A straight diagonal between this map and its registered mud station.
+        """Vertical departure, then a straight line to the registered work area.
 
         Native swept-volume limits still apply. Collinear legs remain below
         that limit; no axis detours or repeated broad Python corridor scans.
@@ -180,29 +180,60 @@ class FlatMapBackend(Backend):
         at_work = lambda p: any(math.hypot(p[0]-a[0], p[2]-a[2]) <= 6 for a in anchors)
         here = state['pos']
         if (not (on_map(here) and at_work(target) or at_work(here) and on_map(target))
-                or min(here[1], target[1]) < high[1]+8 or abs(here[1]-target[1]) > 8
+                or min(here[1], target[1]) < high[1]+2
                 or math.dist(here, target) > 256):
             return False
         from material_jobs.navigation import settled_state
-        for segment in range(8):
-            checkpoint(); here = client.status()['pos']; distance = math.dist(here, target)
-            if distance <= .55:
-                return True
-            ratio = min(1., 48 / distance)
-            point = [a + (b-a)*ratio for a, b in zip(here, target)]
-            while math.prod(abs(b-a)+padding for a,b,padding in zip(here,point,(1.6,2.8,1.6)))>8000:
-                ratio*=.75
-                point = [a+(b-a)*ratio for a,b in zip(here,target)]
-            # Preserve the native8192-cell swept-volume gate, including a
-            # conservative player/body margin for mildly sloped staging legs.
+
+        def move(point, event, segment):
+            checkpoint()
+            before = list(client.status()['pos'])
             reply = client.request('navigate', target=point, arrival=.25, air_only=True, seconds=45)
-            trace.append({'event': 'direct_registered_map_segment', 'segment': segment+1,
-                          'from': here, 'target': point, 'final_target': list(target),
-                          'native_reply': reply})
+            trace.append({'event': event, 'segment': segment, 'from': before,
+                          'target': point, 'final_target': list(target), 'native_reply': reply})
             if reply.get('phase') != 'done':
                 raise JobBlocked('登记地图直线航段未确认；不重放导航')
             settled_state(client, point, .55)
-        raise JobBlocked('登记地图直线航段上限已到，保留原目标')
+
+        # A window is close to the image while the work-area approach is high.
+        # Handle that height difference at the origin instead of falling back
+        # to the X-then-Z route. Every vertical leg retains native body checks.
+        cruise = max(here[1], target[1], high[1]+8)
+        for segment in range(8):
+            checkpoint(); here = client.status()['pos']
+            if cruise-here[1] <= .55:
+                break
+            move([here[0], min(cruise, here[1]+48), here[2]],
+                 'direct_registered_map_ascent', segment+1)
+        else:
+            raise JobBlocked('登记地图起飞航段上限已到，保留原目标')
+        destination = [target[0], cruise, target[2]]
+        for segment in range(8):
+            checkpoint(); here = client.status()['pos']; distance = math.dist(here, destination)
+            if distance <= .55:
+                break
+            ratio = min(1., 48 / distance)
+            point = [a + (b-a)*ratio for a, b in zip(here, destination)]
+            while math.prod(abs(b-a)+padding for a,b,padding in zip(here,point,(1.6,2.8,1.6)))>8000:
+                ratio*=.75
+                point = [a+(b-a)*ratio for a,b in zip(here,destination)]
+            # Preserve the native8192-cell swept-volume gate, including a
+            # conservative player/body margin for mildly sloped staging legs.
+            move(point, 'direct_registered_map_segment', segment+1)
+        else:
+            if math.dist(client.status()['pos'], destination) > .55:
+                raise JobBlocked('登记地图直线航段上限已到，保留原目标')
+        if keep_cruise:
+            return True
+        for segment in range(8):
+            checkpoint(); here = client.status()['pos']
+            if math.dist(here, target) <= .55:
+                return True
+            move([target[0], max(target[1], here[1]-48), target[2]],
+                 'direct_registered_map_descent', segment+1)
+        if math.dist(client.status()['pos'], target) <= .55:
+            return True
+        raise JobBlocked('登记地图下降航段上限已到，保留原目标')
 
     def _ledger(self, client, layout):
         ledger = getattr(self, 'flat_ledger', None)
