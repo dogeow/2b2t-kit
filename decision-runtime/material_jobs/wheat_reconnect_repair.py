@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import time
+import math
 
 from kit_runtime.journal import write_json
 from material_plan import inventory_counts
@@ -14,6 +15,29 @@ from potato_harvest import _registered_wheat
 from potato_loot_flight import make_plant_access
 from potato_farm import plan
 from .protocol import JobBlocked, server_key
+from potato_farm import FarmWait
+
+
+def current_existing_cell(client,pos,state):
+    """Prove only this historical target; unrelated field changes stay unresolved."""
+    times=[];frames=[];counts=inventory_counts(state);before=state['time']
+    for _ in range(2):
+        reply=client.checked('scan',min=pos,max=[pos[0],pos[1]+1,pos[2]],details=True)
+        rows={tuple(r['pos']):r for r in reply.get('blocks',[])}
+        floor=rows.get(tuple(pos),{});crop=rows.get((pos[0],pos[1]+1,pos[2]),{})
+        text=crop.get('state','');prefix='Block{minecraft:wheat}[age='
+        age=text[len(prefix):-1]if text.startswith(prefix)and text.endswith(']')else''
+        if (reply.get('phase')!='done' or reply.get('world_session')!=client.world
+                or reply.get('scan_cells_read')!=2 or reply.get('scan_total_cells')!=2
+                or reply.get('scan_start_revision')!=client.rev or reply.get('scan_end_revision')!=client.rev
+                or reply.get('time',0)<=before or inventory_counts(client.status())!=counts
+                or not floor.get('state','').startswith('Block{minecraft:farmland}[moisture=')
+                or floor.get('fluid')is not False or floor.get('block_entity')is not False
+                or not age.isdigit()or not 0<=int(age)<=7
+                or crop.get('fluid')is not False or crop.get('block_entity')is not False):
+            raise JobBlocked('当前原格的两帧耕地与麦子没有完整核验；不更新指针')
+        before=reply['time'];times.append(before);frames.append({'time':before,'floor':floor,'crop':crop})
+    return frames
 
 
 def historical_removal(book, reply, state):
@@ -68,7 +92,7 @@ def run(client, journal, out, checkpoint=lambda:None, *, pickup_proof=None):
             and capture.get('no_crop_mined')is True and drop.get('item')=='minecraft:wheat'
             and capture.get('after')==capture.get('before',-1)+drop.get('count',0)
             and capture.get('before')==pending['before_counts'].get('minecraft:wheat',0)
-            and capture.get('after')==expected and grain>=expected)
+            and capture.get('after')==expected)
     if (grain!=expected and not extra_stock_proved) or any(e.get('uuid')in {d['uuid']for d in pending.get('current_loot',[])}for e in state.get('entities',[])):
         raise JobBlocked('原粮食没有以当前实际库存和已知掉落消失核验；不补种')
     # Borrow existing full-field two-frame validation. The native removal
@@ -76,7 +100,13 @@ def run(client, journal, out, checkpoint=lambda:None, *, pickup_proof=None):
     initial=client.checked('scan',min=pos,max=[pos[0],pos[1]+1,pos[2]],details=True)
     existing=next((r for r in initial['blocks']if r['pos']==[pos[0],pos[1]+1,pos[2]]),None)
     already_restored=existing is not None and existing['state'].startswith('Block{minecraft:wheat}[age=')
-    _registered_wheat(client,request,journal,known_replant=None if already_restored else pos,bind_active=False)
+    whole_field_verified=True;field_limit=None;cell_frames=None
+    try:_registered_wheat(client,request,journal,known_replant=None if already_restored else pos,bind_active=False)
+    except FarmWait as error:
+        if not already_restored or error.code not in ('WAIT_SOIL','WAIT_EXISTING_FARMLAND'):
+            raise
+        cell_frames=current_existing_cell(client,pos,client.status())
+        whole_field_verified=False;field_limit={'code':error.code,'detail':str(error)}
     out.mkdir(parents=True);(out/'original-harvest-unchanged.json').write_bytes(raw)
     (out/'original-active-pointer.json').write_bytes(pointer_raw)
     proof={'schema':1,'kind':'independent_registered_cell_restore','world_session':client.world,
@@ -84,11 +114,15 @@ def run(client, journal, out, checkpoint=lambda:None, *, pickup_proof=None):
            'historical_harvest_sha256':hashlib.sha256(raw).hexdigest(),'historical_receipt_reclassified':False,
            'old_harvest_replayed':False,'grain_inventory_credit':0,'pos':pos,'pending':None,'complete':False}
     proof['additional_current_stock_not_old_harvest_credit']=max(0,grain-expected)
+    proof['historically_recovered_grain_may_be_stored']=extra_stock_proved and grain<expected
+    proof.update(whole_registered_field_verified=whole_field_verified,field_maintenance_required=field_limit,
+                 verification_scope='original_single_harvested_cell'if not whole_field_verified else'complete_registered_field')
     path=out/'current-cell-restoration.json';write_json(path,proof)
     if already_restored:
         if journal.read_bytes()!=raw or pointer.read_bytes()!=pointer_raw:
             raise JobBlocked('原记录变化；不更新当前田地指针')
-        proof.update(complete=True,new_reseed=0,current_existing_crop_verified=True,original_harvest_bytes_unchanged=True)
+        proof.update(complete=True,new_reseed=0,current_existing_crop_verified=True,original_harvest_bytes_unchanged=True,
+                     current_cell_frames=cell_frames)
         write_json(path,proof)
         write_json(pointer,{'schema':1,'scope':proof['scope'],'world_session':client.world,'journal':str(path.resolve()),
                             'historical_pending_preserved':str(journal.resolve()),'current_independent_restoration':True})

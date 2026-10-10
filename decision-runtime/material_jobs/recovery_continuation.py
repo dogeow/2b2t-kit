@@ -45,6 +45,20 @@ def recover_attempt(root, original, old_journal, pickup_proof, attempt, state):
     try:
         c=MaterialClient(root,attempt/'control',server=state['server'],remote_finish='guard',
             park_target=[state['pos'][0],min(315,max(90,state['pos'][1]+24)),state['pos'][2]])
+        if inventory_counts(c.status()).get('minecraft:wheat_seeds',0)<5:
+            from .profile import load
+            from material_storage_index import select_sources
+            from material_depots import exchange
+            profile=load(root,{'server':state['server'],'dimension':state['dimension']})
+            route=select_sources(c,profile['depots'],{'minecraft:wheat_seeds':5},reserve_empty=2)
+            write_json(attempt/'local-seed-storage-search.json',route)
+            if not route['positions']:raise RuntimeError('Registered storage has no available seed reserve')
+            staging=profile.get('supply_staging')or profile.get('workbench_staging')
+            if staging and min(math.dist(c.status()['pos'],p)for p in route['positions'])>48:
+                lift_for_travel(c);_travel(c,staging,lambda:c.status(),[],keep_cruise=True)
+            supplied=exchange(c,route['positions'],withdraw={'minecraft:wheat_seeds':5})
+            write_json(attempt/'actual-seed-supply.json',supplied)
+            if not supplied['complete']:raise RuntimeError('Actual registered seed supply incomplete')
         from .registered_wheat import registered_fields
         from potato_farm import plan
         pending=json.loads(Path(old_journal).read_text()).get('pending')or{}
@@ -53,6 +67,7 @@ def recover_attempt(root, original, old_journal, pickup_proof, attempt, state):
         center=field['center'];target=[center[0]+.5,max(c.status()['pos'][1],center[1]+24),center[2]+.5]
         if math.hypot(c.status()['pos'][0]-center[0],c.status()['pos'][2]-center[2])>8:
             lift_for_travel(c);_travel(c,target,lambda:c.status(),[],keep_cruise=True)
+        if math.dist(c.status()['pos'],[center[0]+.5,center[1]+1.6,center[2]+.5])>3:
             c.checked('navigate',target=[center[0]+.5,center[1]+1.6,center[2]+.5],arrival=.15,air_only=True,seconds=45)
         repaired=restore(c,old_journal,attempt/'current-cell-restoration',pickup_proof=pickup_proof)
         write_json(attempt/'result.json',repaired)
@@ -96,6 +111,9 @@ def run(root, original, old_journal, pickup_proof, out):
     original={**original,'created_at':int(time.time()*1000),'context':{**original['context'],
         'world_session':state['world_session'],'expected_revision':state['control_revision'],'start_pos':state['pos']}}
     waiting=WaitingIntent(original,out/'waiting');watch=StationaryResume(root);number=0
+    parked=state.get('supervision_lease')or{}
+    if parked.get('kind')=='parking'and parked.get('world_session')==state['world_session']:
+        waiting.state['native_task_session']=parked.get('job_session')
     while True:
         if(out/'cancel-wait-only.json').exists():
             result={'phase':'cancelled','game_actions_dispatched':number>0};write_json(out/'result.json',result);return result
@@ -103,8 +121,7 @@ def run(root, original, old_journal, pickup_proof, out):
         if state.get('world_session')!=original['context']['world_session']:
             result={'phase':'waiting','reason':'world_changed','automatic_old_action_replay':False};write_json(out/'result.json',result);return result
         held=inventory_counts(state)if state.get('inventory')else{}
-        if (held.get('minecraft:wheat',0)<2 or held.get('minecraft:wheat_seeds',0)<5
-                or state.get('food',0)<18 or any(state.get(k)for k in ('printing','planter_active','feeder_active','fisher_active'))):
+        if (state.get('food',0)<18 or any(state.get(k)for k in ('printing','planter_active','feeder_active','fisher_active'))):
             watch.reset();time.sleep(.25);continue
         if not watch.poll(waiting):time.sleep(.25);continue
         state=read_fresh(root)

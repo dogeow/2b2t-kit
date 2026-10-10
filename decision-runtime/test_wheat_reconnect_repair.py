@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import Mock,patch
 from material_jobs.wheat_reconnect_repair import historical_removal,run
 from material_jobs.protocol import JobBlocked
+from potato_farm import FarmWait
 
 
 class HistoricalRemovalTest(unittest.TestCase):
@@ -105,6 +106,31 @@ class CurrentRestorationTest(HistoricalRemovalTest):
         self.assertEqual(self.original_pointer,self.pointer.read_bytes())
         book=json.loads((self.root/'restoration/current-cell-restoration.json').read_text())
         self.assertEqual('new_seed_use',book['pending']['kind']);self.assertFalse(book['complete'])
+
+    def test_stored_recovered_grain_uses_pickup_proof_without_new_grain_credit(self):
+        self.state['inventory'][0]['count']=0
+        self.book['pending']['owned_loot']=[{'uuid':'known','item':'minecraft:wheat','count':1}]
+        self.journal.write_text(json.dumps(self.book));self.original=self.journal.read_bytes()
+        capture=self.root/'actual-pickup.json';capture.write_text(json.dumps({'picked':True,'source_absent':True,
+            'no_crop_mined':True,'drop_uuid':'known','before':1,'after':2}))
+        with patch('material_jobs.registered_wheat.registered_fields',return_value=iter([({'crop':'wheat'},self.registry)])), \
+             patch('material_jobs.wheat_reconnect_repair.plan',return_value=self.layout), \
+             patch('material_jobs.wheat_reconnect_repair._registered_wheat'):
+            result=run(self.c,self.journal,self.root/'restoration',pickup_proof=capture)
+        self.assertTrue(result['historically_recovered_grain_may_be_stored'])
+        self.assertEqual(0,result['grain_inventory_credit']);self.assertEqual(self.original,self.journal.read_bytes())
+
+    def test_changed_other_field_corners_are_not_claimed_repaired_by_single_cell_proof(self):
+        frames=[{'time':101},{'time':102}]
+        with patch('material_jobs.registered_wheat.registered_fields',return_value=iter([({'crop':'wheat'},self.registry)])), \
+             patch('material_jobs.wheat_reconnect_repair.plan',return_value=self.layout), \
+             patch('material_jobs.wheat_reconnect_repair._registered_wheat',side_effect=FarmWait('WAIT_SOIL','other corner lowered')), \
+             patch('material_jobs.wheat_reconnect_repair.current_existing_cell',return_value=frames):
+            result=run(self.c,self.journal,self.root/'restoration')
+        self.assertFalse(result['whole_registered_field_verified'])
+        self.assertEqual('original_single_harvested_cell',result['verification_scope'])
+        self.assertEqual('WAIT_SOIL',result['field_maintenance_required']['code'])
+        self.assertEqual(0,self.seed_uses);self.assertEqual(self.original,self.journal.read_bytes())
 
 
 if __name__=='__main__':unittest.main()
