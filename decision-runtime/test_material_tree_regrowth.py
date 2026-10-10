@@ -78,6 +78,32 @@ class NativeTreeClient:
 
 
 class TreeRegrowthTest(unittest.TestCase):
+    def test_growth_scan_arrives_after_the_inventory_debit(self):
+        client=NativeTreeClient('Block{minecraft:oak_sapling}[stage=0]')
+        original_checked=client.checked
+        original_scan=client.request
+        pending=False
+        def delayed_use(op,**args):
+            nonlocal pending
+            if op=='interact'and args.get('expected_hand')=='minecraft:bone_meal':
+                client.actions.append((op,copy.deepcopy(args)));pending=True
+                return {'phase':'done'}
+            return original_checked(op,**args)
+        def growth_scan(op,**args):
+            nonlocal pending
+            if pending and args.get('min')==[0,64,1]:
+                pending=False;client.items['minecraft:bone_meal']-=1
+                for y in (64,65):
+                    client.cells[(2,y,3)]=native_cell([2,y,3],'Block{minecraft:oak_log}[axis=y]',solid=True,passable=False)
+            return original_scan(op,**args)
+        client.checked=delayed_use;client.request=growth_scan
+        with patch('material_jobs.acquisition.approach_faces',return_value='up'):
+            result=_apply_bone_meal(client,'minecraft:oak_log','minecraft:oak_sapling',[2,64,3],{},lambda:None)
+        self.assertTrue(result['growth_confirmed'])
+        self.assertEqual(1,result['bone_meal_used'])
+        self.assertEqual(1,result['growth']['bone_meal_used'])
+        self.assertEqual([{'before':6,'after':5,'consumed':True,'growth_confirmed':True}],result['bone_meal_receipts'])
+        self.assertEqual(1,sum(op=='interact'for op,_ in client.actions))
     def test_neighbour_logs_and_leaves_do_not_confirm_an_unchanged_sapling(self):
         client=NativeTreeClient('Block{minecraft:oak_sapling}[stage=0]')
         client.cells[(3,64,3)]=native_cell([3,64,3],'Block{minecraft:oak_log}[axis=y]',solid=True,passable=False)
@@ -112,6 +138,7 @@ class TreeRegrowthTest(unittest.TestCase):
                 self.assertTrue(result['planted'])
                 self.assertTrue(result['growth_confirmed'])
                 self.assertEqual(1, result['growth']['bone_meal_used'])
+                self.assertEqual(1, result['bone_meal_used'])
                 self.assertEqual({'minecraft:oak_sapling': 1, 'minecraft:bone_meal': 5}, client.items)
                 self.assertEqual('Block{minecraft:oak_log}[axis=y]', client.cells[(2, 64, 3)]['state'])
                 self.assertEqual(2, sum(op == 'interact' for op, _ in client.actions))

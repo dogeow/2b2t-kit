@@ -78,6 +78,9 @@ def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
         while time.monotonic()<deadline:
             checkpoint();fresh=c.status();_safe(fresh)
             after=_scan(c,[x-2,y,z-2],[x+2,y+18,z+2],checkpoint)
+            # The loaded block scan can observe growth after the earlier
+            # inventory frame. Pair its result with the post-scan inventory.
+            fresh=c.status();_safe(fresh)
             stump=next((r for r in after if r['pos']==[x,y,z]),None)
             if carried(fresh,'minecraft:bone_meal')<before:used=True
             grown_ids={species_item,species_item.removesuffix('_log')+'_wood'}
@@ -92,15 +95,19 @@ def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
                 break
             if used:break
             time.sleep(.15)
+        current=carried(c.status(),'minecraft:bone_meal')
+        spent=max(0,before-current)
+        used=spent>0
         result.setdefault('bone_meal_receipts',[]).append({
-            'before':before,'after':carried(c.status(),'minecraft:bone_meal'),
+            'before':before,'after':current,
             'consumed':used,'growth_confirmed':bool(growth)})
+        result['bone_meal_used']=result.get('bone_meal_used',0)+spent
         if growth:
+            growth['bone_meal_used']=spent
             result.update(stage='grown',growth_confirmed=True,growth=growth);break
         if not used or result.get('stage')=='sapling_site_changed':
             result.update(stage='sapling_kept_bone_meal_unconfirmed',
                           detail='本次骨粉效果未获服务器确认；没有重复点击');break
-        result['bone_meal_used']=result.get('bone_meal_used',0)+1
     result['bone_meal_on_hand']=carried(c.status(),'minecraft:bone_meal')
     return result
 
