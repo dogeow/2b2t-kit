@@ -495,6 +495,14 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertEqual((job.state['done'], job.state['total']), (3, 10))
         self.assertNotEqual(job.state['state'], 'completed')
 
+    def test_user_preferred_projection_material_precedes_unrelated_concrete(self):
+        b = FakeBackend(self.catalog, projection={'minecraft:black_concrete': 50, 'minecraft:mud_bricks': 50})
+        request = self.request(projection=True)
+        request.update(preferred_materials=['minecraft:mud_bricks'], target_stack_sizes={'minecraft:mud_bricks': 64})
+        job = self.job(b, request); job._observe(initial=True)
+        with patch.object(job, '_fit_batch', return_value=16):
+            self.assertEqual(job._projection_batch(dict(b.projection)), {'minecraft:mud_bricks': 16})
+
     def test_smelting_dependencies_are_completed_before_blast_furnace_craft(self):
         b = FakeBackend(self.catalog, held={'minecraft:furnace':2,'minecraft:iron_ingot':10,'minecraft:cobblestone':6})
         result = self.job(b, self.request('blast_furnace',2)).run()

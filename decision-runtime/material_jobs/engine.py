@@ -374,6 +374,7 @@ class MaterialJob:
             ranked = sorted((item for item, count in targets.items()
                              if self.held.get(item, 0) < count), key=lambda item: (
                                  not bool(self.held.get(item, 0)),
+                                 item not in self.request.get('preferred_materials', []),
                                  not item.endswith('_concrete'), item))
             if not ranked:
                 raise JobBlocked('投影差料已有现货，但原生施工尚未确认可继续')
