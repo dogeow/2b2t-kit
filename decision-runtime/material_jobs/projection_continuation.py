@@ -16,7 +16,10 @@ MANUAL_FAILURES={'Control revision changed outside the owned request',
 
 
 def can_continue_after_manual(root,world,result):
-    if result.get('state')not in ('failed','cancelled','paused'):return False
+    early_handoff=(result.get('state')=='blocked'and result.get('detail')=='Control or world changed; no more commands'
+                   and result.get('steps')==0 and result.get('work_detail_before_finish')in
+                   ('Meteor Flight 已关闭，区域飞行已停止','Control or world changed; no more commands'))
+    if result.get('state')not in ('failed','cancelled','paused')and not early_handoff:return False
     if result.get('detail')not in MANUAL_FAILURES:return False
     state=read_fresh(root)
     return (state.get('connected')is True and state.get('world_session')==world
