@@ -23,6 +23,14 @@ SPEC={'recipe_id':'white_concrete_powder','output':'minecraft:white_concrete_pow
       'ingredients':{'minecraft:sand':[1,2,3,4],'minecraft:gravel':[5,6,7,8],'minecraft:white_dye':[9]}}
 
 class StackRecipeTest(unittest.TestCase):
+    def test_coarse_dirt_batch_requires_exact_four_output_and_two_of_each_input(self):
+        spec={'output':'minecraft:coarse_dirt','produces':4,'width':2,
+              'ingredients':{'minecraft:dirt':[1,4],'minecraft:gravel':[2,3]}}
+        self.assertTrue(supported(spec))
+        for change in ({'produces':1},{'width':1},
+                {'ingredients':{'minecraft:dirt':[1],'minecraft:gravel':[2,3]}},
+                {'ingredients':{'minecraft:dirt':[1,2],'minecraft:gravel':[2,3]}}):
+            self.assertFalse(supported({**spec,**change}))
     def test_mud_bulk_allowlist_requires_exact_no_remainder_inputs_and_outputs(self):
         packed={'output':'minecraft:packed_mud','produces':1,'width':2,
                 'ingredients':{'minecraft:mud':[1],'minecraft:wheat':[2]}}

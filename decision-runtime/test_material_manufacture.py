@@ -13,6 +13,19 @@ from recipe_catalog import RecipeCatalog
 
 
 class CherryBatchCapacityTest(unittest.TestCase):
+    def test_coarse_dirt_stock_visit_batches_all_four_rounds_without_more_inputs(self):
+        slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]
+        slots[9].update(item='minecraft:dirt',count=8,max_stack=64)
+        slots[10].update(item='minecraft:gravel',count=64,max_stack=64)
+        state={'menu':{'slots':slots},'inventory':[{**r,'slot':i}for i,r in enumerate(slots[9:45])]}
+        before=copy.deepcopy(state)
+        batch=_inventory_batch(state,{'output':'minecraft:coarse_dirt','produces':4,'width':2,
+            'ingredients':{'minecraft:dirt':[1,4],'minecraft:gravel':[2,3]}},16)
+        self.assertEqual((4,16),(batch['rounds'],batch['produced']))
+        self.assertEqual({'minecraft:dirt':8,'minecraft:gravel':8},
+            dict(Counter({item:sum(a['count']for a in batch['actions']if a['item']==item)
+                          for item in ('minecraft:dirt','minecraft:gravel')})))
+        self.assertEqual(before,state)
     def test_exact_mud_recipes_use_one_balanced_inventory_batch(self):
         slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]
         slots[9].update(item='minecraft:mud',count=32,max_stack=64)
