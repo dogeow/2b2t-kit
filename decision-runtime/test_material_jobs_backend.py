@@ -1674,6 +1674,25 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(32,backend.inventory_counts(self.current)['minecraft:wheat_seeds'])
         self.assertEqual(0,result['warehouse_inventory_credit'])
 
+    def test_registered_dirt_surplus_frees_workspace_without_stashing_tools(self):
+        self.job.profile={'depots':[[5,64,1]],'mud_inventory_staging':{
+            'authorized':True,'keep_wheat_seeds':32,'keep_dirt':64,'minimum_empty_slots':3}}
+        bag=inventory_rows({'minecraft:dirt':320,'minecraft:mud_bricks':2})
+        for row in bag:
+            if not row['count']:row.update(item='minecraft:stone',count=64,max_stack=64)
+        self.current['inventory']=bag
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)));self.job.prepare_travel=Mock()
+        def exchange(c,positions,deposit):
+            self.assertEqual(deposit,{'minecraft:dirt':64})
+            for row in bag[1:5]:row.update(item='minecraft:air',count=0)
+            return {'complete':True,'remaining_deposit':{}}
+        with patch('material_storage_index.select_destinations',return_value={'positions':[[5,64,1]]}), \
+                patch('material_depots.exchange',side_effect=exchange):
+            result=self.job.prepare_mud_inventory()
+        self.assertEqual((result['phase'],result['free_slots']),('done',4))
+        self.assertEqual(result['stored_items'],{'minecraft:dirt':256})
+        self.assertEqual(backend.inventory_counts(self.current)['minecraft:mud_bricks'],2)
+
     def test_unregistered_or_invalid_mud_staging_does_not_store_items(self):
         self.job.profile={}
         self.assertEqual({'phase':'done','prepared':False},self.job.prepare_mud_inventory())
