@@ -228,8 +228,31 @@ class FlatMapBackend(Backend):
     def build(self, projection_key):
         with self.action('build') as (client, out):
             self.prepare_travel()
-            model_reply = client.request('projection_model')
-            write_json(out / 'flat-model.json', model_reply)
+            state = client.status()
+            selection = state.get('projection_selection', {})
+            low, high = position(selection.get('min')), position(selection.get('max'))
+            if selection.get('key') != projection_key or any(a > b for a, b in zip(low, high)):
+                raise JobBlocked('地图画当前选择范围已改变；不使用旧模型')
+            center = [(low[0] + high[0] + 1) / 2, max(state['pos'][1], high[1] + 24),
+                      (low[2] + high[2] + 1) / 2]
+            if math.hypot(state['pos'][0] - center[0], state['pos'][2] - center[2]) > 48:
+                from material_jobs.acquisition import _travel
+                trace = []
+                _travel(client, center, self.checkpoint, trace, keep_cruise=True)
+                write_json(out / 'model-loading-travel.json', trace)
+            for attempt in range(40):
+                model_reply = client.request('projection_model')
+                write_json(out / 'flat-model.json', model_reply)
+                model = model_reply.get('projection_model', {})
+                if (model.get('loaded_chunks_verified') is True
+                        and model.get('loaded_server_chunks_verified') is True):
+                    break
+                if model_reply.get('world_session') != client.world:
+                    raise JobBlocked('地图画模型读取期间世界已改变')
+                self.checkpoint()
+                if attempt == 39:
+                    raise JobBlocked('地图画区块仍未完整加载；不规划或发送施工')
+                time.sleep(.25)
             if model_reply.get('world_session') != client.world:
                 raise JobBlocked('地图画模型不属于当前世界')
             layout = FlatLayout(model_reply.get('projection_model'), self.request['flat_map'])
