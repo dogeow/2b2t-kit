@@ -7,10 +7,12 @@ import time
 
 from material_jobs import MaterialJob, JobBlocked, JobCancelled, JobPaused
 from safety_interlock import require_unlocked
+from material_jobs.stationary_resume import StationaryResume
 
 
 def serve(request, automation, out, factory, *, poll_seconds=.5, max_pause_seconds=86400):
     job = MaterialJob(request, out)
+    stationary_resume = StationaryResume(automation)
     if job.state.get('terminal'):
         return job.state
     while True:
@@ -28,7 +30,7 @@ def serve(request, automation, out, factory, *, poll_seconds=.5, max_pause_secon
                     return job._write('blocked', '世界已变化', str(error), terminal=True)
                 if action == 'cancel':
                     return job._write('cancelled', '已取消', '用户取消任务', terminal=True)
-                if action == 'resume':
+                if action == 'resume' or stationary_resume.poll(job):
                     job.resuming = True
                     job._write('queued', '重新核对当前世界', terminal=False)
                     break
