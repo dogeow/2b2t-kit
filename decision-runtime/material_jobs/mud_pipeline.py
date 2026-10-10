@@ -90,7 +90,7 @@ def run(c,profile,item,target_count,out,checkpoint):
     from .mud_batch import carried_visit_target
     bulk=carried_visit_target(backend.request,profile,c.status(),item,target_count) is not None
     initial=inventory_counts(c.status());gain=max(0,target_count-initial[item])
-    visit_units=min(cell_budget,math.ceil(gain/4)*4)if item=='minecraft:mud_bricks'else 0
+    visit_units=min(cell_budget,max(0,math.ceil(gain/4)*4-initial['minecraft:packed_mud']))if item=='minecraft:mud_bricks'else 0
     bulk_inputs_ready=False
     bulk_wheat_ready=False
 
