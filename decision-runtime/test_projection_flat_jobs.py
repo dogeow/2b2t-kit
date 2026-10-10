@@ -419,6 +419,56 @@ class FlatIntegrationTests(unittest.TestCase):
             self.assertEqual(result['phase'],'waiting')
             self.assertEqual(calls,['return_to_model','projection_model'])
 
+    def test_remote_quarry_return_segments_before_loading_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = model(3,1); layout = layout_for(m)
+            current = state(2); current['pos'] = [-400.5,100,400.5]
+            current['projection_selection'].update(min=[0,64,0], max=[2,64,0])
+            calls = []
+            def request(op, **params):
+                calls.append(op)
+                self.assertEqual(op, 'projection_model')
+                self.assertLess(math.dist(current['pos'], [1.5,100,.5]), 1)
+                return {'world_session':'world', 'projection_model':m}
+            client = SimpleNamespace(world='world', request=request, status=lambda: current)
+            backend = FlatMapBackend.__new__(FlatMapBackend)
+            backend.request = {'flat_map':{**CONFIG,'content_hash':m['content_hash']}}
+            backend.checkpoint = lambda: None
+            @contextmanager
+            def action(name):
+                yield client, Path(tmp)
+            backend.action = action; backend.prepare_travel = lambda: None
+            backend.refresh_audit = lambda: audit(layout,{})
+            backend._safe_flat = lambda c,l: current
+            def travel(c,target,checkpoint,trace,*,keep_cruise):
+                self.assertTrue(keep_cruise)
+                self.assertLessEqual(math.hypot(current['pos'][0]-target[0],current['pos'][2]-target[2]),256.00001)
+                current['pos']=target;calls.append('return_to_model')
+            with patch('material_jobs.acquisition._travel',side_effect=travel):
+                result=backend.build('ship')
+            self.assertEqual(result['phase'],'waiting')
+            self.assertEqual(calls,['return_to_model','return_to_model','return_to_model','projection_model'])
+
+    def test_uncertain_return_keeps_segment_without_a_second_navigation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            current = state(4); current['pos'] = [-400.5,100,400.5]
+            backend = FlatMapBackend.__new__(FlatMapBackend)
+            backend.checkpoint = lambda: None
+            client = SimpleNamespace(status=lambda:current)
+            with patch('material_jobs.acquisition._travel', side_effect=RuntimeError('native outcome unknown')) as travel:
+                with self.assertRaisesRegex(RuntimeError, 'outcome unknown'):
+                    backend.travel_to_projection(client,[1.5,100,.5],'ship',Path(tmp))
+            travel.assert_called_once()
+            trace=json.loads((Path(tmp)/'model-loading-travel.json').read_text())
+            self.assertEqual(trace[0]['final_target'],[1.5,100,.5])
+            self.assertEqual(trace[0]['segment'],1)
+
+    def test_flat_initial_loading_uses_center_with_current_safe_height(self):
+        backend=FlatMapBackend.__new__(FlatMapBackend)
+        client=SimpleNamespace(status=lambda:{'pos':[0,145,500]})
+        self.assertEqual([64.,145,64.], backend.projection_loading_target(
+            client,{'min':[0,64,0],'max':[127,64,127]}))
+
     def test_existing_scheduler_mines_smelts_places_resupplies_and_finishes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); jar = root / 'recipes.jar'

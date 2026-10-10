@@ -356,10 +356,9 @@ class Backend:
                 # An unloaded audit is never counted as an empty projection.
                 if math.hypot(state['pos'][0]-center[0], state['pos'][2]-center[2]) > 96:
                     self.prepare_travel()
-                    target = [selection['max'][0]+4.5,
-                              max(c.status()['pos'][1], selection['max'][1]+4), center[2]+.5]
-                    from material_jobs.acquisition import _travel
-                    _travel(c,target,self.checkpoint,[])
+                    target = self.projection_loading_target(c, selection)
+                    self.travel_to_projection(c, target, self.request['projection_key'],
+                                              self.out/'projection-loading')
                 self.refresh_audit()
                 state = read_fresh(self.root)
             finally:
@@ -375,6 +374,15 @@ class Backend:
             state['native_task_session'] = self.native_gravel_session
         self.latest = state
         return state
+
+    def projection_loading_target(self, client, selection):
+        return [selection['max'][0]+4.5,
+                max(client.status()['pos'][1], selection['max'][1]+4),
+                (selection['min'][2]+selection['max'][2])/2+.5]
+
+    def travel_to_projection(self, client, target, projection_key, directory):
+        from material_jobs.acquisition import _travel
+        _travel(client, target, self.checkpoint, [])
 
     def stock(self):
         state = read_fresh(self.root)

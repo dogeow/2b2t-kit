@@ -266,10 +266,7 @@ class FlatMapBackend(Backend):
             center = [(low[0] + high[0] + 1) / 2, max(state['pos'][1], high[1] + 24),
                       (low[2] + high[2] + 1) / 2]
             if math.hypot(state['pos'][0] - center[0], state['pos'][2] - center[2]) > 48:
-                from material_jobs.acquisition import _travel
-                trace = []
-                _travel(client, center, self.checkpoint, trace, keep_cruise=True)
-                write_json(out / 'model-loading-travel.json', trace)
+                self.travel_to_projection(client, center, projection_key, out)
             for attempt in range(40):
                 model_reply = client.request('projection_model')
                 write_json(out / 'flat-model.json', model_reply)
@@ -307,6 +304,46 @@ class FlatMapBackend(Backend):
             if any(final_actual.get(p) != v for p, v in actual.items()) or final['matched'] - audit['matched'] != gained:
                 raise JobBlocked('窗口结果与完整实机审计不一致；保留全部原记录')
             return result or {'phase': 'done', 'detail': '本批地图画通过原生、物资和完整图面复核', 'placed': gained}
+
+    def projection_loading_target(self, client, selection):
+        low, high = selection['min'], selection['max']
+        return [(low[0]+high[0]+1)/2, max(client.status()['pos'][1],high[1]+24),
+                (low[2]+high[2]+1)/2]
+
+    def travel_to_projection(self, client, center, projection_key, out):
+        """Return to the current selection through bounded existing Kit routes.
+
+        Resource search authorization describes an ore destination, so it must
+        not be fabricated for a flight back to the selected construction area.
+        Each ordinary route below stays under the existing direct-route limit.
+        """
+        from material_jobs.acquisition import _travel, SEGMENT_ROUTE_LIMIT
+        trace = []
+        try:
+            for segment in range(16):
+                self.checkpoint()
+                state = client.status()
+                if state.get('projection_selection', {}).get('key') != projection_key:
+                    raise JobBlocked('返程期间投影选择已改变，保留当前航段')
+                here = state['pos']
+                gap = math.hypot(here[0] - center[0], here[2] - center[2])
+                ratio = min(1., SEGMENT_ROUTE_LIMIT / gap) if gap else 1.
+                target = [here[0] + (center[0]-here[0])*ratio,
+                          max(here[1], center[1]),
+                          here[2] + (center[2]-here[2])*ratio]
+                trace.append({'event':'projection_return_segment', 'segment':segment+1,
+                              'from':list(here), 'target':target, 'final_target':list(center)})
+                write_json(out / 'model-loading-travel.json', trace)
+                _travel(client, target, self.checkpoint, trace, keep_cruise=True)
+                actual = client.status()
+                if (actual.get('projection_selection', {}).get('key') != projection_key
+                        or math.hypot(actual['pos'][0]-target[0], actual['pos'][2]-target[2]) > .75):
+                    raise JobBlocked('原地图画返程航段未到达，不重放导航')
+                if ratio == 1.:
+                    return
+            raise JobBlocked('地图画返程航段上限已到，保留当前位置')
+        finally:
+            write_json(out / 'model-loading-travel.json', trace)
 
     def recover(self, inflight):
         if inflight.get('operation') == 'build':
