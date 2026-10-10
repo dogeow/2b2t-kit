@@ -1419,6 +1419,21 @@ class BackendTest(unittest.TestCase):
         self.assertEqual('done',self.job.acquire_gravel(8)['phase'])
         self.job.prepare_travel.assert_not_called();self.job.stage_near_base.assert_not_called();self.job.finish.assert_not_called()
 
+    def test_native_gravel_partial_gain_preserves_uncollected_drop_and_reports_source_batch(self):
+        self.job.client=None;self.job.stock=Mock(side_effect=[{'minecraft:gravel':2},{'minecraft:gravel':7}]);self.job.finish=Mock()
+        initial=copy.deepcopy(self.current);initial['supervision_lease']={}
+        active=copy.deepcopy(self.current);active['gravel']={'active':True};active['supervision_lease']['job_session']='gravel-owned'
+        ended=copy.deepcopy(active);ended['gravel']={'active':False,'phase':'FINISH','collected':5,
+            'pending_block':[4,48,6],'pending_drop':'uncollected-drop'}
+        with patch.object(backend,'read_fresh',side_effect=[initial,ended,ended]),patch('kit_cli.send',return_value=active)as send:
+            result=self.job.acquire_gravel(8)
+        self.assertEqual(('waiting','SOURCE_BATCH',2,7,8),
+                         (result['phase'],result['code'],result['before'],result['after'],result['target']))
+        proof=json.loads(Path(result['native_outcome_journal']).read_text())
+        self.assertEqual(5,proof['gain']);self.assertEqual('uncollected-drop',proof['native_gravel_snapshot']['pending_drop'])
+        self.assertFalse(proof['pending_drop_collected']);self.assertFalse(proof['native_mining_replayed'])
+        self.assertEqual(1,send.call_count)
+
     def test_resume_directory_sequence_continues_without_overwriting_previous_actions(self):
         for name in ('0007-craft','control-008','0009-smelt'):(self.root/name).mkdir()
         (self.root/'1000-result.json').write_text('{}')

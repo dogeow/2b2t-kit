@@ -1641,6 +1641,7 @@ class Backend:
                     or reply.get('world_session') != self.request['context']['world_session']):
                 raise JobBlocked('沙砾启动回执没有确认本次任务；保留现场，不重复启动')
             self.native_gravel_session = lease['job_session']
+            native_session = self.native_gravel_session
             started = time.monotonic()
             try:
                 while True:
@@ -1661,8 +1662,19 @@ class Backend:
         finally:
             self.busy = previous
         actual = self.stock().get('minecraft:gravel',0)
-        return {'phase':'done' if actual>=target else 'waiting' if actual>before else 'blocked',
-                'detail':'沙砾采集已核对实际背包','before':before,'after':actual,'target':target}
+        outcome = {'phase':'done' if actual>=target else 'waiting' if actual>before else 'blocked',
+                   'detail':'沙砾采集已核对实际背包','before':before,'after':actual,'target':target}
+        if actual>before and actual<target:
+            # A confirmed carried gain is a partial source batch. An uncollected
+            # native drop stays in its original receipt and is never credited.
+            native = state.get('gravel') or {}
+            path = self.out/('native-gravel-partial-'+fingerprint(native_session)[:16]+'.json')
+            write_json(path,{'world_session':state.get('world_session'),'native_task_session':native_session,
+                'before':before,'after':actual,'gain':actual-before,'target':target,
+                'native_gravel_snapshot':native,'pending_drop_collected':False,
+                'original_drop_receipt_preserved':True,'native_mining_replayed':False})
+            outcome.update(code='SOURCE_BATCH',native_outcome_journal=str(path))
+        return outcome
 
     def stop_owned_gravel(self):
         from kit_cli import make_request, send
