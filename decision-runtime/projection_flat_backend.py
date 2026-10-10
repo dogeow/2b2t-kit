@@ -179,7 +179,9 @@ class FlatMapBackend(Backend):
                 anchors.append(point)
         at_work = lambda p: any(math.hypot(p[0]-a[0], p[2]-a[2]) <= 6 for a in anchors)
         here = state['pos']
-        if (not (on_map(here) and at_work(target) or at_work(here) and on_map(target))
+        within_map=(self.request['flat_map'].get('direct_within_map_windows')is True
+                    and on_map(here)and on_map(target))
+        if (not (within_map or on_map(here) and at_work(target) or at_work(here) and on_map(target))
                 or min(here[1], target[1]) < high[1]+2
                 or math.dist(here, target) > 256):
             return False
@@ -198,7 +200,7 @@ class FlatMapBackend(Backend):
         # A window is close to the image while the work-area approach is high.
         # Handle that height difference at the origin instead of falling back
         # to the X-then-Z route. Every vertical leg retains native body checks.
-        cruise = max(here[1], target[1], high[1]+8)
+        cruise = max(here[1], target[1])if within_map else max(here[1], target[1], high[1]+8)
         for segment in range(8):
             checkpoint(); here = client.status()['pos']
             if cruise-here[1] <= .55:

@@ -136,5 +136,25 @@ class ContinuityTests(unittest.TestCase):
         self.assertFalse(backend.try_direct_registered_travel(client,[20.5,85,190.5],lambda:None,[],keep_cruise=False))
         self.assertEqual(calls,[])
 
+    def test_opt_in_nearby_map_windows_stay_at_work_height_and_move_directly(self):
+        start,target=[5.5,66.75,15.5],[17.5,66.75,23.5]
+        backend,client,current,calls=self.route_fixture(start)
+        self.assertFalse(backend.try_direct_registered_travel(client,target,lambda:None,[],keep_cruise=False))
+        backend.request['flat_map']['direct_within_map_windows']=True
+        with patch('material_jobs.navigation.settled_state'):
+            self.assertTrue(backend.try_direct_registered_travel(client,target,lambda:None,[],keep_cruise=False))
+        self.assertEqual([(start,target)],calls)
+
+    def test_low_map_or_native_blocked_segment_cannot_use_direct_window_route(self):
+        backend,client,current,calls=self.route_fixture([5.5,65.,15.5])
+        backend.request['flat_map']['direct_within_map_windows']=True
+        self.assertFalse(backend.try_direct_registered_travel(client,[17.5,66.75,23.5],lambda:None,[],keep_cruise=False))
+        current['pos']=[5.5,66.75,15.5]
+        def reject(op,**params):calls.append(params['target']);return {'phase':'error'}
+        client.request=reject
+        with self.assertRaises(JobBlocked):
+            backend.try_direct_registered_travel(client,[17.5,66.75,23.5],lambda:None,[],keep_cruise=False)
+        self.assertEqual([[17.5,66.75,23.5]],calls)
+
 
 if __name__ == '__main__': unittest.main()
