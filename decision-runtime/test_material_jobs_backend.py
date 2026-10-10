@@ -1389,6 +1389,36 @@ class BackendTest(unittest.TestCase):
             self.assertEqual('done',self.job.acquire_gravel(64)['phase'])
         self.assertEqual([False,False,True],seen);self.assertFalse(self.job.busy)
 
+    def test_projection_gravel_stages_at_registered_supply_before_native_start(self):
+        self.job.request['mode']='projection';self.job.profile={'depots':[[5,64,7]]}
+        self.job.client=None;self.job.stock=Mock(side_effect=[{}, {'minecraft:gravel':8}])
+        calls=[];self.job.prepare_travel=Mock(side_effect=lambda:calls.append('prepare'))
+        self.job.stage_near_base=Mock(side_effect=lambda positions:calls.append(('base',positions)))
+        self.job.finish=Mock(side_effect=lambda:calls.append('finish'))
+        initial=copy.deepcopy(self.current);initial['supervision_lease']={}
+        active=copy.deepcopy(self.current);active['gravel']={'active':True};active['supervision_lease']['job_session']='gravel-owned'
+        ended=copy.deepcopy(active);ended['gravel']['active']=False
+        def start(*args):
+            calls.append('native_start');return active
+        with patch.object(backend,'read_fresh',side_effect=[initial,ended,ended]),patch('kit_cli.send',side_effect=start):
+            self.assertEqual('done',self.job.acquire_gravel(8)['phase'])
+        self.assertEqual(['prepare',('base',[[5,64,7]]),'finish','native_start'],calls)
+
+    def test_projection_gravel_failed_base_approach_does_not_start_native_search(self):
+        self.job.request['mode']='projection';self.job.profile={'depots':[[5,64,7]]}
+        self.job.stock=Mock(return_value={});self.job.prepare_travel=Mock()
+        self.job.stage_near_base=Mock(side_effect=JobBlocked('base route uncertain'));self.job.finish=Mock()
+        with patch('kit_cli.send')as send:
+            with self.assertRaisesRegex(JobBlocked,'base route uncertain'):self.job.acquire_gravel(8)
+        send.assert_not_called();self.job.finish.assert_not_called()
+
+    def test_carried_gravel_needs_no_base_trip_or_native_session(self):
+        self.job.request['mode']='projection';self.job.profile={'depots':[[5,64,7]]}
+        self.job.stock=Mock(return_value={'minecraft:gravel':8});self.job.prepare_travel=Mock()
+        self.job.stage_near_base=Mock();self.job.finish=Mock()
+        self.assertEqual('done',self.job.acquire_gravel(8)['phase'])
+        self.job.prepare_travel.assert_not_called();self.job.stage_near_base.assert_not_called();self.job.finish.assert_not_called()
+
     def test_resume_directory_sequence_continues_without_overwriting_previous_actions(self):
         for name in ('0007-craft','control-008','0009-smelt'):(self.root/name).mkdir()
         (self.root/'1000-result.json').write_text('{}')

@@ -1616,6 +1616,12 @@ class Backend:
         if before >= target:
             return {'phase':'done','detail':'沙砾数量已足够'}
         self.checkpoint()
+        if self.request.get('mode') == 'projection' and self.profile.get('depots'):
+            # Native seafloor collection searches around its start position.
+            # The map's platform can obstruct a later surface return. Reuse
+            # the registered supply approach before opening the native session.
+            self.prepare_travel()
+            self.stage_near_base(self.profile['depots'])
         self.finish()
         self.ready = True
         self.checkpoint()
