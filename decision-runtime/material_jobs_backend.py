@@ -283,6 +283,7 @@ def clean_for_replan(state, client=None):
 
 
 class Backend:
+    PROJECTION_LOADING_RADIUS=96
     def __init__(self, request, automation, out, checkpoint):
         self.request, self.root, self.out = request, Path(automation), Path(out)
         self.checkpoint = checkpoint
@@ -354,7 +355,7 @@ class Backend:
                     raise JobBlocked('投影范围不可读')
                 center = [(selection['min'][i]+selection['max'][i])/2 for i in range(3)]
                 # An unloaded audit is never counted as an empty projection.
-                if math.hypot(state['pos'][0]-center[0], state['pos'][2]-center[2]) > 96:
+                if math.hypot(state['pos'][0]-center[0], state['pos'][2]-center[2]) > self.PROJECTION_LOADING_RADIUS:
                     self.prepare_travel()
                     target = self.projection_loading_target(c, selection)
                     self.travel_to_projection(c, target, self.request['projection_key'],

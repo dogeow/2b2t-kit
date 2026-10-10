@@ -750,6 +750,25 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(1,movement.call_count);self.assertEqual(1,self.job.refresh_audit.call_count)
         self.assertEqual(5,result['projection_audit']['matched']);self.assertFalse(self.job.busy)
 
+    def test_flat_map_80_block_edge_returns_to_center_before_full_audit(self):
+        from projection_flat_backend import FlatMapBackend
+        self.job.__class__=FlatMapBackend
+        self.job.request.update(mode='projection',projection_key='ship')
+        self.current['pos']=[64,100,150]
+        self.current['projection_selection']={'key':'ship','min':[0,64,0],'max':[127,64,127]}
+        self.job.audit=None;self.job.audit_dirty=True;self.job.checking=False
+        self.job.initial_revision=3;self.job.warehouse_hint={}
+        self.job.ensure_client=Mock(return_value=self.client);self.job.prepare_travel=Mock()
+        self.job.travel_to_projection=Mock()
+        def audit():
+            self.job.audit={'placement_key':'ship','matched':5,'total':10};self.job.audit_dirty=False
+        self.job.refresh_audit=Mock(side_effect=audit)
+        with patch.object(backend,'read_fresh',side_effect=lambda root:copy.deepcopy(self.current)):
+            self.job.observe()
+        self.job.travel_to_projection.assert_called_once()
+        self.assertEqual([64.,100,64.],self.job.travel_to_projection.call_args.args[1])
+        self.job.refresh_audit.assert_called_once()
+
     def test_remote_quarry_return_stages_before_local_workbench_walk(self):
         self.current['pos']=[100,90,100]
         entry=[0,65,0];staging=[0,85,5]

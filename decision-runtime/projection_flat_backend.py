@@ -80,6 +80,24 @@ def accept_window(plan, before, after, stock_before, stock_after, receipt, expec
 
 
 class FlatMapBackend(Backend):
+    PROJECTION_LOADING_RADIUS=48
+
+    def refresh_audit(self):
+        """Wait for the entire server map at the already verified loading pose."""
+        client=self.ensure_client();previous=self.busy;self.busy=True
+        try:
+            for attempt in range(20):
+                reply=client.request('projection_audit');value=reply.get('projection_audit')or{}
+                if reply.get('world_session')!=client.world or value.get('placement_key')!=self.request['projection_key']:
+                    raise JobBlocked('地图画完整审计的世界或原模型已变化')
+                if(value.get('loaded_chunks_verified')is True and value.get('loaded_server_chunks_verified')is True
+                        and not(value.get('kinds')or{}).get('unloaded')):
+                    self.audit=value;self.audit_dirty=False;write_json(self.out/'projection-latest.json',value);return value
+                self.checkpoint()
+                if attempt<19:time.sleep(.25)
+            raise JobBlocked('地图画完整服务器区块仍未加载；不按旧差料施工')
+        finally:self.busy=previous
+
     def __init__(self, request, automation, out, checkpoint):
         if request.get('mode') != 'projection':
             raise ValueError('Flat-map adapter requires an explicit projection task')

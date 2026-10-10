@@ -8,6 +8,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from unittest.mock import Mock
 import zipfile
 
 from material_jobs import MaterialJob
@@ -20,6 +21,33 @@ from material_jobs.projection_spatial_cache import native_content_hash
 from test_material_jobs import FakeBackend
 
 ITEM = 'minecraft:stone'
+
+
+class FlatLoadingTest(unittest.TestCase):
+    def test_server_chunk_arrival_is_waited_without_publishing_unloaded_cells(self):
+        with tempfile.TemporaryDirectory()as d:
+            job=FlatMapBackend.__new__(FlatMapBackend);job.out=Path(d);job.busy=False
+            job.request={'projection_key':'ship'};job.audit={'matched':9};job.audit_dirty=True
+            missing={'world_session':'w','projection_audit':{'placement_key':'ship',
+                'loaded_chunks_verified':False,'loaded_server_chunks_verified':False,'kinds':{'unloaded':3}}}
+            good={'world_session':'w','projection_audit':{'placement_key':'ship',
+                'loaded_chunks_verified':True,'loaded_server_chunks_verified':True,'kinds':{},'matched':10,'total':18}}
+            client=SimpleNamespace(world='w',request=Mock(side_effect=[missing,good]))
+            job.ensure_client=lambda:client;job.checkpoint=Mock()
+            with patch('projection_flat_backend.time.sleep'):
+                result=job.refresh_audit()
+            self.assertEqual(10,result['matched']);self.assertFalse(job.busy);self.assertFalse(job.audit_dirty)
+            self.assertEqual(2,client.request.call_count);job.checkpoint.assert_called_once()
+
+    def test_wrong_model_does_not_become_retry_or_cached_success(self):
+        with tempfile.TemporaryDirectory()as d:
+            job=FlatMapBackend.__new__(FlatMapBackend);job.out=Path(d);job.busy=False
+            job.request={'projection_key':'ship'};job.audit=None
+            client=SimpleNamespace(world='w',request=Mock(return_value={'world_session':'w','projection_audit':{'placement_key':'other'}}))
+            job.ensure_client=lambda:client;job.checkpoint=Mock()
+            with self.assertRaises(JobBlocked):job.refresh_audit()
+            self.assertIsNone(job.audit);self.assertFalse((job.out/'projection-latest.json').exists())
+            self.assertEqual(1,client.request.call_count)
 
 
 def model(width=6, depth=3, origin=(0, 64, 0)):
