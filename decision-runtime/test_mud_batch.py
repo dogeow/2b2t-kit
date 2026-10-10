@@ -48,3 +48,11 @@ class MudVisitTest(unittest.TestCase):
         self.assertEqual(self.offer(),18)
         self.state['inventory'][-3].update(item='minecraft:stone',count=64)
         self.assertIsNone(self.offer())
+
+    def test_crossing_output_stack_preserves_three_workspace_slots(self):
+        self.state['inventory'][0]['count']=50
+        for r in self.state['inventory'][2:]:r.update(item='minecraft:stone',count=64)
+        for r in self.state['inventory'][-4:]:r.update(item='minecraft:air',count=0)
+        self.assertEqual(self.offer(),66)
+        self.state['inventory'][-4].update(item='minecraft:stone',count=64)
+        self.assertIsNone(self.offer())

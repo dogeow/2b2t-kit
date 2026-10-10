@@ -17,9 +17,13 @@ def carried_visit_target(request,profile,state,item,final_count):
     # Native source-water fill supports a stack with a separate output slot.
     # The three-slot workspace also covers that output after raw inputs are
     # prepared; stack size must not silently disable the16-cell visit.
-    if not 1<=bottle<=64 or not plain or sum(not r['count']for r in rows)<3:return None
+    free=sum(not r['count']for r in rows)
+    if not 1<=bottle<=64 or not plain or free<3:return None
     held=sum(r['count']for r in rows if r.get('item')==item)
     if type(final_count)is not int or final_count<=held:return None
     gain=min(16,final_count-held);rounded=math.ceil(gain/4)*4
-    if sum(64-r['count']for r in plain)<rounded:return None
+    # A fourth free slot can receive output that crosses a64-item stack;
+    # retain the original three-slot work reserve instead of shrinking inputs.
+    output_room=sum(64-r['count']for r in plain)+max(0,free-3)*64
+    if output_room<rounded:return None
     return held+gain

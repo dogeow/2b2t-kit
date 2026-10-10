@@ -451,6 +451,25 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual(16,sum(op=='bottle_fill'for op,_ in self.c.calls))
         self.assertEqual(0,self.c.count('minecraft:wheat'));self.assertEqual(0,self.c.count('minecraft:dirt'))
 
+    def test_bulk_visit_crosses_output_stack_without_consuming_workspace(self):
+        self.sea_source();self.c.add('minecraft:mud_bricks',50)
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        for row in self.c.rows:
+            if not row['count']:row.update(item='minecraft:stone',count=64,max_stack=64)
+        for row in self.c.rows[-4:]:row.update(item='minecraft:air',count=0)
+        original=self.b.fetch
+        def stored(target):
+            if len(target)==1 and next(iter(target))in ('minecraft:dirt','minecraft:wheat'):
+                self.b.calls.append(('fetch',target));item,amount=next(iter(target.items()))
+                self.c.add(item,max(0,amount-self.c.count(item)));return {'phase':'done'}
+            return original(target)
+        self.b.fetch=stored
+        result=self.go(target=66)
+        self.assertEqual((result['phase'],self.c.count('minecraft:mud_bricks')),('done',66))
+        self.assertGreaterEqual(sum(not row['count']for row in self.c.rows),3)
+        self.assertEqual([{'minecraft:dirt':16}],[x[1]for x in self.b.calls if x[0]=='fetch'and 'minecraft:dirt'in x[1]])
+
     def test_coarse_stock_visit_with_stacked_bottles_fetches_one_recipe_load(self):
         self.sea_source();self.c.add('minecraft:glass_bottle',2);self.c.add('minecraft:mud_bricks',2)
         self.profile['mud_station']['feedstock_item']='minecraft:coarse_dirt'
