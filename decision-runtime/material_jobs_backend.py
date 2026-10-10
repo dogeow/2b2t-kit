@@ -1358,7 +1358,7 @@ class Backend:
                             'search_progress':progress}
                 if (search_coverage(progress)>0
                         and progress.get('has_more') is True):
-                    return {'phase':'waiting','detail':'本批粗筛或详细区域无安全矿点，继续搜索尚未访问的区域',
+                    return {'phase':'waiting','code':'WAIT_SOURCE_SEARCH','detail':'本批粗筛或详细区域无安全矿点，继续搜索尚未访问的区域',
                             'search_progress':progress}
                 return {'phase':'blocked','detail':'本轮已扫描未访问的资源区，未找到安全矿点；记录已保存，下次从新区域继续'}
             self.profile['resource_regions'].append(found)

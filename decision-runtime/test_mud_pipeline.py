@@ -182,6 +182,14 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual('WAIT_SOURCE',self.go()['code'])
         self.assertIn(('acquire','minecraft:dirt',1),self.b.calls)
         self.assertFalse(any(op=='interact'for op,_ in self.c.calls))
+    def test_known_source_search_wait_keeps_the_large_target_without_an_unknown_action(self):
+        self.c.add('minecraft:dirt',-4)
+        self.b.acquire=lambda item,target:{'phase':'waiting','code':'WAIT_SOURCE_SEARCH',
+            'search_progress':{'new_tiles':8,'has_more':True}}
+        result=self.go(target=64);self.assertEqual('WAIT_SOURCE_SEARCH',result['code'])
+        book=json.loads((self.root/'job/mud-pipeline.json').read_text())
+        self.assertIsNone(book['pending']);self.assertTrue(result['safe_to_leave']);self.assertEqual(64,book['target'])
+        self.assertFalse(any(op in ('interact','mine_block')for op,_ in self.c.calls))
     def sea_source(self,uncertain=False,wrong_potion=False):
         from material_jobs.mud_water_supply import BOTTLE_SCOPE
         self.profile['mud_bucket_source']={'authorized':True,'pos':[104,63,100],

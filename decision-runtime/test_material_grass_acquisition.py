@@ -211,7 +211,7 @@ class GrassAcquisitionTest(unittest.TestCase):
         found = choose_region(rows, GRASS, 0, 0, [3.5, 70, 3.5])
         self.assertEqual((GRASS, 'natural_survey', 64),
                          (found['item'], found['source'], found['surface_y']))
-        self.assertIsNone(choose_region(rows, 'minecraft:dirt', 0, 0, [3.5, 70, 3.5]))
+        self.assertEqual('minecraft:dirt',choose_region(rows, 'minecraft:dirt', 0, 0, [3.5, 70, 3.5])['item'])
 
     def test_older_native_host_cannot_start_grass_collection(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -221,6 +221,22 @@ class DiscoveryContinuationTests(unittest.TestCase):
             travel.assert_not_called();self.assertEqual([],c.requests)
             self.assertEqual(original['tiles'],json.loads(path.read_text())['tiles'])
 
+    def test_old_bare_dirt_only_empty_tile_is_reobserved_for_grass_output_without_erasing_history(self):
+        item='minecraft:dirt';region={'item':item,'min':[64,58,0],'max':[79,72,15],
+             'source':'natural_survey','surface_y':64}
+        profile={**self.profile(),'search_origin':[0,100,0],
+            'protected_regions':[{'min':[-100,50,-100],'max':[-80,95,-80]}]}
+        with tempfile.TemporaryDirectory()as folder:
+            scope=hashlib.sha256(('test|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+            path=Path(folder)/(scope+'.json');prior={'state':'empty_or_unsafe','algorithm_version':ALGORITHM_VERSION,
+                                                  'region':None,'diagnostics':{'bare_dirt_only':True}}
+            path.write_text(json.dumps({'schema':1,'item':item,'tiles':{'64:0':prior}}));c=self.client()
+            with patch('material_jobs.discovery.frontier',return_value=[(64,0)]), \
+                    patch('material_jobs.discovery._travel'),patch('material_jobs.discovery.choose_region',return_value=region):
+                self.assertEqual(region,discover(c,item,profile,folder,lambda:None,max_tiles=1))
+            saved=json.loads(path.read_text());self.assertEqual(ALGORITHM_VERSION+1,saved['tiles']['64:0']['algorithm_version'])
+            self.assertEqual(prior,saved['history']['64:0'][0]);self.assertEqual(2,len(c.requests))
+
     def test_scanning_budget_reports_real_new_coverage_and_continues_next_call(self):
         with tempfile.TemporaryDirectory() as folder,patch('material_jobs.discovery._travel'):
             c=self.client();profile=self.profile()

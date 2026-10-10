@@ -105,7 +105,8 @@ def candidate(rows, pos, index=None, *, item=ITEM):
     if index is None:
         index = {tuple(row['pos']): row for row in rows}
     target = index.get((x, y, z))
-    if (target is None or _name(target) != item or target.get('solid') is not True
+    source_matches=target is not None and (_name(target)==item or item==ITEM and _name(target)==GRASS)
+    if (not source_matches or target.get('solid') is not True
             or target.get('fluid') is not False or target.get('block_entity') is not False):
         return False
     if any((x, y + dy, z) in index for dy in range(1, 6)):
@@ -170,7 +171,7 @@ def _silk(row):
                for e in row.get('enchantments', []))
 
 
-def _shovel(state, item=ITEM):
+def _shovel(state, item=ITEM, *, source=None):
     from .acquisition import Unavailable
     rows = state.get('inventory', [])
     # The 26.1.2 dirt loot table yields dirt with or without Silk Touch.
@@ -178,7 +179,8 @@ def _shovel(state, item=ITEM):
                 and row.get('count') == 1
                 and row.get('item') in ('minecraft:diamond_shovel', 'minecraft:netherite_shovel')
                 and row.get('durability', 0) >= 33
-                and (item != GRASS or _silk(row))]
+                and (item != GRASS or _silk(row))
+                and (item != ITEM or source != GRASS or not _silk(row))]
     if not eligible:
         raise Unavailable('草方块需要至少保留 33 耐久的精准采集钻石或下界合金铲'
                           if item == GRASS else '需要至少保留 33 耐久的钻石或下界合金铲')
@@ -295,7 +297,8 @@ def acquire_surface_soil(c, item, target, profile, regions, path, ledger, checkp
                                       'reason': 'source_or_buffer_changed'}
             write_json(path, ledger)
             return {'phase': 'waiting', 'detail': f'{label}候选在操作前改变，已跳过该列'}
-        tool = _shovel(state, item)
+        source=next(_name(row)for row in fresh if row['pos']==pos)
+        tool = _shovel(state, item,source=source)
         trace = []
         try:
             destination = [pos[0] + .5, pos[1] + 3.1, pos[2] + .5]
@@ -334,13 +337,14 @@ def acquire_surface_soil(c, item, target, profile, regions, path, ledger, checkp
             return {'phase': 'done', 'gained': 0}
         if room_for_item(state, item) < 1:
             raise Unavailable(f'{label}背包空间已耗尽，请先存放本批物资', 'waiting')
-        tool = _shovel(state, item)
         fresh = _local_scan(c, pos, checkpoint)
         if not candidate(fresh, pos, item=item):
             ledger['visited'][key] = {'state': 'skipped', 'pos': pos,
                                       'reason': 'source_changed_after_travel'}
             write_json(path, ledger)
             return {'phase': 'waiting', 'detail': f'接近后{label}或保护缓冲区改变，已跳过该列'}
+        source=next(_name(row)for row in fresh if row['pos']==pos)
+        tool = _shovel(state,item,source=source)
         _choose_tool(c, tool, checkpoint)
         fresh = _local_scan(c, pos, checkpoint)
         if not candidate(fresh, pos, item=item):
@@ -355,7 +359,8 @@ def acquire_surface_soil(c, item, target, profile, regions, path, ledger, checkp
             return {'phase': 'done', 'gained': 0}
         if room_for_item(before, item) < 1:
             raise Unavailable(f'{label}背包空间已耗尽，请先存放本批物资', 'waiting')
-        if item == GRASS:
+        source=next(_name(row)for row in fresh if row['pos']==pos)
+        if item == GRASS or item==ITEM and source==GRASS:
             hand = before.get('hand') or {}
             selected = before.get('selected_slot')
             held = next((row for row in before.get('inventory', [])
@@ -365,12 +370,12 @@ def acquire_surface_soil(c, item, target, profile, regions, path, ledger, checkp
                     or hand.get('item') != tool['item'] or hand.get('count') != 1
                     or hand.get('durability') != tool['durability']
                     or hand.get('enchantments', []) != tool.get('enchantments', [])
-                    or not _silk(hand)
+                    or _silk(hand)!=(item==GRASS)
                     or hand.get('durability', 0) < 33
                     or held.get('durability') != hand.get('durability')
                     or held.get('enchantments', []) != hand.get('enchantments', [])
-                    or not _silk(held)):
-                raise Unavailable('精准采集铲的实际手持槽位或属性未核实；不挖草方块')
+                    or _silk(held)!=(item==GRASS)):
+                raise Unavailable('草皮产物所需铲的实际手持槽位或精准采集属性未核实；不挖草方块')
         expected = next(row['state'] for row in fresh if row['pos'] == pos)
         entry = {'state': 'inflight', 'pos': pos, 'expected_state': expected,
                  'before': carried(before, item), 'route': trace,

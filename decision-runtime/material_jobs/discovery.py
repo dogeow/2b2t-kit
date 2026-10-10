@@ -759,7 +759,8 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
     directory=Path(directory); directory.mkdir(parents=True,exist_ok=True)
     path=_resource_ledger_scope_path(directory,profile['server'],profile['dimension'],item)
     ledger=_resource_ledger(path,item,create=True)
-    ledger['algorithm_version']=ALGORITHM_VERSION
+    algorithm_version=ALGORITHM_VERSION+1 if item=='minecraft:dirt' else ALGORITHM_VERSION
+    ledger['algorithm_version']=algorithm_version
     seed_state=seed_snow_ledger(ledger) if item in SNOW_PRODUCTS else None
     bobby_state=(bobby_snow_ledger(ledger,profile['server'],profile['dimension'])
                  if item in SNOW_PRODUCTS else None)
@@ -777,9 +778,9 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
         # Do not launch the old tile-by-tile flight on an old host.  The host
         # capability is checked before equipment discovery can move the actor.
         value={'new_tiles':0,'scanned_total':sum(
-                   row.get('algorithm_version',1)>=ALGORITHM_VERSION
+                   row.get('algorithm_version',1)>=algorithm_version
                    for row in ledger['tiles'].values()),
-               'has_more':False,'ledger':str(path),'algorithm_version':ALGORITHM_VERSION,
+               'has_more':False,'ledger':str(path),'algorithm_version':algorithm_version,
                'coarse_new_cells':0,'coarse_visited':0,'coarse_has_more':False,
                'coarse_fallback':'host_protocol_unavailable'}
         c.material_search_progress=value;ledger['search_progress']=value;write_json(path,ledger)
@@ -811,10 +812,10 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
                                      selection,max_tiles)
         if seeded['available']:
             value={'new_tiles':1 if seeded.get('region') else 0,
-                   'scanned_total':sum(row.get('algorithm_version',1)>=ALGORITHM_VERSION
+                   'scanned_total':sum(row.get('algorithm_version',1)>=algorithm_version
                                        for row in ledger['tiles'].values()),
                    'has_more':seeded.get('has_more',False),
-                   'ledger':str(path),'algorithm_version':ALGORITHM_VERSION,
+                   'ledger':str(path),'algorithm_version':algorithm_version,
                    'seed_processed':seeded.get('processed',0),
                    'seed_cursor':seeded.get('cursor',0),
                    'seed_total':seeded.get('total',0)}
@@ -826,10 +827,10 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
                                       selection,max_tiles)
         if cached['available']:
             value={'new_tiles':1 if cached.get('region') else 0,
-                   'scanned_total':sum(row.get('algorithm_version',1)>=ALGORITHM_VERSION
+                   'scanned_total':sum(row.get('algorithm_version',1)>=algorithm_version
                                        for row in ledger['tiles'].values()),
                    'has_more':cached.get('has_more',False),
-                   'ledger':str(path),'algorithm_version':ALGORITHM_VERSION,
+                   'ledger':str(path),'algorithm_version':algorithm_version,
                    'bobby_cached_candidates':cached.get('cached_candidates',0),
                    'bobby_checked':1,
                    'bobby_route':'live_verified' if cached.get('region') else 'checked'}
@@ -838,7 +839,7 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
             if cached.get('has_more'):return None
     extension=_extend_known_shaft(c,item,profile,ledger,path,checkpoint,origin,selection,max_tiles)
     if extension is not None:
-        c.material_search_progress.update(ledger=str(path),has_more=True,algorithm_version=ALGORITHM_VERSION)
+        c.material_search_progress.update(ledger=str(path),has_more=True,algorithm_version=algorithm_version)
         return extension
     pending=[]; remembered=[]; search_tiles=[]
     known_regions=[r for r in profile.get('resource_regions',[]) if r.get('item')==item]
@@ -862,7 +863,7 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
             # A prior job finding a deposit does not mean it exhausted it.
             # Re-scan the tile before using it; never treat cached ore as stock.
             remembered.append((x,z));continue
-        already_seen=prior and (prior.get('state')=='candidate' or prior.get('algorithm_version',1)>=ALGORITHM_VERSION)
+        already_seen=prior and (prior.get('state')=='candidate' or prior.get('algorithm_version',1)>=algorithm_version)
         if already_seen:continue
         pending.append((x,z))
     normal_pending=list(pending)
@@ -879,9 +880,9 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
                            key=lambda tile:math.hypot(tile[0]+8-here[0],tile[1]+8-here[2]))
         elif coarse['available'] and coarse_has_more:
             value={'new_tiles':0,
-                   'scanned_total':sum(row.get('algorithm_version',1)>=ALGORITHM_VERSION
+                   'scanned_total':sum(row.get('algorithm_version',1)>=algorithm_version
                                        for row in ledger['tiles'].values()),
-                   'has_more':True,'ledger':str(path),'algorithm_version':ALGORITHM_VERSION,
+                   'has_more':True,'ledger':str(path),'algorithm_version':algorithm_version,
                    'coarse_new_cells':coarse_new,'coarse_visited':coarse_visited,
                    'coarse_has_more':True}
             c.material_search_progress=value;ledger['search_progress']=value;write_json(path,ledger)
@@ -893,9 +894,9 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
     pending=remembered+pending
     count=0
     def progress():
-        value={'new_tiles':count,'scanned_total':sum(row.get('algorithm_version',1)>=ALGORITHM_VERSION for row in ledger['tiles'].values()),
+        value={'new_tiles':count,'scanned_total':sum(row.get('algorithm_version',1)>=algorithm_version for row in ledger['tiles'].values()),
                'has_more':len(pending)>count or coarse_has_more,
-               'ledger':str(path),'algorithm_version':ALGORITHM_VERSION}
+               'ledger':str(path),'algorithm_version':algorithm_version}
         if item in SNOW_PRODUCTS:
             value.update(coarse_new_cells=coarse_new,coarse_visited=coarse_visited,
                          coarse_has_more=coarse_has_more)
@@ -937,7 +938,7 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
         prior=ledger['tiles'].get(key)
         if prior:ledger.setdefault('history',{}).setdefault(key,[]).append(prior)
         ledger['tiles'][key]={'observed_at':c.status()['time'],'world_session':c.world,
-                              'algorithm_version':ALGORITHM_VERSION,
+                              'algorithm_version':algorithm_version,
                               'state':'candidate' if candidate else 'empty_or_unsafe','region':candidate,
                               'diagnostics':diagnostics,
                               **({'route_hold':held_route['code']} if held_route else {})}

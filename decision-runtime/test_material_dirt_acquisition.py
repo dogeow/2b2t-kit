@@ -76,7 +76,9 @@ class FakeClient:
             self.state['pos'] = list(params['target'])
             return {'phase': 'done'}
         if op == 'select_item':
-            self.state['hand'] = {'item': params['item']}
+            selected=params.get('slot',next(r['slot']for r in self.state['inventory']if r['item']==params['item']and r['count']))
+            self.state['selected_slot']=selected
+            self.state['hand']=copy.deepcopy(self.state['inventory'][selected])
             return {'phase': 'done'}
         if op == 'mine_block':
             if isinstance(self.mine_reply, Exception):
@@ -97,6 +99,29 @@ class DirtAcquisitionTest(unittest.TestCase):
         settled = patch('material_jobs.navigation.settled_state',
                         side_effect=lambda c, *args, **kwargs: c.status())
         settled.start(); self.addCleanup(settled.stop)
+
+    def test_natural_grass_yields_dirt_with_ordinary_shovel_and_preserves_silk_tool(self):
+        rows=soil_patch()
+        for r in rows:
+            if r['state']=='Block{minecraft:dirt}':r['state']='Block{minecraft:grass_block}[snowy=false]'
+        c=FakeClient(rows)
+        c.state['inventory'][2]={'slot':2,'item':'minecraft:diamond_shovel','count':1,'max_stack':1,
+            'durability':1000,'enchantments':[{'id':'minecraft:silk_touch','level':1}]}
+        with tempfile.TemporaryDirectory()as directory:
+            result=acquire(c,'minecraft:dirt',4,profile(),directory,lambda:None)
+        self.assertEqual(('done',4),(result['phase'],result['after']))
+        self.assertTrue(all(p['expected_state']=='Block{minecraft:grass_block}[snowy=false]'for op,p in c.actions if op=='mine_block'))
+        self.assertTrue(all(p.get('slot')==0 for op,p in c.actions if op=='select_item'))
+        self.assertEqual(1000,c.state['inventory'][2]['durability'])
+
+    def test_only_silk_shovel_never_mines_grass_for_dirt(self):
+        rows=soil_patch()
+        for r in rows:
+            if r['state']=='Block{minecraft:dirt}':r['state']='Block{minecraft:grass_block}[snowy=false]'
+        c=FakeClient(rows);c.state['inventory'][0]['enchantments']=[{'id':'minecraft:silk_touch','level':1}]
+        with tempfile.TemporaryDirectory()as directory:
+            result=acquire(c,'minecraft:dirt',4,profile(),directory,lambda:None)
+        self.assertEqual('blocked',result['phase']);self.assertFalse(any(op=='mine_block'for op,_ in c.actions))
 
     def test_one_dirt_block_has_exact_mining_and_inventory_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -330,15 +355,15 @@ class DirtAcquisitionTest(unittest.TestCase):
                              directory, lambda: None)['phase'])
             self.assertEqual(before, len(c.actions))
 
-    def test_grass_only_patch_is_not_excavated_for_dirt(self):
+    def test_grass_patch_is_a_dirt_source_with_an_explicit_dirt_output_target(self):
         rows = [dict(row, state='Block{minecraft:grass_block}') if row['pos'][1] == 64
                 else row for row in soil_patch()]
-        self.assertIsNone(choose_region(rows, 'minecraft:dirt', 0, 0, [3.5, 70, 3.5]))
+        self.assertEqual('minecraft:dirt',choose_region(rows, 'minecraft:dirt', 0, 0, [3.5, 70, 3.5])['item'])
         with tempfile.TemporaryDirectory() as directory:
             c = FakeClient(rows)
             result = acquire(c, 'minecraft:dirt', 1, profile(), directory, lambda: None)
-            self.assertEqual('no_safe_candidate', result['code'])
-            self.assertFalse(any(op in ('navigate', 'mine_block') for op, _ in c.actions))
+            self.assertEqual(('done',1),(result['phase'],result['after']))
+            self.assertEqual(1,sum(op=='mine_block'for op,_ in c.actions))
 
     def test_protected_site_or_depot_blocks_before_any_native_action(self):
         with tempfile.TemporaryDirectory() as directory:
