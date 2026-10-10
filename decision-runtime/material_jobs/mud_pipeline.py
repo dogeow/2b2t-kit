@@ -258,7 +258,15 @@ def run(c,profile,item,target_count,out,checkpoint):
         while stock()['minecraft:mud']<target:
             if new_mud>=4:raise Wait('WAIT_MUD_BATCH','Four owned mud cells completed; next call rechecks sources')
             cfg,pos,support,actual=station()
-            if actual==AIR:require_raw('minecraft:dirt',1)
+            if actual==AIR:
+                current=state();held=inventory_counts(current)
+                dirt_target=min(4-new_mud,target-held['minecraft:mud'])
+                # Carry this invocation's real demand together. A new dirt
+                # stack consumes an empty slot; leave room for the mud output.
+                output_room=room_for_item(current,'minecraft:mud')
+                if not held['minecraft:dirt']:output_room-=64
+                if output_room<1:dirt_target=1
+                require_raw('minecraft:dirt',dirt_target)
             if actual!=MUD:
                 # Fill before placing dirt, shortening its exposed growth window.
                 water=bottle()

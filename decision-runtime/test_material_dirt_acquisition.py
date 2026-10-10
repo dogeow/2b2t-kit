@@ -1,6 +1,7 @@
 """Offline surface-dirt worker regressions; no live Kit client is constructed."""
 import copy
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -34,11 +35,12 @@ class FakeClient:
     world = 'offline-world'
 
     def __init__(self, rows=None, before=0):
+        self.rev=1
         self.rows = copy.deepcopy(rows if rows is not None else soil_patch())
         self.actions = []
         self.last = None
         self.mine_reply = None
-        self.state = {'world_session': self.world, 'pos': [3.5, 70.1, 3.5],
+        self.state = {'world_session': self.world, 'control_revision':self.rev,'pos': [3.5, 70.1, 3.5],
                       'health': 20, 'food': 20, 'guard_armed': True,
                       'guard_pve_only': True, 'flight': True,
                       'air_only_navigation_protocol': 2,
@@ -63,7 +65,11 @@ class FakeClient:
         self.actions.append((op, copy.deepcopy(params)))
         self.last = 'offline-' + str(len(self.actions))
         if op == 'scan':
-            return {'blocks': [copy.deepcopy(row) for row in self.rows
+            volume=1
+            for low,high in zip(params['min'],params['max']):volume*=high-low+1
+            return {'world_session':self.world,'phase':'done','id':self.last,
+                    'control_revision':self.rev,'scan_start_revision':self.rev,'scan_end_revision':self.rev,
+                    'scan_cells_read':volume,'scan_total_cells':volume,'blocks': [copy.deepcopy(row) for row in self.rows
                                if all(params['min'][i] <= row['pos'][i] <= params['max'][i]
                                       for i in range(3))]}
         if op == 'navigate':
@@ -112,6 +118,7 @@ class DirtAcquisitionTest(unittest.TestCase):
     def test_454_dirt_target_uses_absolute_inventory_count(self):
         with tempfile.TemporaryDirectory() as directory:
             c = FakeClient(before=9)
+            origin=c.status()['pos'][:]
             result = acquire(c, 'minecraft:dirt', 454, profile(), directory, lambda: None)
             self.assertEqual(('waiting', 9, 13, 4),
                              (result['phase'], result['before'], result['after'], result['gained']))
@@ -127,11 +134,25 @@ class DirtAcquisitionTest(unittest.TestCase):
             self.assertEqual(4, len(receipts))
             self.assertTrue(all(v['state'] == 'collected' and v['gained'] == 1
                                 for v in receipts))
-            first_mine = next(i for i, (op, _) in enumerate(c.actions) if op == 'mine_block')
-            self.assertTrue(any(op == 'scan' and p['max'][1] == 319
-                                for op, p in c.actions[:first_mine]))
-            self.assertFalse(any(op == 'scan' and p['max'][1] == 319
-                                 for op, p in c.actions[first_mine + 1:]))
+            first_nav,move=next((i,p)for i,(op,p)in enumerate(c.actions)if op=='navigate')
+            # The current route proves its actual descent body before moving.
+            # Reliable near-height travel does not need a scan to world ceiling.
+            self.assertTrue(any(op=='scan' and p['min'][1]<=math.floor(move['target'][1])
+                                and p['max'][1]>=math.floor(origin[1]+1.8)
+                                and all(p['min'][axis]<=math.floor(move['target'][axis])<=p['max'][axis]for axis in (0,2))
+                                for op,p in c.actions[:first_nav]))
+
+    def test_missing_native_scan_completion_metadata_never_allows_navigation_or_mining(self):
+        with tempfile.TemporaryDirectory()as directory:
+            c=FakeClient();request=c.request
+            def incomplete(op,**params):
+                reply=request(op,**params)
+                if op=='scan':reply.pop('scan_cells_read',None)
+                return reply
+            c.request=incomplete
+            result=acquire(c,'minecraft:dirt',4,profile(),directory,lambda:None)
+            self.assertEqual('waiting',result['phase'])
+            self.assertFalse(any(op in ('navigate','mine_block')for op,_ in c.actions))
 
     def test_next_call_never_digs_below_the_previous_column(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -158,6 +158,30 @@ class MudPipelineTest(unittest.TestCase):
     def test_current_finished_stock_is_absolute_not_added_target(self):
         self.c.add('minecraft:mud_bricks',4)
         self.assertEqual(4,self.go()['after']);self.assertEqual([],self.b.calls)
+    def test_one_dirt_source_trip_supplies_the_existing_four_cell_batch(self):
+        self.c.add('minecraft:dirt',-4)
+        def acquire(item,target):
+            self.b.calls.append(('acquire',item,target));self.c.add(item,target-self.c.count(item))
+            return {'phase':'done'}
+        self.b.acquire=acquire
+        self.assertEqual('done',self.go()['phase'])
+        self.assertEqual([('acquire','minecraft:dirt',4)],[c for c in self.b.calls if c[0]=='acquire'])
+        self.assertEqual(4,self.c.count('minecraft:mud_bricks'));self.assertEqual(0,self.c.count('minecraft:dirt'))
+    def test_dirt_batch_demand_excludes_already_carried_mud(self):
+        self.c.add('minecraft:dirt',-4);self.c.add('minecraft:mud',2)
+        def acquire(item,target):
+            self.b.calls.append(('acquire',item,target));self.c.add(item,target-self.c.count(item))
+            return {'phase':'done'}
+        self.b.acquire=acquire
+        self.assertEqual('done',self.go()['phase'])
+        self.assertEqual([('acquire','minecraft:dirt',2)],[c for c in self.b.calls if c[0]=='acquire'])
+    def test_one_empty_slot_preserves_single_dirt_conversion_without_speculative_bulk_loading(self):
+        self.c.add('minecraft:dirt',-4)
+        for row in self.c.rows:
+            if not row['count']and row['slot']!=12:row.update(item='minecraft:stone',count=64,max_stack=64)
+        self.assertEqual('WAIT_SOURCE',self.go()['code'])
+        self.assertIn(('acquire','minecraft:dirt',1),self.b.calls)
+        self.assertFalse(any(op=='interact'for op,_ in self.c.calls))
     def sea_source(self,uncertain=False,wrong_potion=False):
         from material_jobs.mud_water_supply import BOTTLE_SCOPE
         self.profile['mud_bucket_source']={'authorized':True,'pos':[104,63,100],

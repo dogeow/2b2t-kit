@@ -7,7 +7,8 @@ from pathlib import Path
 
 from kit_runtime.journal import write_json
 from .acquisition import ROCK_SOURCES, LOGS, NATURAL, AIR, LIGHTS, FALLING, Unavailable, block_id, rock_choice, _rock_observation, _travel, route_failure, _resource_ledger, _resource_ledger_scope_path
-from .dirt_harvest import candidates as surface_soil_candidates
+from .dirt_harvest import (candidates as surface_soil_candidates,
+                          validate_region as validate_soil_region)
 from .snow_harvest import (PRODUCTS as SNOW_PRODUCTS, candidates as surface_snow_candidates,
                            validate_region as validate_snow_region)
 from .snow_biome_search import (MAX_ANCHORS_PER_CALL, SAMPLE_STRIDE, SURVEY_RADIUS,
@@ -855,6 +856,9 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
                     r.get('min')==region.get('min') and r.get('max')==region.get('max') for r in known_regions)):
             if route_failure(c,profile,item,region):
                 continue  # Same-session unsafe route is not exhausted ore or permission to retry.
+            if item in ('minecraft:dirt','minecraft:grass_block'):
+                try:validate_soil_region(region,profile,selection)
+                except ValueError:continue
             # A prior job finding a deposit does not mean it exhausted it.
             # Re-scan the tile before using it; never treat cached ore as stock.
             remembered.append((x,z));continue
@@ -906,8 +910,8 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
         if not _search_travel(c,[x+8.5,cruise,z+8.5],checkpoint,ledger,path,(x,z)):
             return None
         rows=[]
-        levels=(((58,110),(111,164),(165,220),(221,280),(281,319))
-                if item in SNOW_PRODUCTS else
+        levels=(((57,110),(111,165)) if item in ('minecraft:dirt','minecraft:grass_block') else
+                ((58,110),(111,164),(165,220),(221,280),(281,319)) if item in SNOW_PRODUCTS else
                 ((-60,-1),(0,59),(60,120),(121,164)))
         for bottom,top in levels:
             checkpoint()
@@ -917,13 +921,13 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
             rows.extend(reply['blocks'])
         diagnostics={}
         candidate=choose_region(rows,item,x,z,c.status()['pos'],checkpoint,diagnostics)
-        if candidate and item in SNOW_PRODUCTS:
+        if candidate and (item in SNOW_PRODUCTS or item in ('minecraft:dirt','minecraft:grass_block')):
             try:
                 # Discovery and execution must authorize the same exact snow
                 # region.  In particular, frontier ring three begins only 48
                 # blocks from search_origin: persisting that candidate would
                 # make acquisition reject it forever before searching onward.
-                validate_snow_region(candidate,profile,selection)
+                (validate_snow_region if item in SNOW_PRODUCTS else validate_soil_region)(candidate,profile,selection)
             except ValueError as error:
                 rejected=diagnostics.setdefault('reject_reasons',Counter())
                 rejected['protected_site_buffer']+=1

@@ -190,6 +190,37 @@ class DiscoveryContinuationTests(unittest.TestCase):
 
     def profile(self):return {'server':'test','dimension':'minecraft:overworld','search_radius':64,'resource_regions':[]}
 
+    def test_surface_soil_rejects_search_origin_buffer_then_returns_a_safe_patch_with_only_surface_scans(self):
+        item='minecraft:dirt'
+        unsafe={'item':item,'min':[48,58,0],'max':[63,72,15],'source':'natural_survey','surface_y':64}
+        safe={**unsafe,'min':[64,58,0],'max':[79,72,15]}
+        profile={**self.profile(),'search_radius':128,'search_origin':[0,100,0],
+                 'protected_regions':[{'min':[-100,50,-100],'max':[-80,95,-80]}]}
+        with tempfile.TemporaryDirectory()as folder, \
+                patch('material_jobs.discovery.frontier',return_value=[(48,0),(64,0)]), \
+                patch('material_jobs.discovery._travel'), \
+                patch('material_jobs.discovery.choose_region',side_effect=[unsafe,safe]):
+            c=self.client();self.assertEqual(safe,discover(c,item,profile,folder,lambda:None,max_tiles=2))
+            self.assertEqual([(57,110),(111,165)]*2,[(p['min'][1],p['max'][1])for _,p in c.requests])
+            scope=hashlib.sha256(('test|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+            ledger=json.loads((Path(folder)/(scope+'.json')).read_text())
+            self.assertEqual('empty_or_unsafe',ledger['tiles']['48:0']['state'])
+            self.assertIn('too close',ledger['tiles']['48:0']['diagnostics']['region_validation'])
+
+    def test_cached_surface_candidate_in_current_site_buffer_is_not_revisited(self):
+        item='minecraft:dirt';profile={**self.profile(),'search_origin':[0,100,0],
+            'protected_regions':[{'min':[-100,50,-100],'max':[-80,95,-80]}]}
+        region={'item':item,'min':[48,58,0],'max':[63,72,15],'source':'natural_survey','surface_y':64}
+        with tempfile.TemporaryDirectory()as folder:
+            scope=hashlib.sha256(('test|minecraft:overworld|'+item).encode()).hexdigest()[:20]
+            path=Path(folder)/(scope+'.json');original={'schema':1,'item':item,'tiles':{'48:0':{
+                'state':'candidate','algorithm_version':ALGORITHM_VERSION,'region':region}}}
+            path.write_text(json.dumps(original));c=self.client()
+            with patch('material_jobs.discovery.frontier',return_value=[(48,0)]),patch('material_jobs.discovery._travel')as travel:
+                self.assertIsNone(discover(c,item,profile,folder,lambda:None,max_tiles=1))
+            travel.assert_not_called();self.assertEqual([],c.requests)
+            self.assertEqual(original['tiles'],json.loads(path.read_text())['tiles'])
+
     def test_scanning_budget_reports_real_new_coverage_and_continues_next_call(self):
         with tempfile.TemporaryDirectory() as folder,patch('material_jobs.discovery._travel'):
             c=self.client();profile=self.profile()
