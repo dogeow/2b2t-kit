@@ -4,10 +4,11 @@ from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from existing_wheat_source import observed_request,register
 from potato_farm import plan,request_from_layout,survey_rows,FarmWait
-from material_jobs.registered_wheat import registered_fields
+from material_jobs.registered_wheat import registered_fields,make_registered_pickup
 from farm_reseed import registered
 
 
@@ -70,3 +71,18 @@ class Tests(unittest.TestCase):
             if change=='sky':next(r for r in frame['blocks']if r['pos']==[-4,63,-4])['sky_light']=0
             else:next(r for r in frame['blocks']if r['block_entity'])['state']='Block{minecraft:barrel}'
             with self.assertRaises(FarmWait):survey_rows(frame,layout,records)
+
+    def test_large_field_pickup_and_plant_access_preserve_observed_source_bounds(self):
+        from potato_loot_flight import make_plant_access
+        from test_potato_loot_flight import FlightClient
+        request=observed_request(self.frames,self.center,4);source=request['existing_source']
+        c=FlightClient();drop={'pos':[4.1,64.0,0.5],'stack':{'item':'minecraft:wheat'}}
+        access=make_plant_access(self.center,radius=4,existing_source=source)
+        with patch('drop_collection.collect_drop',return_value={'movement_only':True})as collect:
+            pickup=make_registered_pickup(self.center,radius=4,existing_source=source)
+            pickup(c,drop,c.status());collect.assert_called_once()
+        access(c,[4,63,0],c.status(),'before_plant')
+        self.assertEqual([4.5,64.6,0.5],c.extra['pos'])
+        with self.assertRaises(FarmWait):access(c,[3,63,0],c.status(),'before_plant')
+        for factory in (make_registered_pickup,make_plant_access):
+            with self.assertRaises(ValueError):factory(self.center,radius=4)

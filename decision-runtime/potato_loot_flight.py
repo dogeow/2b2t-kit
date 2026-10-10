@@ -14,9 +14,11 @@ class PickupObservationChanged(FarmWait):
                       'observed_drop':drop,'fresh_player':fresh.get('pos')}
 
 
-def make_plant_access(center, *, radius=2, checkpoint=lambda:None):
+def make_plant_access(center, *, radius=2, checkpoint=lambda:None, existing_source=None):
     """Normal flight above one confirmed harvested AIR cell, then center return."""
-    layout=plan({'authorized':True,'center':center,'radius':radius,'crop':'wheat'})
+    request={'authorized':True,'center':center,'radius':radius,'crop':'wheat'}
+    if existing_source is not None:request['existing_source']=existing_source
+    layout=plan(request)
     home=[center[0]+.5,center[1]+1.6,center[2]+.5]
     def access(c,pos,observation,stage):
         if pos not in layout['cells']or stage not in ('before_plant','after_plant'):

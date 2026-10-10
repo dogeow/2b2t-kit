@@ -12,12 +12,14 @@ from potato_loot_flight import make_pickup,make_plant_access
 from .protocol import server_key
 
 
-def make_registered_pickup(center,*,radius=2,checkpoint=lambda:None,crop='wheat'):
+def make_registered_pickup(center,*,radius=2,checkpoint=lambda:None,crop='wheat',existing_source=None):
     """Use Kit's identity-bound collector, which follows a falling item's real height."""
     from drop_collection import collect_drop
     from potato_harvest import _lease
     if crop!='wheat':raise ValueError('Registered wheat pickup only')
-    layout=plan({'authorized':True,'center':center,'radius':radius,'crop':'wheat'})
+    request={'authorized':True,'center':center,'radius':radius,'crop':'wheat'}
+    if existing_source is not None:request['existing_source']=existing_source
+    layout=plan(request)
     def pickup(c,drop,observation):
         checkpoint();_lease(c,observation,observation['recent_hurt_at'])
         p=drop.get('pos');item=(drop.get('stack')or{}).get('item')
@@ -186,8 +188,10 @@ def run(backend,target,out,checkpoint):
             options={'max_cells':4,'bonemeal_budget':0,
                      'allow_unrecovered_seed_loss':True,
                      'allow_unrecovered_grain_loss':True,
-                     'pickup':make_registered_pickup(center,radius=layout['radius'],checkpoint=checkpoint,crop='wheat'),
-                     'plant_access':make_plant_access(center,radius=layout['radius'],checkpoint=checkpoint)}
+                     'pickup':make_registered_pickup(center,radius=layout['radius'],checkpoint=checkpoint,crop='wheat',
+                                                    existing_source=layout.get('existing_source')),
+                     'plant_access':make_plant_access(center,radius=layout['radius'],checkpoint=checkpoint,
+                                                     existing_source=layout.get('existing_source'))}
             result=harvest(*args,**options)
             from wheat_plant_reconcile import REJECTION,reconcile
             journal=Path(result['journal']);inner=json.loads(journal.read_text());pending=inner.get('pending')or{}
