@@ -14,7 +14,10 @@ def carried_visit_target(request,profile,state,item,final_count):
     bottle=sum(r['count']for r in rows if r.get('item')=='minecraft:glass_bottle')
     plain=[r for r in rows if r.get('item')==item and r['count']>0
            and set(r)=={'slot','item','count','max_stack'}and r.get('max_stack')==64]
-    if bottle!=1 or not plain or sum(not r['count']for r in rows)<3:return None
+    # Native source-water fill supports a stack with a separate output slot.
+    # The three-slot workspace also covers that output after raw inputs are
+    # prepared; stack size must not silently disable the16-cell visit.
+    if not 1<=bottle<=64 or not plain or sum(not r['count']for r in rows)<3:return None
     held=sum(r['count']for r in rows if r.get('item')==item)
     if type(final_count)is not int or final_count<=held:return None
     gain=min(16,final_count-held);rounded=math.ceil(gain/4)*4

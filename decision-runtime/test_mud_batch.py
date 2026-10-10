@@ -29,14 +29,22 @@ class MudVisitTest(unittest.TestCase):
         self.assertEqual(18,job._fit_batch('minecraft:mud_bricks',690))
         self.assertEqual(5,job._fit_batch('minecraft:mud_bricks',5));job._plan.assert_not_called()
 
-    def test_full_named_stacked_bottle_foreign_world_and_item_jobs_do_not_offer(self):
+    def test_full_named_foreign_world_and_item_jobs_do_not_offer(self):
         original=copy.deepcopy(self.state)
-        for kind in ('full','named','bottles','world','item'):
+        for kind in ('full','named','world','item'):
             self.state=copy.deepcopy(original);self.request['mode']='projection'
             if kind=='full':
                 for r in self.state['inventory'][2:]:r.update(item='minecraft:stone',count=64)
             elif kind=='named':self.state['inventory'][0]['name']='reserved'
-            elif kind=='bottles':self.state['inventory'][1]['count']=2
             elif kind=='world':self.state['world_session']='other'
             else:self.request['mode']='item'
             self.assertIsNone(self.offer())
+
+    def test_bottle_stack_uses_real_output_workspace_instead_of_disabling_bulk_visit(self):
+        self.state['inventory'][1]['count']=3
+        self.assertEqual(self.offer(),18)
+        for r in self.state['inventory'][2:]:r.update(item='minecraft:stone',count=64)
+        for r in self.state['inventory'][-3:]:r.update(item='minecraft:air',count=0)
+        self.assertEqual(self.offer(),18)
+        self.state['inventory'][-3].update(item='minecraft:stone',count=64)
+        self.assertIsNone(self.offer())
