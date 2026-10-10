@@ -27,6 +27,9 @@ class GrowthProofTest(unittest.TestCase):
             with self.assertRaises(JobBlocked):reconcile_pre_use_rejection(p,changed,host)
             proof=reconcile_pre_use_rejection(p,state,host)
             self.assertFalse(proof['new_bone_meal_use_sent']);self.assertIsNone(json.loads(p.read_text())['pending'])
+            reply['kit_version']='2026.10.11.1';p.write_text(json.dumps(book))
+            proof=reconcile_pre_use_rejection(p,state,host)
+            self.assertFalse(proof['new_bone_meal_use_sent']);self.assertIsNone(json.loads(p.read_text())['pending'])
 
 
 if __name__=='__main__':unittest.main()

@@ -26,7 +26,7 @@ def reconcile_pre_use_rejection(journal,state,host_class_sha256):
     journal=Path(journal);raw=journal.read_bytes();book=json.loads(raw);pending=book.get('pending')or{}
     reply=pending.get('receipt')or{};before=pending.get('before_bone_meal')
     if (reply.get('phase')!='error' or reply.get('world_session')!=book.get('world_session')
-            or reply.get('kit_version')not in ('2026.10.10.2','2026.10.10.3')
+            or reply.get('kit_version')not in ('2026.10.10.2','2026.10.10.3','2026.10.11.1')
             or reply.get('detail')not in ('Target block changed','Target interaction face is occluded or out of reach')
             or state.get('world_session')!=book.get('world_session')
             or inventory_counts(reply)['minecraft:bone_meal']!=before

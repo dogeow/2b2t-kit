@@ -44,6 +44,13 @@ class Tests(unittest.TestCase):
             values[target].update(changes)
             with self.assertRaises(RuntimeError):prove(**values)
 
+    def test_gravel_navigation_host_retains_the_exact_pre_use_bridge_contract(self):
+        from wheat_plant_reconcile import HOST_CONTRACTS
+        self.reply['kit_version']='2026.10.11.1'
+        self.host={'kit_version':'2026.10.11.1','class_sha256':HOST_CONTRACTS['2026.10.11.1']}
+        self.assertEqual(HOST_CONTRACTS['2026.10.10.3'],self.host['class_sha256'])
+        self.assertEqual(0,prove(self.book,self.reply,self.event,self.current,self.host)['seed_debit'])
+
     def parked(self):
         self.reply.update(health=20,recent_hurt_at=1,manual_movement=False,screen='',
                           supervision_lease={'id':'lease','kind':'materials','job_session':'task',
