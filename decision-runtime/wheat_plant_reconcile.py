@@ -13,6 +13,8 @@ from live_snapshot import read_fresh
 REJECTION='Target interaction face is occluded or out of reach'
 HOST='2026.10.10.1'
 HOST_CLASS_SHA='00f03248aa8a3eeec90afc3ac28a854e44867214ff083685540506479a52943e'
+HOST_CONTRACTS={HOST:HOST_CLASS_SHA,
+    '2026.10.10.2':'ef5f1bbccaa2746e9aaff2782c4c58ec8ef15c9cb6a0cf5cf1088a2819c09688'}
 
 
 def contract(root):
@@ -23,7 +25,7 @@ def contract(root):
         version=json.loads(z.read('fabric.mod.json'))['version']
         code=z.read('dev/twob2tkit/automation/AutomationBridge.class')
     digest=hashlib.sha256(code).hexdigest()
-    if version!=HOST or digest!=HOST_CLASS_SHA or code.count(REJECTION.encode())!=1:
+    if HOST_CONTRACTS.get(version)!=digest or code.count(REJECTION.encode())!=1:
         raise RuntimeError('Exact pre-use rejection host contract is not verified')
     return {'kit_version':version,'class_sha256':digest,'rejection_before_use_item_on':True}
 
@@ -31,12 +33,13 @@ def contract(root):
 def prove(book,reply,event,current,host):
     pending=book.get('pending')or{};native=pending.get('receipt')or{};pos=pending.get('pos')
     harvest=book.get('cells',{}).get(_key(pos),{}).get('harvest',{})if isinstance(pos,list)else{}
-    if (host.get('kit_version')!=HOST or host.get('class_sha256')!=HOST_CLASS_SHA
+    version=host.get('kit_version')
+    if (version not in HOST_CONTRACTS or host.get('class_sha256')!=HOST_CONTRACTS.get(version)
             or pending.get('operation')!='plant' or native.get('phase')!='error' or native.get('detail')!=REJECTION
             or not harvest.get('native_mining_confirmed') or harvest.get('remaining_count')!=0
             or reply.get('id')!=native.get('id') or reply.get('phase')!='error' or reply.get('detail')!=REJECTION
             or reply.get('time')!=native.get('time')
-            or reply.get('kit_version')!=HOST or reply.get('world_session')!=book.get('world_session')
+            or reply.get('kit_version')!=version or reply.get('world_session')!=book.get('world_session')
             or reply.get('server')!=event.get('server',reply.get('server'))
             or reply.get('dimension')!='minecraft:overworld'
             or event.get('request_id')!=reply['id'] or event.get('op')!='interact'

@@ -29,6 +29,13 @@ class Tests(unittest.TestCase):
         result=prove(self.book,self.reply,self.event,self.current,self.host)
         self.assertEqual('rejected_without_use',result['outcome']);self.assertEqual(0,result['seed_debit'])
         self.assertTrue(result['original_attempt_not_done'])
+    def test_new_bottle_host_uses_its_exact_unchanged_pre_use_rejection_contract(self):
+        from wheat_plant_reconcile import HOST_CONTRACTS
+        self.host={'kit_version':'2026.10.10.2','class_sha256':HOST_CONTRACTS['2026.10.10.2']}
+        self.reply['kit_version']='2026.10.10.2'
+        self.assertEqual(0,prove(self.book,self.reply,self.event,self.current,self.host)['seed_debit'])
+        self.reply['kit_version']=HOST
+        with self.assertRaises(RuntimeError):prove(self.book,self.reply,self.event,self.current,self.host)
     def test_unknown_host_generic_error_mutation_or_foreign_scope_never_grants_recovery(self):
         for target,changes in [('reply',{'phase':'waiting'}),('reply',{'detail':'unknown'}),
                 ('current',{'world_session':'other'}),('current',{'recent_hurt_at':2}),

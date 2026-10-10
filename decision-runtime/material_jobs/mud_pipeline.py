@@ -195,6 +195,19 @@ def run(c,profile,item,target_count,out,checkpoint):
         fetch('minecraft:glass_bottle',1)
         if stock()['minecraft:glass_bottle']<1:
             require_raw('minecraft:glass',3);craft('minecraft:glass_bottle',1,'glass_bottle')
+        if profile.get('mud_bucket_source',{}).get('authorized') is True:
+            from .mud_water_supply import bottle_source,fill_bottle
+            bottle_source(backend)
+            if state().get('bottle_water_protocol',0)<1:
+                raise Wait('WAIT_WATER_SOURCE','Update Kit for direct registered sea-water bottle fill')
+            if preflight:return None
+            result,_,_=operation('fill_bottle',lambda:fill_bottle(backend))
+            retained=result['derived_water_slot']
+            actual=next((r for r in state()['inventory']if r.get('slot')==retained['slot']),None)
+            if actual!=retained:
+                book['pending']={'kind':'water_slot_identity','before':dict(stock())};save()
+                raise Wait('WAIT_RECONCILE','New source-water bottle slot changed; preserve potion')
+            book['derived_water_slot']=retained;save();return retained
         source=profile.get('mud_water_source',{})
         pos=source.get('pos')
         if source.get('authorized') is not True or not _point(pos):

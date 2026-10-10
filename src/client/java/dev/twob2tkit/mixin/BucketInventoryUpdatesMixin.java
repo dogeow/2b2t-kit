@@ -30,8 +30,7 @@ public abstract class BucketInventoryUpdatesMixin {
         var c=Minecraft.getInstance();
         AutomationBridge.serverFurnaceContent(this, packet.containerId(), packet.items());
         if((Object)this!=c.getConnection()||c.player==null||packet.containerId()!=0)return;
-        int slot=36+c.player.getInventory().getSelectedSlot();
-        if(slot>=36&&slot<45&&slot<packet.items().size())
+        for(int slot=9;slot<45&&slot<packet.items().size();slot++)
             AutomationBridge.serverBucketInventory(this,0,slot,false,packet.items().get(slot));
     }
 }

@@ -158,6 +158,56 @@ class MudPipelineTest(unittest.TestCase):
     def test_current_finished_stock_is_absolute_not_added_target(self):
         self.c.add('minecraft:mud_bricks',4)
         self.assertEqual(4,self.go()['after']);self.assertEqual([],self.b.calls)
+    def sea_source(self,uncertain=False,wrong_potion=False):
+        from material_jobs.mud_water_supply import BOTTLE_SCOPE
+        self.profile['mud_bucket_source']={'authorized':True,'pos':[104,63,100],
+            'approach':[103.5,64,100.5],'expected_state':'Block{minecraft:water}[level=0]'}
+        self.c.blocks[(104,63,100)]='Block{minecraft:water}[level=0]'
+        self.b.checkpoint=lambda:None
+        original_status=self.c.status;original_request=self.c.request
+        def status():
+            s=original_status();s['bottle_water_protocol']=1;return s
+        def request(op,**kw):
+            if op!='bottle_fill':return original_request(op,**kw)
+            self.c.calls.append((op,kw))
+            if uncertain:return {'phase':'waiting','detail':'unknown original use'}
+            self.c.add('minecraft:glass_bottle',-1);self.c.add('minecraft:potion',1)
+            slot=next(r['slot']for r in self.c.rows if r['item']=='minecraft:potion' and r['count'])
+            return {'phase':'done','id':'sea-bottle', 'bottle_water':{
+                'world_session':'world','request_id':'sea-bottle','operation':'bottle_fill','pos':kw['pos'],
+                'use_count':1,'water_slot':slot,'potion':'minecraft:healing'if wrong_potion else'minecraft:water',
+                'confirmed':True,'unknown_outcome':False,'server_hand_confirmed':True,'server_water_slot_confirmed':True,
+                'source_not_consumed_by_bottle_use':True,'confirmation_scope':BOTTLE_SCOPE}}
+        self.c.status=status;self.c.request=request
+    def test_registered_sea_fills_four_bottles_without_cauldron_or_bucket(self):
+        self.sea_source();self.assertEqual('done',self.go()['phase'])
+        self.assertEqual(4,sum(op=='bottle_fill'for op,_ in self.c.calls))
+        self.assertFalse(any(op=='interact'and p.get('expected_hand')in ('minecraft:glass_bottle','minecraft:water_bucket')for op,p in self.c.calls))
+        self.assertEqual('Block{minecraft:water}[level=0]',self.c.blocks[(104,63,100)])
+        self.assertEqual('Block{minecraft:water_cauldron}[level=3]',self.c.blocks[(103,64,100)])
+        self.assertEqual(1,self.c.count('minecraft:glass_bottle'))
+    def test_direct_water_unknown_use_keeps_pending_and_never_retries(self):
+        self.sea_source(uncertain=True)
+        with self.assertRaises(JobBlocked):self.go('minecraft:mud',1)
+        self.assertEqual('WAIT_RECONCILE',self.go('minecraft:mud',1)['code'])
+        self.assertEqual(1,sum(op=='bottle_fill'for op,_ in self.c.calls))
+        self.assertFalse(any(op=='interact'and p.get('expected_hand')=='minecraft:dirt'for op,p in self.c.calls))
+    def test_direct_water_requires_real_water_potion_receipt(self):
+        self.sea_source(wrong_potion=True)
+        with self.assertRaisesRegex(JobBlocked,'unproved'):self.go('minecraft:mud',1)
+        self.assertEqual('WAIT_RECONCILE',self.go('minecraft:mud',1)['code'])
+        self.assertEqual(1,sum(op=='bottle_fill'for op,_ in self.c.calls))
+    def test_changed_sea_source_never_uses_bottle_or_falls_back_to_cauldron(self):
+        self.sea_source();self.c.blocks[(104,63,100)]='Block{minecraft:water}[level=1]'
+        with self.assertRaisesRegex(JobBlocked,'source changed'):self.go('minecraft:mud',1)
+        self.assertFalse(any(op=='bottle_fill'for op,_ in self.c.calls))
+    def test_old_host_requires_update_without_cauldron_fallback(self):
+        self.sea_source();status=self.c.status
+        def old_status():
+            s=status();s.pop('bottle_water_protocol');return s
+        self.c.status=old_status
+        self.assertEqual('WAIT_WATER_SOURCE',self.go('minecraft:mud',1)['code'])
+        self.assertFalse(any(op in ('bottle_fill','interact')for op,_ in self.c.calls))
     def test_bottle_is_filled_before_owned_dirt_placement_to_reduce_grass_growth_window(self):
         original=self.c.request
         def grow(op,**params):

@@ -113,7 +113,7 @@ public final class AutomationBridge {
         flags.put("native_request",active!=null);flags.put("scan",pendingScan!=null);
         flags.put("native_material_owner",nativeMaterialOwner!=null&&!nativeMaterialOwner.closed);
         flags.put("material_lease",supervisionLease!=null&&!"parking".equals(str(supervisionLease,"kind")));
-        flags.put("bucket",bucketWaterTask!=null);flags.put("map",mapCreationTask!=null);
+        flags.put("bucket",bucketWaterTask!=null||bottleWaterTask!=null);flags.put("map",mapCreationTask!=null);
         flags.put("air_seed",airSeedTask!=null);flags.put("craft",craftTask!=null);flags.put("supply",supplyTask!=null);
         flags.put("scaffold_row",scaffoldFillTask!=null);flags.put("air_navigation",materialAirNavigation!=null);
         flags.put("mining_isolation",materialMiningCleanupPending);
@@ -261,6 +261,8 @@ public final class AutomationBridge {
     private static SurvivalCraftTask craftTask;
     private static BucketWaterAction bucketWaterTask;
     private static JsonObject lastBucketWater;
+    private static BottleWaterAction bottleWaterTask;
+    private static JsonObject lastBottleWater;
     private static MapAutomation.Creation mapCreationTask;
     private static JsonObject lastMapCreation;
     private static final TerrainServerConfirmation airSeedConfirmation=new TerrainServerConfirmation();
@@ -623,6 +625,9 @@ public final class AutomationBridge {
     }
     private static JsonObject nativeMaterialReceipt(Minecraft c,String id,String outcome,String message){
         JsonObject result=snapshot(c);result.addProperty("id",id);result.addProperty("phase",outcome);
+        if(lastBottleWater!=null&&id.equals(str(lastBottleWater,"request_id"))
+                &&session(c).equals(str(lastBottleWater,"world_session")))
+            result.add("bottle_water",lastBottleWater.deepCopy());
         if(lastSlaughterAttack!=null&&id.equals(str(lastSlaughterAttack,"id"))
                 &&session(c).equals(str(lastSlaughterAttack,"world_session")))
             result.add("slaughter_attack",lastSlaughterAttack.deepCopy());
@@ -635,7 +640,7 @@ public final class AutomationBridge {
         nativeMaterialCheck(owner,c);
         if(owner.pendingId!=null||active!=null)throw new IllegalStateException("Native material child is already running");
         if(!Set.of("guard","select_item","snapshot","scan","scan_snow_biomes","snow_seed_candidates","air_return_set","mine_block","rock_quarry_batch",
-                "walk","navigate","collect_item","approach_block","bucket_fill","bucket_place","material_slaughter_attack").contains(command))
+                "walk","navigate","collect_item","approach_block","bucket_fill","bucket_place","bottle_fill","material_slaughter_attack").contains(command))
             throw new IllegalArgumentException("Native material command is not allowed: "+command);
         JsonObject request=params==null?new JsonObject():params.deepCopy();
         for(String protectedKey:List.of("id","op","task_session","server","dimension","site",
@@ -1396,6 +1401,11 @@ public final class AutomationBridge {
             bucketWaterTask=null;
         }
         if(mapCreationTask!=null){lastMapCreation=mapCreationTask.snapshot(false);mapCreationTask=null;}
+        if(bottleWaterTask!=null){
+            lastBottleWater=bottleWaterTask.snapshot(false);
+            try{bottleWaterTask.terminal("stopped");}catch(Exception failure){KitClient.LOGGER.error("[Bottle] stopped receipt retained",failure);}
+            bottleWaterTask=null;
+        }
         if(airSeedTask!=null){lastAirSeed=airSeedTask.snapshot(false);airSeedTask.close();airSeedTask=null;}
         if(scaffoldFillTask!=null){scaffoldFillTask.close();lastScaffoldFill=scaffoldFillTask.snapshot();if(!scaffoldFillTask.cleanupPending())scaffoldFillTask=null;}
         terrainServerConfirmation.clear();
@@ -1818,6 +1828,12 @@ public final class AutomationBridge {
                         case DONE->finish(c,"done","one normal water bucket use confirmed by current-connection block and inventory packets");
                         case WAITING->finish(c,"waiting","bucket outcome unconfirmed or protection changed; durable claim retained, no second use sent");
                         case RUNNING->detail="waiting for target block and bucket inventory server packets; no retry";
+                    }
+                }else if(op.equals("bottle_fill")){
+                    switch(bottleWaterTask.poll(c,ticks,ticks>=deadline)){
+                        case DONE->finish(c,"done","one normal source-water bottle use confirmed by current-connection hand and water-potion packets");
+                        case WAITING->finish(c,"waiting","bottle outcome unconfirmed or protection changed; no second use sent");
+                        case RUNNING->detail="waiting for exact water bottle inventory server packets; source water needs no change packet";
                     }
                 }else if(op.equals("map_create")){
                     if(!currentMaterialRequest(c,active)||!guardArmed()||!pveOnly()||guardBusy
@@ -2663,6 +2679,23 @@ public final class AutomationBridge {
                     guard(c,r);bucketWaterTask.useOnce(c);
                 }catch(Exception failure){finish(c,"waiting","bucket use stopped or unconfirmed; no second use sent: "+failure.getMessage());}
             });
+        }else if(command.equals("bottle_fill")){
+            if(!bucketOwnerCurrent(c,r)||active!=null||bucketWaterTask!=null||bottleWaterTask!=null||KitClient.buildJob().isActive()
+                ||KitClient.borer().isActive()||KitClient.machines().isPlacing()||ProfessionalPrinter.owned()
+                ||KitClient.controller().isActive()||KitClient.chopper().isActive())
+                throw new IllegalStateException("Water bottle action requires the current healthy idle guarded material lease");
+            checkSiteTarget(r,r.getAsJsonArray("pos"));
+            var plannedBottle=new BottleWaterAction(c,r,session(c),lastId,root(c),()->bucketOwnerCurrent(c,r));
+            Vec3 aim=plannedBottle.aim(c);RotationAim.Look look=RotationAim.lookAt(c.player,aim);
+            bottleWaterTask=plannedBottle;lastBottleWater=null;
+            active=r.deepCopy();op=command;phase="running";deadline=ticks+100;
+            detail="rotating for exactly one normal source-water bottle use";
+            PlacementRotation.after(c,look.yaw(),look.pitch(),()->{
+                try{
+                    if(active==null||!str(active,"id").equals(str(r,"id"))||bottleWaterTask==null)return;
+                    guard(c,r);bottleWaterTask.useOnce(c);
+                }catch(Exception failure){finish(c,"waiting","bottle use stopped or unconfirmed; no second use sent: "+failure.getMessage());}
+            });
         }else if(command.equals("map_create")){
             if(!r.has("task_session")||!currentMaterialRequest(c,r)||!guardArmed()||!pveOnly()
                 ||guardBusy||KitKeys.manualMovementDown(c)||c.player.getHealth()<19||loadedHostileNearby(c)
@@ -2861,6 +2894,7 @@ public final class AutomationBridge {
         if(ordinaryMining!=null)lastSingleBlockConfirmation=singleBlockConfirmation(c,ordinaryMining,p,text,p.equals("done")&&ordinaryConfirmed);
         if(printing!=null)lastPrinterConfirmation=printerConfirmation(printing,p,text,p.equals("done")&&printerConfirmed);
         var completedBucket=active!=null&&Set.of("bucket_fill","bucket_place").contains(op)?bucketWaterTask:null;
+        var completedBottle=active!=null&&op.equals("bottle_fill")?bottleWaterTask:null;
         var completedMap=active!=null&&op.equals("map_create")?mapCreationTask:null;
         var completedAirSeed=active!=null&&op.equals("projection_air_seed")?airSeedTask:null;
         var completedScaffold=active!=null&&op.equals("projection_scaffold_fill")?scaffoldFillTask:null;
@@ -2891,6 +2925,11 @@ public final class AutomationBridge {
             bucketWaterTask=null;
         }
         if(completedMap!=null){lastMapCreation=completedMap.snapshot(p.equals("done"));mapCreationTask=null;}
+        if(completedBottle!=null){
+            lastBottleWater=completedBottle.snapshot(p.equals("done"));
+            try{completedBottle.terminal(p);}catch(Exception failure){KitClient.LOGGER.error("[Bottle] terminal receipt retained",failure);}
+            bottleWaterTask=null;
+        }
         if(completedAirSeed!=null){lastAirSeed=completedAirSeed.snapshot(p.equals("done"));completedAirSeed.close();airSeedTask=null;}
         if(completedScaffold!=null){completedScaffold.close();lastScaffoldFill=completedScaffold.snapshot();if(!completedScaffold.cleanupPending())scaffoldFillTask=null;}
         ProfessionalPrinter.stop(c,false);restoreArrival();releaseWalk(c);active=null;phase=p;detail=text;
@@ -2912,6 +2951,12 @@ public final class AutomationBridge {
             receipt.addProperty("phase",p);receipt.addProperty("detail",text);receipt.add("map_creation",lastMapCreation.deepCopy());
             try{save(root(c).resolve("reply-"+safeId(completedId)+".json"),receipt);}
             catch(Exception failure){KitClient.LOGGER.error("[Map] terminal creation reply could not be saved",failure);}
+        }
+        if(completedBottle!=null){
+            JsonObject receipt=snapshot(c);receipt.addProperty("id",completedId);
+            receipt.addProperty("phase",p);receipt.addProperty("detail",text);receipt.add("bottle_water",lastBottleWater.deepCopy());
+            try{save(root(c).resolve("reply-"+safeId(completedId)+".json"),receipt);}
+            catch(Exception failure){KitClient.LOGGER.error("[Bottle] terminal reply retained; no replay allowed",failure);}
         }
         if(completedAirSeed!=null){
             JsonObject receipt=snapshot(c);receipt.addProperty("id",completedId);
@@ -3296,6 +3341,8 @@ public final class AutomationBridge {
     /** Called after vanilla applies an inventory packet from the current connection. */
     public static void serverBucketInventory(Object connection,int containerId,int slot,boolean direct,ItemStack packet){
         Minecraft c=Minecraft.getInstance();
+        if(c.player!=null&&c.level!=null&&connection==c.getConnection()&&active!=null&&bottleWaterTask!=null&&op.equals("bottle_fill"))
+            bottleWaterTask.serverInventory(c,connection,containerId,slot,direct,packet,ticks);
         if(c.player==null||c.level==null||connection!=c.getConnection()||active==null||bucketWaterTask==null
             ||!Set.of("bucket_fill","bucket_place").contains(op))return;
         bucketWaterTask.serverInventory(c,connection,containerId,slot,direct,packet,ticks);
@@ -4073,6 +4120,9 @@ public final class AutomationBridge {
         j.addProperty("projection_air_seed_protocol",1);j.addProperty("projection_air_seed_axis_protocol",1);j.addProperty("air_place",MeteorModules.isActive(MeteorModules.AIR_PLACE));
         j.addProperty("projection_scaffold_fill_protocol",1);
         j.addProperty("bucket_water_protocol",1);
+        j.addProperty("bottle_water_protocol",1);
+        if(bottleWaterTask!=null)j.add("bottle_water",bottleWaterTask.snapshot(false));
+        if(lastBottleWater!=null)j.add("last_bottle_water",lastBottleWater.deepCopy());
         j.addProperty("material_slaughter_protocol",SlaughterPolicy.PROTOCOL);
         if(lastSlaughterAttack!=null&&session(c).equals(str(lastSlaughterAttack,"world_session")))
             j.add("last_slaughter_attack",lastSlaughterAttack.deepCopy());
