@@ -1,5 +1,6 @@
 """Short, supported ground adjustment when a drop lies beyond an integer-grid pickup pose."""
 import math,time,json
+from collections import deque
 from material_plan import inventory_counts
 
 def hazard(cell):
@@ -45,6 +46,43 @@ def pickup_candidates(player,drop,rows):
     return sorted(candidates,key=lambda p:sum((a-b)**2 for a,b in zip(player,p)))
 
 
+def farmland_route(player,drop,rows):
+    """At most four ordinary steps over dry known farmland collision heights."""
+    cells={tuple(r['pos']):r for r in rows};start=(math.floor(player[0]),math.floor(player[2]))
+    heights={}
+    for pos,row in cells.items():
+        state=row.get('state','');farm=state.startswith('Block{minecraft:farmland}')
+        if (not farm or row.get('fluid')is not False or row.get('block_entity')is not False
+                or row.get('solid')is not False or abs(pos[1]+.9375-player[1])>1.05):continue
+        height=pos[1]+.9375;point=[pos[0]+.5,height,pos[2]+.5]
+        if math.hypot(point[0]-player[0],point[2]-player[2])>3:continue
+        body=[cells.get((pos[0],y,pos[2]))for y in range(pos[1]+1,math.floor(height+1.8)+1)]
+        if any(r and (r.get('passable')is not True or hazard(r) or r.get('block_entity')is not False)for r in body):continue
+        if (pos[0],pos[2])in heights:return []
+        heights[(pos[0],pos[2])]=height
+    if start not in heights or abs(player[1]-heights[start])>.15:return []
+    parents={start:None};depth={start:0};queue=deque([start]);end=None
+    while queue:
+        cell=queue.popleft();point=[cell[0]+.5,heights[cell],cell[1]+.5]
+        if abs(point[1]-drop[1])<=.35 and math.hypot(point[0]-drop[0],point[2]-drop[2])<=.7:
+            end=cell;break
+        if depth[cell]>=4:continue
+        for dx,dz in ((1,0),(-1,0),(0,1),(0,-1)):
+            nxt=(cell[0]+dx,cell[1]+dz)
+            if nxt not in heights or nxt in parents or abs(heights[nxt]-heights[cell])>1.000001:continue
+            # Extra jump headroom at the higher side remains checked; the
+            # native walk handles actual .9375 farmland and its one-block step.
+            ceiling=math.floor(max(heights[nxt],heights[cell])+2.8)
+            if any((r:=cells.get((cx,y,cz))) and (r.get('passable')is not True or hazard(r))
+                   for cx,cz in (cell,nxt)for y in range(math.floor(max(heights[nxt],heights[cell])+1.8),ceiling+1)):continue
+            parents[nxt]=cell;depth[nxt]=depth[cell]+1;queue.append(nxt)
+    if end is None:return []
+    path=[]
+    while end!=start:
+        path.append([end[0]+.5,heights[end],end[1]+.5]);end=parents[end]
+    return list(reversed(path))
+
+
 def collect_nearby_ground(client,drop):
     state=client.status();current=next((e for e in state.get('entities',[]) if e.get('uuid')==drop['uuid']),None)
     if not current or current.get('stack')!=drop.get('stack'):return False
@@ -52,10 +90,18 @@ def collect_nearby_ground(client,drop):
     low=[math.floor(min(a,b))-2 for a,b in zip(origin,pos)];high=[math.ceil(max(a,b))+2 for a,b in zip(origin,pos)]
     rows=client.request('scan',min=low,max=high,details=True)['blocks']
     choices=pickup_candidates(origin,pos,rows)
-    if not choices:return False
+    route=[]
+    if not choices and item in ('minecraft:wheat','minecraft:wheat_seeds'):
+        route=farmland_route(origin,pos,rows)
+    if not choices and not route:return False
     # One bounded normal walk; never replay an ambiguous inventory/arrival failure.
-    result=client.request('walk',target=choices[0],arrival=.08,seconds=8,restore_flight=True)
-    if result.get('phase')!='done':return False
+    for target in route or choices[:1]:
+        fresh=client.status()
+        if inventory_counts(fresh)[item]==before+drop['stack']['count'] and not any(e.get('uuid')==drop['uuid']for e in fresh.get('entities',[])):return True
+        same=next((e for e in fresh.get('entities',[])if e.get('uuid')==drop['uuid']),None)
+        if not same or same.get('stack')!=drop.get('stack')or inventory_counts(fresh)[item]!=before:return False
+        result=client.request('walk',target=target,arrival=.08,seconds=8,restore_flight=True)
+        if result.get('phase')!='done':return False
     until=time.monotonic()+3
     while time.monotonic()<until:
         state=client.status()

@@ -398,6 +398,10 @@ class MaterialClient(Client):
    if (not isinstance(point,list) or len(point)!=3 or any(type(v) is not int for v in point)
        or any(point[i]<low[i] or point[i]>high[i] for i in range(3))):
     raise RuntimeError('High park ascent scan returned an invalid block')
+   harmless={'minecraft:'+name for name in ('wheat','potatoes','carrots','beetroots','torch','wall_torch','short_grass','tall_grass','fern','large_fern')}
+   block_name=(row.get('state')or'').split('}',1)[0].removeprefix('Block{')
+   if (block_name in harmless and row.get('passable')is True
+       and row.get('fluid')is False and row.get('block_entity')is False):continue
    blocks.append({'pos':point,'state':row.get('state')})
   return blocks
  def _finish_canopy_escape(self,state,obstacles):

@@ -1,6 +1,18 @@
 import unittest
-from ground_pickup import pickup_candidates,clear_segment
+from ground_pickup import pickup_candidates,clear_segment,farmland_route
 class Tests(unittest.TestCase):
+ def test_known_wheat_on_lower_farmland_gets_fractional_step_route(self):
+  rows=[{'pos':[27,64,69],'state':'Block{minecraft:farmland}[moisture=7]','solid':False,'fluid':False,'block_entity':False},
+        {'pos':[27,64,70],'state':'Block{minecraft:farmland}[moisture=7]','solid':False,'fluid':False,'block_entity':False},
+        {'pos':[26,63,70],'state':'Block{minecraft:farmland}[moisture=7]','solid':False,'fluid':False,'block_entity':False}]
+  route=farmland_route([27.5043,64.9375,69.5],[26.8276,63.9375,70.409],rows)
+  self.assertEqual([[27.5,64.9375,70.5],[26.5,63.9375,70.5]],route)
+  for change in ('fluid','missing','head'):
+   r=[dict(v)for v in rows]
+   if change=='fluid':r[-1]['fluid']=True
+   elif change=='missing':r.pop()
+   else:r.append({'pos':[26,64,70],'state':'Block{minecraft:cobweb}','passable':True,'fluid':False,'block_entity':False})
+   self.assertEqual([],farmland_route([27.5043,64.9375,69.5],[26.8276,63.9375,70.409],r))
  def floor(self):return [{'pos':[x,61,z],'solid':True,'passable':False,'fluid':False} for x in range(9,14) for z in range(831,838)]
  def test_corner_drop_gets_fractional_pose_without_entering_low_ceiling(self):
   rows=self.floor()+[{'pos':[11,63,833],'solid':True,'passable':False,'fluid':False}]

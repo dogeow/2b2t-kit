@@ -62,6 +62,16 @@ class Tests(unittest.TestCase):
   c.request=request
   self.assertEqual([],c.ascent_obstacles({'pos':[100.5,300,200.5]}))
   self.assertEqual(calls[0]['max'][1],319)
+ def test_current_passable_dry_wheat_is_not_a_roof_or_canopy(self):
+  c=MaterialClient.__new__(MaterialClient);c.world='world-2';c.park_target=[100.5,89,200.5]
+  wheat={'pos':[100,65,200],'state':'Block{minecraft:wheat}[age=6]',
+         'passable':True,'fluid':False,'block_entity':False}
+  c.request=lambda *a,**kw:{'phase':'done','world_session':c.world,'blocks':[wheat]}
+  self.assertEqual([],c.ascent_obstacles({'pos':[100.5,64.9375,200.5]}))
+  for change in ({'fluid':True},{'block_entity':True},{'passable':False},
+                 {'state':'Block{minecraft:fire}'},{'state':'Block{minecraft:oak_leaves}'}):
+   row={**wheat,**change};c.request=lambda *a,**kw:{'phase':'done','world_session':c.world,'blocks':[row]}
+   self.assertEqual(1,len(c.ascent_obstacles({'pos':[100.5,64.9375,200.5]})))
  def test_healthy_leaf_canopy_without_ground_exit_retains_owner_without_logout_or_unverified_flight(self):
   with tempfile.TemporaryDirectory() as temp:
    c=MaterialClient.__new__(MaterialClient)
