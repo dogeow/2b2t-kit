@@ -38,6 +38,7 @@ def restore(backend, state):
         backend.flat_layout, backend.flat_model, backend.flat_ledger = layout, model, ledger
         backend.audit, backend.audit_dirty = ledger.audit, False
         backend.parked_ledger_reused = True
+        write_json(backend.out / 'projection-latest.json', ledger.audit)
         write_json(backend.out / 'parked-ledger-reuse.json', {
             'source': str(path), 'world_session': ledger.world,
             'baseline_observed_at': ledger.baseline_at, 'matched': ledger.audit['matched'],
