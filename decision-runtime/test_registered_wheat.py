@@ -95,8 +95,35 @@ class Tests(unittest.TestCase):
         self.assertEqual(before,active.read_bytes())
         self.assertFalse(any(op in ('mine_block','interact')for op,_ in self.c.calls))
 
+    def test_one_missing_registered_cell_borrows_existing_maintenance_then_rechecks_the_full_field(self):
+        from potato_farm import plan
+        from test_potato_farm import row
+        pos=plan(REQUEST)['cells'][0];above=[pos[0],pos[1]+1,pos[2]];self.c.rows.pop(tuple(above))
+        planting=self.c.plant_journal.read_bytes();registry=self.c.registry.read_bytes()
+        def maintenance(c,reg,cells,out,checkpoint,**options):
+            self.assertIs(c,self.c);self.assertEqual(self.c.registry,reg);self.assertEqual([pos],cells)
+            self.assertTrue(options['allow_move']);c.inv[10]['count']-=1
+            c.rows[tuple(above)]=row(above,'Block{minecraft:wheat}[age=0]',False)
+            return {'phase':'done','pending':False,'new_reseed':1}
+        with patch('farm_reseed.run',side_effect=maintenance)as reseed:
+            result=self.execute();self.assertEqual('done',result['phase'],result);reseed.assert_called_once()
+        self.assertEqual(4,result['gained']);self.assertEqual(planting,self.c.plant_journal.read_bytes())
+        self.assertEqual(registry,self.c.registry.read_bytes())
+        proof=json.loads((self.root/'source/field-00/existing-field-maintenance/registered-reseed-result.json').read_text())
+        self.assertEqual(0,proof['grain_inventory_credit']);self.assertFalse(proof['old_harvest_replayed'])
+
+    def test_missing_crop_maintenance_keeps_four_seeds_and_never_replays_unknown_maintenance(self):
+        from potato_farm import plan
+        pos=plan(REQUEST)['cells'][0];self.c.rows.pop((pos[0],pos[1]+1,pos[2]));self.c.inv[10]['count']=4
+        with patch('farm_reseed.run')as reseed:
+            self.assertEqual('WAIT_SEED',self.execute()['code']);reseed.assert_not_called()
+        self.c.inv[10]['count']=8
+        with patch('farm_reseed.run',return_value={'phase':'waiting','pending':True,'new_reseed':0})as reseed:
+            self.assertEqual('WAIT_RECONCILE',self.execute()['code']);reseed.assert_called_once()
+        self.assertFalse(any(op=='mine_block'for op,_ in self.c.calls))
+
     def test_known_rejected_planting_reuses_original_partial_batch_and_restores_it(self):
-        from wheat_plant_reconcile import HOST,HOST_CLASS_SHA
+        from wheat_plant_reconcile import HOST_CONTRACTS
         from potato_farm import plan
         original_request=self.c.request
         def reject_plant(op,**kw):
@@ -114,7 +141,7 @@ class Tests(unittest.TestCase):
         proof=self.root/'verified-rejection.json'
         proof.write_text(json.dumps({'proof':{'outcome':'rejected_without_use','world_session':self.c.world,
                     'original_attempt_not_done':True,'seed_debit':0,'pos':pending['pos'],
-                    'host_contract':{'kit_version':HOST,'class_sha256':HOST_CLASS_SHA}}}))
+                    'host_contract':{'kit_version':'2026.10.10.2','class_sha256':HOST_CONTRACTS['2026.10.10.2']}}}))
         b['rejected_plant_history']=[{'original_pending':pending,'proof':str(proof)}]
         b['pending']={'operation':'await_replant','pos':pending['pos'],
                       'pre_drop_ids':pending.get('pre_drop_ids',[]),'prior_plant_rejected_without_use':str(proof)}

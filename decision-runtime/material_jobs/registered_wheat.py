@@ -11,6 +11,38 @@ from potato_loot_flight import make_pickup,make_plant_access
 from .protocol import server_key
 
 
+def repair_registered_empty(backend,request,registry,out,checkpoint):
+    """Borrow existing reseed maintenance on completed original farmland only."""
+    from farm_reseed import run as reseed,registered
+    c=backend.ensure_client();layout=plan(request)
+    # Validate completed planting/preparation and no unknown original harvest
+    # before discovering candidates. This does not classify any old action done.
+    registered(c.root,registry,layout['cells'][:1],server=c.server)
+    before=c.status();scan=c.checked('scan',min=layout['scan_min'],max=layout['scan_max'],details=True)
+    volume=1
+    for low,high in zip(layout['scan_min'],layout['scan_max']):volume*=high-low+1
+    if (scan.get('world_session')!=c.world or scan.get('phase')!='done'
+            or scan.get('scan_cells_read')!=volume or scan.get('scan_total_cells')!=volume
+            or scan.get('scan_start_revision')!=c.rev or scan.get('scan_end_revision')!=c.rev
+            or scan.get('unloaded_chunks',0) or scan.get('time',0)<=before['time']):
+        raise FarmWait('WAIT_SCAN','Registered empty-cell discovery requires a complete later current field frame')
+    rows={tuple(row['pos']):row for row in scan['blocks']}
+    empty=[p for p in layout['cells']if (p[0],p[1]+1,p[2])not in rows]
+    if not 1<=len(empty)<=4:
+        raise FarmWait('WAIT_RECONCILE','Existing bounded maintenance requires one to four explicit empty original cells')
+    if inventory_counts(c.status())['minecraft:wheat_seeds']<len(empty)+4:
+        raise FarmWait('WAIT_SEED','Existing-field maintenance preserves four actual wheat seeds')
+    out=Path(out);out.mkdir(parents=True,exist_ok=True)
+    backend.prepare_travel()
+    result=reseed(c,registry,empty,out,checkpoint,allow_move=True)
+    write_json(Path(out)/'registered-reseed-result.json',{**result,'original_cells':empty,
+               'grain_inventory_credit':0,'old_harvest_replayed':False})
+    if (result.get('phase')!='done' or result.get('pending')is not False
+            or result.get('new_reseed')!=len(empty)):
+        raise FarmWait('WAIT_RECONCILE','Original registered maintenance needs its own reconciliation; no repeated seed use')
+    return result
+
+
 def registered_fields(c):
     """Read original planting registrations; never create fields or credit stock."""
     for path in sorted((Path(c.root)/'farms').glob('*/registry.json'))[:32]:
@@ -58,11 +90,12 @@ def run(backend,target,out,checkpoint):
                         and saved_layout.get('center')==layout['center']
                         and saved_layout.get('radius')==layout['radius'] and saved_layout.get('crop')=='wheat'):
                     proof=json.loads(Path(evidence).read_text()).get('proof',{})if evidence else {}
-                    from wheat_plant_reconcile import HOST,HOST_CLASS_SHA
+                    from wheat_plant_reconcile import HOST_CONTRACTS
                     host=proof.get('host_contract')or{}
                     if known_replant and (proof.get('outcome')!='rejected_without_use' or proof.get('world_session')!=c.world
                             or proof.get('original_attempt_not_done') is not True or proof.get('seed_debit')!=0
-                            or host.get('kit_version')!=HOST or host.get('class_sha256')!=HOST_CLASS_SHA
+                            or host.get('kit_version')not in HOST_CONTRACTS
+                            or host.get('class_sha256')!=HOST_CONTRACTS.get(host.get('kit_version'))
                             or proof.get('pos')!=pending['pos']):
                         return wait('WAIT_RECONCILE','Original rejected planting proof is incomplete')
                     request={**request,'cells':saved_layout['harvest_cells']}
@@ -71,9 +104,17 @@ def run(backend,target,out,checkpoint):
                                'original_action_replayed':False,'known_stage':pending['operation'],'inventory_credit':0})
             # This existing primitive proves original complete planting, no old
             # pending harvest, and two current complete crop/farmland frames.
-            _registered_wheat(c,{**request,'cells':layout['cells']},reused[0]if reused else home/'preflight.json',
+            def preflight():
+                return _registered_wheat(c,{**request,'cells':layout['cells']},reused[0]if reused else home/'preflight.json',
                               known_replant=reused[1]if reused else None,bind_active=False,
                               known_loot=pending if reused and pending.get('operation')=='await_loot'else None)
+            try:preflight()
+            except FarmWait as error:
+                if (reused is not None or error.code!='WAIT_RECONCILE'
+                        or str(error)!='A previously planted crop is missing; no automatic reseed'):
+                    raise
+                repair_registered_empty(backend,request,registry,home/'existing-field-maintenance',checkpoint)
+                preflight()
             scan=c.checked('scan',min=layout['scan_min'],max=layout['scan_max'],details=True)
             expected=1
             for low,high in zip(layout['scan_min'],layout['scan_max']):expected*=high-low+1

@@ -2,9 +2,8 @@
 
 Targets are absolute carried counts. Use c.mud_backend or c.material_backend;
 no backend, native controller, source region or game profile is created here.
-Vanilla water-cauldron bottle use is supported by the existing interact API.
-Open-water BottleItem.use is currently unavailable in the food-only use_item
-protocol, and is reported as WAIT_WATER_SOURCE rather than emulated input.
+Registered source water uses the native single-use bottle_fill protocol.
+Existing cauldron-only profiles retain their normal interact route.
 """
 from collections import Counter
 import copy
@@ -113,6 +112,7 @@ def run(c,profile,item,target_count,out,checkpoint):
         if actions>=64:raise Wait('WAIT_BUDGET','Bounded mud action budget reached')
         before=state();book['pending']={'kind':kind,'before':dict(inventory_counts(before))}
         save();checkpoint();result=fn();actions+=1;after=state()
+        book['pending'].update(returned_receipt=result,after=dict(inventory_counts(after)));save()
         phase=(result or {}).get('phase')
         known_wait=phase=='waiting' and ((result.get('code','').startswith('WAIT_') and result.get('code')!='WAIT_RECONCILE')
                                        or result.get('code')=='SOURCE_BATCH'
