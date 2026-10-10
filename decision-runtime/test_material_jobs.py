@@ -483,6 +483,18 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertEqual(20,progress['done']);self.assertEqual(32,progress['total'])
         self.assertFalse(progress['terminal']);self.assertNotEqual('completed',progress['state'])
 
+    def test_verified_flat_windows_update_top_progress_during_batch(self):
+        b = FakeBackend(self.catalog, projection={'minecraft:stone': 10})
+        original = b.observe
+        def observe():
+            state = original()
+            state['projection_audit'].update(matched=3, material_ledger={'world_session': 'world'})
+            return state
+        b.observe = observe
+        job = self.job(b, self.request(projection=True)); job.checkpoint()
+        self.assertEqual((job.state['done'], job.state['total']), (3, 10))
+        self.assertNotEqual(job.state['state'], 'completed')
+
     def test_smelting_dependencies_are_completed_before_blast_furnace_craft(self):
         b = FakeBackend(self.catalog, held={'minecraft:furnace':2,'minecraft:iron_ingot':10,'minecraft:cobblestone':6})
         result = self.job(b, self.request('blast_furnace',2)).run()

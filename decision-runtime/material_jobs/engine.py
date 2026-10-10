@@ -164,6 +164,11 @@ class MaterialJob:
                 if (building.get('active') and building.get('placement_key')==self.request['projection_key']
                         and type(matched) is int and type(total) is int and 0<=matched<=total):
                     self.state.update(done=matched,total=total)
+                elif (audit.get('material_ledger', {}).get('world_session') == self.context['world_session']
+                      and audit.get('placement_key') == self.request['projection_key']
+                      and type(audit.get('matched')) is int and type(total) is int
+                      and 0 <= audit['matched'] <= total):
+                    self.state.update(done=audit['matched'], total=total)
         self._write(detail=self.state.get('detail', ''))
 
     def _observe(self, *, initial=False):
@@ -764,7 +769,7 @@ class MaterialJob:
         if self.backend is None:
             raise ValueError('A concrete backend must be attached before execution')
         try:
-            self._write('planning','前往投影并核对缺料' if self.request['mode']=='projection' else '核对背包与材料')
+            self._write('planning','读取投影缺料清单（本次首次）' if self.request['mode']=='projection' else '核对背包与材料')
             self._observe(initial=True)
             self._recover()
             while True:

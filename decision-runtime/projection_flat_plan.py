@@ -175,11 +175,11 @@ def next_batch(layout, actual, snapshot, *, cell_budget=None):
         item = stack['item']
         targets = by_item.get(item, set())
         ready = {p for p in targets if any(n in actual for n in neighbors(p))}
-        buckets = {(int((p[0] - layout.low[0]) // 3), int((p[2] - layout.low[2]) // 3)) for p in ready}
+        buckets = {(int((p[0] - layout.low[0]) // 4), int((p[2] - layout.low[2]) // 4)) for p in ready}
         for bx, bz in buckets:
-            low = (layout.low[0] + bx * 3, layout.low[1], layout.low[2] + bz * 3)
-            high = (min(low[0] + 2, layout.high[0]), low[1], min(low[2] + 2, layout.high[2]))
-            mask = connected_mask(targets, actual, low, high, min(9, budget, stack['count'] - 2),
+            low = (layout.low[0] + bx * 4, layout.low[1], layout.low[2] + bz * 4)
+            high = (min(low[0] + 3, layout.high[0]), low[1], min(low[2] + 3, layout.high[2]))
+            mask = connected_mask(targets, actual, low, high, min(16, budget, stack['count'] - 2),
                                   excluded=layout.config['excluded_positions'])
             if not mask:
                 continue

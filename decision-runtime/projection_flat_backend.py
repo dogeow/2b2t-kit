@@ -37,9 +37,13 @@ def scene(layout, reply, low, high, world, revision):
             raise JobBlocked('地图画扫描含重复或越界坐标')
         observed[p] = row
     actual = {}
+    registered_lights = layout.config['registered_lights']
+    if layout.config.get('reuse_existing_map_lights') is True:
+        registered_lights |= {p for p, row in observed.items()
+                              if registered_map_light(row, layout.expected, observed, {p}, layout.low[1])}
     for p, row in observed.items():
         if p[1] != layout.low[1]:
-            if registered_map_light(row, layout.expected, observed, layout.config['registered_lights'], layout.low[1]):
+            if registered_map_light(row, layout.expected, observed, registered_lights, layout.low[1]):
                 continue
             raise JobBlocked('地图画站位上方存在未登记方块；先核对现场')
         if any(row.get(k) is not False for k in ('fluid', 'block_entity')):
@@ -250,7 +254,21 @@ class FlatMapBackend(Backend):
         save = lambda: write_json(directory / 'flat-window.json', journal)
         save()
         trace = []
-        _travel(client, plan['station'], self.checkpoint, trace, keep_cruise=False)
+        here = client.status()['pos']
+        if math.dist(here, plan['station']) <= .15:
+            trace.append({'event': 'already_at_map_station'})
+        elif (math.hypot(here[0] - plan['station'][0], here[2] - plan['station'][2]) <= 12
+                and abs(here[1] - plan['station'][1]) <= 1):
+            # The native air-only navigator validates collision/clearance. A
+            # nearby map window needs no ground-to-high-cruise departure.
+            reply = client.request('navigate', target=plan['station'], arrival=.15,
+                                   air_only=True, seconds=25)
+            trace.append({'event': 'nearby_map_air_navigation', 'reply': reply})
+            if reply.get('phase') != 'done':
+                write_json(directory / 'travel.json', trace)
+                raise JobBlocked('近处地图画站位未确认；不重放导航或放置')
+        else:
+            _travel(client, plan['station'], self.checkpoint, trace, keep_cruise=False)
         write_json(directory / 'travel.json', trace)
         state = self._safe_flat(client, layout)
         if math.dist(state['pos'], plan['station']) > .75:
@@ -414,9 +432,18 @@ class FlatMapBackend(Backend):
         return super().recover(inflight)
 
     def finish(self):
-        pending = [str(path) for path in self.out.glob('*-build/window-*/flat-window.json')
-                   if (record := json.loads(path.read_text())).get('pending') is not None
-                   or record.get('complete') is not True]
+        pending = []
+        for path in self.out.glob('*-build/window-*/flat-window.json'):
+            record = json.loads(path.read_text())
+            if record.get('pending') is None and record.get('complete') is True:
+                continue
+            # A stopped preflight has consumed nothing. Its journal remains
+            # unresolved, but it must not prevent ordinary healthy parking.
+            if (record.get('pending') == 'navigate'
+                    and not any((path.parent / name).exists() for name in
+                                ('mask-receipt.json', 'native-receipt.json'))):
+                continue
+            pending.append(str(path))
         if pending:
             write_json(self.out / 'flat-unconfirmed-finish.json', {'pending_windows': pending,
                        'safe_to_replan': False, 'movement_or_mask_cleanup_sent': False})

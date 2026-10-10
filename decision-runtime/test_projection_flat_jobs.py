@@ -162,6 +162,16 @@ class FlatPlanningTests(unittest.TestCase):
             actual = {(0, 64, 0): 'Block{minecraft:stone}'}
             self.assertEqual(len(next_batch(self.layout, actual, s, cell_budget=cap)['positions']), cap)
 
+    def test_one_reachable_four_by_four_window_replaces_smaller_subwindows(self):
+        layout = layout_for(model(4, 4))
+        actual = {(0, 64, 0): 'Block{minecraft:stone}'}
+        result = next_batch(layout, actual, state(64))
+        self.assertEqual(len(result['positions']), 15)
+        self.assertEqual(result['station'], [2.0, 66.75, 2.0])
+        # Far corner top face remains within ordinary survival reach.
+        eye = [2.0, 66.75 + 1.62, 2.0]
+        self.assertLess(math.dist(eye, [.5, 65, .5]), 4.5)
+
     def test_models_and_audits_must_be_complete_and_exact(self):
         for mutate in (lambda m: m['expected'].pop(), lambda m: m.update(content_hash='b' * 64),
                        lambda m: m.update(loaded_server_chunks_verified=False),
@@ -220,6 +230,37 @@ class FlatReceiptTests(unittest.TestCase):
                        lambda r: r['blocks'][0].update(state='Block{minecraft:dirt}')):
             bad = deepcopy(r); mutate(bad)
             with self.assertRaises(JobBlocked): scene(layout, bad, low, high, 'world', 1)
+
+    def test_existing_standing_map_lights_are_read_only_and_require_exact_support(self):
+        layout = layout_for(model(1, 1), {**CONFIG, 'reuse_existing_map_lights': True})
+        base = {'pos': [0, 64, 0], 'state': 'Block{minecraft:stone}',
+                'solid': True, 'fluid': False, 'block_entity': False}
+        light = {'pos': [0, 65, 0], 'state': 'Block{minecraft:torch}',
+                 'solid': False, 'passable': True, 'fluid': False, 'block_entity': False}
+        reply = {'phase': 'done', 'world_session': 'world', 'scan_cells_read': 2, 'scan_total_cells': 2,
+                 'control_revision': 1, 'scan_start_revision': 1, 'scan_end_revision': 1, 'blocks': [base, light]}
+        self.assertEqual(scene(layout, reply, [0, 64, 0], [0, 65, 0], 'world', 1), self.before)
+        self.assertFalse(layout.config['registered_lights'])
+        for mutate in (lambda r: r['blocks'].pop(0), lambda r: r.update(scan_end_revision=2),
+                       lambda r: r['blocks'][1].update(fluid=True),
+                       lambda r: r['blocks'][1].update(state='Block{minecraft:chest}')):
+            bad = deepcopy(reply); mutate(bad)
+            with self.assertRaises(JobBlocked): scene(layout, bad, [0, 64, 0], [0, 65, 0], 'world', 1)
+
+    def test_stopped_navigation_without_material_action_allows_healthy_parking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = FlatMapBackend.__new__(FlatMapBackend); backend.out = Path(tmp)
+            target = backend.out / '0001-build/window-0000'; target.mkdir(parents=True)
+            journal = target / 'flat-window.json'
+            original = {'complete': False, 'pending': 'navigate', 'world_session': 'world'}
+            journal.write_text(json.dumps(original))
+            with patch('material_jobs_backend.Backend.finish', return_value={'parked': True}) as finish:
+                self.assertEqual(backend.finish(), {'parked': True}); finish.assert_called_once()
+            self.assertEqual(json.loads(journal.read_text()), original)
+            (target / 'mask-receipt.json').write_text('{}')
+            with patch('material_jobs_backend.Backend.finish') as finish:
+                with self.assertRaises(JobBlocked): backend.finish()
+                finish.assert_not_called()
 
     def test_air_seed_needs_real_projected_state_and_exact_native_counts(self):
         p = next_batch(self.layout, {}, state(4))
