@@ -340,6 +340,33 @@ class SimulatedFlatBackend(FakeBackend):
 
 
 class FlatIntegrationTests(unittest.TestCase):
+    def test_small_plain_carried_output_is_ready_without_supplying_a_full_batch(self):
+        m=model(3,1); layout=layout_for(m)
+        backend=FlatMapBackend.__new__(FlatMapBackend)
+        backend.request={'projection_key':'ship','flat_map':{**CONFIG,'content_hash':m['content_hash']}}
+        snapshot=state(3); snapshot['projection_audit']=audit(layout,{})
+        self.assertTrue(backend.has_ready_projection_output(snapshot))
+        for change in ('reserve','metadata','wet','retained','unloaded'):
+            s=deepcopy(snapshot); backend.request['flat_map']={**CONFIG,'content_hash':m['content_hash']}
+            if change=='reserve':s['inventory'][5]['count']=2
+            elif change=='metadata':s['inventory'][5]['custom_name']='protected'
+            elif change=='wet':
+                for row in s['projection_audit']['mismatches']:row['adjacent_fluid']=True
+            elif change=='retained':backend.request['flat_map']['excluded_positions']=[list(p)for p in layout.expected]
+            else:s['projection_audit']['loaded_server_chunks_verified']=False
+            self.assertFalse(backend.has_ready_projection_output(s),change)
+
+    def test_scheduler_builds_ready_carried_output_before_advice_or_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            request={'schema':1,'id':'carried-first','mode':'projection','targets':{},'projection_key':'ship','created_at':1000,
+                     'context':{'server':'example.test','dimension':'minecraft:overworld','world_session':'world','expected_revision':1,'start_pos':[0,64,0]}}
+            backend=SimpleNamespace(has_ready_projection_output=lambda s:True,projection_jev_enabled=True,
+                                    advise_projection_supply=lambda *a:(_ for _ in ()).throw(AssertionError('must build before advice')))
+            job=MaterialJob(request,Path(tmp),backend);job.held={ITEM:3};job.snapshot=state(3)
+            with patch.object(job,'_build_batch') as build:
+                self.assertIsNone(job._projection_batch({ITEM:128}))
+            build.assert_called_once_with()
+
     def test_real_backend_build_returns_supply_without_any_placement(self):
         with tempfile.TemporaryDirectory() as tmp:
             m = model(3, 1); layout = layout_for(m)

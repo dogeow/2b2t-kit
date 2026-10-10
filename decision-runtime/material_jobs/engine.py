@@ -347,6 +347,10 @@ class MaterialJob:
         return len(rows) == 36 and sum(not row.get('count') for row in rows) <= 1
 
     def _projection_batch(self, targets):
+        carried_ready = getattr(self.backend, 'has_ready_projection_output', None)
+        if callable(carried_ready) and carried_ready(self.snapshot) is True:
+            self._build_batch()
+            return None
         ready = {item: count for item, count in targets.items() if self.held.get(item, 0)}
         if (ready and self._nearly_full()
                 or any(self.held.get(item, 0) >= min(count, self._batch_limit(item))

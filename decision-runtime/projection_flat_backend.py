@@ -13,9 +13,10 @@ from kit_runtime.journal import write_json
 from material_jobs.protocol import JobBlocked
 from material_jobs_backend import Backend
 from material_plan import inventory_counts
-from projection_flat_plan import FlatLayout, next_batch, policy, position
+from projection_flat_plan import FlatLayout, next_batch, policy, position, full_block
 from projection_patch_plan import connected_mask
 from projection_scene_lights import registered_map_light
+from projection_completion import block_state
 
 
 def scene(layout, reply, low, high, world, revision):
@@ -84,6 +85,35 @@ class FlatMapBackend(Backend):
             raise ValueError('Flat-map adapter requires an explicit projection task')
         policy(request.get('flat_map'))  # Validate before constructing the existing backend.
         super().__init__(request, automation, out, checkpoint)
+
+    def has_ready_projection_output(self, snapshot):
+        """Read-only offer: spend plain carried stock before any supply trip."""
+        audit = snapshot.get('projection_audit', {})
+        if (snapshot.get('projection_selection', {}).get('key') != self.request['projection_key']
+                or snapshot.get('projection_air_seed_protocol') != 1
+                or audit.get('placement_key') != self.request['projection_key']
+                or audit.get('loaded_chunks_verified') is not True
+                or audit.get('loaded_server_chunks_verified') is not True):
+            return False
+        rows = snapshot.get('inventory', [])
+        if len(rows) != 43 or {r.get('slot') for r in rows} != set(range(43)):
+            return False
+        usable = {r['item'] for r in rows if set(r) == {'slot','item','count','max_stack'}
+                  and r['slot'] < 36 and type(r['count']) is int
+                  and type(r['max_stack']) is int and 2 < r['count'] <= r['max_stack']}
+        excluded = policy(self.request['flat_map'])['excluded_positions']
+        for row in audit.get('mismatches', []):
+            item, _ = block_state(row.get('expected', ''))
+            if item not in usable:
+                continue
+            if (row.get('kind') == 'missing' and row.get('actual') in
+                    ('Block{minecraft:air}','Block{minecraft:cave_air}','Block{minecraft:void_air}')
+                    and all(row.get(k) is False for k in ('fluid','adjacent_fluid','block_entity'))
+                    and row.get('neighbors_loaded') is True
+                    and position(row['pos']) not in excluded
+                    and full_block(row['expected'], item)):
+                return True
+        return False
 
     def _safe_flat(self, client, layout):
         self.checkpoint()
