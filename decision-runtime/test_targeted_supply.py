@@ -38,6 +38,60 @@ class TargetedSupplyTest(unittest.TestCase):
             result = self.job.fetch(targets)
         return result, opened
 
+    def mud_context(self):
+        self.client.world='w'
+        self.job.request.update(mode='projection',projection_key='map')
+        self.job.resource_pipeline_context={'item':'minecraft:mud_bricks',
+            'target_scope':'absolute_backpack_total','world_session':'w','projection_key':'map'}
+        self.job.profile['mud_bucket_source']={'authorized':True,'approach':[43.5,63.1,879.5]}
+
+    def test_registered_mud_water_reuses_native_refill_without_chest_search(self):
+        self.mud_context()
+        old_status=self.client.status
+        self.client.status=lambda:{**old_status(),'pos':[19.5,95,852.5]}
+        receipt={'phase':'done','water_bucket':1,'new_use':True,'source_still_renewed':True}
+        with patch('material_jobs.acquisition._travel') as travel, \
+                patch('material_jobs.mud_water_supply.fill',return_value=receipt) as refill, \
+                patch('container_access.open_grounded_chest') as chest:
+            self.assertIs(receipt,self.job.fetch({'minecraft:water_bucket':1}))
+        refill.assert_called_once_with(self.job,1);chest.assert_not_called()
+        self.job.stage_near_base.assert_not_called();self.job.prepare_travel.assert_called_once()
+        self.assertEqual([43.5,95,879.5],travel.call_args.args[1])
+        self.assertTrue(travel.call_args.kwargs['keep_cruise'])
+        self.assertTrue((self.root/'registered-mud-water-refill.json').exists())
+
+    def test_refill_unknown_is_not_followed_by_warehouse_fallback(self):
+        self.mud_context()
+        old_status=self.client.status
+        self.client.status=lambda:{**old_status(),'pos':[19.5,95,852.5]}
+        with patch('material_jobs.acquisition._travel'), \
+                patch('material_jobs.mud_water_supply.fill',side_effect=JobBlocked('unknown fill')) as refill, \
+                patch('container_access.open_grounded_chest') as chest:
+            with self.assertRaisesRegex(JobBlocked,'unknown fill'):
+                self.job.fetch({'minecraft:water_bucket':1})
+        refill.assert_called_once();chest.assert_not_called()
+        self.assertFalse((self.root/'registered-mud-water-refill.json').exists())
+
+    def test_same_mud_production_reuses_verified_empty_source_attempt_without_stock_credit(self):
+        self.mud_context();self.job.profile['mud_station']={'authorized':True}
+        with patch('container_access.open_grounded_chest',return_value=self.client.status()) as opened:
+            first=self.job.fetch({'minecraft:mud_bricks':4})
+            self.assertEqual('waiting',first['phase']);self.assertEqual(2,opened.call_count)
+            self.job.prepare_travel.reset_mock()
+            second=self.job.fetch({'minecraft:mud_bricks':4})
+            self.assertEqual('USE_REGISTERED_MUD_PRODUCTION',second['code'])
+            self.assertEqual({'minecraft:mud_bricks':4},second['missing'])
+            self.assertEqual(2,opened.call_count);self.job.prepare_travel.assert_not_called()
+            self.assertEqual(0,self.job.stock().get('minecraft:mud_bricks',0))
+
+    def test_changed_depot_registration_does_not_reuse_mud_attempt(self):
+        self.mud_context();self.job.profile['mud_station']={'authorized':True}
+        with patch('container_access.open_grounded_chest',return_value=self.client.status()) as opened:
+            self.job.fetch({'minecraft:mud':4})
+            self.job.profile['depots'].append([3,64,3])
+            self.job.fetch({'minecraft:mud':4})
+        self.assertEqual(5,opened.call_count)
+
     def fill(self, first=28, last=62):
         for slot in range(first,last+1):
             self.client.put(slot,'minecraft:dirt',64)

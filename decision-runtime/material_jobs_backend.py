@@ -621,6 +621,42 @@ class Backend:
         with self.action('fetch') as (c, out):
             if all(self.stock().get(i, 0) >= n for i, n in targets.items()):
                 return {'phase': 'done', 'detail': '背包已有所需材料'}
+            context = getattr(self, 'resource_pipeline_context', None)
+            mud_context = (isinstance(context, dict)
+                           and context.get('item') in ('minecraft:mud','minecraft:packed_mud','minecraft:mud_bricks')
+                           and context.get('target_scope') == 'absolute_backpack_total'
+                           and context.get('world_session') == c.world
+                           and context.get('projection_key') == self.request.get('projection_key'))
+            source = self.profile.get('mud_bucket_source') or {}
+            mud_item = next(iter(targets)) if len(targets)==1 else None
+            mud_production = (mud_context and mud_item in
+                              ('minecraft:mud','minecraft:packed_mud','minecraft:mud_bricks')
+                              and self.profile.get('mud_station',{}).get('authorized') is True)
+            attempt_key = (c.world, mud_item, tuple(tuple(p) for p in self.profile['depots'])) if mud_production else None
+            previous = getattr(self,'empty_mud_supply_attempts',{}).get(attempt_key) if mud_production else None
+            if previous is not None:
+                return {'phase':'waiting','code':'USE_REGISTERED_MUD_PRODUCTION',
+                        'detail':'本任务已核对该泥料的登记仓库；继续工位生产，不重复取料尝试',
+                        'missing':{mud_item:targets[mud_item]-self.stock().get(mud_item,0)},
+                        'prior_source_attempt':previous,'warehouse_counts_not_inventory_credit':True}
+            if (mud_context and targets == {'minecraft:water_bucket':1}
+                    and source.get('authorized') is True):
+                from material_jobs.acquisition import _travel
+                from material_jobs.mud_water_supply import fill
+                self.prepare_travel()
+                approach = source.get('approach')
+                if (not isinstance(approach,list) or len(approach)!=3
+                        or any(type(v) not in (int,float) or not math.isfinite(v) for v in approach)):
+                    raise JobBlocked('已登记泥水源的接近点不完整，保留现场')
+                target = [approach[0], max(c.status()['pos'][1],approach[1]+24), approach[2]]
+                trace = []
+                try:
+                    _travel(c,target,self.checkpoint,trace,keep_cruise=True)
+                    receipt = fill(self,1)
+                    write_json(out/'registered-mud-water-refill.json',receipt)
+                    return receipt
+                finally:
+                    write_json(out/'registered-mud-water-travel.json',trace)
             self.prepare_travel()
             self.stage_near_base(self.profile['depots'])
             # Resource pipelines fetch their explicit ingredient targets on the
@@ -697,6 +733,7 @@ class Backend:
                     return fresh, stored, sizes
 
                 initial, stored, sizes = observed()
+                entry['observed_target_counts'] = {item:stored.get(item,0) for item in targets}
                 selected = supply_targets(initial, missing, stored, reserve_empty=1, stack_sizes=sizes)
                 for item, planned_target in selected.items():
                     fresh, source, sizes = observed()
@@ -726,8 +763,15 @@ class Backend:
             all_unavailable = bool(unavailable) and len(unavailable) == len(self.profile['depots'])
             detail = ('登记仓库均已失效，现场扫描已记录' if all_unavailable else
                       '仓库现货已核对，部分登记箱失效' if unavailable else '仓库现货已核对')
-            return {'phase':'waiting' if missing else 'done', 'detail':detail,
-                    'missing':missing, 'unavailable_sources':unavailable}
+            result = {'phase':'waiting' if missing else 'done', 'detail':detail,
+                      'missing':missing, 'unavailable_sources':unavailable}
+            if (mud_production and mud_item in missing and not unavailable
+                    and len(visited)==len(self.profile['depots'])
+                    and all(entry.get('observed_target_counts',{}).get(mud_item)==0 for entry in visited)):
+                if not hasattr(self,'empty_mud_supply_attempts'):
+                    self.empty_mud_supply_attempts={}
+                self.empty_mud_supply_attempts[attempt_key]=str((out/'sources.json').resolve())
+            return result
 
     def finished_supply_pass(self,c,out,targets):
         """Once per observed projection deficit, fill with real finished stock.
