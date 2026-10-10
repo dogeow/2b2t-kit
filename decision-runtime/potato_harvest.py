@@ -226,7 +226,7 @@ def _registered_wheat(c, request, journal, known_replant=None, *, bind_active=Tr
 def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
         bonemeal_budget=16, max_bonemeal_per_cell=4, pickup_seconds=6,
         pickup=None, plant_access=None, sleep=time.sleep, monotonic=time.monotonic, _recover_only=False,
-        allow_unrecovered_seed_loss=False):
+        allow_unrecovered_seed_loss=False,allow_unrecovered_grain_loss=False):
     """Grow optionally, harvest only fresh age=7, prove pickup, then reseed once.
 
     request['bonemeal'] must be True to use bone meal. Journal reuse continues
@@ -236,6 +236,7 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
     """
     layout = plan(request)
     if type(allow_unrecovered_seed_loss)is not bool:raise ValueError('Seed loss restoration requires explicit boolean')
+    if type(allow_unrecovered_grain_loss)is not bool:raise ValueError('Grain loss restoration requires explicit boolean')
     descriptor = crop_descriptor(request)
     wheat = descriptor.name == 'wheat'
     seed, produce = descriptor.item, descriptor.harvest_item
@@ -503,7 +504,7 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
                                            'actual_gains':gains, 'remaining_count':remaining_count,
                                            'observed_drop_totals':observed_totals, 'pickup_attempts':attempts}
                         save()
-                    seed_loss=harvest.get('unrecovered_seed_count',0)
+                    seed_loss=harvest.get('unrecovered_seed_count',0);grain_loss=harvest.get('unrecovered_grain_count',0)
                     ids={d['uuid']for d in owned.values()}
                     absent=not any(e.get('uuid')in ids for e in after.get('entities',[]))
                     no_other_crop_drop=not any(e.get('type')=='minecraft:item'
@@ -536,8 +537,27 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
                                                    unrecovered_seed_frames=seed_loss_frames,
                                                    seed_pickup_credit=gains[seed]);save()
                     elif not missing_seed:seed_loss_frames=[]
-                    reconciled = (consistent and gains[produce] > 0 and not potatoes
-                                  and all(gains[item]+(seed_loss if item==seed else 0)==observed_totals[item]
+                    missing_grain=(allow_unrecovered_grain_loss and not _recover_only and consistent and not potatoes
+                        and observed_totals[produce]==1 and gains[produce]==0 and gains[seed]==observed_totals[seed]
+                        and _counts(after)[seed]>=5 and absent and no_other_crop_drop
+                        and math.dist(after['pos'],[pos[0]+.5,pos[1]+1.6,pos[2]+.5])<=6
+                        and all('returned'in a or a.get('stage')=='refused_before_navigation'for a in attempts.values())
+                        and any(d['item']==produce and d['count']==1 for d in owned.values()))
+                    if not grain_loss and missing_grain:
+                        grain_frames=harvest.get('unrecovered_grain_frames',[])
+                        if not grain_frames or after['time']>grain_frames[-1]['time']:
+                            grain_frames.append({'time':after['time'],'counts':dict(_counts(after))})
+                        harvest={**harvest,'unrecovered_grain_frames':grain_frames}
+                        if len(grain_frames)>=2 and grain_frames[-1]['counts']==grain_frames[-2]['counts']:
+                            grain_loss=1;harvest['unrecovered_grain_count']=1
+                            book.setdefault('unrecovered_grain_history',[]).append({'pos':pos[:],'count':1,
+                                'original_known_loot':list(owned.values()),'original_attempts':attempts,
+                                'grain_inventory_credit':0,'frames':grain_frames[-2:]})
+                            book['pending'].update(unrecovered_grain_count=1,unrecovered_grain_frames=grain_frames);save()
+                    elif not grain_loss:
+                        harvest.pop('unrecovered_grain_frames',None)
+                    reconciled = (consistent and (gains[produce]>0 or grain_loss==1) and not potatoes
+                                  and all(gains[item]+(seed_loss if item==seed else grain_loss)==observed_totals[item]
                                           for item in loot_items))
                     signature = tuple(sorted(gains.items()))
                 else:

@@ -107,6 +107,7 @@ def run(backend,target,out,checkpoint):
             args=(c,{**request,'cells':cells},harvest_out,checkpoint)
             options={'max_cells':4,'bonemeal_budget':0,
                      'allow_unrecovered_seed_loss':True,
+                     'allow_unrecovered_grain_loss':True,
                      'pickup':make_pickup(center,radius=layout['radius'],checkpoint=checkpoint,crop='wheat'),
                      'plant_access':make_plant_access(center,radius=layout['radius'],checkpoint=checkpoint)}
             result=harvest(*args,**options)
@@ -127,7 +128,7 @@ def run(backend,target,out,checkpoint):
             if result.get('phase')!='done' or pending or not books:
                 return wait('WAIT_RECONCILE','Original registered wheat harvest needs reconciliation',receipt=result)
             after=inventory_counts(c.status())['minecraft:wheat']
-            if after<=before or not result.get('harvested_replanted'):
+            if after<before or not result.get('harvested_replanted'):
                 return wait('WAIT_RECONCILE','Registered wheat receipt lacks a fresh carried gain and restored cell')
             return {'phase':'done' if after>=target else 'waiting','code':'SOURCE_BATCH',
                     'before':before,'after':after,'gained':after-before,'journal':str(home),

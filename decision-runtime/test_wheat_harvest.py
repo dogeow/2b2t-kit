@@ -334,6 +334,19 @@ class WheatHarvestTests(unittest.TestCase):
         self.assertEqual('WAIT_LOOT',result['code']);self.assertEqual(0,self.client.plant_calls)
         self.assertNotIn('unrecovered_seed_history',self.book(result))
 
+    def test_explicit_known_missing_grain_restores_field_but_yields_zero_grain_credit(self):
+        self.client.pickup_items={WHEAT_SEEDS};reads=[0]
+        def gone(c):
+            if any(e['stack']['item']==WHEAT for e in c.entities):
+                reads[0]+=1
+                if reads[0]>=3:c.entities=[e for e in c.entities if e['stack']['item']!=WHEAT]
+        self.client.on_scan=gone
+        result=self.execute({**REQUEST,'cells':[[1,63,0]]},allow_unrecovered_grain_loss=True)
+        self.assertEqual('done',result['phase'],result);self.assertEqual(0,result['wheat_gain'])
+        self.assertEqual(1,self.client.plant_calls)
+        history=self.book(result)['unrecovered_grain_history']
+        self.assertEqual((1,0),(history[0]['count'],history[0]['grain_inventory_credit']))
+
     def test_unknown_or_preexisting_drops_block_without_becoming_owned_pickups(self):
         self.client.entities=[{'uuid':'old-seeds','id':999,'type':'minecraft:item','pos':[1.5,64,.5],
                                'stack':{'item':WHEAT_SEEDS,'count':2}}]
