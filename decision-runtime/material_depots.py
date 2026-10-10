@@ -51,6 +51,11 @@ def exchange(client,chests,deposit=None,withdraw=None):
     deposit=deposit or {};withdraw=withdraw or {}
     if set(deposit)&set(withdraw):raise ValueError('A material cannot be deposited and withdrawn in the same exchange')
     if any(not isinstance(v,int) or v<0 for v in (*deposit.values(),*withdraw.values())):raise ValueError('Counts must be nonnegative')
+    if deposit and not withdraw:
+        from material_storage_index import select_destinations
+        route=select_destinations(client,chests,deposit)
+        write_json(client.out/('depot-deposit-routing-'+str(time.time_ns())+'.json'),route)
+        chests=route['positions']
     visited=[]
     for pos in chests:
         before=client.status();to_store,to_fetch=unmet(before,deposit,withdraw)

@@ -90,6 +90,25 @@ def records(client,state=None):
     return result
 
 
+def select_destinations(client,positions,deposit):
+    """Prefer recorded receiving space; counts remain routing hints only."""
+    state=client.status();held=_counts(state.get('inventory',[]))or{}
+    wanted={i:held.get(i,0)-n for i,n in deposit.items()if held.get(i,0)>n}
+    saved=records(client,state);known=[];unknown=[];full=[]
+    for pos in positions:
+        record=next((r for r in saved if list(pos)in r.get('aliases',[r['pos']])),None)
+        if record and record.get('missing'):full.append(list(pos));continue
+        rows=record.get('slots')if record and not record.get('dirty')else None
+        if not isinstance(rows,list)or len(rows)not in (27,54):unknown.append(list(pos));continue
+        capacity={item:sum(64 if not r.get('count',0)else max(0,64-r['count'])
+                         if r.get('item')==item else 0 for r in rows)for item in wanted}
+        if any(capacity.values()):known.append((sum(min(wanted[i],capacity[i])for i in wanted),list(pos)))
+        else:full.append(list(pos))
+    known.sort(key=lambda r:-r[0])
+    return {'positions':[p for _,p in known]+unknown,'skipped_known_full':full,
+            'source':'persistent_local_storage','inventory_credit':0}
+
+
 def select_sources(client,positions,targets,*,ender=False,reserve_empty=None):
     """Known useful sources first; known irrelevant sources are never reopened."""
     state=client.status();saved=records(client,state);wanted=set(targets);ranked=[];unknown=[];skipped=[]

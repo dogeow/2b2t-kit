@@ -5,6 +5,22 @@ from material_storage_index import select_sources,bind_source,remember_current,i
 
 
 class Tests(unittest.TestCase):
+    def test_deposit_routing_prefers_saved_space_and_skips_known_full_boxes(self):
+        from unittest.mock import patch
+        from material_storage_index import select_destinations
+        self.state['inventory']=[{'slot':0,'item':'minecraft:wheat_seeds','count':196}]
+        full=[{'item':'minecraft:stone','count':64,'max_stack':64}for _ in range(27)]
+        room=copy.deepcopy(full)
+        for r in room[:3]:r.update(item='minecraft:air',count=0)
+        saved=[{'pos':self.a,'aliases':[self.a],'slots':full},
+               {'pos':self.b,'aliases':[self.b],'slots':room}]
+        unknown=[9,64,1]
+        with patch('material_storage_index.records',return_value=saved):
+            result=select_destinations(self.c,[self.a,unknown,self.b],{'minecraft:wheat_seeds':32})
+        self.assertEqual([self.b,unknown],result['positions'])
+        self.assertEqual([self.a],result['skipped_known_full'])
+        self.assertEqual(0,result['inventory_credit'])
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.base=Path(self.tmp.name)/'config';self.root=self.base/'twob2tkit/automation';self.root.mkdir(parents=True)

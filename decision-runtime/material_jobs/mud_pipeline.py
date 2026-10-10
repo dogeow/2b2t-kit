@@ -72,6 +72,18 @@ def run(c,profile,item,target_count,out,checkpoint):
     if any(book.get(k)!=v for k,v in scope.items()):raise JobPaused('Mud journal scope changed')
     if book.get('pending'):
         return {'phase':'waiting','code':'WAIT_RECONCILE','detail':'Previous mud action unknown; no replay','journal':str(path)}
+    prepare=getattr(backend,'prepare_mud_inventory',None)
+    if (callable(prepare) and inventory_counts(c.status()).get(item,0)<target_count
+            and book.get('owned_cell')is False and book.get('derived_water_slot')is None):
+        book['pending']={'kind':'inventory_staging','before':dict(inventory_counts(c.status()))}
+        write_json(path,book);checkpoint();prepared=prepare()
+        if not isinstance(prepared,dict)or prepared.get('phase')not in ('done','waiting'):
+            raise JobBlocked('Mud inventory staging result unknown; preserve journal')
+        book['receipts'].append({'kind':'inventory_staging','receipt':prepared,
+                                 'after':dict(inventory_counts(c.status()))})
+        book['pending']=None;write_json(path,book)
+        if prepared['phase']!='done':
+            return {**prepared,'target_scope':TARGET_SCOPE,'journal':str(path),'safe_to_leave':True}
     cell_budget=16 if backend.request.get('mode')=='projection' else 4
     action_budget=256 if cell_budget==16 else 64
     catalog=RecipeCatalog(profile['recipe_jar']);actions=0;fetched=set();new_mud=0

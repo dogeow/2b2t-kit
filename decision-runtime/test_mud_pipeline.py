@@ -158,6 +158,16 @@ class MudPipelineTest(unittest.TestCase):
     def test_current_finished_stock_is_absolute_not_added_target(self):
         self.c.add('minecraft:mud_bricks',4)
         self.assertEqual(4,self.go()['after']);self.assertEqual([],self.b.calls)
+    def test_inventory_staging_precedes_mud_work_and_keeps_unknown_receipt(self):
+        self.b.prepare_mud_inventory=lambda:{'phase':'waiting','code':'WAIT_WORKSPACE'}
+        result=self.go()
+        self.assertEqual('WAIT_WORKSPACE',result['code']);self.assertTrue(result['safe_to_leave'])
+        self.assertFalse(any(op in ('mine_block','interact')for op,_ in self.c.calls))
+        book=json.loads((self.root/'job/mud-pipeline.json').read_text());self.assertIsNone(book['pending'])
+        self.b.prepare_mud_inventory=lambda:(_ for _ in ()).throw(JobPaused('unknown deposit'))
+        with self.assertRaises(JobPaused):self.go()
+        book=json.loads((self.root/'job/mud-pipeline.json').read_text());self.assertEqual('inventory_staging',book['pending']['kind'])
+        self.assertEqual('WAIT_RECONCILE',self.go()['code'])
     def test_one_dirt_source_trip_supplies_the_existing_four_cell_batch(self):
         self.c.add('minecraft:dirt',-4)
         def acquire(item,target):

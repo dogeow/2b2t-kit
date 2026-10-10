@@ -1633,6 +1633,35 @@ class BackendTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError)as raised:self.job.ensure_client()
             self.assertNotIsInstance(raised.exception,JobPaused);self.assertIsNone(self.job.client)
 
+    def test_registered_mud_staging_preserves_32_seeds_and_frees_real_slots(self):
+        self.job.profile={'depots':[[5,64,1]],'mud_inventory_staging':{
+            'authorized':True,'keep_wheat_seeds':32,'minimum_empty_slots':3}}
+        bag=inventory_rows({'minecraft:wheat_seeds':196,'minecraft:mud':1})
+        for row in bag:
+            if not row['count']:row.update(item='minecraft:stone',count=64,max_stack=64)
+        self.current['inventory']=bag
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
+        self.job.prepare_travel=Mock()
+        def exchange(c,positions,deposit):
+            self.assertEqual({'minecraft:wheat_seeds':32},deposit)
+            for row in bag[1:4]:row.update(item='minecraft:air',count=0)
+            bag[0]['count']=32
+            return {'complete':True,'remaining_deposit':{},'visited':[{'pos':[5,64,1]}]}
+        with patch('material_storage_index.select_destinations',return_value={'positions':[[5,64,1]]}), \
+                patch('material_depots.exchange',side_effect=exchange):
+            result=self.job.prepare_mud_inventory()
+        self.assertEqual(('done',164,3),(result['phase'],result['stored'],result['free_slots']))
+        self.assertEqual(1,backend.inventory_counts(self.current)['minecraft:mud'])
+        self.assertEqual(32,backend.inventory_counts(self.current)['minecraft:wheat_seeds'])
+        self.assertEqual(0,result['warehouse_inventory_credit'])
+
+    def test_unregistered_or_invalid_mud_staging_does_not_store_items(self):
+        self.job.profile={}
+        self.assertEqual({'phase':'done','prepared':False},self.job.prepare_mud_inventory())
+        self.job.profile={'mud_inventory_staging':{'authorized':True,'keep_wheat_seeds':0,'minimum_empty_slots':3}}
+        with self.assertRaises(JobBlocked):self.job.prepare_mud_inventory()
+        self.client.checked.assert_not_called()
+
     def test_single_dirt_input_releases_its_slot_before_first_mud_output(self):
         from material_storage_index import select_sources
         config=Path(self.temp.name)/'config';root=config/'twob2tkit/automation';root.mkdir(parents=True)

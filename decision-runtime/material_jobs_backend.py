@@ -939,6 +939,39 @@ class Backend:
                 return 0
         return 1
 
+    def prepare_mud_inventory(self):
+        """Use an explicitly registered seed reserve, never discard or stash gear."""
+        cfg=self.profile.get('mud_inventory_staging')or{}
+        if cfg.get('authorized')is not True:return {'phase':'done','prepared':False}
+        keep,minimum=cfg.get('keep_wheat_seeds'),cfg.get('minimum_empty_slots')
+        if type(keep)is not int or not 32<=keep<=64 or type(minimum)is not int or not 2<=minimum<=4:
+            raise JobBlocked('泥流水线背包整理登记无效；不存放物品')
+        c=self.ensure_client();state=c.status()
+        rows=[r for r in state.get('inventory',[])if 0<=r.get('slot',-1)<36]
+        if len(rows)!=36 or len({r['slot']for r in rows})!=36:
+            raise JobBlocked('泥流水线工作槽未完整确认')
+        free=sum(not r.get('count',0)for r in rows)
+        if free>=minimum:return {'phase':'done','prepared':True,'free_slots':free}
+        held=inventory_counts(state).get('minecraft:wheat_seeds',0)
+        if held<=keep:
+            return {'phase':'waiting','code':'WAIT_WORKSPACE','detail':'制泥需要保留工作槽，当前没有登记的多余种子可存放'}
+        from material_storage_index import select_destinations
+        from material_depots import exchange
+        route=select_destinations(c,self.profile['depots'],{'minecraft:wheat_seeds':keep})
+        if not route['positions']:
+            return {'phase':'waiting','code':'WAIT_WORKSPACE','detail':'已记录仓库没有种子存放空间'}
+        with self.action('mud_inventory_staging')as(c,out):
+            write_json(out/'local-storage-deposit-search.json',route)
+            self.prepare_travel();self.stage_near_base(route['positions'])
+            result=exchange(c,route['positions'],deposit={'minecraft:wheat_seeds':keep})
+            current=c.status();actual=inventory_counts(current).get('minecraft:wheat_seeds',0)
+            if actual<keep:raise JobBlocked('种子预留未确认；保留原存放记录')
+            free=sum(not r.get('count',0)for r in current['inventory']if r.get('slot',99)<36)
+            reply={'phase':'done'if free>=minimum else 'waiting','code':'WORKSPACE_READY'if free>=minimum else 'WAIT_WORKSPACE',
+                   'seed_before':held,'seed_after':actual,'stored':held-actual,'free_slots':free,'exchange':result,
+                   'minimum_empty_slots':minimum,'preserved_seed_reserve':keep,'warehouse_inventory_credit':0}
+            write_json(out/'result.json',reply);return reply
+
     def fetch_packed(self, targets):
         if not self.profile.get('ender_chest') or not self.profile.get('shulker_pad'):
             return
