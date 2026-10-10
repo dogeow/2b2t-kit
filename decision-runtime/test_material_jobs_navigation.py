@@ -8,7 +8,8 @@ from types import SimpleNamespace
 
 from material_jobs.navigation import (_below_vertical_start, leave_quarry,
                                       quarry_exit_candidates, shaft_path,
-                                      settled_state, leave_projection, lift_for_travel)
+                                      settled_state, leave_projection, lift_for_travel,
+                                      _escape_local_canopy)
 from material_jobs.protocol import JobBlocked
 
 
@@ -114,9 +115,19 @@ class TravelTakeoffTest(unittest.TestCase):
         air={'pos':[10.5,88.8,20.5],'flight':True,'on_ground':False}
         client=SimpleNamespace(checked=Mock())
         with patch('material_jobs.navigation.settled_state',return_value=air), \
-                patch('material_jobs.navigation.local_park') as park:
+                patch('material_jobs.navigation.local_park',return_value=[10.5,89.8,20.5]) as park:
             self.assertIs(air,lift_for_travel(client))
-        park.assert_not_called();client.checked.assert_not_called()
+        park.assert_called_once_with(client);client.checked.assert_not_called()
+
+    def test_low_flight_does_not_bypass_verified_canopy_exit(self):
+        low={'pos':[10.5,63.,20.5],'flight':True,'on_ground':False}
+        high={'pos':[10.5,88.,20.5],'flight':True,'on_ground':False}
+        client=SimpleNamespace(checked=Mock())
+        with patch('material_jobs.navigation.settled_state',side_effect=[low,high]), \
+                patch('material_jobs.navigation.local_park',return_value=[10.5,88.,20.5]) as park:
+            self.assertIs(high,lift_for_travel(client))
+        park.assert_called_once_with(client)
+        self.assertEqual([10.5,88.,20.5],client.checked.call_args.kwargs['target'])
 
     def test_blocked_vertical_column_sends_no_takeoff(self):
         client=SimpleNamespace(checked=Mock())
@@ -124,6 +135,40 @@ class TravelTakeoffTest(unittest.TestCase):
                 patch('material_jobs.navigation.local_park',side_effect=JobBlocked('roof blocked')):
             with self.assertRaisesRegex(JobBlocked,'roof blocked'):lift_for_travel(client)
         client.checked.assert_not_called()
+
+
+class GenericCanopyExitTest(unittest.TestCase):
+    def client(self,root,phase='done',wet=False):
+        position=[.5,64.,.5]
+        floors=[{'pos':[x,63,z],'solid':True,'passable':False,'fluid':wet,'block_entity':False}
+                for x in range(-2,3) for z in range(-2,3)]
+        roof={'pos':[0,66,0],'solid':True,'passable':False,'fluid':False,'block_entity':False}
+        c=SimpleNamespace(out=root,world='w',pos=position)
+        c.status=lambda:{'pos':list(c.pos),'world_session':'w'}
+        c.request=Mock(return_value={'phase':phase,'world_session':'w','blocks':floors+[roof]})
+        def checked(op,**kw):
+            self.assertEqual('walk',op)
+            c.pos=list(kw['target']);return {'phase':'done'}
+        c.checked=Mock(side_effect=checked)
+        return c
+
+    def test_general_exit_walks_to_open_column_without_wood_job_or_fixed_high_flight(self):
+        with tempfile.TemporaryDirectory() as d:
+            c=self.client(Path(d))
+            with patch('material_jobs.navigation.settled_state',side_effect=lambda *_args,**_kw:c.status()):
+                result=_escape_local_canopy(c)
+            self.assertNotEqual([.5,64.,.5],result['pos'])
+            self.assertEqual(64.,result['pos'][1]);self.assertTrue(c.checked.called)
+            book=json.loads(next(Path(d).glob('canopy-exit-*.json')).read_text())
+            self.assertFalse(book['parking_confirmed'])
+
+    def test_partial_scan_or_wet_support_never_moves(self):
+        for phase,wet in [('error',False),('done',True)]:
+            with self.subTest(phase=phase,wet=wet),tempfile.TemporaryDirectory() as d:
+                c=self.client(Path(d),phase,wet)
+                with patch('material_jobs.navigation.settled_state',side_effect=lambda *_args,**_kw:c.status()):
+                    with self.assertRaises(JobBlocked):_escape_local_canopy(c)
+                c.checked.assert_not_called()
 
 class QuarryExitTest(unittest.TestCase):
 

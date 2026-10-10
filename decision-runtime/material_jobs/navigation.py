@@ -288,20 +288,34 @@ def leave_projection(client):
 
 def _escape_local_canopy(client):
     """Follow a scanned local ground corridor to an open sky column when a tree blocks ascent."""
-    from types import SimpleNamespace
-    from pathlib import Path
-    from wood_expedition import Expedition
+    from wood_expedition import sky_path
     state=settled_state(client)
-    explorer=object.__new__(Expedition)
-    explorer.c=client;explorer.home=list(state['pos']);explorer.path=[]
-    explorer.a=SimpleNamespace(radius=32)
-    trace=Path(getattr(client,'out',Path('/private/tmp')))/'canopy-exit'
-    trace.mkdir(parents=True,exist_ok=True);explorer.out=trace;explorer.result={}
-    Expedition.sky_exit(explorer)
-    state=settled_state(client)
-    if state['pos'][1]<90:
-        raise RuntimeError('Canopy exit reached ground but did not confirm a high safe park')
-    return state
+    x,y,z=map(math.floor,state['pos'])
+    reply=client.request('scan',min=[x-12,y-4,z-12],max=[x+12,y+39,z+12],details=True)
+    if (reply.get('phase') not in (None,'done') or reply.get('world_session')!=client.world
+            or not isinstance(reply.get('blocks'),list)):
+        raise JobBlocked('树冠退出扫描尚未完整确认')
+    # Reuse the surveyed ground planner, without constructing a wood job or
+    # borrowing its inventory target/route journal. Unknown or wet supports
+    # cannot become walking ground.
+    rows=[{**row,'solid':row.get('solid') is True and row.get('fluid') is False
+                         and row.get('block_entity') is False,
+           'passable':row.get('passable') is True and row.get('fluid') is False}
+          for row in reply['blocks']]
+    path=sky_path(rows,state['pos'])
+    if not path:raise JobBlocked('树冠附近没有已核验的地面出口')
+    for point in path:
+        current=settled_state(client)
+        if math.dist(current['pos'],point)<.25:continue
+        client.checked('walk',target=point,arrival=.2,seconds=12)
+        settled_state(client,point,.4)
+    actual=settled_state(client)
+    write_json(client.out/('canopy-exit-%d.json'%time.time_ns()),
+               {'world_session':client.world,'from':state['pos'],'waypoints':path,
+                'actual':actual['pos'],'parking_confirmed':False})
+    # local_park performs the full-height column proof at this actual exit,
+    # then chooses the normal local height instead of a fixed Y=140 flight.
+    return actual
 
 
 def local_park(client):
@@ -338,10 +352,11 @@ def lift_for_travel(client):
     padded voxel corridor deliberately treats the chest block as an obstacle.
     Do the native collision-aware vertical takeoff before that corridor check.
     """
-    state = settled_state(client)
-    if state.get('flight') is True and not state.get('on_ground'):
-        return state
     point = local_park(client)
+    state = settled_state(client)
+    if (state.get('flight') is True and not state.get('on_ground')
+            and math.dist(state['pos'],point)<=1.000001):
+        return state
     client.checked('navigate',target=point,arrival=.25,air_only=True,seconds=90)
     return settled_state(client,point,.6)
 

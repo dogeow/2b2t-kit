@@ -645,15 +645,20 @@ class Backend:
                 from material_jobs.mud_water_supply import fill
                 from material_jobs.navigation import lift_for_travel
                 self.prepare_travel()
-                lift_for_travel(c)
                 approach = source.get('approach')
                 if (not isinstance(approach,list) or len(approach)!=3
                         or any(type(v) not in (int,float) or not math.isfinite(v) for v in approach)):
                     raise JobBlocked('已登记泥水源的接近点不完整，保留现场')
-                target = [approach[0], max(c.status()['pos'][1],approach[1]+24), approach[2]]
                 trace = []
                 try:
-                    _travel(c,target,self.checkpoint,trace,keep_cruise=True)
+                    if math.dist(c.status()['pos'],approach)>6:
+                        lift_for_travel(c)
+                        target = [approach[0], max(c.status()['pos'][1],approach[1]+24), approach[2]]
+                        _travel(c,target,self.checkpoint,trace,keep_cruise=True)
+                    else:
+                        trace.append({'event':'near_registered_water_source',
+                                      'actual':c.status()['pos'],'approach':approach,
+                                      'placement_credit':0})
                     receipt = fill(self,1)
                     write_json(out/'registered-mud-water-refill.json',receipt)
                     return receipt

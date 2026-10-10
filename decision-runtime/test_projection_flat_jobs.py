@@ -415,7 +415,8 @@ class FlatIntegrationTests(unittest.TestCase):
             backend._safe_flat = lambda c,l: current
             def travel(c,target,checkpoint,trace,*,keep_cruise):
                 self.assertTrue(keep_cruise);current['pos']=target;calls.append('return_to_model')
-            with patch('material_jobs.acquisition._travel',side_effect=travel):
+            with patch('material_jobs.acquisition._travel',side_effect=travel), \
+                    patch('material_jobs.navigation.lift_for_travel',return_value=current):
                 result=backend.build('ship')
             self.assertEqual(result['phase'],'waiting')
             self.assertEqual(calls,['return_to_model','projection_model'])
@@ -445,7 +446,8 @@ class FlatIntegrationTests(unittest.TestCase):
                 self.assertTrue(keep_cruise)
                 self.assertLessEqual(math.hypot(current['pos'][0]-target[0],current['pos'][2]-target[2]),256.00001)
                 current['pos']=target;calls.append('return_to_model')
-            with patch('material_jobs.acquisition._travel',side_effect=travel):
+            with patch('material_jobs.acquisition._travel',side_effect=travel), \
+                    patch('material_jobs.navigation.lift_for_travel',return_value=current):
                 result=backend.build('ship')
             self.assertEqual(result['phase'],'waiting')
             self.assertEqual(calls,['return_to_model','return_to_model','return_to_model','projection_model'])
@@ -457,7 +459,8 @@ class FlatIntegrationTests(unittest.TestCase):
             backend = FlatMapBackend.__new__(FlatMapBackend)
             backend.checkpoint = lambda: None
             client = SimpleNamespace(status=lambda:current)
-            with patch('material_jobs.acquisition._travel', side_effect=RuntimeError('native outcome unknown')) as travel:
+            with patch('material_jobs.acquisition._travel', side_effect=RuntimeError('native outcome unknown')) as travel, \
+                    patch('material_jobs.navigation.lift_for_travel',return_value=current):
                 with self.assertRaisesRegex(RuntimeError, 'outcome unknown'):
                     backend.travel_to_projection(client,[1.5,100,.5],'ship',out)
             travel.assert_called_once()
