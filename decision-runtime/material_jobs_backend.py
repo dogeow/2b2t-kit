@@ -399,6 +399,8 @@ class Backend:
         state = read_fresh(self.root)
         require_unlocked(self.root, state)
         require_scope(state, self.request['context'])
+        if state.get('screen'):
+            raise JobPaused('玩家正在使用游戏界面，等待关闭并稳定停住后恢复')
         self.sequence += 1
         directory = self.out / ('control-%03d' % self.sequence)
         # Choose a nearby high point only after reading the actual column. The
@@ -413,6 +415,14 @@ class Backend:
                                record_experience=True, experience_state=self.experience_state(),
                                remote_finish='guard', park_target=park)
             self.client = client
+        except RuntimeError as error:
+            if str(error)=='Material session cannot acquire control':
+                current=read_fresh(self.root)
+                if (current.get('world_session')==state.get('world_session')
+                        and not current.get('supervision_lease')
+                        and (current.get('screen') or current.get('manual_movement'))):
+                    raise JobPaused('接管前玩家打开界面或移动，未取得控制，等待稳定后恢复') from error
+            raise
         finally:
             self.busy = previous
         return client

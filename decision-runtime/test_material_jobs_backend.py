@@ -1608,4 +1608,29 @@ class BackendTest(unittest.TestCase):
         lift.assert_not_called();travel.assert_not_called()
 
 
+    def test_interface_before_control_creation_waits_without_starting_a_controller(self):
+        self.job.client=None;self.current.update(screen='InventoryScreen',supervision_lease=None)
+        with patch.object(backend,'read_fresh',return_value=self.current),patch.object(backend,'JobClient')as controller:
+            with self.assertRaises(JobPaused):self.job.ensure_client()
+        controller.assert_not_called();self.assertIsNone(self.job.client)
+
+    def test_interface_race_at_exact_pre_control_native_rejection_is_a_pause(self):
+        self.job.client=None;self.job.sequence=0;self.job.profile={};self.job.experience_state=Mock(return_value={})
+        before=copy.deepcopy(self.current);before['supervision_lease']=None
+        after=copy.deepcopy(before);after['screen']='InventoryScreen'
+        with patch.object(backend,'read_fresh',side_effect=[before,after]), \
+                patch.object(backend,'JobClient',side_effect=RuntimeError('Material session cannot acquire control'))as controller:
+            with self.assertRaises(JobPaused):self.job.ensure_client()
+        controller.assert_called_once();self.assertIsNone(self.job.client);self.assertFalse(self.job.busy)
+
+    def test_generic_or_already_owned_control_failure_never_becomes_an_automatic_retry(self):
+        for message,lease in [('unknown control result',None),('Material session cannot acquire control',self.current['supervision_lease'])]:
+            self.job.client=None;self.job.sequence=0;self.job.profile={};self.job.experience_state=Mock(return_value={})
+            before=copy.deepcopy(self.current);before['supervision_lease']=None
+            after=copy.deepcopy(before);after.update(screen='InventoryScreen',supervision_lease=lease)
+            with patch.object(backend,'read_fresh',side_effect=[before,after]), \
+                    patch.object(backend,'JobClient',side_effect=RuntimeError(message)):
+                with self.assertRaises(RuntimeError)as raised:self.job.ensure_client()
+            self.assertNotIsInstance(raised.exception,JobPaused);self.assertIsNone(self.job.client)
+
 if __name__=='__main__':unittest.main()
