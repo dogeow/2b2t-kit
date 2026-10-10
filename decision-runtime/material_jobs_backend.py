@@ -530,10 +530,62 @@ class Backend:
             raise RuntimeError('Owned inventory crafting recovery is unavailable; no movement permitted')
         state = c.status()
         menu = state.get('menu', {})
-        if state.get('screen'):
+        if state.get('screen') or menu.get('type') not in (None, 'InventoryMenu'):
             if menu.get('id') != c.owned_material_menu or menu.get('cursor', {}).get('count'):
                 raise JobPaused('物品界面不属于当前任务，保留现场')
             c.checked('close_menu')
+
+    def wait_finish_idle(self):
+        """Observe release of the last action before updating native parking."""
+        c = self.client
+        deadline = time.monotonic() + 6
+        while True:
+            state = c.status()
+            if not owns_material_state(c, state):
+                raise JobPaused('收尾控制权已变化，保留当前状态')
+            menu = state.get('menu') or {}
+            if state.get('screen') or menu.get('type') != 'InventoryMenu' or menu.get('id') != 0:
+                raise JobPaused('菜单尚未关闭，保持现场，不发送停靠或退出')
+            if menu.get('cursor', {}).get('count') != 0:
+                raise JobPaused('光标物品尚未归位，保持现场')
+            if (not state.get('navigating') and not state.get('native_material_busy')
+                    and state.get('pending_scan') is None and not c.native_inflight):
+                return state
+            if time.monotonic() >= deadline:
+                raise RuntimeError('原生动作尚未释放，保留结果，不发送停靠或退出')
+            time.sleep(.1)
+
+    def hold_failed_finish(self, error):
+        """Keep a healthy failed cleanup owned; never replay its resource actions."""
+        c = self.client
+        try:
+            write_json(self.out/'finish-deferred.json', {
+                'reason':str(error), 'action':'WAIT_OWNED_PVE_GUARD',
+                'world_session':c.world, 'task_session':c.task,
+                'lease_id':c.heartbeat.id, 'native_parking_confirmed':False,
+                'resource_actions_replayed':False})
+        except OSError:
+            print('Deferred finish journal unavailable; retaining healthy owner', flush=True)
+        print('FINISH_DEFERRED: healthy owner retained; no automatic logout', flush=True)
+        while True:
+            try:
+                fresh = read_fresh(self.root)
+            except (OSError, RuntimeError, ValueError):
+                time.sleep(.25)
+                continue
+            if not owns_material_state(c, fresh):
+                raise JobPaused('收尾等待期间控制权已变化，保留进度') from error
+            if fresh.get('safety_hold', {}).get('active'):
+                raise JobPaused('原生健康防护已接管，保留进度') from error
+            if fresh.get('health', 0) < 14:
+                c.rev = fresh['control_revision']
+                try:
+                    c.request('safe_logout')
+                finally:
+                    from safety_interlock import record_material_health_exit
+                    record_material_health_exit(self.root, fresh, 'Low health while cleanup deferred: '+str(error))
+                raise JobBlocked('收尾等待期间血量过低，已安全退出并保留进度') from error
+            time.sleep(.25)
 
     def prepare_travel(self):
         self.close_owned_menu()
@@ -1613,6 +1665,7 @@ class Backend:
                 if cleanup_resources(c):
                     raise JobBlocked('临时箱子或工位收尾未确认，保留记录；不重复清理')
                 self.close_owned_menu()
+                self.wait_finish_idle()
                 point = local_park(c)
                 if not c.status().get('flight'):
                     # Grounded crafting/storage intentionally disabled Flight.
@@ -1640,9 +1693,10 @@ class Backend:
                     raise JobPaused('收尾控制权已变化，保留当前状态') from error
                 if fresh.get('safety_hold',{}).get('active'):
                     raise JobPaused('原生安全锁已开启，不继续收尾或自动重连') from error
-                # Only a matching lease and current/owned terminal revision
-                # permits this one-shot logout. Never attempt to climb a roof.
                 c.rev=fresh['control_revision']
+                if fresh.get('health', 0) >= 14:
+                    self.hold_failed_finish(error)
+                    raise JobPaused('收尾等待已结束，保留进度') from error
                 try:
                     write_json(self.out/'finish-fallback.json',{'reason':str(error),'action':'safe_logout'})
                 except OSError:

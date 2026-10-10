@@ -1045,6 +1045,9 @@ class BackendTest(unittest.TestCase):
         self.job.cleaning=False;self.job.busy=False;self.job.ready=True;self.job.native_gravel_session=None
         self.job.request={'mode':'item','context':{'server':'simpcraft.com','dimension':'minecraft:overworld','world_session':'w','expected_revision':3}}
         self.job.checkpoint=Mock();self.job.close_owned_menu=Mock();self.job.stage_near_base=Mock()
+        self.job.wait_finish_idle=Mock()
+        def deferred(error):raise JobPaused(str(error))
+        self.job.hold_failed_finish=Mock(side_effect=deferred)
 
     def publish_native_finish(self):
         self.client.rev=4
@@ -1218,11 +1221,11 @@ class BackendTest(unittest.TestCase):
                 self.client.request.assert_not_called()
                 self.assertTrue(self.current['flight'] and self.current['guard_armed'])
 
-    def test_nonhealth_park_failure_is_reported_and_logout_is_not_replayed(self):
+    def test_nonhealth_park_failure_retains_guard_without_logout(self):
         with patch.object(backend,'read_fresh',return_value=self.current),patch('material_cleanup.run',return_value=[]),patch.object(backend,'local_park',side_effect=JobBlocked('屋顶遮挡')):
-            with self.assertRaisesRegex(JobBlocked,'屋顶遮挡'):self.job.finish()
-        self.client.request.assert_called_once_with('safe_logout')
-        self.assertEqual('safe_logout',json.loads((self.root/'finish-fallback.json').read_text())['action'])
+            with self.assertRaisesRegex(JobPaused,'屋顶遮挡'):self.job.finish()
+        self.client.request.assert_not_called();self.job.hold_failed_finish.assert_called_once()
+        self.assertFalse((self.root/'finish-fallback.json').exists())
 
     def test_control_handoff_during_park_cannot_become_logout(self):
         with patch.object(backend,'read_fresh',return_value=self.current),patch('material_cleanup.run',return_value=[]),patch.object(backend,'local_park',side_effect=JobPaused('用户接管')):
@@ -1393,9 +1396,9 @@ class BackendTest(unittest.TestCase):
 
     def test_incomplete_cleanup_does_not_get_retried_by_base_finish(self):
         with patch.object(backend,'read_fresh',return_value=self.current),patch('material_cleanup.run',return_value=[{'resource':'box','completed':False}]) as clean,patch.object(backend,'local_park') as park:
-            with self.assertRaisesRegex(JobBlocked,'不重复清理'):self.job.finish()
+            with self.assertRaisesRegex(JobPaused,'不重复清理'):self.job.finish()
         clean.assert_called_once();park.assert_not_called();self.client.finish.assert_not_called()
-        self.client.request.assert_called_once_with('safe_logout')
+        self.client.request.assert_not_called();self.job.hold_failed_finish.assert_called_once()
 
     def stored_tools(self,state='stored',world='w',pos=None):
         path=self.root/'equipment'/'silk-tools.json';path.parent.mkdir()
@@ -1421,25 +1424,25 @@ class BackendTest(unittest.TestCase):
         with patch.object(backend,'read_fresh',return_value=self.current),patch.object(backend,'leave_quarry'),patch('material_cleanup.run',return_value=[]),patch.object(backend,'local_park',return_value=[0,110,0]):self.job.finish()
         self.job.stage_near_base.assert_not_called()
 
-    def test_unknown_tool_transfer_never_replays_cleanup_and_logs_out_once(self):
+    def test_unknown_tool_transfer_keeps_healthy_guard_without_cleanup_replay(self):
         self.stored_tools(state='storing')
         with patch.object(backend,'read_fresh',return_value=self.current),patch.object(backend,'leave_quarry') as exit,patch('material_cleanup.run') as clean:
-            with self.assertRaisesRegex(JobBlocked,'不重复取放'):self.job.finish()
+            with self.assertRaisesRegex(JobPaused,'不重复取放'):self.job.finish()
         exit.assert_called_once();clean.assert_not_called();self.job.stage_near_base.assert_not_called()
-        self.client.request.assert_called_once_with('safe_logout')
+        self.client.request.assert_not_called();self.job.hold_failed_finish.assert_called_once()
 
     def test_unapproved_tool_depot_does_not_get_visited(self):
         self.stored_tools(pos=[999,65,999])
         with patch.object(backend,'read_fresh',return_value=self.current),patch.object(backend,'leave_quarry'),patch('material_cleanup.run') as clean:
-            with self.assertRaisesRegex(JobBlocked,'批准范围'):self.job.finish()
-        clean.assert_not_called();self.job.stage_near_base.assert_not_called();self.client.request.assert_called_once_with('safe_logout')
+            with self.assertRaisesRegex(JobPaused,'批准范围'):self.job.finish()
+        clean.assert_not_called();self.job.stage_near_base.assert_not_called();self.client.request.assert_not_called();self.job.hold_failed_finish.assert_called_once()
 
-    def test_failed_shaft_exit_logs_out_without_visiting_remote_chest_or_rising(self):
+    def test_failed_shaft_exit_keeps_healthy_guard_without_remote_chest_or_rising(self):
         self.stored_tools()
         with patch.object(backend,'read_fresh',return_value=self.current),patch.object(backend,'leave_quarry',side_effect=JobBlocked('竖井被堵')),patch('material_cleanup.run') as clean,patch.object(backend,'local_park') as park:
-            with self.assertRaisesRegex(JobBlocked,'竖井被堵'):self.job.finish()
+            with self.assertRaisesRegex(JobPaused,'竖井被堵'):self.job.finish()
         self.job.stage_near_base.assert_not_called();clean.assert_not_called();park.assert_not_called()
-        self.client.request.assert_called_once_with('safe_logout')
+        self.client.request.assert_not_called();self.job.hold_failed_finish.assert_called_once()
 
     def test_failed_owned_cursor_recovery_stops_before_shaft_exit_or_park(self):
         self.job.close_owned_menu=Mock(side_effect=RuntimeError('Crafting recovery not confirmed; no repeated click'))
@@ -1447,11 +1450,11 @@ class BackendTest(unittest.TestCase):
                 patch.object(backend,'leave_quarry') as exit, \
                 patch('material_cleanup.run') as clean, \
                 patch.object(backend,'local_park') as park:
-            with self.assertRaisesRegex(JobBlocked,'Crafting recovery not confirmed'):
+            with self.assertRaisesRegex(JobPaused,'Crafting recovery not confirmed'):
                 self.job.finish()
         exit.assert_not_called();clean.assert_not_called();park.assert_not_called()
         self.client.finish.assert_not_called()
-        self.client.request.assert_called_once_with('safe_logout')
+        self.client.request.assert_not_called();self.job.hold_failed_finish.assert_called_once()
 
     def test_lost_inventory_isolation_with_owned_marker_stops_before_movement(self):
         slots=[{'slot':i,'item':'minecraft:air','count':0} for i in range(46)]
@@ -1469,11 +1472,11 @@ class BackendTest(unittest.TestCase):
                 patch.object(backend,'leave_quarry') as exit, \
                 patch('material_cleanup.run') as clean, \
                 patch.object(backend,'local_park') as park:
-            with self.assertRaisesRegex(JobBlocked,'recovery is unavailable'):
+            with self.assertRaisesRegex(JobPaused,'recovery is unavailable'):
                 self.job.finish()
         exit.assert_not_called();clean.assert_not_called();park.assert_not_called()
         self.client.finish.assert_not_called()
-        self.client.request.assert_called_once_with('safe_logout')
+        self.client.request.assert_not_called();self.job.hold_failed_finish.assert_called_once()
 
     def test_lost_owner_after_exit_failure_is_not_logged_out(self):
         changed=copy.deepcopy(self.current);changed['control_revision']=4;changed['supervision_lease']['revision']=4;changed['last_request']='other';changed['id']='other'
@@ -1489,9 +1492,52 @@ class BackendTest(unittest.TestCase):
         self.assertEqual(10,hold.call_args.args[1]['health'])
 
     def test_fallback_logging_failure_does_not_prevent_owned_safety_logout(self):
-        with patch.object(backend,'read_fresh',return_value=self.current),patch.object(backend,'leave_quarry',side_effect=JobBlocked('入口不通')),patch.object(backend,'write_json',side_effect=OSError('disk full')):
+        hurt=copy.deepcopy(self.current);hurt['health']=10
+        with patch.object(backend,'read_fresh',side_effect=[self.current,hurt]),patch.object(backend,'leave_quarry',side_effect=JobBlocked('入口不通')),patch.object(backend,'write_json',side_effect=OSError('disk full')):
             with self.assertRaises(JobBlocked):self.job.finish()
         self.client.request.assert_called_once_with('safe_logout')
+
+    def test_finish_wait_observes_action_release_before_any_new_request(self):
+        self.client.native_inflight=None
+        self.current['menu']={'id':0,'type':'InventoryMenu','cursor':{'count':0}}
+        busy=copy.deepcopy(self.current);busy['native_material_busy']=True
+        self.client.status=Mock(side_effect=[busy,self.current])
+        with patch.object(backend.time,'sleep'):
+            actual=backend.Backend.wait_finish_idle(self.job)
+        self.assertIs(actual,self.current);self.client.request.assert_not_called()
+        self.client.checked.assert_not_called()
+
+    def test_finish_wait_rejects_hidden_foreign_menu_without_logout(self):
+        self.client.native_inflight=None
+        self.current['menu']={'id':9,'type':'ChestMenu','cursor':{'count':0}}
+        with self.assertRaisesRegex(JobPaused,'菜单尚未关闭'):
+            backend.Backend.wait_finish_idle(self.job)
+        self.client.request.assert_not_called();self.client.checked.assert_not_called()
+
+    def test_failed_finish_retains_heartbeat_and_yields_to_real_owner_change(self):
+        changed=copy.deepcopy(self.current);changed['manual_movement']=True
+        with patch.object(backend,'read_fresh',side_effect=[self.current,changed]),patch.object(backend.time,'sleep'):
+            with self.assertRaises(JobPaused):
+                backend.Backend.hold_failed_finish(self.job,RuntimeError('park rejected'))
+        self.client.heartbeat.close.assert_not_called();self.client.request.assert_not_called()
+        saved=json.loads((self.root/'finish-deferred.json').read_text())
+        self.assertFalse(saved['native_parking_confirmed']);self.assertFalse(saved['resource_actions_replayed'])
+
+    def test_failed_finish_health_priority_still_exits_once(self):
+        hurt=copy.deepcopy(self.current);hurt['health']=13
+        with patch.object(backend,'read_fresh',side_effect=[self.current,hurt]), \
+                patch.object(backend.time,'sleep'),patch('safety_interlock.record_material_health_exit') as hold:
+            with self.assertRaises(JobBlocked):
+                backend.Backend.hold_failed_finish(self.job,RuntimeError('park rejected'))
+        self.client.request.assert_called_once_with('safe_logout');hold.assert_called_once()
+
+    def test_failed_finish_journal_error_does_not_trigger_healthy_logout(self):
+        changed=copy.deepcopy(self.current);changed['manual_movement']=True
+        with patch.object(backend,'write_json',side_effect=OSError('disk full')), \
+                patch.object(backend,'read_fresh',side_effect=[self.current,changed]),patch.object(backend.time,'sleep'):
+            with self.assertRaises(JobPaused):
+                backend.Backend.hold_failed_finish(self.job,RuntimeError('park rejected'))
+        self.client.request.assert_not_called();self.client.heartbeat.close.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()

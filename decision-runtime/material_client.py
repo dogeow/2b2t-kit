@@ -281,7 +281,11 @@ class Client:
         stream.write(json.dumps({'request_id':rid,'error':type(error).__name__})+'\n')
       except OSError:pass
      if movement_samples and result.get('phase') in ('waiting','error','stopped'):
-      try:(self.out/('movement-failure-'+rid+'.json')).write_text(json.dumps({'op':op,'params':sanitize(params),'detail':result.get('detail'),'last_inflight':movement_samples,'terminal_pos':current.get('pos')},ensure_ascii=False,indent=2))
+      def context(state):
+       menu=state.get('menu') or {}
+       return {**{k:state.get(k) for k in ('time','screen','interface_paused','on_ground','flight','under_water','navigating','native_material_busy','pending_scan')},
+        'menu':{k:menu.get(k) for k in ('id','type','cursor')}}
+      try:(self.out/('movement-failure-'+rid+'.json')).write_text(json.dumps({'op':op,'params':sanitize(params),'detail':result.get('detail'),'last_inflight':movement_samples,'terminal_pos':current.get('pos'),'context_before':context(evidence_before),'context_after':context(current)},ensure_ascii=False,indent=2))
       except OSError:pass
      with (self.out/'events.jsonl').open('a') as f:f.write(json.dumps({'time':time.time(),'request_id':rid,'world_session':self.world,'op':op,'params':sanitize(params),'phase':result.get('phase'),'detail':result.get('detail'),'pos':current.get('pos'),'health':current.get('health'),'duration_ms':round((time.monotonic()-request_started)*1000),'guard_pause_ms':round(guard_pause*1000),'interface_pause_ms':round(interface_pause*1000),'evidence_scope':'native_operation_reply_not_goal_completion',**observed_delta(evidence_before,current)},ensure_ascii=False)+'\n')
      try:
