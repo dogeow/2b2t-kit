@@ -11,6 +11,22 @@ from potato_loot_flight import make_pickup,make_plant_access
 from .protocol import server_key
 
 
+def make_registered_pickup(center,*,radius=2,checkpoint=lambda:None,crop='wheat'):
+    """Use Kit's identity-bound collector, which follows a falling item's real height."""
+    from drop_collection import collect_drop
+    from potato_harvest import _lease
+    if crop!='wheat':raise ValueError('Registered wheat pickup only')
+    layout=plan({'authorized':True,'center':center,'radius':radius,'crop':'wheat'})
+    def pickup(c,drop,observation):
+        checkpoint();_lease(c,observation,observation['recent_hurt_at'])
+        p=drop.get('pos');item=(drop.get('stack')or{}).get('item')
+        if (item not in ('minecraft:wheat','minecraft:wheat_seeds')or not isinstance(p,list)or len(p)!=3
+                or any(not layout['scan_min'][i]<=p[i]<layout['scan_max'][i]+1 for i in range(3))):
+            raise FarmWait('WAIT_LOOT','Known crop pickup must remain in the registered field')
+        return collect_drop(c,drop,observation,seconds=30)
+    return pickup
+
+
 def repair_registered_empty(backend,request,registry,out,checkpoint):
     """Borrow existing reseed maintenance on completed original farmland only."""
     from farm_reseed import run as reseed,registered
@@ -149,7 +165,7 @@ def run(backend,target,out,checkpoint):
             options={'max_cells':4,'bonemeal_budget':0,
                      'allow_unrecovered_seed_loss':True,
                      'allow_unrecovered_grain_loss':True,
-                     'pickup':make_pickup(center,radius=layout['radius'],checkpoint=checkpoint,crop='wheat'),
+                     'pickup':make_registered_pickup(center,radius=layout['radius'],checkpoint=checkpoint,crop='wheat'),
                      'plant_access':make_plant_access(center,radius=layout['radius'],checkpoint=checkpoint)}
             result=harvest(*args,**options)
             from wheat_plant_reconcile import REJECTION,reconcile

@@ -28,6 +28,12 @@ class FlightClient(HarvestClient):
 
 
 class PotatoLootFlightTest(unittest.TestCase):
+    def test_ground_pickup_rises_in_its_actual_column_before_crossing_the_higher_field(self):
+        from potato_loot_flight import make_plant_access
+        c=FlightClient();c.extra['pos']=[-2.5,62.0,.5]
+        make_plant_access([0,63,0])(c,[-2,63,0],c.status(),'before_plant')
+        self.assertEqual([[-2.5,64.6,.5],[-1.5,64.6,.5]],[p['target']for p in self.moves(c)])
+
     def prepare(self):
         client = FlightClient(); observation = client.status()
         drop = {**copy.deepcopy(client.entities[0]), 'remaining_count': 1}

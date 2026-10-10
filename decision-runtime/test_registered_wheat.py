@@ -13,6 +13,20 @@ from test_potato_harvest import Clock
 
 
 class Tests(unittest.TestCase):
+    def test_registered_native_pickup_uses_the_exact_known_drop_and_rejects_outside_the_field(self):
+        from material_jobs.registered_wheat import make_registered_pickup
+        c=self.c;layout=json.loads(self.c.registry.read_text())['scope']['layout'];p=layout['cells'][0]
+        drop={'uuid':'known','id':1,'type':'minecraft:item','pos':[p[0]+.5,p[1]+1,p[2]+.5],
+              'stack':{'item':'minecraft:wheat','count':1},'remaining_count':1}
+        with patch('drop_collection.collect_drop',return_value=True)as collect:
+            callback=make_registered_pickup(layout['center'])
+            self.assertTrue(callback(c,drop,c.status()));self.assertEqual('known',collect.call_args.args[1]['uuid'])
+        drop['pos'][0]+=100
+        with patch('drop_collection.collect_drop')as collect:
+            from potato_farm import FarmWait
+            with self.assertRaises(FarmWait):callback(c,drop,c.status())
+            collect.assert_not_called()
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.c=WheatHarvestClient(self.root);self.clock=Clock()
@@ -30,7 +44,7 @@ class Tests(unittest.TestCase):
         with patch('material_jobs.navigation.lift_for_travel'), \
                 patch('material_jobs.navigation.settled_state',return_value=self.c.status()), \
                 patch('material_jobs.acquisition._travel'), \
-                patch('material_jobs.registered_wheat.make_pickup',return_value=None), \
+                patch('material_jobs.registered_wheat.make_registered_pickup',return_value=None), \
                 patch('material_jobs.registered_wheat.make_plant_access',return_value=None), \
                 patch('material_jobs.registered_wheat.harvest',side_effect=harvest):
             return run(self.backend,target,self.root/'source',lambda:None)

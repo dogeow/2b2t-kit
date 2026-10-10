@@ -23,6 +23,12 @@ def make_plant_access(center, *, radius=2, checkpoint=lambda:None):
             raise FarmWait('WAIT_ROUTE','Plant access must stay in the exact original field')
         checkpoint();_lease(c,observation,observation['recent_hurt_at'])
         target=[pos[0]+.5,pos[1]+1.6,pos[2]+.5]if stage=='before_plant'else home
+        current=c.status();safe_y=max(current['pos'][1],target[1])
+        # Ground pickup may end one block below the planted field. Rise within
+        # that actual clear column before crossing the higher farmland edge.
+        if current['pos'][1]<target[1]-.15:
+            c.checked('navigate',target=[current['pos'][0],safe_y,current['pos'][2]],arrival=.15,seconds=15,air_only=True)
+            current=c.status();checkpoint();_lease(c,current,observation['recent_hurt_at'])
         reply=c.checked('navigate',target=target,arrival=.15,seconds=15,air_only=True)
         actual=c.status();checkpoint();_lease(c,actual,observation['recent_hurt_at'])
         if math.dist(actual['pos'],target)>.6:
