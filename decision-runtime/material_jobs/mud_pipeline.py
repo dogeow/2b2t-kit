@@ -255,6 +255,16 @@ def run(c,profile,item,target_count,out,checkpoint):
             if stock()['minecraft:mud']>=target:return
             if reply.get('code') not in ('WAIT_SOURCE','SOURCE_BATCH'):raise Wait(reply.get('code','WAIT_SOURCE'),reply.get('detail','Natural mud unavailable'))
             if reply.get('code')=='SOURCE_BATCH':raise Wait('WAIT_MUD_BATCH','Known natural mud batch collected',requirements={'minecraft:mud':target})
+        cfg=profile.get('mud_station',{});work=cfg.get('pos');floor=cfg.get('support')
+        if (cfg.get('authorized')is not True or not _point(work)or not _point(floor)
+                or work!=[floor[0],floor[1]+1,floor[2]]or not isinstance(cfg.get('support_state'),str)):
+            raise Wait('WAIT_SOURCE','Configure an explicitly owned dry mud work cell')
+        if math.hypot(state()['pos'][0]-work[0],state()['pos'][2]-work[2])>32:
+            from .navigation import lift_for_travel
+            from .acquisition import _travel
+            backend.prepare_travel();c=client();lift_for_travel(c);trace=[]
+            _travel(c,[work[0]+.5,max(c.status()['pos'][1],work[1]+24),work[2]+.5],checkpoint,trace,keep_cruise=True)
+            write_json(out/'registered-mud-station-loading-travel.json',trace)
         while stock()['minecraft:mud']<target:
             if new_mud>=4:raise Wait('WAIT_MUD_BATCH','Four owned mud cells completed; next call rechecks sources')
             cfg,pos,support,actual=station()

@@ -19,3 +19,5 @@ Minecraft 26.1.2 的 `BottleItem.use` 使用 `SOURCE_ONLY` 视线取水，生成
 附近256格实际扫描确认新水源 `[761044,62,797879]`，距原干岸站位眼睛约2.43格；原站位仍为干燥沙岸且身体空间为空。备份原材料配置后仅更新水点与当前观测信息。新点未执行水桶取水，不沿用旧点的 `renewing_source_server_verified` 信用；水瓶取水不需要该信用。证据在 `work/live-20261004/mud-sea-source-current-sand-survey-7622-001/updated-source-proof.json`。新完整地图任务正在使用这项登记，实际水瓶回执另行核对。
 
 当前服务器实机装瓶通过：请求 `materials-4f9e2a6e55b3`、世界 `7622657d-39a9-4368-b2e0-aded76acb0f6`，原手持空瓶槽6变为完整水瓶，`confirmed=true`、`unknown_outcome=false`，手持槽与水瓶槽服务器确认均为true，水源保持不变。流水线随后通过原 owned-dirt 转泥和采集验证，实际新增泥1，没有炼药锅或桶补水动作。独立观测保存于 `work/live-20261004/direct-sea-bottle-host2-ready-7695-001/actual-current-water-bottle-proof.json`，原流水线原生回执保留在 `map-full-kit-current-sea-source-7622-019/material-job/pipelines/000002-mud_bricks/mud-pipeline.json`。全图仍未完成。
+
+后续当前循环正常制作泥砖4并实际放置4，完整图面确认8962／16512。返回地图后的下一次 owned mud 工位复核仍在远处，结果为已知未加载扫描；原记录保留。现在只在需要人工制泥时先验证原登记工位元数据、无旧 pending，再靠近安全高空加载点，然后读取实际工位。天然泥采集不要求人工工位。远工位顺序、天然泥及仓库缓存等相关回归210项通过，无需主包重启。

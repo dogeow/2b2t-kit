@@ -167,6 +167,17 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual('done',self.go()['phase'])
         self.assertEqual([('acquire','minecraft:dirt',4)],[c for c in self.b.calls if c[0]=='acquire'])
         self.assertEqual(4,self.c.count('minecraft:mud_bricks'));self.assertEqual(0,self.c.count('minecraft:dirt'))
+    def test_remote_owned_station_is_loaded_before_station_scanning(self):
+        self.c.pos=[200,100,200];self.b.prepare_travel=lambda:None
+        original=self.c.request
+        def request(op,**params):
+            if op=='scan':self.assertLessEqual(abs(self.c.pos[0]-100),3)
+            return original(op,**params)
+        self.c.request=request
+        def travel(c,target,*args,**kwargs):c.pos=list(target)
+        with patch('material_jobs.navigation.lift_for_travel'),patch('material_jobs.acquisition._travel',side_effect=travel):
+            self.assertEqual('done',self.go()['phase'])
+        self.assertTrue((self.root/'job/registered-mud-station-loading-travel.json').exists())
     def test_dirt_batch_demand_excludes_already_carried_mud(self):
         self.c.add('minecraft:dirt',-4);self.c.add('minecraft:mud',2)
         def acquire(item,target):
