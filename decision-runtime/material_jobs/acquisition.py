@@ -80,9 +80,10 @@ def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
             after=_scan(c,[x-2,y,z-2],[x+2,y+18,z+2],checkpoint)
             stump=next((r for r in after if r['pos']==[x,y,z]),None)
             if carried(fresh,'minecraft:bone_meal')<before:used=True
-            grown_ids={species_item,species_item.removesuffix('_log')+'_wood',species_item.removesuffix('_log')+'_leaves'}
-            if any(block_id(r) in grown_ids and y<=r['pos'][1]<=y+18
-                   and abs(r['pos'][0]-x)<=2 and abs(r['pos'][2]-z)<=2 for r in after):
+            grown_ids={species_item,species_item.removesuffix('_log')+'_wood'}
+            upper=next((r for r in after if r['pos']==[x,y+1,z]),None)
+            if (stump and block_id(stump)in grown_ids
+                    and upper and block_id(upper)in grown_ids):
                 growth={'root_state':stump['state'] if stump else 'missing',
                         'bone_meal_used':before-carried(fresh,'minecraft:bone_meal'),
                         'observed_at':fresh['time']};break
@@ -1906,13 +1907,10 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
         old_drops = {e.get('uuid'): e.get('stack', {}).get('count', 0)
                      for e in c.status().get('entities', []) if e.get('type') == 'minecraft:item'
                      and e.get('stack', {}).get('item') == sapling_item and e.get('uuid')}
-        # Replant the verified lowest natural trunk cell, not a guessed nearby dirt block.
-        trunk = min(logs, key=lambda row: (row['pos'][1],
-                   (row['pos'][0]-root[0])**2+(row['pos'][2]-root[2])**2))
-        plant_cell = [trunk['pos'][0], trunk['pos'][1], trunk['pos'][2]]
-        support = next((row for row in rows if row['pos'] == [plant_cell[0], plant_cell[1]-1, plant_cell[2]]), None)
-        if not support or support.get('state', '').split('[',1)[0].removeprefix('Block{').removesuffix('}') not in SAPLING_SOILS:
-            plant_cell = [root[0], root[1], root[2]]
+        # Replant the selected natural stump, not a nearby tree in the access scan.
+        # The broad access scan includes other living trees. Its lowest log is
+        # not necessarily part of the selected native harvest.
+        plant_cell = list(root)
         entry = {'state': 'inflight', 'root': root, 'before': before, 'route': trace}
         ledger['visited'][key] = entry; write_json(path, ledger); checkpoint()
         fixed_params = {}

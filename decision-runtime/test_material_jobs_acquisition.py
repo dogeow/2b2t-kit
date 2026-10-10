@@ -674,6 +674,21 @@ class AcquisitionTest(unittest.TestCase):
             command=next(params for op,params in c.actions if op=='chop')
             self.assertEqual(1,command['tree_limit']);self.assertEqual(6,command['target_count'])
 
+    def test_regrowth_uses_selected_stump_not_lower_neighbour_in_access_scan(self):
+        with tempfile.TemporaryDirectory() as out:
+            c=FakeClient(item='minecraft:oak_log',before=2,gain=4)
+            c.state['pos']=[-6.5,71,.5]
+            c.rows=[block((x,63,z),'grass_block')for x in range(-11,12)for z in range(-11,12)]
+            c.rows += [block((0,64,0),'dirt')]
+            c.rows += [block((0,y,0),'oak_log')for y in range(65,69)]
+            c.rows += [block((3,y,0),'oak_log')for y in range(64,68)]
+            c.trees=[{'pos':[0,65,0],'top':69,'natural_leaves':8}]
+            with patch('material_jobs.acquisition._replant_tree_with_bonemeal',return_value={'stage':'fixture'})as regrow:
+                result=self.run_acquire(c,out,target=6,profile=self.profile(c.item,[-12,60,-12],[12,105,12]))
+            self.assertEqual('done',result['phase'])
+            self.assertEqual([0,65,0],regrow.call_args.args[2])
+            self.assertEqual([0,65,0],regrow.call_args.args[3])
+
     def test_stopped_chop_with_reset_counters_and_sufficient_stock_never_replants_or_replays(self):
         for phase in ('stopped', 'waiting', 'error'):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as out:

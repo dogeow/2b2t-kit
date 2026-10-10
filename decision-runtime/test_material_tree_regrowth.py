@@ -78,6 +78,24 @@ class NativeTreeClient:
 
 
 class TreeRegrowthTest(unittest.TestCase):
+    def test_neighbour_logs_and_leaves_do_not_confirm_an_unchanged_sapling(self):
+        client=NativeTreeClient('Block{minecraft:oak_sapling}[stage=0]')
+        client.cells[(3,64,3)]=native_cell([3,64,3],'Block{minecraft:oak_log}[axis=y]',solid=True,passable=False)
+        client.cells[(2,66,3)]=native_cell([2,66,3],'Block{minecraft:oak_leaves}[persistent=false]',solid=True,passable=False)
+        original=client.checked
+        def no_growth(op,**args):
+            if op=='interact'and args.get('expected_hand')=='minecraft:bone_meal':
+                client.actions.append((op,copy.deepcopy(args)));return {'phase':'done'}
+            return original(op,**args)
+        client.checked=no_growth
+        with patch('material_jobs.acquisition.approach_faces',return_value='up'),\
+             patch('material_jobs.acquisition.time.monotonic',side_effect=[0,0,4]),\
+             patch('material_jobs.acquisition.time.sleep'):
+            result=_apply_bone_meal(client,'minecraft:oak_log','minecraft:oak_sapling',[2,64,3],{},lambda:None)
+        self.assertFalse(result.get('growth_confirmed',False))
+        self.assertEqual('sapling_kept_bone_meal_unconfirmed',result['stage'])
+        self.assertEqual(6,client.items['minecraft:bone_meal'])
+        self.assertEqual(1,sum(op=='interact'for op,_ in client.actions))
     def regrow(self, client):
         with tempfile.TemporaryDirectory() as out:
             return _replant_tree_with_bonemeal(
