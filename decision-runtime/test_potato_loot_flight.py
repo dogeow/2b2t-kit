@@ -101,5 +101,14 @@ class PotatoLootFlightTest(unittest.TestCase):
         moves=self.moves(client);self.assertEqual(4,len(moves));self.assertAlmostEqual(63.1375,moves[1]['target'][1])
         self.assertEqual([.5,64.6,.5],moves[-1]['target']);self.assertTrue(result['movement_only'])
 
+    def test_same_falling_wheat_uuid_uses_latest_bounded_position_after_one_block_drift(self):
+        client,_,drop=self.prepare()
+        client.entities[0].update(pos=[2.1,64.9,.5],stack={'item':'minecraft:wheat','count':1})
+        drop={**copy.deepcopy(client.entities[0]),'remaining_count':1};observation=client.status()
+        client.entities[0]['pos']=[2.3,63.9375,.5]
+        result=make_pickup([0,63,0],crop='wheat')(client,drop,observation)
+        self.assertEqual(2,len(self.moves(client)));self.assertEqual(2.3,self.moves(client)[0]['target'][0])
+        self.assertTrue(result['movement_only'])
+
 
 if __name__ == '__main__': unittest.main()

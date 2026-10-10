@@ -360,6 +360,21 @@ class WheatHarvestTests(unittest.TestCase):
         second=self.execute(pickup=no_change);self.assertEqual('WAIT_LOOT',second['code'])
         self.assertEqual(2,len(offered));self.assertEqual(1,len(self.actions()))
 
+    def test_pre_navigation_refusal_allows_a_new_current_observation_without_claiming_old_pickup(self):
+        from potato_loot_flight import PickupObservationChanged
+        self.client.pickup_delay=None;called=[0]
+        def pickup(c,drop,observed):
+            called[0]+=1
+            if called[0]==1:
+                raise PickupObservationChanged('current observation changed',observed,observed,drop)
+            c.pickup_delay=1;c.pending_pickup=1
+            return {'movement_only':True}
+        result=self.execute({**REQUEST,'cells':[[1,63,0]]},pickup=pickup)
+        self.assertEqual('done',result['phase'],result)
+        self.assertGreaterEqual(called[0],2)
+        self.assertEqual('refused_before_navigation',self.book(result)['pickup_refusal_history'][0]['stage'])
+        self.assertEqual(1,result['wheat_gain']);self.assertEqual(1,self.client.plant_calls)
+
     def test_pickup_callback_receives_only_exact_wheat_or_seed_id_and_current_stack(self):
         self.client.pickup_delay=None;items=[]
         def collect(c,drop,observation):

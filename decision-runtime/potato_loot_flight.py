@@ -4,6 +4,15 @@ import math
 from potato_farm import FarmWait, POTATO, crop_descriptor, plan
 from potato_harvest import _lease
 
+class PickupObservationChanged(FarmWait):
+    """The callback has sent only a read snapshot, never navigation."""
+    no_navigation_sent=True
+    def __init__(self,detail,observation,fresh,drop):
+        super().__init__('WAIT_LOOT',detail)
+        self.refusal={'no_navigation_sent':True,'uuid':drop['uuid'],
+                      'observation_time':observation.get('time'),'fresh_time':fresh.get('time'),
+                      'observed_drop':drop,'fresh_player':fresh.get('pos')}
+
 
 def make_plant_access(center, *, radius=2, checkpoint=lambda:None):
     """Normal flight above one confirmed harvested AIR cell, then center return."""
@@ -73,9 +82,9 @@ def make_pickup(center, *, radius=2, checkpoint=lambda: None, crop='potato'):
         if (current.get('type') != 'minecraft:item' or current.get('id') != drop.get('id')
                 or actual.get('item') != stack['item'] or type(actual.get('count')) is not int
                 or actual['count'] != stack['count'] or not bounded(current.get('pos'))
-                or math.dist(current['pos'], drop['pos']) > 1
+                or math.dist(current['pos'], drop['pos']) > (3 if descriptor.name=='wheat'else 1)
                 or not point(fresh.get('pos')) or math.dist(fresh['pos'], home) > .65):
-            raise FarmWait('WAIT_LOOT', 'Known UUID/stack or bounded center-hover context changed')
+            raise PickupObservationChanged('Known UUID/stack or bounded center-hover context changed',observation,fresh,drop)
         target = [current['pos'][0], home[1], current['pos'][2]]
         lower=None
         if home[1]-current['pos'][1]>1.3:

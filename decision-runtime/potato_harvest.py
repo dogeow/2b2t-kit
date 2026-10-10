@@ -563,11 +563,22 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
                     if len(times) == 2: break
                 else: times = []
                 if consistent and pickup is not None and not _recover_only:
-                    target = next((d for d in potatoes if d['uuid'] not in attempts), None)
+                    target = next((d for d in potatoes if d['uuid'] not in attempts or
+                        attempts[d['uuid']].get('stage')=='refused_before_navigation'
+                        and after['time']>attempts[d['uuid']].get('observation_time',0)
+                        and attempts[d['uuid']].get('refusal_count',0)<2), None)
                     if target is not None:
+                        old_attempt=attempts.get(target['uuid'],{});refused=old_attempt.get('refusal_count',0)
                         attempts[target['uuid']] = {'stage':'sent_once', 'remaining_count':target['remaining_count'],
-                                                    'observation_time':after['time']}; save(); status()
-                        answer = pickup(c, target, after)
+                                                    'observation_time':after['time'],'refusal_count':refused}; save(); status()
+                        try:answer = pickup(c, target, after)
+                        except FarmWait as error:
+                            from potato_loot_flight import PickupObservationChanged
+                            if not isinstance(error,PickupObservationChanged):raise
+                            attempts[target['uuid']].update(stage='refused_before_navigation',refusal_count=refused+1,
+                                                           refusal=getattr(error,'refusal',{}))
+                            book.setdefault('pickup_refusal_history',[]).append(dict(attempts[target['uuid']]))
+                            save();continue
                         status()
                         attempts[target['uuid']]['returned'] = answer if type(answer) is bool else type(answer).__name__
                         save()
