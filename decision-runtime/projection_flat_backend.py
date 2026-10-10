@@ -17,6 +17,7 @@ from projection_flat_plan import FlatLayout, next_batch, policy, position, full_
 from projection_patch_plan import connected_mask
 from projection_scene_lights import registered_map_light
 from projection_completion import block_state
+from projection_flat_cache import FlatMaterialLedger
 
 
 def scene(layout, reply, low, high, world, revision):
@@ -103,6 +104,59 @@ class FlatMapBackend(Backend):
             raise ValueError('Flat-map adapter requires an explicit projection task')
         policy(request.get('flat_map'))  # Validate before constructing the existing backend.
         super().__init__(request, automation, out, checkpoint)
+
+    def observe(self):
+        state = super().observe()
+        ledger = getattr(self, 'flat_ledger', None)
+        if (ledger is not None and ledger.audit.get('material_ledger') and not ledger.audit['mismatches']
+                and not self.busy and not self.checking and not self.cleaning):
+            # Never let the scheduler complete a projection from cached totals.
+            audit = self.refresh_audit()
+            self.flat_ledger = FlatMaterialLedger(ledger.layout, audit, ledger.world)
+            state = dict(state, projection_audit=audit)
+            self.latest = state
+        return state
+
+    def _layout(self, client, projection_key, out):
+        layout = getattr(self, 'flat_layout', None)
+        if layout is not None:
+            selection = client.status().get('projection_selection', {})
+            if (layout.key != projection_key or selection.get('key') != layout.key
+                    or position(selection.get('min')) != layout.low
+                    or position(selection.get('max')) != layout.high):
+                raise JobBlocked('地图画缓存模型的选择范围已改变')
+            return layout
+        for attempt in range(40):
+            reply = client.request('projection_model')
+            write_json(out / 'flat-model.json', reply)
+            if reply.get('world_session') != client.world:
+                raise JobBlocked('地图画模型读取期间世界已改变')
+            model = reply.get('projection_model', {})
+            if (model.get('loaded_chunks_verified') is True
+                    and model.get('loaded_server_chunks_verified') is True):
+                break
+            self.checkpoint()
+            if attempt == 39:
+                raise JobBlocked('地图画区块仍未完整加载；不规划或发送施工')
+            time.sleep(.25)
+        layout = FlatLayout(model, self.request['flat_map'])
+        if layout.key != projection_key:
+            raise JobBlocked('地图画目标投影已改变')
+        self.flat_layout = layout
+        return layout
+
+    def _ledger(self, client, layout):
+        ledger = getattr(self, 'flat_ledger', None)
+        if ledger is not None and ledger.world != client.world:
+            raise JobBlocked('地图画实际缓存属于旧连接；需要独立的新任务')
+        if (ledger is None or getattr(self, 'audit_dirty', True)
+                or ledger.audit is not getattr(self, 'audit', None)):
+            audit = getattr(self, 'audit', None)
+            if audit is None or getattr(self, 'audit_dirty', True):
+                audit = self.refresh_audit()
+            ledger = FlatMaterialLedger(layout, audit, client.world)
+            self.flat_ledger = ledger
+        return ledger
 
     def has_ready_projection_output(self, snapshot):
         """Read-only offer: spend plain carried stock before any supply trip."""
@@ -285,26 +339,9 @@ class FlatMapBackend(Backend):
                       (low[2] + high[2] + 1) / 2]
             if math.hypot(state['pos'][0] - center[0], state['pos'][2] - center[2]) > 48:
                 self.travel_to_projection(client, center, projection_key, out)
-            for attempt in range(40):
-                model_reply = client.request('projection_model')
-                write_json(out / 'flat-model.json', model_reply)
-                model = model_reply.get('projection_model', {})
-                if (model.get('loaded_chunks_verified') is True
-                        and model.get('loaded_server_chunks_verified') is True):
-                    break
-                if model_reply.get('world_session') != client.world:
-                    raise JobBlocked('地图画模型读取期间世界已改变')
-                self.checkpoint()
-                if attempt == 39:
-                    raise JobBlocked('地图画区块仍未完整加载；不规划或发送施工')
-                time.sleep(.25)
-            if model_reply.get('world_session') != client.world:
-                raise JobBlocked('地图画模型不属于当前世界')
-            layout = FlatLayout(model_reply.get('projection_model'), self.request['flat_map'])
-            if layout.key != projection_key:
-                raise JobBlocked('地图画目标投影已改变')
-            audit = self.refresh_audit()
-            actual = layout.observed(audit)
+            layout = self._layout(client, projection_key, out)
+            ledger = self._ledger(client, layout)
+            actual = ledger.actual
             gained, result = 0, None
             while gained < layout.config['max_cells_per_build']:
                 state = self._safe_flat(client, layout)
@@ -314,14 +351,14 @@ class FlatMapBackend(Backend):
                     result = {'phase': plan['phase'], 'detail': plan.get('detail', '当前图面方块已齐'),
                               'requirements': plan.get('requirements', {}), 'placed': gained}
                     break
-                after, count = self._window(client, layout, actual, plan, out / ('window-%04d' % gained))
-                actual.update(after)
+                directory = out / ('window-%04d' % gained)
+                after, count = self._window(client, layout, actual, plan, directory)
+                journal = directory / 'flat-window.json'
+                self.audit = ledger.accept(after, count, json.loads(journal.read_text()), evidence_path=journal)
+                self.audit_dirty = False
+                write_json(self.out / 'projection-latest.json', self.audit)
                 gained += count
-            final = self.refresh_audit()
-            final_actual = layout.observed(final)
-            if any(final_actual.get(p) != v for p, v in actual.items()) or final['matched'] - audit['matched'] != gained:
-                raise JobBlocked('窗口结果与完整实机审计不一致；保留全部原记录')
-            return result or {'phase': 'done', 'detail': '本批地图画通过原生、物资和完整图面复核', 'placed': gained}
+            return result or {'phase': 'done', 'detail': '本批地图画已确认，缺料清单已增量更新', 'placed': gained}
 
     def projection_loading_target(self, client, selection):
         low, high = selection['min'], selection['max']
