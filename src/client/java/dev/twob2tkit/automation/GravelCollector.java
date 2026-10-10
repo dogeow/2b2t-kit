@@ -28,7 +28,7 @@ public final class GravelCollector {
     private static ClientLevel world;
     private static Step step,next;
     private static int ticks,phaseSince,stable,initialCount,collected,limit,radius,depth,
-        scanIndex,scanChosenCount,patches,failures,pickupRetries,alignmentAttempts,driftAttempts;
+        scanIndex,scanChosenCount,patches,failures,pickupRetries,alignmentAttempts;
     private static double returnY,parkY,routineY,diveY;
     private static Vec3 origin,settlePos,dropPose;
     private static BlockPos target,mined;
@@ -65,7 +65,7 @@ public final class GravelCollector {
             net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
             (int)Math.floor(origin.x),(int)Math.floor(origin.z))+22));
         initialCount=count(c);collected=0;visited.clear();blockedTargets.clear();standFailed.clear();candidates.clear();approaches.clear();beforeDrops.clear();
-        scanIndex=scanChosenCount=patches=failures=pickupRetries=alignmentAttempts=driftAttempts=ticks=stable=0;
+        scanIndex=scanChosenCount=patches=failures=pickupRetries=alignmentAttempts=ticks=stable=0;
         target=mined=null;dropId=null;dropPose=null;stopping=footingFlightDisabled=minedUnderfoot=false;
         try{
             session=NativeMaterialSession.open(c,new Vec3(origin.x,parkY,origin.z));
@@ -337,7 +337,7 @@ public final class GravelCollector {
         minedUnderfoot=c.player.onGround()&&c.player.blockPosition().below().equals(target)
             &&GravelFootingPolicy.stableFloor(c.level,target);
         if(!minedUnderfoot)restoreFootingFlight();
-        beforeMine=count(c);mined=target;dropId=null;dropPose=null;pickupRetries=driftAttempts=0;
+        beforeMine=count(c);mined=target;dropId=null;dropPose=null;pickupRetries=0;
         beforeDrops.clear();for(var e:c.level.getEntitiesOfClass(ItemEntity.class,
             new net.minecraft.world.phys.AABB(mined).inflate(6),e->e.isAlive()&&e.getItem().is(Items.GRAVEL)))
             beforeDrops.put(e.getUUID(),e.getItem().getCount());
@@ -362,18 +362,13 @@ public final class GravelCollector {
             if(c.level.hasChunkAt(p)&&!c.level.getBlockState(p).getCollisionShape(c.level,p).isEmpty()){floor=p;break;}}
         if(floor==null){stop(c,"掉落物下方没有安全落脚点");return;}
         dropPose=Vec3.atBottomCenterOf(floor.above());dropId=item.getUUID();
-        double distance=horizontal(c.player.position(),item.position());
-        if(distance>1.5){
-            boolean clear=MaterialAirRoute.clearColumn(c,item.getX(),item.getZ(),returnY);
-            if(GravelCollectionPolicy.recenterDriftingDrop(distance,driftAttempts,clear,
-                    c.player.getAirSupply(),number(observed,"air_return_floor",240))){
-                driftAttempts++;
-                KitClient.LOGGER.info("[Gravel] recenter drifting drop={} distance={} attempt={} air={}",
-                    dropId,distance,driftAttempts,c.player.getAirSupply());
-                status="掉落物随水漂移，水面重新定位";
-                navigate(c,new Vec3(c.player.getX(),returnY,c.player.getZ()),Step.REFILL);return;
-            }
-            stop(c,"掉落物离安全拾取位置过远");return;
+        double distance=Math.max(horizontal(c.player.position(),item.position()),
+            horizontal(c.player.position(),dropPose));
+        boolean clearPickupColumn=MaterialAirRoute.clearColumn(c,dropPose.x,dropPose.z,returnY);
+        if(!GravelCollectionPolicy.boundedDropApproach(distance,clearPickupColumn)){
+            KitClient.LOGGER.info("[Gravel] retain pending drop={} distance={} clear_pickup_column={} air={}",
+                dropId,distance,clearPickupColumn,c.player.getAirSupply());
+            stop(c,"掉落物超出已验证的拾取列，保留记录并返回");return;
         }
         double fall=c.player.getY()-dropPose.y;
         if(fall<.5){

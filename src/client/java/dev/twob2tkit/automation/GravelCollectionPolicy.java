@@ -21,8 +21,10 @@ public final class GravelCollectionPolicy {
     static boolean confirmedPickup(boolean blockRemoved,int inventoryGain,boolean freshDropRemaining){
         return blockRemoved&&inventoryGain>0&&!freshDropRemaining;
     }
-    static boolean recenterDriftingDrop(double horizontal,int attempts,boolean clearReturnColumn,int air,int returnFloor){
-        return horizontal>1.5&&horizontal<=4&&attempts<2&&clearReturnColumn&&air>=returnFloor;
+    static boolean boundedDropApproach(double horizontal,boolean clearPickupColumn){
+        // Reaching a drifting drop from another column invalidates the armed
+        // vertical escape. Return with the carried batch instead of redive.
+        return Double.isFinite(horizontal)&&horizontal>=0&&horizontal<=1.5&&clearPickupColumn;
     }
     static boolean sameColumn(double x,double z,int blockX,int blockZ){
         return Math.floor(x)==blockX&&Math.floor(z)==blockZ;

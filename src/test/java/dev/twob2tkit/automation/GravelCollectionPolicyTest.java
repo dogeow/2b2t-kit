@@ -25,12 +25,14 @@ class GravelCollectionPolicyTest {
         assertFalse(GravelCollectionPolicy.confirmedPickup(true,0,false));
         assertFalse(GravelCollectionPolicy.confirmedPickup(true,1,true));
     }
-    @Test void driftingDropCanBeRecenteredOnlyTwiceWithinClearNearbyWater(){
-        assertTrue(GravelCollectionPolicy.recenterDriftingDrop(2.5,0,true,280,180));
-        assertFalse(GravelCollectionPolicy.recenterDriftingDrop(5,0,true,280,180));
-        assertFalse(GravelCollectionPolicy.recenterDriftingDrop(2.5,2,true,280,180));
-        assertFalse(GravelCollectionPolicy.recenterDriftingDrop(2.5,0,false,280,180));
-        assertFalse(GravelCollectionPolicy.recenterDriftingDrop(2.5,0,true,170,180));
+    @Test void onlyNearbyDropsWithAnExactClearPickupColumnMayBeApproached(){
+        assertTrue(GravelCollectionPolicy.boundedDropApproach(0,true));
+        assertTrue(GravelCollectionPolicy.boundedDropApproach(1.5,true));
+        assertFalse(GravelCollectionPolicy.boundedDropApproach(1.5,false));
+        assertFalse(GravelCollectionPolicy.boundedDropApproach(2.9251074650605537,true));
+        assertFalse(GravelCollectionPolicy.boundedDropApproach(3.676867682403659,true));
+        assertFalse(GravelCollectionPolicy.boundedDropApproach(Double.NaN,true));
+        assertFalse(GravelCollectionPolicy.boundedDropApproach(-1,true));
     }
     @Test void nativeEntryUsesOnlyTheAuthorizedWorldScope() {
         assertTrue(GravelCollectionPolicy.allowedWorld(true,""));
