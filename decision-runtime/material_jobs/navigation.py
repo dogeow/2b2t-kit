@@ -331,6 +331,21 @@ def local_park(client):
     return [fresh['pos'][0], max(fresh['pos'][1]+1, top+24), fresh['pos'][2]]
 
 
+def lift_for_travel(client):
+    """Take off through the same verified column used by healthy cleanup.
+
+    A chest's real .875-high collision surface is safe to stand on, while the
+    padded voxel corridor deliberately treats the chest block as an obstacle.
+    Do the native collision-aware vertical takeoff before that corridor check.
+    """
+    state = settled_state(client)
+    if state.get('flight') is True and not state.get('on_ground'):
+        return state
+    point = local_park(client)
+    client.checked('navigate',target=point,arrival=.25,air_only=True,seconds=90)
+    return settled_state(client,point,.6)
+
+
 def outside_station(client, selection):
     low, high = selection['min'], selection['max']
     p = client.status()['pos']

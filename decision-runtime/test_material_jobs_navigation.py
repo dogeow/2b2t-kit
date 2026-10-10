@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from material_jobs.navigation import (_below_vertical_start, leave_quarry,
                                       quarry_exit_candidates, shaft_path,
-                                      settled_state, leave_projection)
+                                      settled_state, leave_projection, lift_for_travel)
 from material_jobs.protocol import JobBlocked
 
 
@@ -97,6 +97,33 @@ class SettledStateTest(unittest.TestCase):
             with self.assertRaisesRegex(JobBlocked,'实际位置未到达'):
                 settled_state(client,[1.,10.,1.],tolerance=.45,seconds=1)
 
+
+class TravelTakeoffTest(unittest.TestCase):
+    def test_chest_footing_uses_verified_vertical_takeoff_before_voxel_route(self):
+        ground={'pos':[10.5,64.875,20.5],'flight':False,'on_ground':True}
+        air={'pos':[10.5,88.8,20.5],'flight':True,'on_ground':False}
+        client=SimpleNamespace(checked=Mock())
+        with patch('material_jobs.navigation.settled_state',side_effect=[ground,air]), \
+                patch('material_jobs.navigation.local_park',return_value=[10.5,89,20.5]) as park:
+            self.assertIs(air,lift_for_travel(client))
+        park.assert_called_once_with(client)
+        client.checked.assert_called_once_with('navigate',target=[10.5,89,20.5],
+                                              arrival=.25,air_only=True,seconds=90)
+
+    def test_already_airborne_keeps_pose_without_extra_takeoff(self):
+        air={'pos':[10.5,88.8,20.5],'flight':True,'on_ground':False}
+        client=SimpleNamespace(checked=Mock())
+        with patch('material_jobs.navigation.settled_state',return_value=air), \
+                patch('material_jobs.navigation.local_park') as park:
+            self.assertIs(air,lift_for_travel(client))
+        park.assert_not_called();client.checked.assert_not_called()
+
+    def test_blocked_vertical_column_sends_no_takeoff(self):
+        client=SimpleNamespace(checked=Mock())
+        with patch('material_jobs.navigation.settled_state',return_value={'flight':False}), \
+                patch('material_jobs.navigation.local_park',side_effect=JobBlocked('roof blocked')):
+            with self.assertRaisesRegex(JobBlocked,'roof blocked'):lift_for_travel(client)
+        client.checked.assert_not_called()
 
 class QuarryExitTest(unittest.TestCase):
 

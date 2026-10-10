@@ -51,6 +51,7 @@ def inventory(count=0, free=4):
 
 def state(count=0, free=4):
     return {'pos': [.5, 66.75, .5], 'projection_selection': {'key': 'ship'},
+            'flight':True, 'on_ground':False,
             'inventory': inventory(count, free), 'projection_air_seed_protocol': 1,
             'target_stack_sizes': {ITEM: 64}}
 

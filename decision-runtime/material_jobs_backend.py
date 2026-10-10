@@ -643,7 +643,9 @@ class Backend:
                     and source.get('authorized') is True):
                 from material_jobs.acquisition import _travel
                 from material_jobs.mud_water_supply import fill
+                from material_jobs.navigation import lift_for_travel
                 self.prepare_travel()
+                lift_for_travel(c)
                 approach = source.get('approach')
                 if (not isinstance(approach,list) or len(approach)!=3
                         or any(type(v) not in (int,float) or not math.isfinite(v) for v in approach)):

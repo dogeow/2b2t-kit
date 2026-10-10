@@ -318,10 +318,12 @@ class FlatMapBackend(Backend):
         Each ordinary route below stays under the existing direct-route limit.
         """
         from material_jobs.acquisition import _travel, SEGMENT_ROUTE_LIMIT
+        from material_jobs.navigation import lift_for_travel
         out = Path(out)
         out.mkdir(parents=True, exist_ok=True)
         trace = []
         try:
+            lift_for_travel(client)
             for segment in range(16):
                 self.checkpoint()
                 state = client.status()

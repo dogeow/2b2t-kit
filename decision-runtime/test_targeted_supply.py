@@ -48,7 +48,8 @@ class TargetedSupplyTest(unittest.TestCase):
     def test_registered_mud_water_reuses_native_refill_without_chest_search(self):
         self.mud_context()
         old_status=self.client.status
-        self.client.status=lambda:{**old_status(),'pos':[19.5,95,852.5]}
+        self.client.status=lambda:{**old_status(),'pos':[19.5,95,852.5],
+                                   'flight':True,'on_ground':False,'velocity':[0,0,0]}
         receipt={'phase':'done','water_bucket':1,'new_use':True,'source_still_renewed':True}
         with patch('material_jobs.acquisition._travel') as travel, \
                 patch('material_jobs.mud_water_supply.fill',return_value=receipt) as refill, \
@@ -63,7 +64,8 @@ class TargetedSupplyTest(unittest.TestCase):
     def test_refill_unknown_is_not_followed_by_warehouse_fallback(self):
         self.mud_context()
         old_status=self.client.status
-        self.client.status=lambda:{**old_status(),'pos':[19.5,95,852.5]}
+        self.client.status=lambda:{**old_status(),'pos':[19.5,95,852.5],
+                                   'flight':True,'on_ground':False,'velocity':[0,0,0]}
         with patch('material_jobs.acquisition._travel'), \
                 patch('material_jobs.mud_water_supply.fill',side_effect=JobBlocked('unknown fill')) as refill, \
                 patch('container_access.open_grounded_chest') as chest:
