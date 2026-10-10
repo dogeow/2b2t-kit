@@ -1,6 +1,17 @@
 import unittest
 from ground_pickup import pickup_candidates,clear_segment,farmland_route
 class Tests(unittest.TestCase):
+ def test_known_wheat_can_step_down_to_dry_grass_border_without_jumping_back_on_crops(self):
+  rows=[{'pos':[27,64,68],'state':'Block{minecraft:farmland}[moisture=7]','solid':False,'fluid':False,'block_entity':False},
+        {'pos':[26,63,68],'state':'Block{minecraft:grass_block}[snowy=false]','solid':True,'fluid':False,'block_entity':False}]
+  self.assertEqual([[26.5,64,68.5]],farmland_route([27.5,64.9375,68.5],[26.4,64,68.67],rows))
+  self.assertEqual([],farmland_route([26.5,64,68.5],[27.5,64.9375,68.5],rows))
+  for change in ('water','container','hole'):
+   modified=[dict(r)for r in rows]
+   if change=='water':modified[-1]['fluid']=True
+   elif change=='container':modified[-1]['block_entity']=True
+   else:modified.pop()
+   self.assertEqual([],farmland_route([27.5,64.9375,68.5],[26.4,64,68.67],modified))
  def test_known_wheat_on_lower_farmland_gets_fractional_step_route(self):
   rows=[{'pos':[27,64,69],'state':'Block{minecraft:farmland}[moisture=7]','solid':False,'fluid':False,'block_entity':False},
         {'pos':[27,64,70],'state':'Block{minecraft:farmland}[moisture=7]','solid':False,'fluid':False,'block_entity':False},

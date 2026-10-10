@@ -47,19 +47,22 @@ def pickup_candidates(player,drop,rows):
 
 
 def farmland_route(player,drop,rows):
-    """At most four ordinary steps over dry known farmland collision heights."""
+    """At most four ordinary steps over farmland and its dry soil edge."""
     cells={tuple(r['pos']):r for r in rows};start=(math.floor(player[0]),math.floor(player[2]))
-    heights={}
+    heights={};ordinary=set()
     for pos,row in cells.items():
         state=row.get('state','');farm=state.startswith('Block{minecraft:farmland}')
-        if (not farm or row.get('fluid')is not False or row.get('block_entity')is not False
-                or row.get('solid')is not False or abs(pos[1]+.9375-player[1])>1.05):continue
-        height=pos[1]+.9375;point=[pos[0]+.5,height,pos[2]+.5]
+        soil=state in ('Block{minecraft:dirt}','Block{minecraft:grass_block}[snowy=false]')
+        height=pos[1]+(.9375 if farm else 1)
+        if (not(farm or soil) or row.get('fluid')is not False or row.get('block_entity')is not False
+                or row.get('solid')is not (False if farm else True) or abs(height-player[1])>1.05):continue
+        point=[pos[0]+.5,height,pos[2]+.5]
         if math.hypot(point[0]-player[0],point[2]-player[2])>3:continue
         body=[cells.get((pos[0],y,pos[2]))for y in range(pos[1]+1,math.floor(height+1.8)+1)]
         if any(r and (r.get('passable')is not True or hazard(r) or r.get('block_entity')is not False)for r in body):continue
         if (pos[0],pos[2])in heights:return []
         heights[(pos[0],pos[2])]=height
+        if soil:ordinary.add((pos[0],pos[2]))
     if start not in heights or abs(player[1]-heights[start])>.15:return []
     parents={start:None};depth={start:0};queue=deque([start]);end=None
     while queue:
@@ -70,6 +73,7 @@ def farmland_route(player,drop,rows):
         for dx,dz in ((1,0),(-1,0),(0,1),(0,-1)):
             nxt=(cell[0]+dx,cell[1]+dz)
             if nxt not in heights or nxt in parents or abs(heights[nxt]-heights[cell])>1.000001:continue
+            if cell in ordinary and nxt not in ordinary and heights[nxt]>heights[cell]+.125:continue
             # Extra jump headroom at the higher side remains checked; the
             # native walk handles actual .9375 farmland and its one-block step.
             ceiling=math.floor(max(heights[nxt],heights[cell])+2.8)
