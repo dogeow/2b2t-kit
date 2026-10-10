@@ -483,6 +483,13 @@ public final class GravelCollector {
     }
     private static void navigate(Minecraft c,Vec3 point,Step after,double arrival){
         var p=target(point);p.addProperty("arrival",arrival);p.addProperty("seconds",30);
+        if(c.player!=null && GravelNavigationPolicy.dryTransit(after.name(),
+                c.player.isUnderWater(),c.player.getY(),point.y,returnY)){
+            // The material air navigator brakes and confirms stable arrival.
+            // Its existing native swept-body, loaded-chunk and dry-path gates
+            // remain authoritative; diving/refilling from water uses the old route.
+            p.addProperty("air_only",true);p.addProperty("arrival",.25);
+        }
         issue(c,"navigate",p,after);
     }
     private static void issue(Minecraft c,String op,JsonObject p,Step after){session.submit(c,op,p);next=after;phaseSince=ticks;}
