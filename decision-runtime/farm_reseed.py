@@ -30,7 +30,8 @@ def registered(root,registry_path,cells,*,server=None):
     root=Path(root).resolve();path=Path(registry_path).resolve()
     if path.name!='registry.json' or not path.is_relative_to(root/'farms'):raise ValueError('Use the exact original local farm registry')
     registry=read(path);scope=registry.get('scope') or {};layout=scope.get('layout') or {};crop=crop_descriptor(layout)
-    request={'authorized':True,'center':layout.get('center'),'radius':layout.get('radius',2),'crop':crop.name}
+    from potato_farm import request_from_layout
+    request=request_from_layout(layout)
     key=hashlib.sha256(json.dumps(scope,sort_keys=True).encode()).hexdigest()[:16]
     if (path.parent.name!=key or scope.get('dimension')!='minecraft:overworld'
             or server is not None and scope.get('server')!=server_key(server) or plan(request)!=layout):

@@ -8,6 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 import hashlib
 import json
+from copy import deepcopy
 import math
 from pathlib import Path
 import re
@@ -90,19 +91,52 @@ def plan(request):
             or not -63 <= center[1] <= 317):
         raise ValueError('Farm center must be bounded integer [x, floor_y, z]')
     radius = request.get('radius', 2)
-    if type(radius) is not int or not 1 <= radius <= 2:
+    existing=request.get('existing_source')
+    if existing is not None and (crop.name!='wheat' or not isinstance(existing,dict)
+            or existing.get('schema')!=1 or existing.get('kind')!='observed_existing_wheat'):
+        raise ValueError('Existing source must be an explicitly observed wheat field')
+    maximum_radius=4 if existing is not None else 2
+    if type(radius) is not int or not 1 <= radius <= maximum_radius:
         raise ValueError('Farm pilot radius is limited to 1..2')
     x, y, z = center
     cells = [[a, y, b] for a in range(x-radius, x+radius+1)
              for b in range(z-radius, z+radius+1) if (a, b) != (x, z)]
     assert all(hydration_covers(p, center) for p in cells)
+    if existing is not None:
+        selected=existing.get('cells');canonical={tuple(p)for p in cells}
+        if (not isinstance(selected,list)or not 1<=len(selected)<=80
+                or any(not isinstance(p,list)or len(p)!=3 or any(type(v)is not int for v in p)
+                       or tuple(p)not in canonical for p in selected)
+                or len({tuple(p)for p in selected})!=len(selected)):
+            raise ValueError('Observed wheat source needs unique existing cells within hydration range')
+        cells=sorted(deepcopy(selected))
     layout={'center': center[:], 'radius': radius, 'cells': cells,
             'scan_min': [x-radius-1, y-1, z-radius-1],
             'scan_max': [x+radius+1, y+2, z+radius+1],
             crop.quantity_key: len(cells), 'maximum_interactions': 2*len(cells)}
     # Keep the original potato layout hash and journals byte-for-byte compatible.
     if crop.name!='potato':layout['crop']=crop.name
+    if existing is not None:
+        protected=existing.get('protected_obstacles',[])
+        mutation={(p[0],y,p[2])for p in cells+[center]for y in range(p[1]-1,p[1]+3)}
+        if (not isinstance(protected,list)or len(protected)>512
+                or any(not isinstance(r,dict)or not isinstance(r.get('pos'),list)or len(r['pos'])!=3
+                    or any(type(v)is not int for v in r['pos'])or tuple(r['pos'])in mutation
+                    or not all(layout['scan_min'][i]<=r['pos'][i]<=layout['scan_max'][i]for i in range(3))
+                    or not isinstance(r.get('state'),str)or type(r.get('fluid'))is not bool
+                    or type(r.get('block_entity'))is not bool or not(r['fluid']or r['block_entity'])for r in protected)
+                or len({tuple(r['pos'])for r in protected})!=len(protected)):
+            raise ValueError('Source obstacles must be exact protected rows outside all crop actions')
+        layout['existing_source']={'schema':1,'kind':'observed_existing_wheat','cells':cells,
+            'protected_obstacles':sorted(deepcopy(protected),key=lambda r:r['pos'])}
     return layout
+
+
+def request_from_layout(layout):
+    request={'authorized':True,'center':layout.get('center'),'radius':layout.get('radius',2),
+             'crop':crop_descriptor(layout).name}
+    if 'existing_source'in layout:request['existing_source']=deepcopy(layout['existing_source'])
+    return request
 
 
 def _key(pos):
@@ -170,6 +204,8 @@ def survey_rows(reply, layout, records, pending=None):
     if reply['scan_entities']:
         raise FarmWait('WAIT_ENTITY', 'A currently loaded entity intersects the farm/buffer')
     lo, hi = layout['scan_min'], layout['scan_max']; by = {}
+    existing=layout.get('existing_source')or{}
+    protected={tuple(r['pos']):r for r in existing.get('protected_obstacles',[])}
     for row in reply['blocks']:
         point = row.get('pos')
         if (not isinstance(point, list) or len(point) != 3 or any(type(v) is not int for v in point)
@@ -179,10 +215,17 @@ def survey_rows(reply, layout, records, pending=None):
                 or type(row.get('block_entity')) is not bool):
             raise FarmWait('WAIT_SCAN', 'Missing typed details, duplicate or out-of-volume scan row')
         by[tuple(point)] = row
+        recorded=protected.get(tuple(point))
+        if recorded is not None:
+            if any(row.get(k)!=recorded[k]for k in ('state','fluid','block_entity')):
+                raise FarmWait('WAIT_CONTAINER','Registered protected obstacle changed')
+            continue
         if row['block_entity']:
             raise FarmWait('WAIT_CONTAINER', 'Container or block entity in farm buffer is protected')
         if row['fluid'] and point != layout['center']:
             raise FarmWait('WAIT_WATER', 'A fluid outside the declared center is protected')
+    if any(p not in by for p in protected):
+        raise FarmWait('WAIT_CONTAINER','Registered protected obstacle is no longer present')
     water = by.get(tuple(layout['center']), {})
     if water.get('state') != 'Block{minecraft:water}[level=0]' or water.get('fluid') is not True:
         raise FarmWait('WAIT_WATER', 'The center must already contain an actual level-0 water source')
@@ -205,7 +248,10 @@ def survey_rows(reply, layout, records, pending=None):
                 or not farmland and soil.get('solid') is not True):
             raise FarmWait('WAIT_SOIL', 'Farm floor is not fresh grass/dirt or known farmland')
         light = soil.get('spawn_block_light')
-        if type(light) is not int or not 9 <= light <= 15:
+        sky=soil.get('sky_light')
+        existing_sky=(existing.get('kind')=='observed_existing_wheat'and farmland
+                      and type(sky)is int and 9<=sky<=15)
+        if type(light) is not int or not 0<=light<=15 or light<9 and not existing_sky:
             raise FarmWait('WAIT_LIGHT', 'Crop cell needs actual block light >=9 for reliable survival/growth')
         known = records.get(_key(pos), {}).get('planted') is True
         expected_crop = pending and pending.get('operation') == 'plant' and pending.get('pos') == pos

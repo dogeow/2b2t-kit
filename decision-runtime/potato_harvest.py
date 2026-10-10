@@ -645,13 +645,12 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
             for _ in range(6):
                 after, observed, _ = survey(pos, pre_ids)
                 if (action_proved('plant', pos, before, after, observed, crop=descriptor)
-                        and _properties(observed.get(crop, {}), descriptor.block, 'age', descriptor.age_max) == 0
                         and _counts(after)[seed] >= 4):
                     if not times or after['time'] > times[-1]: times.append(after['time'])
                     if len(times) == 2: break
                 else: times = []
             if len(times) != 2:
-                raise FarmWait('WAIT_RECONCILE', 'Reseed needs exactly one actual planting item consumed and two fresh age-zero frames')
+                raise FarmWait('WAIT_RECONCILE', 'Reseed needs exactly one actual planting item consumed and two fresh crop frames')
             record['plant'] = {**book['pending'], 'observed_times': times, 'after_counts': dict(_counts(after))}
             record['replanted'] = True; book['pending'] = None; resume = None; save()
             if plant_access is not None:

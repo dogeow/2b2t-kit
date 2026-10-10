@@ -6,7 +6,7 @@ from pathlib import Path
 
 from kit_runtime.journal import write_json
 from material_plan import inventory_counts
-from potato_farm import FarmWait, _properties, plan
+from potato_farm import FarmWait, _properties, plan, request_from_layout
 from potato_harvest import _registered_wheat, run as harvest
 from potato_loot_flight import make_pickup,make_plant_access
 from .protocol import server_key
@@ -62,14 +62,17 @@ def repair_registered_empty(backend,request,registry,out,checkpoint):
 
 def registered_fields(c):
     """Read original planting registrations; never create fields or credit stock."""
-    for path in sorted((Path(c.root)/'farms').glob('*/registry.json'))[:32]:
+    paths=sorted((Path(c.root)/'farms').glob('*/registry.json'))[:32]
+    def priority(path):
+        try:return not json.loads(path.read_text()).get('preferred_material_source',False),str(path)
+        except (OSError,ValueError):return True,str(path)
+    for path in sorted(paths,key=priority):
         try:
             if path.stat().st_size>1_000_000:continue
             saved=json.loads(path.read_text());scope=saved['scope'];layout=scope['layout']
             if (scope['server']!=server_key(c.server) or scope['dimension']!='minecraft:overworld'
                     or layout.get('crop')!='wheat'):continue
-            request={'authorized':True,'center':layout['center'],'radius':layout['radius'],
-                     'crop':'wheat','bonemeal':False,'reverify_registered_field':True}
+            request={**request_from_layout(layout),'bonemeal':False,'reverify_registered_field':True}
             if plan(request)!=layout:continue
             key=hashlib.sha256(json.dumps(scope,sort_keys=True).encode()).hexdigest()[:16]
             if path.parent.name!=key:continue

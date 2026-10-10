@@ -127,6 +127,18 @@ class HarvestTests(unittest.TestCase):
         self.assertEqual('new_scoped_item_ids_and_actual_stock', record['harvest']['loot_proof'])
         self.assertEqual(1, len(record['harvest']['owned_loot']))
 
+    def test_reseed_natural_growth_before_readback_does_not_repeat_planting(self):
+        class GrowingClient(HarvestClient):
+            def request(self,op,**params):
+                result=super().request(op,**params)
+                if op=='interact'and params.get('expected_hand')==POTATO:
+                    p=params['pos'];self.rows[(p[0],p[1]+1,p[2])]['state']='Block{minecraft:potatoes}[age=1]'
+                return result
+        client=GrowingClient();result,book=self.execute(client,bonemeal_budget=0)
+        self.assertEqual('done',result['phase'],result);self.assertEqual(4,result['harvested_replanted'])
+        self.assertEqual(4,sum(op=='interact'for op,_ in self.actions(client)))
+        self.assertTrue(all(r.get('replanted')is True for r in book['cells'].values()))
+
     def test_no_loot_stops_after_exactly_one_break_and_cannot_replay(self):
         client = HarvestClient(); client.pickup_delay = None
         with tempfile.TemporaryDirectory() as directory:
