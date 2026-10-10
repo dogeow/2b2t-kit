@@ -7,7 +7,7 @@ from kit_runtime.journal import write_json
 from material_plan import inventory_counts
 from potato_farm import FarmWait, _properties, plan
 from potato_harvest import _registered_wheat, run as harvest
-from potato_loot_flight import make_pickup
+from potato_loot_flight import make_pickup,make_plant_access
 from .protocol import server_key
 
 
@@ -40,9 +40,33 @@ def run(backend,target,out,checkpoint):
     try:
         for number,(request,registry) in enumerate(fields):
             checkpoint();layout=plan(request);home=out/('field-%02d'%number);home.mkdir(exist_ok=True)
+            harvest_out=home;reused=None
+            active=registry.parent/'harvest-active.json'
+            if active.exists():
+                prior=Path(json.loads(active.read_text())['journal'])
+                old=json.loads(prior.read_text());pending=old.get('pending')or{}
+                saved_layout=old.get('scope',{}).get('layout',{})
+                evidence=pending.get('prior_plant_rejected_without_use')
+                if (old.get('world_session')==c.world and pending.get('operation')=='await_replant'
+                        and evidence and old.get('scope',{}).get('server')==server_key(c.server)
+                        and saved_layout.get('center')==layout['center']
+                        and saved_layout.get('radius')==layout['radius'] and saved_layout.get('crop')=='wheat'):
+                    proof=json.loads(Path(evidence).read_text()).get('proof',{})
+                    from wheat_plant_reconcile import HOST,HOST_CLASS_SHA
+                    host=proof.get('host_contract')or{}
+                    if (proof.get('outcome')!='rejected_without_use' or proof.get('world_session')!=c.world
+                            or proof.get('original_attempt_not_done') is not True or proof.get('seed_debit')!=0
+                            or host.get('kit_version')!=HOST or host.get('class_sha256')!=HOST_CLASS_SHA
+                            or proof.get('pos')!=pending['pos']):
+                        return wait('WAIT_RECONCILE','Original rejected planting proof is incomplete')
+                    request={**request,'cells':saved_layout['harvest_cells']}
+                    harvest_out=prior.parent;reused=(prior,pending['pos'])
+                    write_json(home/'reused-original-harvest.json',{'journal':str(prior),'proof':evidence,
+                               'original_action_replayed':False,'inventory_credit':0})
             # This existing primitive proves original complete planting, no old
             # pending harvest, and two current complete crop/farmland frames.
-            _registered_wheat(c,{**request,'cells':layout['cells']},home/'preflight.json',bind_active=False)
+            _registered_wheat(c,{**request,'cells':layout['cells']},reused[0]if reused else home/'preflight.json',
+                              known_replant=reused[1]if reused else None,bind_active=False)
             scan=c.checked('scan',min=layout['scan_min'],max=layout['scan_max'],details=True)
             expected=1
             for low,high in zip(layout['scan_min'],layout['scan_max']):expected*=high-low+1
@@ -53,7 +77,7 @@ def run(backend,target,out,checkpoint):
             mature=[p for p in layout['cells'] if _properties(rows.get((p[0],p[1]+1,p[2]),{}),'wheat','age',7)==7]
             write_json(home/'source-observation.json',{'world_session':c.world,'registry':str(registry),
                        'mature_cells':mature,'inventory_credit':0})
-            if not mature:continue
+            if not mature and reused is None:continue
             if inventory_counts(c.status())['minecraft:wheat_seeds']<5:
                 fetched=backend.fetch({'minecraft:wheat_seeds':5})
                 if fetched.get('phase') not in ('done','waiting'):
@@ -72,13 +96,24 @@ def run(backend,target,out,checkpoint):
             hover=[center[0]+.5,center[1]+1.6,center[2]+.5]
             c.checked('navigate',target=hover,arrival=.15,air_only=True,seconds=45)
             settled_state(c,hover,.6)
-            cells=mature[:min(4,target-before)]
-            result=harvest(c,{**request,'cells':cells},home,checkpoint,max_cells=4,bonemeal_budget=0,
-                           pickup=make_pickup(center,radius=layout['radius'],checkpoint=checkpoint,crop='wheat'))
+            cells=request['cells']if reused else mature[:min(4,target-before)]
+            args=(c,{**request,'cells':cells},harvest_out,checkpoint)
+            options={'max_cells':4,'bonemeal_budget':0,
+                     'pickup':make_pickup(center,radius=layout['radius'],checkpoint=checkpoint,crop='wheat'),
+                     'plant_access':make_plant_access(center,radius=layout['radius'],checkpoint=checkpoint)}
+            result=harvest(*args,**options)
+            from wheat_plant_reconcile import REJECTION,reconcile
+            journal=Path(result['journal']);inner=json.loads(journal.read_text());pending=inner.get('pending')or{}
+            if (pending.get('operation')=='plant' and pending.get('receipt',{}).get('phase')=='error'
+                    and pending.get('receipt',{}).get('detail')==REJECTION):
+                # Exactly one new pose is allowed only by the existing pinned
+                # pre-use rejection proof, while the original owner is alive.
+                reconcile(c,journal,home/'exact-rejected-planting',control_dir=c.out)
+                result=harvest(*args,**options)
             write_json(home/'result.json',result)
             # A remaining harvested cell/drop must stay with its original
             # reconciler; a generic source wait must not abandon replanting.
-            books=list(home.glob('wheat-harvest-*.json'))
+            books=list(harvest_out.glob('wheat-harvest-*.json'))
             pending=any((b.get('pending') or b.get('cleanup_pending')) for b in
                         (json.loads(p.read_text()) for p in books))
             if result.get('phase')!='done' or pending or not books:

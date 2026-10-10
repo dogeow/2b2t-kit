@@ -31,6 +31,7 @@ class Tests(unittest.TestCase):
                 patch('material_jobs.navigation.settled_state',return_value=self.c.status()), \
                 patch('material_jobs.acquisition._travel'), \
                 patch('material_jobs.registered_wheat.make_pickup',return_value=None), \
+                patch('material_jobs.registered_wheat.make_plant_access',return_value=None), \
                 patch('material_jobs.registered_wheat.harvest',side_effect=harvest):
             return run(self.backend,target,self.root/'source',lambda:None)
 
@@ -93,6 +94,36 @@ class Tests(unittest.TestCase):
         _registered_wheat(self.c,{**REQUEST,'reverify_registered_field':True},self.root/'preflight.json',bind_active=False)
         self.assertEqual(before,active.read_bytes())
         self.assertFalse(any(op in ('mine_block','interact')for op,_ in self.c.calls))
+
+    def test_known_rejected_planting_reuses_original_partial_batch_and_restores_it(self):
+        from wheat_plant_reconcile import HOST,HOST_CLASS_SHA
+        from potato_farm import plan
+        original_request=self.c.request
+        def reject_plant(op,**kw):
+            if op=='interact' and kw.get('expected_hand')=='minecraft:wheat_seeds':
+                self.c.last='rejected-plant'
+                return {**self.c.status(),'phase':'error','id':self.c.last,
+                        'detail':'Target interaction face is occluded or out of reach'}
+            return original_request(op,**kw)
+        self.c.request=reject_plant
+        request={**REQUEST,'cells':plan(REQUEST)['cells'][:4],'reverify_registered_field':True}
+        result=native_harvest(self.c,request,self.root/'original-harvest',
+                              sleep=self.clock.sleep,monotonic=self.clock.monotonic)
+        journal=Path(result['journal']);b=json.loads(journal.read_text());pending=b['pending']
+        self.assertEqual('plant',pending['operation'])
+        proof=self.root/'verified-rejection.json'
+        proof.write_text(json.dumps({'proof':{'outcome':'rejected_without_use','world_session':self.c.world,
+                    'original_attempt_not_done':True,'seed_debit':0,'pos':pending['pos'],
+                    'host_contract':{'kit_version':HOST,'class_sha256':HOST_CLASS_SHA}}}))
+        b['rejected_plant_history']=[{'original_pending':pending,'proof':str(proof)}]
+        b['pending']={'operation':'await_replant','pos':pending['pos'],
+                      'pre_drop_ids':pending.get('pre_drop_ids',[]),'prior_plant_rejected_without_use':str(proof)}
+        journal.write_text(json.dumps(b));self.c.request=original_request
+        recovered=self.execute();self.assertEqual('done',recovered['phase'],recovered)
+        self.assertEqual((1,4,3),(recovered['before'],recovered['after'],recovered['gained']))
+        final=json.loads(journal.read_text());self.assertIsNone(final['pending'])
+        self.assertEqual(4,sum(v.get('replanted')is True for v in final['cells'].values()))
+        self.assertEqual('plant',final['rejected_plant_history'][0]['original_pending']['operation'])
 
 
 if __name__=='__main__':unittest.main()

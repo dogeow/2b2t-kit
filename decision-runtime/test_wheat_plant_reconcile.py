@@ -1,6 +1,10 @@
 import copy
+import json
+from pathlib import Path
+import tempfile
 import unittest
-from wheat_plant_reconcile import prove,HOST,HOST_CLASS_SHA,REJECTION
+from unittest.mock import patch
+from wheat_plant_reconcile import prove,prove_after_park,reconcile_after_park,HOST,HOST_CLASS_SHA,REJECTION
 from potato_farm import _key
 
 
@@ -32,3 +36,56 @@ class Tests(unittest.TestCase):
             values={k:copy.deepcopy(getattr(self,k))for k in ('book','reply','event','current','host')}
             values[target].update(changes)
             with self.assertRaises(RuntimeError):prove(**values)
+
+    def parked(self):
+        self.reply.update(health=20,recent_hurt_at=1,manual_movement=False,screen='',
+                          supervision_lease={'id':'lease','kind':'materials','job_session':'task',
+                                             'world_session':'world','revision':7,'remote_finish':'guard'})
+        current={**copy.deepcopy(self.current),'time':22,'control_revision':9,'connected':True,
+                 'flight':True,'guard_armed':True,'guard_pve_only':True,'under_water':False,'pos':[5,100,9],
+                 'supervision_lease':{'id':'lease','kind':'parking','job_session':'task','world_session':'world',
+                                      'revision':9,'remote_finish':'guard','park_target':[5,100,9]}}
+        native={'lease':'lease','job_session':'task','action':'KEEP_PVE_GUARD','time':20,
+                'snapshot':{'world_session':'world'}}
+        finish={**copy.deepcopy(native),'native_receipt':True,'parking_confirmation':copy.deepcopy(current)}
+        return current,finish,native
+
+    def test_unchanged_native_park_can_reconcile_the_historical_pre_use_rejection(self):
+        current,finish,native=self.parked()
+        result=prove_after_park(self.book,self.reply,self.event,current,self.host,finish,native)
+        self.assertEqual('rejected_without_use',result['outcome'])
+        self.assertTrue(result['original_rejection_frame_is_historical'])
+        self.assertEqual(9,result['fresh_unchanged_parking_revision'])
+        self.assertTrue(result['original_attempt_not_done'])
+
+    def test_foreign_or_unproved_parking_and_changed_inventory_do_not_clear_original_pending(self):
+        current,finish,native=self.parked();before=copy.deepcopy(self.book)
+        for target,change in [('current',{'world_session':'other'}),('current',{'guard_armed':False}),
+                ('current',{'pos':[7,100,9]}),('current',{'recent_hurt_at':2}),
+                ('finish',{'native_receipt':False}),('native',{'lease':'other'}),('native',{'local_verified':True})]:
+            values={'current':copy.deepcopy(current),'finish':copy.deepcopy(finish),'native':copy.deepcopy(native)}
+            values[target].update(change)
+            with self.assertRaises(RuntimeError):
+                prove_after_park(self.book,self.reply,self.event,values['current'],self.host,values['finish'],values['native'])
+        current['inventory'][5]['count']=9
+        with self.assertRaises(RuntimeError):prove_after_park(self.book,self.reply,self.event,current,self.host,finish,native)
+        self.assertEqual(before,self.book)
+
+    def test_park_reconciliation_waits_for_distinct_frames_and_preserves_the_original_attempt(self):
+        current,finish,native=self.parked();later=copy.deepcopy(current);later['time']=23
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);control=root/'control';control.mkdir()
+            journal=root/'harvest.json';journal.write_text(json.dumps(self.book));original=journal.read_bytes()
+            (root/'reply-one.json').write_text(json.dumps(self.reply))
+            (root/'supervision-receipt-lease.json').write_text(json.dumps(native))
+            (control/'stock-safety.json').write_text(json.dumps(finish))
+            (control/'events.jsonl').write_text(json.dumps(self.event)+'\n')
+            with patch('wheat_plant_reconcile.contract',return_value=self.host), \
+                    patch('wheat_plant_reconcile.read_fresh',side_effect=[current,current,later]), \
+                    patch('wheat_plant_reconcile.time.sleep'):
+                result=reconcile_after_park(root,journal,root/'proof',control)
+            saved=json.loads(journal.read_text())
+            self.assertEqual('await_replant',saved['pending']['operation'])
+            self.assertEqual('plant',saved['rejected_plant_history'][0]['original_pending']['operation'])
+            self.assertEqual(original,(root/'proof/original-harvest-journal-before.json').read_bytes())
+            self.assertTrue(result['original_attempt_not_done'])

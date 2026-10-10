@@ -2,10 +2,13 @@
 import copy
 import hashlib
 import json
+import math
+import time
 from pathlib import Path
 from zipfile import ZipFile
 from kit_runtime.journal import write_json
 from potato_farm import _counts,_key
+from live_snapshot import read_fresh
 
 REJECTION='Target interaction face is occluded or out of reach'
 HOST='2026.10.10.1'
@@ -53,6 +56,70 @@ def prove(book,reply,event,current,host):
         raise RuntimeError('Exact rejected planting and unchanged current inventory/owner are not proven')
     return {'outcome':'rejected_without_use','request_id':reply['id'],'world_session':book['world_session'],
             'original_attempt_not_done':True,'seed_debit':0,'host_contract':host,'pos':pos}
+
+
+def prove_after_park(book,reply,event,current,host,finish,native):
+    """Keep the original rejection frame separate from a fresh unchanged park."""
+    original=prove(book,reply,event,reply,host)
+    lease=current.get('supervision_lease')or{};old=reply.get('supervision_lease')or{}
+    saved=finish.get('parking_confirmation')or{};target=lease.get('park_target')
+    if (finish.get('native_receipt') is not True or finish.get('local_verified') or native.get('local_verified')
+            or finish.get('lease_transition_pending') or native.get('lease_transition_pending')
+            or lease.get('kind')!='parking' or lease.get('id')!=old.get('id')
+            or lease.get('job_session')!=event['params']['task_session']
+            or lease.get('world_session')!=book['world_session'] or lease.get('remote_finish')!='guard'
+            or lease.get('revision')!=current.get('control_revision')
+            or current.get('control_revision')!=saved.get('control_revision')
+            or type(native.get('time')) is not int or native['time']<=reply['time']
+            or type(current.get('time')) is not int or current['time']<saved.get('time',0)
+            or not isinstance(target,list) or len(target)!=3 or not isinstance(current.get('pos'),list)
+            or math.dist(current['pos'],target)>.6
+            or dict(_counts(current))!=book['pending']['before_counts']
+            or current.get('world_session')!=book['world_session']
+            or current.get('recent_hurt_at')!=book['recent_hurt_at']
+            or current.get('health')!=20 or current.get('manual_movement') or current.get('screen')
+            or not current.get('connected') or not current.get('flight') or current.get('under_water')
+            or current.get('guard_armed')is not True or current.get('guard_pve_only')is not True
+            or current.get('safety_hold',{}).get('active') or current.get('guard_busy')
+            or (native.get('snapshot')or{}).get('world_session')!=book['world_session']
+            or any(finish.get(k)!=native.get(k)for k in ('lease','job_session','action','time'))
+            or native.get('lease')!=lease.get('id') or native.get('job_session')!=lease.get('job_session')
+            or native.get('action')!='KEEP_PVE_GUARD'):
+        raise RuntimeError('Original rejection and unchanged current native parking are not proven')
+    return {**original,'original_rejection_frame_is_historical':True,
+            'fresh_unchanged_parking_revision':current['control_revision'],
+            'fresh_unchanged_parking_time':current['time'],'native_finish_time':native['time']}
+
+
+def reconcile_after_park(root,journal,out,control_dir):
+    """Read-only journal reconciliation before a new controller is created."""
+    root=Path(root);journal=Path(journal);out=Path(out);directory=Path(control_dir)
+    if out.exists():raise RuntimeError('Choose a new proof directory')
+    raw=journal.read_bytes();book=json.loads(raw);rid=book['pending']['receipt']['id']
+    reply=json.loads((root/('reply-'+rid+'.json')).read_text())
+    matches=[r for r in (json.loads(line)for line in(directory/'events.jsonl').read_text().splitlines())if r.get('request_id')==rid]
+    if len(matches)!=1:raise RuntimeError('Single original event required')
+    finish=json.loads((directory/'stock-safety.json').read_text());lease=finish['lease']
+    native=json.loads((root/('supervision-receipt-'+lease+'.json')).read_text());host=contract(root)
+    frames=[]
+    for _ in range(2):
+        deadline=time.monotonic()+6
+        while True:
+            current=read_fresh(root)
+            if not frames or current['time']>frames[-1]['time']:break
+            if time.monotonic()>=deadline:raise RuntimeError('Two distinct current parking frames required')
+            time.sleep(.1)
+        proof=prove_after_park(book,reply,matches[0],current,host,finish,native)
+        frames.append(current)
+    if journal.read_bytes()!=raw:raise RuntimeError('Original journal changed during observation')
+    out.mkdir(parents=True);(out/'original-harvest-journal-before.json').write_bytes(raw)
+    evidence=out/'exact-pre-use-rejection-proof.json'
+    write_json(evidence,{'proof':proof,'reply':reply,'event':matches[0],'native_finish':native,
+                        'fresh_parking_frames':frames})
+    pending=book['pending'];book.setdefault('rejected_plant_history',[]).append({'original_pending':copy.deepcopy(pending),'proof':str(evidence)})
+    book['pending']={'operation':'await_replant','pos':pending['pos'],'pre_drop_ids':pending.get('pre_drop_ids',[]),
+                     'prior_plant_rejected_without_use':str(evidence)}
+    write_json(journal,book);return proof
 
 
 def reconcile(c,journal,out,control_dir=None):
