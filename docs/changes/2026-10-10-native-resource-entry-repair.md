@@ -11,3 +11,5 @@ Backend.acquire 对本次已知 route_geometry_blocked 可调用该原语，在�
 229 项相关回归通过；最终同一分支接入后又针对后端／入口／平面地图验证。真正采集与新的地图放置继续验证，完整地图仍未完成。用户新增要求已保存为记忆：操作经验必须持续集成到 Kit，后续地图画与其它操作使用 Kit 自主完成。
 
 实机补充：登记入口及矿区预加载组合已实际成功。Kit 清理登记天然竖井后采得 12 个闪长岩，背包 2→14，源任务 completed 14/14、ai_calls=0；退出矿坑后取得原生 KEEP_PVE_GUARD 并自动衔接完整图面任务。证据在 work/live-20261004/map-source12-then-full-kit-39bb-008/actual_source_terminal.json 与 actual_diorite_after_source.json。该材料尚未计入图面放置，本次尚未完成全图与地图像素验收。
+
+本批图面验收：上述 12 个闪长岩已经真实放置，两个窗口分别 7 格、5 格，库存 14→7→2，均 complete=true、pending=null。完整当前原生图面审计 8777→8789 / 16512，服务器区块覆盖通过。Kit 随后自动进入下一批泥砖材料流水线。相关证据在 map-source12-then-full-kit-39bb-008/material-job/projection-latest.json 和两个 flat-window.json；全图及实际地图物品仍未完成。
