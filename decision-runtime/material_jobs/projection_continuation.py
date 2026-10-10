@@ -38,6 +38,14 @@ def run(root,original,out):
     original={**original,'created_at':int(time.time()*1000),'context':{**original['context'],
         'world_session':world,'expected_revision':first['control_revision'],'start_pos':first['pos']}}
     waiting=WaitingIntent(original,out/'waiting');watch=StationaryResume(root);attempt=0;previous=None
+    # A new authorized goal may replace an idle native parking lease. The
+    # material client already supports this; the standing watcher must bind
+    # that exact lease's task rather than wait forever for a healthy hover.
+    parking=first.get('supervision_lease')or{}
+    if(parking.get('kind')=='parking'and parking.get('world_session')==world
+            and parking.get('revision')==first.get('control_revision')
+            and parking.get('job_session')):
+        waiting.state['native_task_session']=parking['job_session']
     while True:
         while not watch.poll(waiting):
             state=read_fresh(root)
