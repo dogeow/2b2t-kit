@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from material_jobs.mud_pipeline import run,DIRT,GRASS,MUD,AIR,CAULDRON
+from material_jobs.mud_pipeline import run,DIRT,COARSE_DIRT,GRASS,MUD,AIR,CAULDRON
 from material_jobs.protocol import JobPaused,JobBlocked
 from recipe_catalog import RecipeCatalog
 
@@ -18,6 +18,7 @@ def fixture(path):
     recipes={
         'packed_mud':{'type':'minecraft:crafting_shapeless','ingredients':['minecraft:mud','minecraft:wheat'],'result':{'id':'minecraft:packed_mud'}},
         'mud_bricks':{'type':'minecraft:crafting_shaped','key':{'#':'minecraft:packed_mud'},'pattern':['##','##'],'result':{'count':4,'id':'minecraft:mud_bricks'}},
+        'coarse_dirt':{'type':'minecraft:crafting_shapeless','ingredients':['minecraft:dirt','minecraft:gravel','minecraft:gravel','minecraft:dirt'],'result':{'count':4,'id':'minecraft:coarse_dirt'}},
         'glass_bottle':{'type':'minecraft:crafting_shaped','key':{'#':'minecraft:glass'},'pattern':['# #',' # '],'result':{'count':3,'id':'minecraft:glass_bottle'}}}
     with zipfile.ZipFile(path,'w') as z:
         for n,d in recipes.items():z.writestr('data/minecraft/recipe/'+n+'.json',json.dumps(d))
@@ -93,11 +94,11 @@ class Client:
                 self.blocks[pos]=CAULDRON if level==1 else 'Block{minecraft:water_cauldron}[level='+str(level-1)+']'
             elif hand['item']=='minecraft:water_bucket':
                 self.add('minecraft:water_bucket',-1);self.add('minecraft:bucket',1);self.blocks[pos]='Block{minecraft:water_cauldron}[level=3]'
-            elif hand['item']=='minecraft:dirt':
+            elif hand['item']in ('minecraft:dirt','minecraft:coarse_dirt'):
                 assert self.blocks.get((pos[0],pos[1]+1,pos[2]),AIR)==AIR
-                self.add('minecraft:dirt',-1);self.blocks[(pos[0],pos[1]+1,pos[2])]=DIRT
+                feed=hand['item'];self.add(feed,-1);self.blocks[(pos[0],pos[1]+1,pos[2])]=COARSE_DIRT if feed=='minecraft:coarse_dirt'else DIRT
             elif hand['item']=='minecraft:potion':
-                assert self.blocks[pos]==DIRT
+                assert self.blocks[pos]in (DIRT,COARSE_DIRT)
                 self.add('minecraft:potion',-1);self.add('minecraft:glass_bottle',1);self.blocks[pos]=MUD
             elif hand['item']=='minecraft:wheat_seeds':
                 self.add('minecraft:wheat_seeds',-1);self.blocks[(pos[0],pos[1]+1,pos[2])]='Block{minecraft:wheat}[age=0]'
@@ -173,6 +174,22 @@ class MudPipelineTest(unittest.TestCase):
         result = self.go()
         self.assertEqual(result['code'], 'WAIT_SOURCE')
         self.assertFalse(any(op in ('mine_block','interact') for op,_ in self.c.calls))
+
+    def test_coarse_feedstock_recipe_is_conserved_and_never_places_grass_growing_dirt(self):
+        self.profile['mud_station']['feedstock_item']='minecraft:coarse_dirt'
+        self.c.add('minecraft:gravel',2)
+        result=self.go()
+        self.assertEqual((result['phase'],self.c.count('minecraft:mud_bricks')),('done',4))
+        self.assertEqual((self.c.count('minecraft:dirt'),self.c.count('minecraft:gravel')),(2,0))
+        placed=[kw['expected_hand']for op,kw in self.c.calls if op=='interact'and kw.get('expected_hand')in ('minecraft:dirt','minecraft:coarse_dirt')]
+        self.assertEqual(placed,['minecraft:coarse_dirt']*4)
+        self.assertEqual(self.c.blocks[(100,64,100)],AIR)
+
+    def test_coarse_feedstock_missing_gravel_sends_no_work_cell_action(self):
+        self.profile['mud_station']['feedstock_item']='minecraft:coarse_dirt'
+        result=self.go()
+        self.assertEqual(result['code'],'WAIT_SOURCE')
+        self.assertFalse(any(op in ('mine_block','interact')for op,_ in self.c.calls))
     def test_inventory_staging_precedes_mud_work_and_keeps_unknown_receipt(self):
         self.b.prepare_mud_inventory=lambda:{'phase':'waiting','code':'WAIT_WORKSPACE'}
         result=self.go()

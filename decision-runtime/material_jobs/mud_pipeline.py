@@ -26,6 +26,7 @@ TARGET_SCOPE='absolute_backpack_total'
 MAX_TARGET_COUNT=2304
 AIR='Block{minecraft:air}'
 DIRT='Block{minecraft:dirt}'
+COARSE_DIRT='Block{minecraft:coarse_dirt}'
 GRASS='Block{minecraft:grass_block}[snowy=false]'
 MUD='Block{minecraft:mud}'
 CAULDRON='Block{minecraft:cauldron}'
@@ -93,6 +94,10 @@ def run(c,profile,item,target_count,out,checkpoint):
     visit_units=min(cell_budget,max(0,math.ceil(gain/4)*4-initial['minecraft:packed_mud']))if item=='minecraft:mud_bricks'else 0
     bulk_inputs_ready=False
     bulk_wheat_ready=False
+    feedstock = profile.get('mud_station', {}).get('feedstock_item', 'minecraft:dirt')
+    if feedstock not in ('minecraft:dirt', 'minecraft:coarse_dirt'):
+        raise JobBlocked('Mud feedstock must be ordinary dirt or registered coarse dirt')
+    feedstock_state = COARSE_DIRT if feedstock == 'minecraft:coarse_dirt' else DIRT
 
     def client():return backend.ensure_client()
     def state():
@@ -177,7 +182,16 @@ def run(c,profile,item,target_count,out,checkpoint):
     def require_raw(output,target):
         fetch(output,target)
         if stock()[output]>=target:return
-        if output=='minecraft:dirt':
+        if output=='minecraft:coarse_dirt':
+            recipe=next((r for r in catalog.recipes[output] if r.id=='coarse_dirt'),None)
+            if recipe is None:raise JobBlocked('Current game jar lacks coarse_dirt')
+            rounds=math.ceil((target-stock()[output])/recipe.count)
+            ingredients=Counter(opts[0] for _,opts in recipe.cells if len(opts)==1)
+            if ingredients!={'minecraft:dirt':2,'minecraft:gravel':2}or recipe.count!=4:
+                raise JobBlocked('Unexpected coarse dirt recipe; preserve materials')
+            for raw,amount in ingredients.items():require_raw(raw,amount*rounds)
+            craft(output,target,'coarse_dirt');return
+        if output in ('minecraft:dirt','minecraft:gravel'):
             reply,_,_=operation('dirt',lambda:backend.acquire(output,target),
                                lambda a,b:inventory_counts(b)[output]>=target)
         elif output=='minecraft:wheat':
@@ -202,7 +216,7 @@ def run(c,profile,item,target_count,out,checkpoint):
                 or any(r.get('fluid') is not False or r.get('block_entity') is not False for r in rows)):
             raise Wait('WAIT_SOURCE','Owned mud station is wet, changed or unsafe')
         actual=next((r['state'] for r in rows if r['pos']==pos),AIR)
-        if actual!=AIR and (not book['owned_cell'] or actual not in (DIRT,GRASS,MUD)):
+        if actual!=AIR and (not book['owned_cell'] or actual not in (DIRT,COARSE_DIRT,GRASS,MUD)):
             raise Wait('WAIT_SOURCE','Preserve pre-existing work-cell blocks')
         # Interact against the exact newly observed support, including the
         # natural dirt/grass transition; never send the older expected state.
@@ -288,9 +302,10 @@ def run(c,profile,item,target_count,out,checkpoint):
             # Prepare only the current16-cell visit. Actual recipes, each cell
             # and all output deltas still use the existing four-unit worker.
             desired=max(0,visit_units-inventory_counts(state())['minecraft:mud'])
-            fetch('minecraft:dirt',desired)
-            if inventory_counts(state())['minecraft:dirt']<desired:
-                raise Wait('WAIT_SOURCE','Registered dirt did not fill this real work visit',requirements={'minecraft:dirt':desired})
+            if feedstock=='minecraft:coarse_dirt':require_raw(feedstock,desired)
+            else:fetch(feedstock,desired)
+            if inventory_counts(state())[feedstock]<desired:
+                raise Wait('WAIT_SOURCE','Registered feedstock did not fill this real work visit',requirements={feedstock:desired})
             bulk_inputs_ready=True
         if math.hypot(state()['pos'][0]-work[0],state()['pos'][2]-work[2])>32:
             from .navigation import lift_for_travel
@@ -307,9 +322,9 @@ def run(c,profile,item,target_count,out,checkpoint):
                 # Carry this invocation's real demand together. A new dirt
                 # stack consumes an empty slot; leave room for the mud output.
                 output_room=room_for_item(current,'minecraft:mud')
-                if not held['minecraft:dirt']:output_room-=64
+                if not held[feedstock]:output_room-=64
                 if output_room<1:dirt_target=1
-                require_raw('minecraft:dirt',dirt_target)
+                require_raw(feedstock,dirt_target)
             if actual!=MUD:
                 # Fill before placing dirt, shortening its exposed growth window.
                 water=bottle()
@@ -352,13 +367,14 @@ def run(c,profile,item,target_count,out,checkpoint):
                     if pos[0]-.35<pose[0]<pos[0]+1.35 and pos[2]-.35<pose[2]<pos[2]+1.35:
                         raise Wait('WAIT_SOURCE','Actual adjacent mud stand still overlaps the work cell')
                 face=approach_faces(client(),support,cfg['support_state'],('up',),seconds=45)
-                select('minecraft:dirt')
-                operation('place_owned_dirt',lambda:client().request('interact',pos=support,face=face,expected_state=cfg['support_state'],expected_hand='minecraft:dirt'),
-                          lambda a,b:block(pos)==DIRT and inventory_counts(a)['minecraft:dirt']-inventory_counts(b)['minecraft:dirt']==1)
-                book['owned_cell']=True;save();actual=DIRT
-            if actual==DIRT:
+                select(feedstock)
+                operation('place_owned_dirt' if feedstock_state==DIRT else 'place_owned_coarse_dirt',
+                          lambda:client().request('interact',pos=support,face=face,expected_state=cfg['support_state'],expected_hand=feedstock),
+                          lambda a,b:block(pos)==feedstock_state and inventory_counts(a)[feedstock]-inventory_counts(b)[feedstock]==1)
+                book['owned_cell']=True;save();actual=feedstock_state
+            if actual in (DIRT,COARSE_DIRT):
                 try:
-                    face=approach_faces(client(),pos,DIRT,('up','north','south','west','east'),seconds=45)
+                    face=approach_faces(client(),pos,actual,('up','north','south','west','east'),seconds=45)
                 except RuntimeError:
                     if book['owned_cell'] and block(pos)==GRASS:
                         raise Wait('WAIT_MUD_BATCH','Owned dirt grew grass; retained water remains for ordinary recovery')
