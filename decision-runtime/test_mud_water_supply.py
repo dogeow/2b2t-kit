@@ -44,5 +44,17 @@ class Tests(unittest.TestCase):
         fill(self.backend(c),1)
         moves=[p['target']for op,p in c.calls if op=='navigate']
         self.assertEqual([[43.5,64,879.5],[43.5,63.1,879.5]],moves)
+    def test_source_regeneration_is_observed_without_a_second_bucket_use(self):
+        c=Client();original=c.checked;reads=[0]
+        def delayed(op,**params):
+            reply=original(op,**params)
+            if op=='scan'and c.water:
+                reads[0]+=1
+                if reads[0]==1:reply['blocks']=[]
+            return reply
+        c.checked=delayed
+        result=fill(self.backend(c),1)
+        self.assertTrue(result['source_still_renewed']);self.assertEqual(2,reads[0])
+        self.assertEqual(1,sum(op=='bucket_fill'for op,_ in c.calls))
 
 if __name__=='__main__':unittest.main()
