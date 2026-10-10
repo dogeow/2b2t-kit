@@ -506,6 +506,16 @@ class MaterialJobsTest(unittest.TestCase):
             self.assertEqual(job._projection_batch(dict(b.projection)), {'minecraft:mud_bricks': 16})
         b.advise_projection_supply.assert_not_called()
 
+    def test_explicit_material_order_precedes_carried_partial_material_without_ready_output(self):
+        b=FakeBackend(self.catalog,held={'minecraft:mud_bricks':6},
+                      projection={'minecraft:diorite':35,'minecraft:mud_bricks':300})
+        request=self.request(projection=True)
+        request.update(preferred_materials=['minecraft:diorite','minecraft:mud_bricks'],
+                       target_stack_sizes={'minecraft:diorite':64,'minecraft:mud_bricks':64})
+        job=self.job(b,request);job._observe(initial=True)
+        with patch.object(job,'_fit_batch',return_value=6):
+            self.assertEqual(job._projection_batch(dict(b.projection)),{'minecraft:diorite':6})
+
     def test_smelting_dependencies_are_completed_before_blast_furnace_craft(self):
         b = FakeBackend(self.catalog, held={'minecraft:furnace':2,'minecraft:iron_ingot':10,'minecraft:cobblestone':6})
         result = self.job(b, self.request('blast_furnace',2)).run()

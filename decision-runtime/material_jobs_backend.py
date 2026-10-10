@@ -401,6 +401,10 @@ class Backend:
         from experience_recording import state_for_backend
         return state_for_backend(self)
 
+    def local_recipe_target(self,item,count):
+        from local_rock_recipe import offer
+        return offer(self,item,count)
+
     def ensure_client(self):
         if self.client is not None:
             return self.client

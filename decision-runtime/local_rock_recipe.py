@@ -1,11 +1,31 @@
 """Opt-in local vanilla rock synthesis on the existing material controller."""
 from collections import Counter
 import math
+from types import SimpleNamespace
 
 from kit_runtime.journal import write_json
 from material_plan import inventory_counts
 from material_storage_index import records
 from material_jobs.protocol import JobBlocked
+
+
+def offer(backend, item, target):
+    """A bounded planning hint only; every source still needs actual transfer."""
+    name=(backend.profile.get('local_rock_recipes')or{}).get(item)
+    if name is None:return None
+    recipe=next((r for r in backend.crafting_catalog.recipes.get(item,[])if r.id==name),None)
+    if recipe is None or any(len(opts)!=1 for _,opts in recipe.cells):return None
+    ingredients=Counter(opts[0]for _,opts in recipe.cells)
+    state=backend.latest;available=Counter(inventory_counts(state));held=available[item]
+    depots={tuple(p)for p in backend.profile['depots']}
+    client=SimpleNamespace(root=backend.root,status=lambda:state)
+    for row in records(client,state):
+        if not row.get('missing')and row.get('block_id')!='minecraft:ender_chest'and any(
+                tuple(p)in depots for p in row.get('aliases',[row['pos']])):
+            available.update(row.get('loose_counts',row['counts']))
+    rounds=min((available[raw]//amount for raw,amount in ingredients.items()),default=0)
+    count=min(target,held+16,available[item]+rounds*recipe.count)
+    return count if count>held else None
 
 
 def run(backend, client, item, target, out):

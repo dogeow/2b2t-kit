@@ -451,6 +451,19 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual(16,sum(op=='bottle_fill'for op,_ in self.c.calls))
         self.assertEqual(0,self.c.count('minecraft:wheat'));self.assertEqual(0,self.c.count('minecraft:dirt'))
 
+    def test_empty_wheat_storage_uses_existing_registered_field_adaptor(self):
+        self.sea_source();self.c.add('minecraft:mud_bricks',6);self.c.add('minecraft:wheat',-4)
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        calls=[]
+        def registered(target,out,checkpoint):
+            calls.append(target);return {'phase':'waiting','code':'WAIT_GROWTH','detail':'Registered wheat still growing'}
+        self.b.acquire_registered_wheat=registered
+        result=self.go(target=22)
+        self.assertEqual((result['phase'],result['code']),('waiting','WAIT_GROWTH'))
+        self.assertEqual(calls,[16]);self.assertEqual(self.c.count('minecraft:wheat'),0)
+        self.assertIsNone(json.loads((self.root/'job/mud-pipeline.json').read_text())['pending'])
+
     def test_bulk_visit_crosses_output_stack_without_consuming_workspace(self):
         self.sea_source();self.c.add('minecraft:mud_bricks',50)
         self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'})

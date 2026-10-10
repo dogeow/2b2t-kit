@@ -289,6 +289,11 @@ class MaterialJob:
         return self._peak_capacity(planned)['slots']
 
     def _fit_batch(self, item, final_count):
+        local=getattr(self.backend,'local_recipe_target',None)
+        if callable(local):
+            offered=local(item,final_count)
+            if type(offered)is int and self.held.get(item,0)<offered<=final_count:
+                return offered
         from .mud_batch import carried_visit_target
         offer=carried_visit_target(self.request,getattr(self.backend,'profile',{}),self.snapshot,item,final_count)
         if offer is not None:return offer
@@ -373,8 +378,9 @@ class MaterialJob:
             self.active_advice = None
             ranked = sorted((item for item, count in targets.items()
                              if self.held.get(item, 0) < count), key=lambda item: (
+                                 self.request.get('preferred_materials', []).index(item)
+                                 if item in self.request.get('preferred_materials', []) else len(self.request.get('preferred_materials', [])),
                                  not bool(self.held.get(item, 0)),
-                                 item not in self.request.get('preferred_materials', []),
                                  not item.endswith('_concrete'), item))
             if not ranked:
                 raise JobBlocked('投影差料已有现货，但原生施工尚未确认可继续')

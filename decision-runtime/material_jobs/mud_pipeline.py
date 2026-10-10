@@ -429,6 +429,8 @@ def run(c,profile,item,target_count,out,checkpoint):
             if bulk:
                 if not bulk_wheat_ready:
                     fetch('minecraft:wheat',visit_units);bulk_wheat_ready=True
+                    if stock()['minecraft:wheat']<visit_units:
+                        require_raw('minecraft:wheat',visit_units)
                 if stock()['minecraft:wheat']<rounds:
                     raise Wait('WAIT_SOURCE','Registered wheat is short for the next real recipe',requirements={'minecraft:wheat':rounds})
             else:require_raw('minecraft:wheat',rounds)

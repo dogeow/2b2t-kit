@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock,patch
 import zipfile
 
-from local_rock_recipe import run
+from local_rock_recipe import run,offer
 from material_jobs.protocol import JobBlocked
 from recipe_catalog import RecipeCatalog
 
@@ -53,6 +53,12 @@ class LocalRockRecipeTests(unittest.TestCase):
     def test_insufficient_recorded_inputs_do_not_begin_or_invent_output(self):
         self.saved[0]['loose_counts']['minecraft:quartz']=1
         self.assertIsNone(self.go());self.backend.fetch.assert_not_called();self.backend.craft.assert_not_called()
+
+    def test_offer_bounds_large_projection_deficit_by_existing_local_recipe_inputs(self):
+        self.backend.root=self.root;self.backend.latest=self.client.status()
+        with patch('local_rock_recipe.records',return_value=self.saved):
+            self.assertEqual(offer(self.backend,'minecraft:diorite',35),6)
+        self.assertFalse(self.held);self.backend.fetch.assert_not_called();self.backend.craft.assert_not_called()
 
     def test_unknown_craft_is_retained_and_never_replayed(self):
         self.backend.craft=Mock(return_value={'phase':'waiting'})
