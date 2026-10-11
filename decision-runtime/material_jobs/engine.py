@@ -292,7 +292,9 @@ class MaterialJob:
         local=getattr(self.backend,'local_recipe_target',None)
         if callable(local):
             offered=local(item,final_count)
-            if type(offered)is int and self.held.get(item,0)<offered<=final_count:
+            flat_ready = callable(getattr(self.backend, 'has_ready_projection_output', None))
+            if (type(offered)is int and self.held.get(item,0)<offered<=final_count
+                    and not (self.request['mode']=='projection' and flat_ready and offered<=2)):
                 return offered
         from .mud_batch import carried_visit_target
         offer=carried_visit_target(self.request,getattr(self.backend,'profile',{}),self.snapshot,item,final_count)
@@ -365,7 +367,10 @@ class MaterialJob:
             self._build_batch()
             return None
         ready = {item: count for item, count in targets.items() if self.held.get(item, 0)}
-        if (ready and self._nearly_full()
+        if (callable(carried_ready) and self.batch_item in ready
+                and self.held[self.batch_item]>=min(self.batch_count,targets[self.batch_item])):
+            self.batch_item, self.batch_count = None, 0
+        if not callable(carried_ready) and (ready and self._nearly_full()
                 or any(self.held.get(item, 0) >= min(count, self._batch_limit(item))
                        for item, count in ready.items())
                 or self.batch_item in ready and self.held[self.batch_item] >= min(self.batch_count, targets[self.batch_item])):
@@ -476,6 +481,11 @@ class MaterialJob:
                     if item in needed and actual.get(item, 0) - before['inventory'].get(item, 0) >= count
                     and self.held.get(item, 0) >= before['inventory'].get(item, 0) + count}
         if verified:
+            ready = getattr(self.backend, 'has_ready_projection_output', None)
+            if callable(ready) and ready(self.snapshot) is not True:
+                self._event('finished_materials_rejected', reason='no_carried_placeable_output',
+                            provided=amounts)
+                return
             # One-shot, in-memory intent: a restarted worker must audit again,
             # never treat a stale depot receipt as carried construction stock.
             self.pending_ready_build = verified
@@ -488,6 +498,9 @@ class MaterialJob:
         actual = inventory_counts(self.snapshot)
         if not any(item in targets and actual.get(item, 0) >= count and self.held.get(item, 0) >= count
                    for item, count in pending.items()):
+            return False
+        ready = getattr(self.backend, 'has_ready_projection_output', None)
+        if callable(ready) and ready(self.snapshot) is not True:
             return False
         self.prerequisites.clear()
         self._write(requirements={})

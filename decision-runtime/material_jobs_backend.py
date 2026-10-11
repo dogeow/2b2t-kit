@@ -1484,6 +1484,13 @@ class Backend:
                                                    centre(r)[2]-state['pos'][2]))
         point=centre(region)
         if math.hypot(point[0]-state['pos'][0],point[2]-state['pos'][2])<=64:return
+        from material_jobs.acquisition import DIRECT_ROUTE_LIMIT
+        if math.hypot(point[0]-state['pos'][0],point[2]-state['pos'][2])>DIRECT_ROUTE_LIMIT:
+            from material_jobs.discovery_access import stage
+            access=Path(out)/'registered-source-origin-access';access.mkdir(exist_ok=True)
+            stage(client,self.profile,access,self.checkpoint)
+            state=client.status()
+            if math.hypot(point[0]-state['pos'][0],point[2]-state['pos'][2])<=64:return
         state=lift_for_travel(client)
         point[1]=min(315,max(145,state['pos'][1],region.get('surface_y',region['max'][1])+24))
         trace=[]

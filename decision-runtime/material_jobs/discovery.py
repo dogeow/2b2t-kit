@@ -903,6 +903,13 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
             if coarse_reason:value['coarse_fallback']=coarse_reason
         c.material_search_progress=value;ledger['search_progress']=value;write_json(path,ledger)
     progress()
+    if pending and item not in SNOW_PRODUCTS and profile.get('search_origin') is not None:
+        # All existing unknown/combat holds were checked above. This reaches
+        # only the original registered origin; it grants no excavation credit.
+        from .discovery_access import stage
+        access=directory/(path.stem+'-access')
+        access.mkdir(exist_ok=True)
+        stage(c,profile,access,checkpoint)
     for x,z in pending[:max_tiles]:
         key=f'{x}:{z}';checkpoint()
         # Native cruise still performs collision/guard checks; never disable

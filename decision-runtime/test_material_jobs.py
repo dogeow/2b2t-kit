@@ -685,6 +685,25 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertEqual({}, json.loads((job.out/'receipts'/'000002.json').read_text())['output_targets'])
         self.assertGreater(next(i for i,c in enumerate(b.calls) if c[0]=='acquire'), 1)
 
+    def test_flat_ready_gate_prevents_reserve_only_depot_return(self):
+        item='minecraft:stone'
+        b=FakeBackend(self.catalog,held={item:2},projection={item:31})
+        b.has_ready_projection_output=Mock(return_value=False)
+        job=self.job(b,self.request(projection=True));job._observe()
+        before={'inventory':{},'stock':{},'matched':0}
+        job._record_ready_build({'ready_for_build':True,'provided_finished':{item:2},
+                                 'projection_key':'ship'},before)
+        self.assertIsNone(job.pending_ready_build)
+        job.pending_ready_build={item:2};job.prerequisites={item:33}
+        job._build_batch=Mock()
+        self.assertFalse(job._consume_ready_build({item:31}))
+        self.assertEqual({item:33},job.prerequisites);job._build_batch.assert_not_called()
+        job.batch_item=item;job.batch_count=2
+        self.assertEqual({item:31},job._projection_batch({item:31}))
+        job._build_batch.assert_not_called()
+        b.held.clear();job._observe();b.local_recipe_target=Mock(return_value=2)
+        self.assertEqual(31,job._fit_batch(item,31))
+
     def test_ready_receipt_needs_new_actual_projection_stock_not_food_or_depot_hints(self):
         deep, smooth = 'minecraft:cobbled_deepslate', 'minecraft:smooth_stone'
         for change in ('none', 'food', 'hint', 'non_projection_item', 'stock_only', 'wrong_key', 'boolean_count'):

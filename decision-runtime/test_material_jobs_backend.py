@@ -1663,6 +1663,17 @@ class BackendTest(unittest.TestCase):
         self.assertTrue(travel.call_args.kwargs['keep_cruise'])
         self.client.request.assert_not_called()
 
+    def test_registered_source_beyond_direct_limit_first_approaches_original_search_origin(self):
+        r={'item':'minecraft:diorite','min':[600,55,0],'max':[601,68,1],
+           'source':'natural_survey','surface_y':77}
+        self.job.profile={'resource_regions':[r],'search_origin':[600,100,0],'search_radius':128}
+        def staged(*args):self.current['pos']=[600.,145.,0.]
+        with patch('material_jobs.discovery_access.stage',side_effect=staged)as stage,\
+             patch('material_jobs.acquisition._travel')as travel:
+            self.job.stage_registered_resource(self.client,'minecraft:diorite',self.root)
+        stage.assert_called_once();self.assertEqual(self.job.profile,stage.call_args.args[1])
+        travel.assert_not_called();self.client.request.assert_not_called()
+
     def test_near_registered_source_and_nonrock_do_not_add_travel(self):
         self.job.profile={'resource_regions':[{'item':'minecraft:diorite','min':[1,55,0],
                           'max':[2,68,1],'source':'natural_survey','surface_y':77}]}
