@@ -94,7 +94,19 @@ class FlatMapBackend(Backend):
         try:
             for attempt in range(20):
                 reply=client.request('projection_audit');value=reply.get('projection_audit')or{}
-                if reply.get('world_session')!=client.world or value.get('placement_key')!=self.request['projection_key']:
+                if reply.get('world_session')!=client.world:
+                    raise JobBlocked('地图画完整审计的世界或原模型已变化')
+                if not value and reply.get('phase')=='error':
+                    # Native audit throws before returning a model while its
+                    # schematic chunks are still arriving. Re-observe only
+                    # this known read failure under the same exact selection.
+                    if (reply.get('detail','').startswith('等待图纸区块 ')
+                            and (reply.get('projection_selection')or{}).get('key')==self.request['projection_key']):
+                        self.checkpoint()
+                        if attempt<19:time.sleep(.25)
+                        continue
+                    raise JobBlocked(reply.get('detail')or'地图画完整审计读取失败')
+                if value.get('placement_key')!=self.request['projection_key']:
                     raise JobBlocked('地图画完整审计的世界或原模型已变化')
                 if(value.get('loaded_chunks_verified')is True and value.get('loaded_server_chunks_verified')is True
                         and not(value.get('kinds')or{}).get('unloaded')):

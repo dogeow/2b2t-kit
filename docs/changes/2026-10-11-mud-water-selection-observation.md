@@ -6,4 +6,4 @@
 
 66 项制泥及仓库定向回归通过；延迟/中间帧用例确认不重新装水、不重复选槽。原流水线保留原字节及 SHA，恢复副本仅根据原生回执和两槽实际库存把水来源槽改为 5。恢复控制器在任何使用前再次核对原粗泥土和沙子支撑，继续原目标 18 块泥砖，原已完成两格保持计数。
 
-兼容运行包在线安装，主包仍 2026.10.11.3，无游戏重启。当前实机恢复尚在执行。证据 `work/live-20261004/mud-water-slot-recovery-128/slot-proof.json`。
+兼容运行包在线安装，主包仍 2026.10.11.3，无游戏重启。实机恢复完成：背包泥砖 2→18，原工作格清空，`pending=None`、`derived_water_slot=None`，随后 `HIGH_GUARD_CONFIRMED`。恢复的第一步为原水瓶正常倒水，再挖取原第三格，没有先发 `bottle_fill`。证据 `work/live-20261004/mud-water-slot-recovery-128/slot-proof.json`。

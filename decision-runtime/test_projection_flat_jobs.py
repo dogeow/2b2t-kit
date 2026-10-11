@@ -24,6 +24,44 @@ ITEM = 'minecraft:stone'
 
 
 class FlatLoadingTest(unittest.TestCase):
+    def test_native_unloaded_error_waits_for_same_selected_model(self):
+        with tempfile.TemporaryDirectory()as d:
+            job=FlatMapBackend.__new__(FlatMapBackend);job.out=Path(d);job.busy=False
+            job.request={'projection_key':'ship'};job.audit=None;job.audit_dirty=True
+            missing={'world_session':'w','phase':'error','detail':'等待图纸区块 1,2：UNLOADED',
+                     'projection_selection':{'key':'ship'}}
+            good={'world_session':'w','phase':'done','projection_audit':{'placement_key':'ship',
+                  'loaded_chunks_verified':True,'loaded_server_chunks_verified':True,'kinds':{},'matched':10}}
+            client=SimpleNamespace(world='w',request=Mock(side_effect=[missing,good]))
+            job.ensure_client=lambda:client;job.checkpoint=Mock()
+            with patch('projection_flat_backend.time.sleep'):result=job.refresh_audit()
+            self.assertEqual(10,result['matched']);self.assertFalse(job.busy)
+            self.assertEqual(2,client.request.call_count);job.checkpoint.assert_called_once()
+
+    def test_unloaded_error_does_not_retry_changed_world_or_selection(self):
+        for change in ({'world_session':'other'}, {'projection_selection':{'key':'other'}}):
+            with self.subTest(change=change),tempfile.TemporaryDirectory()as d:
+                job=FlatMapBackend.__new__(FlatMapBackend);job.out=Path(d);job.busy=False
+                job.request={'projection_key':'ship'};job.audit=None
+                reply={'world_session':'w','phase':'error','detail':'等待图纸区块 1,2：UNLOADED',
+                       'projection_selection':{'key':'ship'},**change}
+                client=SimpleNamespace(world='w',request=Mock(return_value=reply))
+                job.ensure_client=lambda:client;job.checkpoint=Mock()
+                with self.assertRaises(JobBlocked):job.refresh_audit()
+                self.assertIsNone(job.audit);self.assertFalse(job.busy)
+                self.assertEqual(1,client.request.call_count)
+                self.assertFalse((job.out/'projection-latest.json').exists())
+
+    def test_other_native_error_keeps_its_actual_reason(self):
+        with tempfile.TemporaryDirectory()as d:
+            job=FlatMapBackend.__new__(FlatMapBackend);job.out=Path(d);job.busy=False
+            job.request={'projection_key':'ship'};job.audit=None
+            client=SimpleNamespace(world='w',request=Mock(return_value={'world_session':'w',
+                    'phase':'error','detail':'图纸损坏','projection_selection':{'key':'ship'}}))
+            job.ensure_client=lambda:client;job.checkpoint=Mock()
+            with self.assertRaisesRegex(JobBlocked,'图纸损坏'):job.refresh_audit()
+            self.assertEqual(1,client.request.call_count);self.assertFalse(job.busy)
+
     def test_server_chunk_arrival_is_waited_without_publishing_unloaded_cells(self):
         with tempfile.TemporaryDirectory()as d:
             job=FlatMapBackend.__new__(FlatMapBackend);job.out=Path(d);job.busy=False
