@@ -90,6 +90,13 @@ class BorerDefensePolicyTest {
 		assertFalse(BorerDefensePolicy.releaseArrow(30, false, true));
 		assertFalse(BorerDefensePolicy.releaseArrow(30, true, false));
 	}
+    @Test void chargedShieldCounterCanReleaseBeforeTheNextArcherShotButStillNeedsTargetAndClearance(){
+        for(int t=0;t<16;t++)assertFalse(BorerDefensePolicy.releaseArrow(t,true,true,true));
+        assertTrue(BorerDefensePolicy.releaseArrow(16,true,true,true));
+        assertFalse(BorerDefensePolicy.releaseArrow(16,true,true,false));
+        assertFalse(BorerDefensePolicy.releaseArrow(16,false,true,true));
+        assertFalse(BorerDefensePolicy.releaseArrow(16,true,false,true));
+    }
 	@Test void mayAbandonAnUnconfirmedFightOnlyAfterHorizontalRelocation() {
 		assertFalse(BorerDefensePolicy.encounterLeftBehind(0, 0));
 		assertFalse(BorerDefensePolicy.encounterLeftBehind(48, 0));

@@ -16,11 +16,19 @@ class GuardShieldCycleTest {
     }
     @Test void observedShieldWearAllowsOneCounterattackOnlyAfterBlockingSettles(){
         var c=new GuardShieldCycle();c.update(archer,0,true,true,0,false,false);
-        assertEquals(GuardShieldCycle.Action.BLOCK,c.update(archer,5,true,true,4,false,false));
+        assertEquals(GuardShieldCycle.Action.ATTACK,c.update(archer,5,true,true,4,false,false));
         assertEquals(GuardShieldCycle.Action.ATTACK,c.update(archer,8,true,true,4,false,false));
         c.shot(9);
         assertEquals(GuardShieldCycle.Action.BLOCK,c.update(archer,10,true,true,4,false,false));
         assertEquals(GuardShieldCycle.Action.BLOCK,c.update(archer,18,true,true,4,false,false));
+    }
+    @Test void realShieldWearOpensCounterImmediatelyButNoWearStillNeedsTheFallbackWait(){
+        var c=new GuardShieldCycle();c.update(archer,0,true,true,0,false,false);
+        assertEquals(GuardShieldCycle.Action.ATTACK,c.update(archer,1,true,true,4,false,false));
+        assertTrue(c.counterattacking());c.shot(17);
+        assertFalse(c.counterattacking());
+        assertEquals(GuardShieldCycle.Action.BLOCK,c.update(archer,18,true,true,4,false,false));
+        assertEquals(GuardShieldCycle.Action.BLOCK,c.update(archer,30,true,true,4,false,false));
     }
     @Test void incomingArrowOrNewHurtCancelsAttackAndReblocks(){
         for(boolean hurt:new boolean[]{false,true}){

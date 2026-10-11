@@ -33,6 +33,23 @@ class BorerBowWiringTest {
         assertTrue(release.contains("shot"));
     }
     private static final String ROOT = "dev/twob2tkit/";
+    @Test void shorterCountershotRequiresChargeAwareHostAndRechecksTheChargeAtActualRelease()throws Exception{
+        var fallback=method(ROOT+"runtime/api/BorerHost","supportsChargedBowAim");
+        assertTrue((fallback.access&Opcodes.ACC_ABSTRACT)==0);assertTrue(calls(fallback).isEmpty());
+        var policy=calls(method(ROOT+"runtime/engine/BorerRangedCombat","chargedShieldCounter"));
+        assertTrue(policy.indexOf("counterattacking")<policy.indexOf("supportsChargedBowAim"));
+        var aimCharge=calls(method(ROOT+"runtime/engine/BorerRangedCombat","bowAimCharge"));
+        assertTrue(aimCharge.containsAll(List.of("getTicksUsingItem","isUsingItem","getUseItem")));
+        var release=calls(method(ROOT+"runtime/engine/BorerRangedCombat","prepareRelease"));
+        assertTrue(release.containsAll(List.of("releaseArrow","chargedShieldCounter","bowAimCharge")));
+        var host=method(ROOT+"borer/TunnelBorer$HostBridge","borerBowAim",
+            "(Lnet/minecraft/client/Minecraft;Lnet/minecraft/world/entity/Entity;I)Lnet/minecraft/world/phys/Vec3;");
+        assertTrue(host.instructions.iterator().hasNext());
+        assertTrue(calls(host).contains("solve"));
+        assertTrue(java.util.stream.StreamSupport.stream(host.instructions.spliterator(),false)
+            .filter(i->i instanceof MethodInsnNode).map(i->(MethodInsnNode)i)
+            .anyMatch(i->i.name.equals("solve")&&i.desc.contains("/Entity;I)")));
+    }
     @Test void cameraHookTargetsExistingGameMethodAndRunsAtTail() throws Exception {
         assertNotNull(method("net/minecraft/client/Camera", "alignWithEntity", "(F)V"));
         assertNotNull(method("net/minecraft/client/Camera", "setRotation", "(FF)V"));

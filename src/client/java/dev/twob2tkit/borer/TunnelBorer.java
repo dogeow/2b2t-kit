@@ -639,9 +639,13 @@ public final class TunnelBorer {
 		}
 		private String bowDiagnostic = "";
 		@Override public net.minecraft.world.phys.Vec3 borerBowAim(Minecraft client, net.minecraft.world.entity.Entity target) {
-			var shot = dev.twob2tkit.piglin.BowAim.solve(client, client.player, target);
-			bowDiagnostic = shot.diagnostic(); return shot.aim();
+            return borerBowAim(client,target,20);
 		}
+        @Override public boolean supportsChargedBowAim() { return true; }
+        @Override public net.minecraft.world.phys.Vec3 borerBowAim(Minecraft client, net.minecraft.world.entity.Entity target, int chargeTicks) {
+            var shot = dev.twob2tkit.piglin.BowAim.solve(client,client.player,target,chargeTicks);
+            bowDiagnostic = "charge_ticks="+chargeTicks+" "+shot.diagnostic(); return shot.aim();
+        }
 		@Override public boolean supportsVisibleBowAim() { return true; }
 		@Override public boolean supportsDirectAreaMining() { return true; }
 		@Override public String borerBowDiagnostics() { return bowDiagnostic; }

@@ -27,14 +27,17 @@ final class GuardShieldCycle {
             if(damage>previousDamage&&!hurt)observedBlock=true;
         }else blockingAt=Long.MIN_VALUE;
         previousDamage=damage;
-        if(blockingAt!=Long.MIN_VALUE&&tick-blockingAt>=MIN_BLOCK_TICKS&&!incoming&&!hurt
-                &&(observedBlock||tick-phaseAt>=WAIT_TICKS)){
+        // Actual shield wear already proves a settled block. Waiting another
+        // eight ticks consumes most of a skeleton's next-shot interval.
+        if(blockingAt!=Long.MIN_VALUE&&!incoming&&!hurt
+                &&(observedBlock||tick-blockingAt>=MIN_BLOCK_TICKS&&tick-phaseAt>=WAIT_TICKS)){
             attacking=true;phaseAt=tick;observedBlock=false;return Action.ATTACK;
         }
         return Action.BLOCK;
     }
     void shot(long tick){if(target!=null)block(tick);}
     boolean enabled(){return target!=null;}
+    boolean counterattacking(){return target!=null&&attacking;}
     private void block(long tick){attacking=false;observedBlock=false;phaseAt=tick;blockingAt=Long.MIN_VALUE;}
     void reset(){target=null;phaseAt=blockingAt=lastTick=Long.MIN_VALUE;previousDamage=0;attacking=observedBlock=false;}
 

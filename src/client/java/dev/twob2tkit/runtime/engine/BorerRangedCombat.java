@@ -329,7 +329,8 @@ final class BorerRangedCombat {
 		}
 		if (cooldown > 0) {
 			cooldown--;
-			Vec3 nextAim = engine.host.borerBowAim(c, target);
+            Vec3 nextAim = chargedShieldCounter(c)
+                ?engine.host.borerBowAim(c,target,bowAimCharge(c)):engine.host.borerBowAim(c,target);
 			look = RotationAim.lookAt(p, nextAim == null ? target.getEyePosition() : nextAim); lookTick = p.tickCount;
 			RotationAim.apply(p, look); engine.mobs.raiseShield(c,p);return true;
 		}
@@ -343,7 +344,9 @@ final class BorerRangedCombat {
 			return true;
 		}
 		Vec3 aim;
-		try { aim = engine.host.borerBowAim(c, target); } catch (LinkageError oldHost) { aim = null; }
+        try { aim = chargedShieldCounter(c)
+            ?engine.host.borerBowAim(c,target,bowAimCharge(c)):engine.host.borerBowAim(c,target);
+        } catch (LinkageError oldHost) { aim = null; }
 		if (aim == null) {
 			cancelDraw(c);
 			look = RotationAim.lookAt(p, target.getEyePosition()); lookTick = p.tickCount; RotationAim.apply(p, look);
@@ -358,7 +361,7 @@ final class BorerRangedCombat {
 		look = RotationAim.lookAt(p, aim);
 		lookTick = p.tickCount;
 		RotationAim.apply(p, look);
-		if (BorerDefensePolicy.releaseArrow(p.getTicksUsingItem(), drawing && p.getUseItem().is(Items.BOW), true)) {
+        if (BorerDefensePolicy.releaseArrow(p.getTicksUsingItem(), drawing && p.getUseItem().is(Items.BOW), true,chargedShieldCounter(c))) {
 			if (viewReady(c)) {
 				c.options.keyUse.setDown(false); releasePending = true;
 				engine.status = "已对准，准备放箭 " + target.getName().getString();
@@ -1182,6 +1185,16 @@ final class BorerRangedCombat {
             p.isBlocking()&&p.getUseItem().is(Items.SHIELD),p.getOffhandItem().getDamageValue(),
             incomingProjectile(c),p.hurtTime>0);
     }
+    private boolean chargedShieldCounter(Minecraft c){
+        if(!shieldCycle.counterattacking())return false;
+        try{return engine.host.supportsChargedBowAim();}catch(LinkageError oldHost){return false;}
+    }
+    private int bowAimCharge(Minecraft c){
+        int minimum=chargedShieldCounter(c)?16:20;
+        int actual=c.player!=null&&c.player.isUsingItem()&&c.player.getUseItem().is(Items.BOW)
+            ?c.player.getTicksUsingItem():0;
+        return Math.max(minimum,Math.min(20,actual));
+    }
     private boolean incomingProjectile(Minecraft c){
         var p=c.player;
         for(var projectile:c.level.getEntitiesOfClass(net.minecraft.world.entity.projectile.Projectile.class,
@@ -1334,10 +1347,12 @@ final class BorerRangedCombat {
 			|| c.level.getEntity(target.getId()) != target || !target.isAlive() || !session.canAttack(target.getUUID())
 			|| !c.player.hasLineOfSight(target) || !visibleHost()) { cancelDraw(c); return false; }
 		var p = c.player;
-		if (!releasePending || !p.isUsingItem() || !p.getUseItem().is(Items.BOW) || p.getTicksUsingItem() < 20) {
+        if (!releasePending || !p.isUsingItem() || !p.getUseItem().is(Items.BOW)
+                || !BorerDefensePolicy.releaseArrow(p.getTicksUsingItem(),true,true,chargedShieldCounter(c))) {
 			c.options.keyUse.setDown(true); return false;
 		}
-		Vec3 fresh = engine.host.borerBowAim(c, target);
+        Vec3 fresh = chargedShieldCounter(c)
+            ?engine.host.borerBowAim(c,target,bowAimCharge(c)):engine.host.borerBowAim(c,target);
 		if (fresh == null) { releasePending = false; c.options.keyUse.setDown(true); return false; }
 		look = RotationAim.lookAt(p, fresh); lookTick = p.tickCount; RotationAim.apply(p, look);
 		if (!viewReady(c)) { releasePending = false; c.options.keyUse.setDown(true); logViewWait(c); return false; }

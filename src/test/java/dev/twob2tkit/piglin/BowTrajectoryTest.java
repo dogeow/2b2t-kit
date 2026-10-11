@@ -95,6 +95,7 @@ class BowTrajectoryTest {
         assertNull(BowTrajectory.solve(ORIGIN, Vec3.ZERO, body(0, 0, 20), Vec3.ZERO, 0, 0, CLEAR));
         assertNull(solve(body(0, 0, 20), new Vec3(Double.NaN, 0, 0), Vec3.ZERO, 0));
         assertEquals(3, BowTrajectory.speedForCharge(20));
+        assertEquals(2.24, BowTrajectory.speedForCharge(16),1e-10);
         assertEquals(3, BowTrajectory.speedForCharge(100));
         assertEquals(1.25, BowTrajectory.speedForCharge(10));
     }

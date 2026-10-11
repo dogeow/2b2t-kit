@@ -23,6 +23,11 @@ public interface BorerHost {
 	default boolean[] borerCargoSupplies(Minecraft client) { return null; }
 	/** Shared host ballistics, also used by the existing ghast archer. */
 	default net.minecraft.world.phys.Vec3 borerBowAim(Minecraft client, net.minecraft.world.entity.Entity target) { return null; }
+    /** Optional charge-aware countershot; old hosts retain their full-charge firing protocol. */
+    default boolean supportsChargedBowAim() { return false; }
+    default net.minecraft.world.phys.Vec3 borerBowAim(Minecraft client, net.minecraft.world.entity.Entity target, int chargeTicks) {
+        return chargeTicks >= 20 ? borerBowAim(client, target) : null;
+    }
 	default void borerRangedMode(boolean active) {}
 	/** New host supplies the camera and release hooks; an old host must not silently use the new firing protocol. */
 	default boolean supportsVisibleBowAim() { return false; }

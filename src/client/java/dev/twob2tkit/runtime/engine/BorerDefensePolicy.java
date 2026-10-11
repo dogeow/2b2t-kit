@@ -46,7 +46,10 @@ final class BorerDefensePolicy {
             &&distance>=0&&distance<=40;
     }
 	static boolean releaseArrow(int chargeTicks, boolean sameTarget, boolean clearShot) {
-		return chargeTicks >= 20 && sameTarget && clearShot;
+        return releaseArrow(chargeTicks,sameTarget,clearShot,false);
 	}
+    static boolean releaseArrow(int chargeTicks, boolean sameTarget, boolean clearShot, boolean shieldCounter) {
+        return chargeTicks >= (shieldCounter ? 16 : 20) && sameTarget && clearShot;
+    }
 	private BorerDefensePolicy() {}
 }
