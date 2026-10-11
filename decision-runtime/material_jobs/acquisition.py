@@ -1012,8 +1012,10 @@ def _rock_observation(rows, low, high, item, *, allow_cleared=False):
             'remaining': remaining}
 
 
-def rock_choice(rows, low, high, item, player, required_entry=None):
+def rock_choice(rows, low, high, item, player, required_entry=None, max_remaining=648):
     """Conservative Python candidate filter; the native op rechecks every cell before mining."""
+    if type(max_remaining)is not int or not 8<=max_remaining<=648:
+        raise ValueError('Bounded observed rock workload required')
     best = None
     widths = sorted({min(6, high[0]-low[0]+1, high[2]-low[2]+1), 4, 2}, reverse=True)
     for width in widths:
@@ -1030,6 +1032,7 @@ def rock_choice(rows, low, high, item, player, required_entry=None):
                     available = observed['available']
                     if not available:continue
                     remaining = observed['remaining']
+                    if remaining>max_remaining:continue
                     score = (available, -math.hypot(x+width/2-player[0], z+width/2-player[2]))
                     if best is None or score > best[0]:
                         best = (score, {'min': lo, 'max': hi, 'available': available, 'remaining': remaining})
@@ -1727,7 +1730,8 @@ def acquire(c, item, target_count, profile, out, checkpoint):
                     return {'phase': 'waiting', 'detail': '本轮已核验 12 个小区域，下一轮从未扫描位置继续'}
                 rows = _scan(c, [lo[0]-3, lo[1]-2, lo[2]-3], [hi[0]+3, hi[1]+2, hi[2]+3], checkpoint); scans += 1
                 state = c.status(); _safe(state)
-                choice = choose_quarry(rows, lo, hi, state['pos']) if sand else rock_choice(rows, lo, hi, item, state['pos'],region.get('access_shaft')or region.get('open_entry'))
+                choice = choose_quarry(rows, lo, hi, state['pos']) if sand else rock_choice(rows, lo, hi, item, state['pos'],region.get('access_shaft')or region.get('open_entry'),
+                    max_remaining=profile.get('rock_collect_max_remaining',648))
                 if choice is None:
                     ledger['visited'][key] = {'state': 'empty_or_unsafe', 'min': lo, 'max': hi, 'observed_at': state.get('time')}
                     write_json(path, ledger); continue
@@ -1788,7 +1792,8 @@ def acquire(c, item, target_count, profile, out, checkpoint):
                                  [hi[0]+3,hi[1]+2,hi[2]+3],checkpoint)
                 fresh_choice=(choose_quarry(fresh_rows,lo,hi,c.status()['pos']) if sand
                               else rock_choice(fresh_rows,lo,hi,item,c.status()['pos'],
-                                               region.get('access_shaft')or region.get('open_entry')))
+                                               region.get('access_shaft')or region.get('open_entry'),
+                                               max_remaining=profile.get('rock_collect_max_remaining',648)))
                 if (fresh_choice is None or fresh_choice['min']!=choice['min']
                         or fresh_choice['max']!=choice['max']):
                     raise Unavailable('清怪后原采坑候选改变，暂停并从原区域重扫', 'waiting')

@@ -76,6 +76,16 @@ class AcquisitionTest(unittest.TestCase):
             with self.subTest(remaining=remaining,target=target):
                 with self.assertRaises(ValueError):rock_collect_seconds(remaining,target)
 
+    def test_bounded_workload_selects_supported_subbox_without_expanding_source(self):
+        rows=[block((x,y,z),'tuff')for x in range(-3,9)for z in range(-3,9)for y in range(20)]
+        wide=rock_choice(rows,[0,1,0],[5,18,5],'minecraft:tuff',[1,30,1])
+        bounded=rock_choice(rows,[0,1,0],[5,18,5],'minecraft:tuff',[1,30,1],
+                            {'min':[0,19,0],'max':[1,20,1]},max_remaining=180)
+        self.assertEqual(648,wide['remaining']);self.assertLessEqual(bounded['remaining'],180)
+        self.assertGreater(bounded['available'],0)
+        self.assertTrue(all(0<=bounded['min'][i]<=bounded['max'][i]<=5 for i in(0,2)))
+        self.assertTrue(all(bounded['min'][i]<=0<=1<=bounded['max'][i]for i in(0,2)))
+
     def test_fresh_collect_check_retains_exact_open_entry_constraint(self):
         with tempfile.TemporaryDirectory()as out:
             c=FakeClient();profile=self.profile(c.item)
@@ -381,7 +391,7 @@ class AcquisitionTest(unittest.TestCase):
                                    'combat_confirmed':True})
             with (patch('material_jobs.acquisition._scan',return_value=[]),
                   patch('material_jobs.acquisition.rock_choice',
-                        side_effect=lambda rows,lo,hi,*args:{
+                        side_effect=lambda rows,lo,hi,*args,**kwargs:{
                             'min':lo,'max':hi,'available':4,'remaining':4}),
                   patch('material_jobs.acquisition._travel_once',
                         side_effect=stopped_route)):
