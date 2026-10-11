@@ -821,7 +821,9 @@ class MaterialClient(Client):
    if self.owned_material_menu==m.get('id') and (clean_workbench or clean_anvil or clean_brewer or storage or furnace) and not m['cursor']['count']:
     self.checked('close_menu')
   except (Handoff,RuntimeError,KeyError):pass
-  if self.remote_finish=='guard' and not self._prepare_guarded_finish():return
+  if self.remote_finish=='guard':
+   while not self._prepare_guarded_finish():
+    if not getattr(self,'guarded_ground_stop',None)or not self._wait_deferred_ground_owner():return
   self.heartbeat.close()
   p=self.root/('supervision-receipt-'+self.heartbeat.id+'.json')
   finish_revision=self.rev;ack_seconds=30 if self.remote_finish=='guard' else 90
@@ -930,6 +932,33 @@ class MaterialClient(Client):
     print('GUARD_FINISH_WAITING: native defense continues; parking unconfirmed',flush=True)
     deadline=now+seconds
    time.sleep(.25)
+ def _wait_deferred_ground_owner(self):
+  """A healthy unresolved finish keeps its real observer alive until handoff.
+
+  No original movement, scan, inventory use or close is replayed here.
+  """
+  deadline=time.monotonic()+30
+  while True:
+   try:state=self._observe_owned_health(self.status(wait_interface=False))
+   except Handoff:
+    self.heartbeat.close();return False
+   except (RuntimeError,KeyError,TypeError):return False
+   lease=state.get('supervision_lease')or{}
+   if not isinstance(lease,dict)or not all(k in lease for k in ('id','job_session','kind','world_session','revision','remote_finish')):
+    return False  # Missing ownership evidence cannot renew or finish this lease.
+   if (state.get('connected')is not True or state.get('world_session')!=self.world
+       or state.get('manual_movement') or state.get('control_revision')!=self.rev
+       or lease.get('id')!=self.heartbeat.id or lease.get('job_session')!=self.task
+       or lease.get('kind')!='materials' or lease.get('world_session')!=self.world
+       or lease.get('revision')!=self.rev or lease.get('remote_finish')!='guard'):
+    self.heartbeat.close();return False
+   self.heartbeat.touch()
+   if state.get('flight')is True and state.get('health',0)>=19 and not state.get('under_water'):
+    return True
+   if time.monotonic()>=deadline:
+    print('GROUND_FINISH_WAITING: current owned observer alive; original evidence retained',flush=True)
+    deadline=time.monotonic()+30
+   time.sleep(.25)
  def _prepare_guarded_finish(self):
   guard_finish_started=time.monotonic()
   ground_finish_mode=bool(getattr(self,'last_owned_ground_walk',None) or getattr(self,'last_owned_idle_ground_read',None))
@@ -973,6 +1002,10 @@ class MaterialClient(Client):
        if time.monotonic()>=deadline:raise RuntimeError('Defense stayed busy before high parking')
        time.sleep(.25);continue
       if abs(s['pos'][1]-self.park_target[1])>2:
+       if (s.get('flight')is False and not getattr(self,'last_owned_ground_walk',None)
+           and not getattr(self,'last_owned_idle_ground_read',None)):
+        from material_ground_finish import capture_closed_menu_baseline
+        if capture_closed_menu_baseline(self,s):continue
        self._finish_vertical(s)
        continue
       r=self.request('navigate',target=self.park_target,arrival=2,seconds=120,air_only=True)

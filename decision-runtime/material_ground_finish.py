@@ -94,6 +94,29 @@ def _idle_ground_frame(s,*,returned_scan=None):
     main_inventory(s)
 
 
+def capture_closed_menu_baseline(c,state):
+    """A confirmed menu close may start one new read baseline, never a fake walk."""
+    terminal=getattr(c,'last_terminal_evidence',None)or{}
+    try:
+        _idle_ground_frame(state)
+        lease=state['supervision_lease']
+        if (terminal.get('op')!='close_menu'or terminal.get('phase')!='done'
+                or terminal.get('request_id')!=getattr(c,'last',None)or not c.last
+                or state.get('last_request')!=c.last
+                or terminal.get('world_session')!=c.world or terminal.get('task_session')!=c.task
+                or terminal.get('revision_after')!=c.rev or state['control_revision']!=c.rev
+                or lease['id']!=c.heartbeat.id or lease['job_session']!=c.task
+                or getattr(c,'native_inflight',None)or getattr(c,'unconfirmed_native_request',None)
+                or not vector(terminal.get('terminal_pos'))or math.dist(state['pos'],terminal['terminal_pos'])>.08):
+            return False
+    except (GroundFinishStop,AttributeError,KeyError,TypeError,ValueError):return False
+    # The normal request path itself retains the exact native before/reply/after
+    # frames only if idle_read_proof succeeds. Do not manufacture that proof.
+    c.request('snapshot')
+    proof=getattr(c,'last_owned_idle_ground_read',None)
+    return isinstance(proof,dict)and proof.get('idle_ground_read_schema')==1 and proof.get('request_id')==c.last
+
+
 def idle_read_proof(c,op,params,before,receipt,current):
     """Capture original frames only at an exact successfully returned read."""
     try:

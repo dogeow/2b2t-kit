@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch,Mock
 
 import material_ground_finish as module
 from material_client import Client,MaterialClient
@@ -15,6 +15,50 @@ import test_material_ground_rebase as fixtures
 
 
 class IdleGroundReadTests(unittest.TestCase):
+    def close_baseline_fixture(self):
+        c=self.c;c.last='close-owned';c.native_inflight=None;c.unconfirmed_native_request=None
+        state=deepcopy(self.before);state['last_request']=c.last
+        c.last_terminal_evidence={'op':'close_menu','phase':'done','request_id':c.last,'world_session':c.world,
+            'task_session':c.task,'revision_after':c.rev,'terminal_pos':deepcopy(state['pos'])}
+        return c,state
+
+    def test_confirmed_close_captures_new_snapshot_through_normal_request_path(self):
+        c,state=self.close_baseline_fixture()
+        def request(op):
+            self.assertEqual('snapshot',op);c.last='new-read'
+            receipt={**deepcopy(state),'id':c.last,'time':1100}
+            receipt.pop('last_request')
+            current={**deepcopy(state),'last_request':c.last,'time':1200}
+            c.last_terminal_evidence={'op':'snapshot','phase':None,'request_id':c.last,'world_session':c.world,
+                'task_session':c.task,'revision_after':c.rev}
+            c.last_owned_idle_ground_read=module.idle_read_proof(c,op,{},state,receipt,current)
+        c.request=Mock(side_effect=request)
+        self.assertTrue(module.capture_closed_menu_baseline(c,state));c.request.assert_called_once_with('snapshot')
+        self.assertFalse(c.last_owned_idle_ground_read['original_walk_performed'])
+        self.assertEqual(state['inventory'],c.last_owned_idle_ground_read['terminal']['inventory'])
+
+    def test_unknown_close_or_changed_owner_never_requests_new_baseline(self):
+        for change in ('unknown','foreign','pending','manual','moved','inventory_ui','damage'):
+            c,state=self.close_baseline_fixture();c.request=Mock()
+            if change=='unknown':c.last_terminal_evidence['phase']='waiting'
+            if change=='foreign':state['supervision_lease']['id']='other'
+            if change=='pending':c.native_inflight={'request_id':'unknown'}
+            if change=='manual':state['manual_movement']=True
+            if change=='moved':state['pos'][0]+=1
+            if change=='inventory_ui':state['screen']='ContainerScreen'
+            if change=='damage':state['health']=19
+            self.assertFalse(module.capture_closed_menu_baseline(c,state),change);c.request.assert_not_called()
+
+    def test_deferred_ground_owner_keeps_observing_without_new_requests_then_yields(self):
+        c,state=self.close_baseline_fixture();c.heartbeat=SimpleNamespace(id='lease',touch=Mock(),close=Mock())
+        later=deepcopy(state);later['time']+=1000
+        foreign=deepcopy(later);foreign['supervision_lease']['id']='foreign'
+        c.status=Mock(side_effect=[state,later,foreign]);c.request=Mock()
+        c._observe_owned_health=lambda s:s
+        with patch('material_client.time.sleep'):
+            self.assertFalse(c._wait_deferred_ground_owner())
+        self.assertEqual(2,c.heartbeat.touch.call_count);c.heartbeat.close.assert_called_once();c.request.assert_not_called()
+
     def setUp(self):
         fixture=fixtures.GroundRebaseTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         self.c=fixture.c;self.c.last_owned_ground_walk=None
