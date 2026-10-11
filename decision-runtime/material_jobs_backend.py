@@ -1429,6 +1429,10 @@ class Backend:
                 if not isinstance(protected,list) or not protected or any(_box(box) is None for box in protected):
                     return {'phase':'blocked','detail':'表层土方采集需要先登记有效的建造保护区域'}
             from material_jobs.equipment import prepare
+            if item in ROCK_SOURCES:
+                from material_jobs.quarry_workspace import run as prepare_quarry_workspace
+                workspace=prepare_quarry_workspace(self)
+                if workspace.get('phase')!='done':return workspace
             prepared=prepare(c,item,count,self.profile,self.out/'equipment',self.checkpoint)
             if prepared.get('phase')!='done':
                 return prepared
