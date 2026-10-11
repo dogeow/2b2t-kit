@@ -823,9 +823,11 @@ class MaterialJob:
             raise ValueError('A concrete backend must be attached before execution')
         try:
             phase = ('复用已保存的投影缺料清单' if getattr(self.backend, 'parked_ledger_reused', False)
-                     else '读取投影缺料清单（本次首次）')
+                     else '校准当前连接图面')
             self._write('planning', phase if self.request['mode']=='projection' else '核对背包与材料')
             self._observe(initial=True)
+            if self.request['mode']=='projection':
+                self._write('planning', '使用材料清单，按放置确认更新')
             self._recover()
             while True:
                 targets = self._observe()

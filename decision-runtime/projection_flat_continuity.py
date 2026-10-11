@@ -54,11 +54,26 @@ def save(backend, client, state):
     model = getattr(backend, 'flat_model', None)
     audit = getattr(backend, 'audit', None)
     lease = state.get('supervision_lease') or {}
-    if (layout is None or model is None or audit is None or getattr(backend, 'audit_dirty', True)
+    if (audit is None or getattr(backend, 'audit_dirty', True)
             or state.get('world_session') != client.world or lease.get('kind') != 'parking'
             or lease.get('id') != client.heartbeat.id or lease.get('job_session') != client.task
             or lease.get('revision') != state.get('control_revision') or state.get('manual_movement')
             or not state.get('connected') or state.get('safety_hold', {}).get('active')):
+        return False
+    if layout is None or model is None:
+        # A fresh native audit can finish before the first build (for example,
+        # capacity refusal). Reuse only the immutable pinned expected table;
+        # never use the old world's actual audit or placement counts.
+        try:
+            path=backend.root/NAME
+            if path.stat().st_size>32*1024*1024:return False
+            previous=json.loads(path.read_text())
+            model=previous['model']
+            layout=FlatLayout(model,backend.request['flat_map'])
+        except (OSError,ValueError,KeyError,TypeError):return False
+    selection=state.get('projection_selection')or{}
+    if (layout.key!=backend.request['projection_key']or selection.get('key')!=layout.key
+            or selection.get('min')!=list(layout.low)or selection.get('max')!=list(layout.high)):
         return False
     layout.observed(audit)
     write_json(backend.root / NAME, {

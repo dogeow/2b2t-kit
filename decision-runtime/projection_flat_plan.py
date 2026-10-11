@@ -52,7 +52,12 @@ def full_block(state, item):
     name, props = block_state(state)
     short = name.removeprefix('minecraft:')
     return (name == item and (short in PLAIN_BLOCKS or short.endswith(('_planks', '_concrete', '_terracotta')))
-            and (not props or plain_mushroom_stem(state,item)))
+            and (not props or plain_mushroom_stem(state,item) or vertical_deepslate(state,item)))
+
+
+def vertical_deepslate(state,item):
+    name,props=block_state(state)
+    return name==item=='minecraft:deepslate' and props=={'axis':'y'}
 
 
 def plain_mushroom_stem(state,item):
@@ -93,6 +98,8 @@ class FlatLayout:
         self.fillable = frozenset(p for p, row in self.expected.items() if full_block(row['state'], row['item']))
         self.single_seed_only = frozenset(p for p in self.fillable
             if plain_mushroom_stem(self.expected[p]['state'],self.expected[p]['item']))
+        self.axis_targets = frozenset(p for p in self.fillable
+            if vertical_deepslate(self.expected[p]['state'],self.expected[p]['item']))
         # Same-type adjacency hides a stem face, so an all-true state must be isolated.
         self.fillable -= {p for p in self.single_seed_only
             if any(self.expected.get(n,{}).get('item')=='minecraft:mushroom_stem'for n in neighbors(p))}
@@ -176,6 +183,8 @@ def next_batch(layout, actual, snapshot, *, cell_budget=None):
     candidates = (missing - layout.config['excluded_positions']) & layout.fillable
     if snapshot.get('projection_mushroom_stem_seed_protocol')!=1:
         candidates-=layout.single_seed_only
+    if snapshot.get('projection_air_seed_axis_protocol')!=1:
+        candidates-=layout.axis_targets
     if not candidates:
         return {**base, 'phase': 'blocked', 'operation': 'review',
                 'detail': '仅剩保留坐标或需要专用状态修复的方块'}

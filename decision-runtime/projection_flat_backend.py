@@ -14,7 +14,7 @@ from kit_runtime.journal import write_json
 from material_jobs.protocol import JobBlocked
 from material_jobs_backend import Backend
 from material_plan import inventory_counts
-from projection_flat_plan import FlatLayout, next_batch, policy, position, full_block, plain_mushroom_stem
+from projection_flat_plan import FlatLayout, next_batch, policy, position, full_block, plain_mushroom_stem, vertical_deepslate
 from projection_patch_plan import connected_mask
 from projection_scene_lights import registered_map_light, neighbour_map_light
 from projection_completion import block_state
@@ -296,6 +296,8 @@ class FlatMapBackend(Backend):
                     and position(row['pos']) not in excluded
                     and (not plain_mushroom_stem(row['expected'],item)
                          or snapshot.get('projection_mushroom_stem_seed_protocol')==1)
+                    and (not vertical_deepslate(row['expected'],item)
+                         or snapshot.get('projection_air_seed_axis_protocol')==1)
                     and full_block(row['expected'], item)):
                 needed[item]=needed.get(item,0)+1
         return any(usable[item]>=min(minimum,count+2)for item,count in needed.items())

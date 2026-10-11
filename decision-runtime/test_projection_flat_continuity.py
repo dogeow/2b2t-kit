@@ -13,6 +13,28 @@ from test_projection_flat_jobs import model, layout_for, audit, state, ITEM
 
 
 class ContinuityTests(unittest.TestCase):
+    def test_fresh_audit_before_first_build_saves_only_new_actual_counts(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            m=model(3,1);layout=layout_for(m)
+            root=Path(tmp)
+            (root/NAME).write_text(json.dumps({'model':m,'audit':{'matched':999},'world_session':'old'}))
+            request={'projection_key':'ship','flat_map':{'schema':1,'content_hash':m['content_hash'],
+                                                       'reuse_parked_material_ledger':True}}
+            backend=SimpleNamespace(root=root,out=root,audit=audit(layout,{}),audit_dirty=False,request=request)
+            client=SimpleNamespace(world='new',task='task',heartbeat=SimpleNamespace(id='lease'))
+            state={'time':5000,'world_session':'new','connected':True,'control_revision':7,
+                'manual_movement':False,'safety_hold':{'active':False},
+                'projection_selection':{'key':'ship','min':[0,64,0],'max':[2,64,0]},
+                'supervision_lease':{'kind':'parking','id':'lease','job_session':'task',
+                                     'world_session':'new','revision':7}}
+            self.assertTrue(save(backend,client,state))
+            saved=json.loads((root/NAME).read_text())
+            self.assertEqual('new',saved['world_session']);self.assertEqual(0,saved['audit']['matched'])
+            self.assertTrue(restore(backend,state));self.assertFalse(backend.flat_ledger.actual)
+            backend.flat_layout=None;backend.flat_model=None
+            state['projection_selection']['key']='changed'
+            self.assertFalse(save(backend,client,state))
+
     def test_exact_native_parking_reuses_ledger_without_scan_or_new_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             m = model(3, 1); layout = layout_for(m)

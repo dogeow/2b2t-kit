@@ -457,6 +457,31 @@ class SimulatedFlatBackend(FakeBackend):
 
 
 class FlatIntegrationTests(unittest.TestCase):
+    def test_vertical_deepslate_carried_stack_is_ready_and_uses_axis_placement(self):
+        m=model(100,1)
+        for row in m['expected']:
+            row.update(item='minecraft:deepslate',state='Block{minecraft:deepslate}[axis=y]')
+        m['content_hash']=native_content_hash(m['expected']);layout=layout_for(m)
+        backend=FlatMapBackend.__new__(FlatMapBackend)
+        backend.profile={'minimum_projection_trip_stack':64}
+        backend.request={'projection_key':'ship','flat_map':{**CONFIG,'content_hash':m['content_hash']}}
+        s=state(64);s['inventory'][5]['item']='minecraft:deepslate'
+        s['target_stack_sizes']={'minecraft:deepslate':64};s['projection_audit']=audit(layout,{})
+        self.assertFalse(backend.has_ready_projection_output(s))
+        self.assertEqual('blocked',next_batch(layout,{},s)['phase'])
+        s['projection_air_seed_axis_protocol']=1
+        self.assertTrue(backend.has_ready_projection_output(s))
+        first=next_batch(layout,{},s)
+        self.assertEqual('air_seed',first['operation']);self.assertEqual('minecraft:deepslate',first['item'])
+        actual={tuple(first['positions'][0]):'Block{minecraft:deepslate}[axis=y]'}
+        s['inventory'][5]['count']=63
+        self.assertEqual('print',next_batch(layout,actual,s)['operation'])
+        for props in ('axis=x','axis=z','axis=y,waterlogged=false'):
+            altered=deepcopy(m)
+            for row in altered['expected']:row['state']='Block{minecraft:deepslate}['+props+']'
+            altered['content_hash']=native_content_hash(altered['expected'])
+            self.assertFalse(layout_for(altered).fillable)
+
     def test_registered_whole_trip_uses_stack_or_exact_tail_before_returning(self):
         m=model(100,1);layout=layout_for(m);backend=FlatMapBackend.__new__(FlatMapBackend)
         backend.profile={'minimum_projection_trip_stack':64}
