@@ -3393,6 +3393,9 @@ public final class AutomationBridge {
             &&str(supervisionLease,"world_session").equals(session(c))
             &&!str(r,"task_session").isBlank()&&str(r,"task_session").equals(str(supervisionLease,"job_session"));
     }
+    public static boolean managedAirOnlyNavigation(){
+        return active!=null&&op.equals("navigate")&&active.has("air_only")&&active.get("air_only").getAsBoolean();
+    }
     private static boolean airNavigationClear(Minecraft c,JsonArray target){
         if(c.player==null||c.level==null||target==null||target.size()!=3)return false;
         double x=target.get(0).getAsDouble(),y=target.get(1).getAsDouble(),z=target.get(2).getAsDouble();

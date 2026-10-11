@@ -1895,6 +1895,11 @@ class Backend:
             c=self.ensure_client()
             self.busy=True
             try:
+                if inflight['operation']=='smelt':
+                    from material_jobs.processing import preflight_smelting_recovery
+                    positions=preflight_smelting_recovery(c.world,inflight['args'],self.profile,directory)
+                    self.prepare_travel()
+                    self.stage_near_base(positions)
                 receipt=recover(c,inflight['operation'],inflight['args'],self.profile,directory,self.checkpoint)
             finally:
                 self.busy=False

@@ -19,6 +19,12 @@ import dev.twob2tkit.combat.HealingItems;
 import dev.twob2tkit.cruise.CruiseCeilingMiner;
 import dev.twob2tkit.cruise.CruiseCollisionPath;
 import dev.twob2tkit.cruise.CruiseScreenHud;
+import dev.twob2tkit.cruise.CruiseCanopyEscape;
+import dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence;
+import dev.twob2tkit.runtime.engine.BorerAreaFlightSession;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.phys.Vec3;
 import dev.twob2tkit.nether.NetherRoofAssist;
 
 /**
@@ -92,6 +98,11 @@ public final class KitController {
 	private int unstickTicksRemaining;
 	private int unstickPhase;
 	private int unstickRound;
+    private java.util.List<Vec3> canopyRoute=java.util.List.of();
+    private ClientLevel canopyWorld;
+    private int canopyIndex,canopyStarted,canopyRetryAfter;
+    private double canopyRiseY;
+    private final BorerAreaFlightSession canopyFlight=new BorerAreaFlightSession();
 
 	public KitController(KitConfig config) {
 		this.config = config;
@@ -163,6 +174,9 @@ public final class KitController {
 
 	/** 停其它模块、进升空阶段并尝试开 Meteor 飞行。 */
 	private void activate(Minecraft client) {
+		clearCanopyRoute();canopyRetryAfter=0;
+        var canopyBackup=client.gameDirectory.toPath().resolve("config/twob2tkit/cruise-canopy-flight-speed.bak");
+        if(java.nio.file.Files.exists(canopyBackup))canopyFlight.prepare(canopyBackup);
 		exactArrival = false;
 		KitClient.prepareForCruise(client);
 		releaseKeys(client);
@@ -214,6 +228,7 @@ public final class KitController {
 
 	/** 停止巡航并松键。 */
 	public void stop(Minecraft client, String reason) {
+		clearCanopyRoute();
 		boolean leavingWorld = client.level == null || "离开世界".equals(reason) || "退出游戏".equals(reason);
 		if (!isActive()) {
 			if (leavingWorld || !"按键停止巡航".equals(reason)) CruiseScreenHud.hide();
@@ -236,6 +251,7 @@ public final class KitController {
 
 		LocalPlayer player = client.player;
 		if (player == null || client.level == null) {
+			clearCanopyRoute();
 			phase = Phase.IDLE;
 			CruiseScreenHud.hide();
 			releaseKeys(client);
@@ -263,6 +279,10 @@ public final class KitController {
 			disconnect(client, "镐耐久过低（剩余 " + left + "），挖不了，已停止并下线");
 			return;
 		}
+
+        // Also runs before exact-arrival's altitude branch, which otherwise
+        // returns before ordinary ceiling mining/obstacle handling can run.
+        if(tickCanopyEscape(client,player))return;
 
 		double finalDx = config.targetX - player.getX();
 		double finalDz = config.targetZ - player.getZ();
@@ -432,6 +452,10 @@ public final class KitController {
 	private float faceDestination(LocalPlayer player) {
 		double navigationX = avoidanceActive ? avoidanceX : config.targetX;
 		double navigationZ = avoidanceActive ? avoidanceZ : config.targetZ;
+		return facePoint(player,navigationX,navigationZ);
+	}
+
+    private float facePoint(LocalPlayer player,double navigationX,double navigationZ){
 		double dx = navigationX - player.getX();
 		double dz = navigationZ - player.getZ();
 		if (dx * dx + dz * dz < 1.0E-6) return 0.0F;
@@ -446,6 +470,95 @@ public final class KitController {
 		RotationAim.apply(player, navYaw, navPitch);
 		return wrapDegrees(targetYaw - navYaw);
 	}
+
+    private void clearCanopyRoute(){
+        canopyFlight.closeKeepingFlight();
+        canopyRoute=java.util.List.of();canopyWorld=null;canopyIndex=0;
+    }
+
+    private boolean clearCruiseSweep(Minecraft c,LocalPlayer p,AABB box){
+        if(box.minY<c.level.getMinY()||box.maxY>c.level.getMaxY()||!c.level.noCollision(p,box))return false;
+        int minX=(int)Math.floor(box.minX),maxX=(int)Math.floor(box.maxX-1e-6);
+        int minZ=(int)Math.floor(box.minZ),maxZ=(int)Math.floor(box.maxZ-1e-6);
+        for(int cx=Math.floorDiv(minX,16);cx<=Math.floorDiv(maxX,16);cx++)
+            for(int cz=Math.floorDiv(minZ,16);cz<=Math.floorDiv(maxZ,16);cz++)
+                if(!LoadedServerChunkEvidence.isServerChunk(c.level,c.level.getChunkSource().getChunk(cx,cz,ChunkStatus.FULL,false)))return false;
+        for(var pos:BlockPos.betweenClosed(minX,(int)Math.floor(box.minY),minZ,
+                maxX,(int)Math.floor(box.maxY-1e-6),maxZ))
+            if(!c.level.getFluidState(pos).isEmpty())return false;
+        return true;
+    }
+
+    private boolean leafCeiling(Minecraft c,LocalPlayer p){
+        var b=p.getBoundingBox();var head=new AABB(b.minX,b.maxY-1e-6,b.minZ,b.maxX,b.maxY+1,b.maxZ);
+        boolean leaves=false;
+        for(var pos:BlockPos.betweenClosed(BlockPos.containing(head.minX,head.minY,head.minZ),
+                BlockPos.containing(head.maxX-1e-6,head.maxY-1e-6,head.maxZ-1e-6))){
+            var state=c.level.getBlockState(pos);var shape=state.getCollisionShape(c.level,pos);
+            if(shape.isEmpty()||!head.intersects(shape.bounds().move(pos)))continue;
+            if(!state.is(BlockTags.LEAVES))return false;
+            leaves=true;
+        }
+        return leaves;
+    }
+
+    private boolean tickCanopyEscape(Minecraft c,LocalPlayer p){
+        // Managed air-only waypoints must retain their original verified path.
+        if(dev.twob2tkit.automation.AutomationBridge.managedAirOnlyNavigation()){
+            clearCanopyRoute();return false;
+        }
+        if(canopyRoute.isEmpty()){
+            if(ticks<canopyRetryAfter||desiredY()<=p.getY()+.6||!leafCeiling(c,p))return false;
+            var body=p.getBoundingBox();double x=p.getX(),z=p.getZ(),y=desiredY();
+            var offsets=CruiseCanopyEscape.find(6,(a,b)->clearCruiseSweep(c,p,
+                CruiseCollisionPath.horizontal(body.move(a.x(),0,a.z()),b.x()-a.x(),b.z()-a.z())),
+                a->clearCruiseSweep(c,p,CruiseCollisionPath.vertical(body.move(a.x(),0,a.z()),y-p.getY())));
+            canopyRetryAfter=ticks+60;
+            if(offsets.isEmpty())return false;
+            canopyRoute=offsets.stream().map(a->new Vec3(x+a.x(),p.getY(),z+a.z())).toList();
+            canopyWorld=c.level;canopyRiseY=y;canopyStarted=ticks;canopyIndex=0;
+            ceilingMiner.release(c);
+            try{
+                canopyFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/cruise-canopy-flight-speed.bak"));
+                String failure=canopyFlight.acquire(p);
+                if(failure!=null)throw new IllegalStateException(failure);
+                canopyFlight.hover();
+            }catch(IllegalStateException unavailable){
+                clearCanopyRoute();releaseKeys(c);warning(c,"树冠脱困暂缓："+unavailable.getMessage());return true;
+            }
+            KitClient.LOGGER.info("[Cruise] canopy escape planned steps={} riseY={}",canopyRoute.size(),y);
+        }
+        if(canopyWorld!=c.level||ticks-canopyStarted>250||Math.abs(desiredY()-canopyRiseY)>.5){
+            clearCanopyRoute();releaseKeys(c);return true;
+        }
+        var point=canopyRoute.get(canopyIndex);
+        if(Math.abs(p.getY()-point.y)>.35||!clearCruiseSweep(c,p,
+                CruiseCollisionPath.horizontal(p.getBoundingBox(),point.x-p.getX(),point.z-p.getZ()))){
+            clearCanopyRoute();releaseKeys(c);canopyRetryAfter=ticks+60;return true;
+        }
+        c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);
+        c.options.keyDown.setDown(false);c.options.keyLeft.setDown(false);c.options.keyRight.setDown(false);
+        String flightFailure=canopyFlight.acquire(p);
+        if(flightFailure!=null){clearCanopyRoute();releaseKeys(c);warning(c,flightFailure);return true;}
+        if(Math.hypot(point.x-p.getX(),point.z-p.getZ())<=.25){
+            c.options.keyUp.setDown(false);canopyFlight.hover();canopyIndex++;
+            if(canopyIndex==canopyRoute.size()){
+                clearCanopyRoute();phase=Phase.ALTITUDE;resetMovementSample(p);
+            }
+            return true;
+        }
+        boolean aligned=Math.abs(facePoint(p,point.x,point.z))<5;
+        double speed=aligned?CruiseCanopyEscape.speed(Math.hypot(point.x-p.getX(),point.z-p.getZ())):0;
+        double heading=Math.toRadians(navYaw),step=speed*15;
+        if(aligned&&!clearCruiseSweep(c,p,CruiseCollisionPath.horizontal(p.getBoundingBox(),
+                -Math.sin(heading)*step,Math.cos(heading)*step))){
+            clearCanopyRoute();releaseKeys(c);canopyRetryAfter=ticks+60;return true;
+        }
+        canopyFlight.speed(speed);
+        c.options.keyUp.setDown(aligned);
+        if(ticks%10==0)CruiseScreenHud.show("巡航 · 离开树冠 · "+(canopyIndex+1)+"/"+canopyRoute.size());
+        return true;
+    }
 
 	/** 前方有障碍：贴身时先升高越过树冠，远处才水平绕行；找不到绕行也不停车。 */
 	private void checkObstacleAndPlan(Minecraft client, LocalPlayer player) {
@@ -972,6 +1085,7 @@ public final class KitController {
 
 	/** 到达目标：停飞并按配置离线。 */
 	private void arrive(Minecraft client) {
+		clearCanopyRoute();
 		String reason = String.format(Locale.ROOT, "已到达目标 %.1f, %.1f（半径 %.1f）", config.targetX, config.targetZ, config.arrivalRadius);
 		phase = Phase.IDLE;
 		avoidanceActive = false;

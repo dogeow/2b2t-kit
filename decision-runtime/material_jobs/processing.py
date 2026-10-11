@@ -481,6 +481,27 @@ def _recover_hardening(c, item, count, profile, out, checkpoint):
     return harden(c,item,count,profile,out,checkpoint)
 
 
+def preflight_smelting_recovery(world,args,profile,original_out):
+    """Read retained receipts before any travel; never authorize partial/foreign loading."""
+    from smelting_workflow import inspect_batch
+    recipe,target=args;root=Path(original_out).resolve()
+    manifest=json.loads((root/'smelting.json').read_text())
+    source=recipe['source'];output=recipe.get('output',recipe.get('item'))
+    positions=_positions(profile.get('furnace_positions'))
+    if (manifest.get('world_session')!=world or manifest.get('target')!=target
+            or manifest.get('source')!=source or manifest.get('output')!=output
+            or manifest.get('recipe_id')!=recipe.get('recipe_id')
+            or manifest.get('positions')!=positions or not manifest.get('batches')):
+        raise JobBlocked('原装炉世界、配方或登记炉位不同，未移动或重新投料')
+    for batch in manifest['batches']:
+        journal=(root/batch['journal']).resolve()
+        if journal.parent!=root:raise JobBlocked('原装炉账本位置不属于加工任务')
+        ledger=inspect_batch(journal,world,positions,source,output,batch['amount'])
+        if ledger.get('recipe_id')!=recipe.get('recipe_id'):
+            raise JobBlocked('原装炉配方不同，未移动或重新投料')
+    return positions
+
+
 def recover(c, operation, args, profile, original_out, checkpoint):
     """Reconcile original receipts first; uncertain half-loading is never replayed."""
     client=c if isinstance(c,CheckpointClient) else CheckpointClient(c,checkpoint)
