@@ -67,6 +67,68 @@ class FakeClient:
 
 
 class AcquisitionTest(unittest.TestCase):
+    def test_open_side_entry_never_becomes_the_box_centre_or_clears_a_cap(self):
+        from material_jobs.acquisition import _open_entry_centre,_route_region_key
+        region={'min':[0,25,0],'max':[5,35,5],'source':'natural_survey',
+                'open_entry':{'min':[0,36,0],'max':[1,37,1]}}
+        self.assertEqual([1.,1.],_open_entry_centre(region,region,[block((3,36,3),'stone')]))
+        with self.assertRaises(Unavailable):_open_entry_centre(region,region,[block((0,36,0),'stone')])
+        outside={**region,'open_entry':{'min':[5,36,0],'max':[6,37,1]}}
+        with self.assertRaises(Unavailable):_open_entry_centre(outside,region,[])
+        old={k:v for k,v in region.items()if k!='open_entry'}
+        self.assertNotEqual(_route_region_key(old),_route_region_key(region))
+
+    def direct_client(self):
+        c=FakeClient();c.state.update(pos=[.5,145.,.5],on_ground=False)
+        c.rows=[];c.registered_direct_air_routes=True
+        return c
+
+    def test_registered_level_route_uses_bounded_diagonal_legs(self):
+        c=self.direct_client();trace=[]
+        with patch('material_jobs.navigation.settled_state',side_effect=lambda *a,**k:c.status()):
+            _travel(c,[100.5,145.,100.5],lambda:None,trace,keep_cruise=True)
+        points=[p['target']for op,p in c.actions if op=='navigate']
+        start=[.5,145.,.5]
+        for point in points:
+            self.assertLessEqual(math.dist(start,point),31.001)
+            self.assertAlmostEqual(point[0],point[2]);start=point
+        self.assertEqual([100.5,145.,100.5],c.status()['pos'])
+        self.assertTrue(any(r.get('event')=='registered_direct_level_air_leg'for r in trace))
+
+    def test_known_diagonal_obstacle_retains_clear_axis_route(self):
+        from material_jobs.acquisition import _travel_once
+        c=self.direct_client();c.rows=[block((10,145,10),'stone')];trace=[]
+        with patch('material_jobs.navigation.settled_state',side_effect=lambda *a,**k:c.status()):
+            _travel_once(c,[20.5,145.,20.5],lambda:None,trace,keep_cruise=True)
+        self.assertEqual([20.5,145.,20.5],c.status()['pos'])
+        self.assertFalse(any(r.get('event')=='registered_direct_level_air_leg'for r in trace))
+        self.assertEqual(2,sum(op=='navigate'for op,_ in c.actions))
+
+    def test_unknown_diagonal_scan_does_not_move_or_fall_back(self):
+        from material_jobs.acquisition import _travel_once
+        c=self.direct_client();ordinary=c.request
+        def request(op,**params):
+            result=ordinary(op,**params)
+            if op=='scan':result['scan_cells_read']-=1
+            return result
+        c.request=request
+        with self.assertRaises(Unavailable):_travel_once(c,[20.5,145.,20.5],lambda:None,[])
+        self.assertFalse(any(op=='navigate'for op,_ in c.actions))
+
+    def test_intended_diagonal_progress_is_not_guard_displacement(self):
+        from material_jobs.acquisition import _travel_once
+        c=self.direct_client();ordinary=c.request;trace=[]
+        def request(op,**params):
+            if op!='navigate':return ordinary(op,**params)
+            c.actions.append((op,params));c.state['pos']=[10.5,145.,10.5]
+            return {'phase':'waiting','detail':'air-only path changed; no blocks were excavated'}
+        c.request=request
+        with patch('material_jobs.acquisition._terminal_guard_route',return_value=True),\
+             patch('material_jobs.acquisition._confirmed_route_obstacle',return_value=False):
+            with self.assertRaises(Unavailable)as raised:_travel_once(c,[20.5,145.,20.5],lambda:None,trace)
+        self.assertEqual('route_uncertain',raised.exception.code)
+        self.assertEqual(1,sum(op=='navigate'for op,_ in c.actions))
+
     def test_guard_displaced_terminal_route_is_not_retried_or_called_a_solid_block(self):
         class Displaced(FakeClient):
             def request(self,op,**params):

@@ -13,9 +13,11 @@ def run(backend):
     cfg=backend.profile.get('quarry_inventory_staging')or{}
     if cfg.get('authorized')is not True:return {'phase':'done','prepared':False}
     minimum=cfg.get('minimum_empty_slots');reserves=cfg.get('reserves')
+    trigger=cfg.get('trigger_below_empty_slots',4)
     if (type(minimum)is not int or not 4<=minimum<=10 or not isinstance(reserves,dict)
             or not reserves or any(i not in ALLOWED or type(n)is not int or not 0<=n<=2304
                                   for i,n in reserves.items())
+            or type(trigger)is not int or not 3<=trigger<=minimum
             or reserves.get('minecraft:wheat_seeds',32)<32):
         raise JobBlocked('采坑周转空间登记无效，未存放物品')
     c=backend.ensure_client();state=c.status()
@@ -23,7 +25,8 @@ def run(backend):
     if len(rows)!=36 or {r.get('slot')for r in rows}!=set(range(36)):
         raise JobBlocked('完整背包未确认，未存放物品')
     free=sum(not r.get('count',0)for r in rows)
-    if free>=minimum:return {'phase':'done','prepared':True,'free_slots':free}
+    if free>=trigger:return {'phase':'done','prepared':True,'free_slots':free,
+                            'staging_not_required':True,'trigger_below_empty_slots':trigger}
     before=dict(inventory_counts(state));protected=set(backend.request.get('targets',{}))
     deposit={i:n for i,n in reserves.items()if i not in protected and before.get(i,0)>n}
     if not deposit:return {'phase':'waiting','code':'WAIT_WORKSPACE','detail':'登记周转料不足，保留当前背包'}

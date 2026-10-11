@@ -631,9 +631,14 @@ def _travel_loaded_segment(c, target, checkpoint, trace, budget, authorized, fin
         if budget['legs'] >= MAX_LOADED_ROUTE_LEGS:
             raise Unavailable('分段接近航段上限已到，不扩大原搜索或重复未知动作',
                               'waiting', code='route_uncertain')
-        axis = 0 if abs(target[0]-here[0]) >= abs(target[2]-here[2]) else 2
         point = list(here)
-        point[axis] += max(-LOADED_ROUTE_LEG, min(LOADED_ROUTE_LEG, target[axis]-here[axis]))
+        if getattr(c,'registered_direct_air_routes',False) is True:
+            distance=math.hypot(target[0]-here[0],target[2]-here[2])
+            ratio=LOADED_ROUTE_LEG/distance
+            for axis in (0,2):point[axis]+=ratio*(target[axis]-here[axis])
+        else:
+            axis = 0 if abs(target[0]-here[0]) >= abs(target[2]-here[2]) else 2
+            point[axis] += max(-LOADED_ROUTE_LEG, min(LOADED_ROUTE_LEG, target[axis]-here[axis]))
         point[1] = max(here[1], target[1])
         budget['legs'] += 1
         leg = budget['legs']
@@ -851,7 +856,20 @@ def _travel_once(c, target, checkpoint, trace, *, clearance_padding=.32, obstacl
     cruise = max(here[1], target[1])
     bend=[target[0],here[1],here[2]]
     legs=((here,bend),(bend,target))
-    if not _cruise_band_clear(c,legs,here,cruise,checkpoint,trace,route_authorized,clearance_padding):
+    level_direct=(getattr(c,'registered_direct_air_routes',False) is True
+                  and c.status().get('on_ground') is False and abs(here[1]-target[1])<=.3
+                  and math.hypot(target[0]-here[0],target[2]-here[2])<=LOADED_ROUTE_LEG+.001)
+    band_clear=False
+    if level_direct:
+        band_clear=_cruise_band_clear(c,((here,target),),here,cruise,checkpoint,trace,
+                                    route_authorized,clearance_padding)
+        if band_clear:
+            legs=((here,target),)
+            trace.append({'event':'registered_direct_level_air_leg','from':here,'target':list(target),
+                          'proof':'complete_loaded_padded_cruise_band_then_complete_native_body_sweep'})
+        else:level_direct=False  # A proved obstacle retains the inspected axis route.
+    if not band_clear:band_clear=_cruise_band_clear(c,legs,here,cruise,checkpoint,trace,route_authorized,clearance_padding)
+    if not band_clear:
         # A proved obstacle retains the original full-height terrain fallback.
         # Incomplete/unknown band evidence raises above, never reaches this branch.
         for start,end in legs:
@@ -867,8 +885,8 @@ def _travel_once(c, target, checkpoint, trace, *, clearance_padding=.32, obstacl
     if cruise>=317:
         raise Unavailable('已观察航线上方没有足够净空，不穿过障碍',
                           code='route_geometry_blocked')
-    points = [[here[0], cruise, here[2]], [target[0], cruise, here[2]],
-              [target[0], cruise, target[2]]]
+    points = [[here[0], cruise, here[2]], [target[0], cruise, target[2]]] if level_direct else [
+              [here[0], cruise, here[2]], [target[0], cruise, here[2]], [target[0], cruise, target[2]]]
     if not keep_cruise:
         points.append(list(target))
     for state, point in _actual_route_steps(c, points, checkpoint, route_authorized):
@@ -908,9 +926,10 @@ def _travel_once(c, target, checkpoint, trace, *, clearance_padding=.32, obstacl
             # health; the next mutation still passes the ordinary safety gate.
             current=c.status()
             vertical=abs(point[1]-start[1])>.5
+            dx,dz=point[0]-start[0],point[2]-start[2]
             drift=(math.hypot(current['pos'][0]-start[0],current['pos'][2]-start[2]) if vertical
-                   else abs(current['pos'][2]-start[2]) if abs(point[0]-start[0])>.5
-                   else abs(current['pos'][0]-start[0]))
+                   else abs((current['pos'][0]-start[0])*dz-(current['pos'][2]-start[2])*dx)
+                   /max(math.hypot(dx,dz),1e-6))
             changed=reply.get('detail')=='air-only path changed; no blocks were excavated'
             request_id=getattr(c,'last',None)
             terminal=_terminal_guard_route(c,reply,current)
@@ -1030,8 +1049,24 @@ def _route_failure_path(c, profile, item):
 
 
 def _route_region_key(region):
-    return hashlib.sha256(json.dumps([region.get('min'),region.get('max'),
-        region.get('access_shaft')],sort_keys=True,separators=(',', ':')).encode()).hexdigest()[:24]
+    value=[region.get('min'),region.get('max'),region.get('access_shaft')]
+    if 'open_entry' in region:value.append(region['open_entry'])
+    return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',', ':')).encode()).hexdigest()[:24]
+
+
+def _open_entry_centre(region,choice,rows):
+    entry=region.get('open_entry')
+    if entry is None:return None
+    low,high=_bounds(entry,shaft=True)
+    if (region.get('source')!='natural_survey' or region.get('access_shaft')
+            or high[0]-low[0]!=1 or high[2]-low[2]!=1 or high[1]-low[1]!=1
+            or low[1]!=choice['max'][1]+1
+            or not all(choice['min'][i]<=low[i]<=high[i]<=choice['max'][i]for i in (0,2))):
+        raise Unavailable('露天入口不在当前已核验采坑内，未开挖',code='unsafe_region')
+    if any(in_box(row['pos'],low,high)and(row.get('fluid')or row.get('block_entity')
+                or row.get('passable')is not True)for row in rows):
+        raise Unavailable('原露天入口已被阻挡，未开挖',code='unsafe_region')
+    return [(low[0]+high[0]+1)/2,(low[2]+high[2]+1)/2]
 
 
 def _validate_resource_ledger(ledger, item):
@@ -1615,7 +1650,7 @@ def acquire(c, item, target_count, profile, out, checkpoint):
                 return {'phase':'waiting','code':held_route['code'],
                         'detail':'原资源区未确认路线待核；不自动重试或当作矿耗尽'}
         ledger['resource_regions']=[{key:region[key] for key in
-                                    ('item','min','max','source','surface_y','access_shaft') if key in region}
+                                    ('item','min','max','source','surface_y','access_shaft','open_entry') if key in region}
                                    for region in regions]
         write_json(path,ledger)
         if item in ('minecraft:dirt', 'minecraft:grass_block'):
@@ -1680,7 +1715,7 @@ def acquire(c, item, target_count, profile, out, checkpoint):
                     return {'phase': 'waiting', 'detail': '本轮已核验 12 个小区域，下一轮从未扫描位置继续'}
                 rows = _scan(c, [lo[0]-3, lo[1]-2, lo[2]-3], [hi[0]+3, hi[1]+2, hi[2]+3], checkpoint); scans += 1
                 state = c.status(); _safe(state)
-                choice = choose_quarry(rows, lo, hi, state['pos']) if sand else rock_choice(rows, lo, hi, item, state['pos'],region.get('access_shaft'))
+                choice = choose_quarry(rows, lo, hi, state['pos']) if sand else rock_choice(rows, lo, hi, item, state['pos'],region.get('access_shaft')or region.get('open_entry'))
                 if choice is None:
                     ledger['visited'][key] = {'state': 'empty_or_unsafe', 'min': lo, 'max': hi, 'observed_at': state.get('time')}
                     write_json(path, ledger); continue
@@ -1688,6 +1723,8 @@ def acquire(c, item, target_count, profile, out, checkpoint):
                 tool = _tool(state, 'shovel' if sand else 'pickaxe', min(amount, 256)+32 if sand else choice['remaining']+32, no_silk=not sand)
                 try:
                     entry_centre = _access_shaft(c,region,choice,item,target_count,ledger,path,checkpoint,profile) if not sand else None
+                    if not sand and entry_centre is None:
+                        entry_centre=_open_entry_centre(region,choice,rows)
                 except Unavailable as error:
                     if error.code!='unsafe_region':raise
                     ledger['visited'][key]={'state':'empty_or_unsafe','min':lo,'max':hi,'reason':error.detail}

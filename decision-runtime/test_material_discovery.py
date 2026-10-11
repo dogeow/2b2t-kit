@@ -59,6 +59,15 @@ class DiscoveryTests(unittest.TestCase):
         self.assertGreater(diagnostics['reject_reasons']['tree_entry'],0)
         self.assertGreater(diagnostics['target_blocks'],32)
 
+    def test_open_side_entry_is_preserved_when_box_centre_has_a_roof(self):
+        rows=[row(x,y,z,'diorite')for x in range(6)for z in range(6)for y in range(25,36)]
+        rows += [row(3,y,3,'stone')for y in range(36,71)]
+        result=choose_region(rows,'minecraft:diorite',0,0,[3,145,3])
+        self.assertIsNotNone(result);self.assertIn('open_entry',result)
+        entry=result['open_entry']
+        self.assertFalse(entry['min'][0]<=3<=entry['max'][0]and entry['min'][2]<=3<=entry['max'][2])
+        self.assertEqual(result['max'][1]+1,entry['min'][1])
+
     def test_every_wet_entrance_is_rejected_even_when_deep_rock_is_abundant(self):
         rows=[row(x,y,z) for x in range(-3,19) for z in range(-3,19) for y in range(-20,1)]
         rows += [row(x,1,z,'water',solid=False,fluid=True) for x in range(-3,19) for z in range(-3,19)]

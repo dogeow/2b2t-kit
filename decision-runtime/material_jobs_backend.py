@@ -427,6 +427,7 @@ class Backend:
                                record_experience=True, experience_state=self.experience_state(),
                                remote_finish='guard', park_target=park)
             self.client = client
+            client.registered_direct_air_routes = self.profile.get('direct_registered_resource_routes') is True
         except RuntimeError as error:
             if str(error)=='Material session cannot acquire control':
                 current=read_fresh(self.root)

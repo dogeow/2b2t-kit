@@ -58,6 +58,15 @@ class QuarryWorkspaceTests(unittest.TestCase):
         book=json.loads((self.out/'quarry-workspace.json').read_text());self.assertEqual('deposit',book['pending'])
         self.assertFalse(book['complete'])
 
+    def test_four_free_slots_do_not_trigger_an_eight_slot_depot_trip(self):
+        for n in range(2):del self.held['minecraft:fixture_'+str(n)]
+        with patch('material_storage_index.select_destinations')as select,\
+             patch('material_depots.exchange')as exchange:
+            result=run(self.b)
+        self.assertEqual('done',result['phase']);self.assertEqual(4,result['free_slots'])
+        self.assertTrue(result['staging_not_required']);select.assert_not_called();exchange.assert_not_called()
+        self.b.prepare_travel.assert_not_called()
+
     def test_invalid_or_unregistered_profile_never_stores(self):
         self.b.profile['quarry_inventory_staging']['authorized']=False
         self.assertFalse(run(self.b)['prepared']);self.b.prepare_travel.assert_not_called()

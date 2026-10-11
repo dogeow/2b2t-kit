@@ -232,6 +232,11 @@ def choose_region(rows, item, x, z, player, checkpoint=lambda:None, diagnostics=
             choice=rock_choice(nearby,low,high,item,player,required_entry=required)
             if choice is None:rejected['no_supported_rock_box']+=1;continue
             choice.update(item=item,source='natural_survey',**entry)
+            if 'access_shaft' not in entry:
+                # The proved open column may be beside the box centre. Keep
+                # that exact column rather than later approaching its roof.
+                choice['open_entry']={'min':[cx,choice['max'][1]+1,cz],
+                                      'max':[cx+1,choice['max'][1]+2,cz+1]}
             diag['candidate_target_blocks']=choice['available']
             return choice
     return None
