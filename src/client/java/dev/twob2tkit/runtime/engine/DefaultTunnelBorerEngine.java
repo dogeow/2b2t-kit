@@ -513,7 +513,9 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			BorerMeteorAutomation.Meal meal = meteorAutomation.meal();
 			boolean usingFood = player.isUsingItem() && player.getUseItem().has(DataComponents.FOOD);
 			boolean entering = !mealPause.paused();
-			BorerMealPolicy.Action action = mealPause.tick(meal.requested(), meal.eating(), usingFood,
+			boolean manualFood=player.getMainHandItem().has(DataComponents.FOOD)
+				&&dev.twob2tkit.KitKeys.isPhysicallyDown(client,client.options.keyUse);
+			BorerMealPolicy.Action action = mealPause.tick(meal.requested()||manualFood, meal.eating(), usingFood,
 				player.getFoodData().getFoodLevel(), player.getHealth());
 			if (action == BorerMealPolicy.Action.WORK) return false;
 			if (action == BorerMealPolicy.Action.RESUME) {
@@ -524,10 +526,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			if (entering) {
 				rangedCombat.pauseForEating(client);
 				// Stop only our shield use; an already-started food/AutoGap use must survive this tick.
-				if (holdingShield && !usingFood && !meal.eating()) {
-					if (player.isUsingItem() && player.getUseItem().is(Items.SHIELD)) player.stopUsingItem();
-					client.options.keyUse.setDown(false);
-				}
+				if (holdingShield && !usingFood) mobs.lowerShield(client);
 				holdingShield = false;
 				fileLog(client, "meteor-eat-pause " + meal.settings() + " nativeEating=" + meal.eating()
 					+ " health=" + player.getHealth() + " hunger=" + player.getFoodData().getFoodLevel());
@@ -911,9 +910,13 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		}
 		engagement.update(c);
 		var meal = meteorAutomation.meal();
-		if (!rangedCombat.hasCreeperEmergency(c) && !rangedCombat.hasImmediateHostileThreat(c)
-			&& (meal.requested() || meal.eating() || c.player.isUsingItem() && c.player.getUseItem().has(DataComponents.FOOD))) {
-			if (standaloneGuard) rangedCombat.pauseForEating(c);
+		boolean usingFood=c.player.isUsingItem()&&c.player.getUseItem().has(DataComponents.FOOD);
+		boolean manualFood=c.player.getMainHandItem().has(DataComponents.FOOD)
+			&&dev.twob2tkit.KitKeys.isPhysicallyDown(c,c.options.keyUse);
+		if (BorerMealPolicy.guardPause(meal.requested(),meal.eating(),usingFood,manualFood,
+			rangedCombat.hasCreeperEmergency(c),rangedCombat.hasImmediateHostileThreat(c),
+			c.player.getHealth(),c.player.getMaxHealth())) {
+			rangedCombat.pauseForEating(c);
 			standaloneGuard = true; pauseGuardMovement(c); return true;
 		}
 		standaloneGuard = true;

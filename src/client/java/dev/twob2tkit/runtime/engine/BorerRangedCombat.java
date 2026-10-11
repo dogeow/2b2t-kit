@@ -1251,6 +1251,11 @@ final class BorerRangedCombat {
 	/** Keep the aura lease until eating finishes; do not restore a tool over Meteor's food. */
 	void pauseForEating(Minecraft c) {
         safetyRise.cancel();
+		boolean usingFood=c.player!=null&&c.player.isUsingItem()
+			&&c.player.getUseItem().has(net.minecraft.core.component.DataComponents.FOOD);
+		if(!usingFood&&c.player!=null&&(engine.holdingShield||c.player.getUseItem().is(Items.SHIELD)))
+			engine.mobs.lowerShield(c); // Normal server release, not only a client animation reset.
+		if(usingFood)engine.holdingShield=false; // Use now belongs to food; preserve its held key.
 		if (c.player != null) trialCreeperMelee.pause(c.player.tickCount);
 		if (c.player != null) trialCreeperFlight.pause(c.player.tickCount);
 		if (c.player != null) session.pause(c.player.tickCount);

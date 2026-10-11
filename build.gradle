@@ -34,6 +34,23 @@ dependencies {
 	testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.11.4"
 }
 
+// Handwritten public signatures only; these Xaero API contracts are never packaged.
+sourceSets {
+	xaeroApi { java.srcDir 'src/compat-api/java'; compileClasspath += sourceSets.client.compileClasspath }
+}
+sourceSets.client.compileClasspath += sourceSets.xaeroApi.output
+
+tasks.register('runBiomeHints',JavaExec) {
+	dependsOn tasks.named('clientClasses')
+	classpath = sourceSets.client.runtimeClasspath
+	mainClass = 'dev.twob2tkit.structure.ResourceBiomeHintCli'
+	args providers.gradleProperty('seedFile').getOrElse(''),
+		providers.gradleProperty('originX').getOrElse('0'),
+		providers.gradleProperty('originZ').getOrElse('0'),
+		providers.gradleProperty('hintRadius').getOrElse('8192'),
+		providers.gradleProperty('hintOutput').getOrElse('build/biome-hints.json')
+}
+
 processResources {
 	def version = project.version
 	inputs.property "version", version
@@ -117,7 +134,18 @@ tasks.register('verifyRuntimeEngineJar') {
 
 tasks.named('check') {
 	dependsOn tasks.named('verifyRuntimeEngineJar')
+	dependsOn tasks.named('verifyOptionalMapIntegration')
 	dependsOn tasks.named('test')
+}
+
+tasks.register('verifyOptionalMapIntegration') {
+	dependsOn tasks.named('jar')
+	doLast {
+		def entries=zipTree(tasks.named('jar').get().archiveFile.get().asFile).files.collect{it.path.replace('\\','/')}
+		if(entries.any{it.contains('/xaero/')})throw new GradleException('Compile-only Xaero contracts must not be packaged')
+		if(!entries.any{it.endsWith('/dev/twob2tkit/mixin/XaeroMapCruiseMenuMixin.class')})
+			throw new GradleException('Optional map cruise menu hook is missing')
+	}
 }
 
 tasks.named('test', Test) {

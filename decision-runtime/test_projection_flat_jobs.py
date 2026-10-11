@@ -633,7 +633,7 @@ class FlatIntegrationTests(unittest.TestCase):
                     patch('material_jobs.navigation.lift_for_travel',return_value=current):
                 result=backend.build('ship')
             self.assertEqual(result['phase'],'waiting')
-            self.assertEqual(calls,['return_to_model','projection_model'])
+            self.assertEqual(calls,['return_to_model']*math.ceil(math.hypot(1,160)/48)+['projection_model'])
 
     def test_remote_quarry_return_segments_before_loading_model(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -658,13 +658,31 @@ class FlatIntegrationTests(unittest.TestCase):
             backend._safe_flat = lambda c,l: current
             def travel(c,target,checkpoint,trace,*,keep_cruise):
                 self.assertTrue(keep_cruise)
-                self.assertLessEqual(math.hypot(current['pos'][0]-target[0],current['pos'][2]-target[2]),256.00001)
+                self.assertLessEqual(math.hypot(current['pos'][0]-target[0],current['pos'][2]-target[2]),48.00001)
                 current['pos']=target;calls.append('return_to_model')
             with patch('material_jobs.acquisition._travel',side_effect=travel), \
                     patch('material_jobs.navigation.lift_for_travel',return_value=current):
                 result=backend.build('ship')
             self.assertEqual(result['phase'],'waiting')
-            self.assertEqual(calls,['return_to_model','return_to_model','return_to_model','projection_model'])
+            self.assertEqual(calls,['return_to_model']*math.ceil(math.hypot(402,400)/48)+['projection_model'])
+
+    def test_long_return_stays_collinear_at_one_height_and_short_server_chunk_legs(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            start=[-3000.5,160,2000.5];center=[1.5,160,.5]
+            current=state(4);current['pos']=start
+            backend=FlatMapBackend.__new__(FlatMapBackend);backend.checkpoint=lambda:None
+            client=SimpleNamespace(status=lambda:current);moves=[]
+            def travel(c,target,checkpoint,trace,*,keep_cruise):
+                self.assertTrue(keep_cruise);self.assertEqual(160,target[1])
+                self.assertLessEqual(math.dist(current['pos'],target),48.00001)
+                self.assertAlmostEqual((target[0]-start[0])*(center[2]-start[2]),
+                                       (target[2]-start[2])*(center[0]-start[0]),places=5)
+                moves.append(target);current['pos']=target
+            with patch('material_jobs.acquisition._travel',side_effect=travel), \
+                    patch('material_jobs.navigation.lift_for_travel',return_value=current):
+                backend.travel_to_projection(client,center,'ship',Path(tmp))
+            self.assertEqual(center,current['pos']);self.assertGreater(len(moves),16)
+            self.assertEqual(math.ceil(math.dist(start,center)/48),len(moves))
 
     def test_uncertain_return_keeps_segment_without_a_second_navigation(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -54,6 +54,16 @@ public final class OverworldSnowLocator {
 	/** Ring-ordered batch: close hints are produced before distant hints. */
 	public static synchronized Batch batch(long seed,
 		int originX, int originZ, int radius, int cursor, int budget) {
+		return biomeCandidates(seed,originX,originZ,radius,cursor,budget,SNOWY);
+	}
+
+	/** Generic seed-side resource hints; the caller must still verify live terrain. */
+	public static synchronized Batch biomeCandidates(long seed,
+		int originX,int originZ,int radius,int cursor,int budget,Set<String> wanted) {
+		if(wanted==null||wanted.isEmpty()||wanted.size()>32
+			||wanted.stream().anyMatch(id->id==null||!id.matches("minecraft:[a-z_]+")))
+			throw new IllegalArgumentException("Use 1..32 explicit vanilla biome IDs");
+		wanted=Set.copyOf(wanted);
 		if (radius < MIN_RADIUS || radius > MAX_RADIUS)
 			throw new IllegalArgumentException("Snow seed radius must be 256..32768");
 		if (budget < 1 || budget > MAX_BATCH)
@@ -77,8 +87,8 @@ public final class OverworldSnowLocator {
 			if (rawX < Integer.MIN_VALUE || rawX > Integer.MAX_VALUE
 				|| rawZ < Integer.MIN_VALUE || rawZ > Integer.MAX_VALUE) continue;
 			int x = (int)rawX, z = (int)rawZ;
-			Candidate candidate = snowyAt(sampleCursor, x, z,
-				(int)Math.round(Math.hypot(dx, dz)));
+			Candidate candidate = candidateAt(sampleCursor, x, z,
+				(int)Math.round(Math.hypot(dx, dz)),wanted);
 			if (candidate != null) found.add(candidate);
 		}
 		return new Batch(cursor, next, processed, total, next >= total, List.copyOf(found));
@@ -119,13 +129,13 @@ public final class OverworldSnowLocator {
 			.map(key->key.identifier().toString()).orElse("unknown");
 	}
 
-	private static Candidate snowyAt(int cursor, int x, int z, int distance) {
+	private static Candidate candidateAt(int cursor, int x, int z, int distance,Set<String> wanted) {
 		for (int y : SAMPLE_Y) {
 			Holder<Biome> holder = cachedBiomes.getNoiseBiome(
 				Math.floorDiv(x, 4), Math.floorDiv(y, 4), Math.floorDiv(z, 4), cachedSampler);
 			String biome = holder.unwrapKey()
 				.map(key -> key.identifier().toString()).orElse("unknown");
-			if (snowyBiome(biome)) return new Candidate(cursor, x, z, y, biome, distance);
+			if (wanted.contains(biome)) return new Candidate(cursor, x, z, y, biome, distance);
 		}
 		return null;
 	}

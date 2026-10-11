@@ -13,12 +13,15 @@ final class BorerMeteorAutomation {
 		static final Meal NONE = new Meal(false, false, "disabled");
 	}
 	private final Lookup lookup;
-	private Handle eat, tool;
+	private Handle eat, gap, tool;
 	BorerMeteorAutomation() { this(BorerMeteorAutomation::find); }
 	BorerMeteorAutomation(Lookup lookup) { this.lookup = lookup; }
 
 	Meal meal() {
 		try {
+			if (gap == null) gap = handle("player.AutoGap");
+			if (gap != null && gap.active() && gap.gapEating())
+				return new Meal(true,true,"module=AutoGap");
 			if (eat == null) eat = handle("player.AutoEat");
 			return eat == null ? Meal.NONE : eat.meal();
 		} catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
@@ -59,6 +62,9 @@ final class BorerMeteorAutomation {
 			this.module = module; active = module.getClass().getMethod("isActive");
 		}
 		boolean active() throws ReflectiveOperationException { return (Boolean) active.invoke(module); }
+		boolean gapEating() throws ReflectiveOperationException {
+			return (Boolean)module.getClass().getMethod("isEating").invoke(module);
+		}
 		Object value(String name) throws ReflectiveOperationException {
 			Object setting = settings.get(name);
 			if (setting == null) {

@@ -7,6 +7,12 @@ final class BorerMealPolicy {
 	private int quietTicks, idleTicks, food = -1;
 	private float health = -1;
 	boolean paused() { return paused; }
+	static boolean guardPause(boolean requested,boolean eating,boolean usingFood,boolean manualFood,
+		boolean creeperEmergency,boolean immediateThreat,float health,float maxHealth) {
+		if(manualFood||usingFood||eating)return true;
+		boolean injured=Float.isFinite(health)&&Float.isFinite(maxHealth)&&health>0&&health<maxHealth;
+		return requested&&!creeperEmergency&&(!immediateThreat||injured);
+	}
 	void reset() { paused = false; quietTicks = idleTicks = 0; food = -1; health = -1; }
 	Action tick(boolean requested, boolean eating, boolean usingFood, int foodLevel, float hp) {
 		boolean wanted = requested || eating || usingFood;

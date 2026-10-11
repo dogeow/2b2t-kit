@@ -5,6 +5,14 @@ import static dev.twob2tkit.runtime.engine.BorerMealPolicy.Action.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BorerMealPolicyTest {
+	@Test void injuredFoodRequestsAndManualFoodOutrankAnOrdinaryNearbyEnemy() {
+		assertTrue(BorerMealPolicy.guardPause(true,false,false,false,false,true,6,20));
+		assertTrue(BorerMealPolicy.guardPause(false,false,false,true,true,true,6,20));
+		assertTrue(BorerMealPolicy.guardPause(false,true,false,false,false,true,6,20));
+		assertTrue(BorerMealPolicy.guardPause(false,false,true,false,true,true,6,20));
+		assertFalse(BorerMealPolicy.guardPause(true,false,false,false,true,true,6,20));
+		assertFalse(BorerMealPolicy.guardPause(true,false,false,false,false,true,20,20));
+	}
 	@Test void yieldsBeforeNativeEatingHasStarted() {
 		var pause = new BorerMealPolicy();
 		assertEquals(PAUSE, pause.tick(true, false, false, 16, 10));

@@ -185,8 +185,16 @@ public final class GuardFoodLease {
         result.addProperty("owned", !borrowed.isEmpty());
         try {
             Object m = module();
+            result.addProperty("active",(Boolean)m.getClass().getMethod("isActive").invoke(m));
+            result.addProperty("eating",m.getClass().getField("eating").getBoolean(m));
             for (String name : List.of("thresholdMode", "healthThreshold", "hungerThreshold", "searchInventory"))
                 result.add(name, new Gson().toJsonTree(read(setting(m, name))));
+            var player=Minecraft.getInstance().player;
+            if(player!=null){
+                result.addProperty("health",player.getHealth());
+                result.addProperty("hunger",player.getFoodData().getFoodLevel());
+                result.addProperty("normal_food_allowed",player.getFoodData().needsFood());
+            }
         } catch (Exception e) { result.addProperty("available", false); }
         return result;
     }

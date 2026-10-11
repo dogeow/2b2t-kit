@@ -35,6 +35,20 @@ class OverworldSnowLocatorTest {
 		assertFalse(OverworldSnowLocator.snowyBiome("unknown"));
 	}
 
+	@Test void resourceFilterFindsSavannaWithTheSameRealSampler(){
+		var wanted=java.util.Set.of("minecraft:savanna","minecraft:savanna_plateau","minecraft:windswept_savanna");
+		OverworldSnowLocator.Candidate found=null;int cursor=0;
+		while(found==null){
+			var batch=OverworldSnowLocator.biomeCandidates(0L,0,0,8192,cursor,128,wanted);
+			assertTrue(batch.candidates().stream().allMatch(c->wanted.contains(c.biome())));
+			if(!batch.candidates().isEmpty())found=batch.candidates().getFirst();
+			if(batch.done())break;cursor=batch.nextCursor();
+		}
+		assertNotNull(found);
+		assertEquals(found.biome(),OverworldSnowLocator.biomeAt(0L,found.x(),found.sampleY(),found.z()));
+		assertThrows(IllegalArgumentException.class,()->OverworldSnowLocator.biomeCandidates(0L,0,0,8192,0,1,java.util.Set.of()));
+	}
+
 	@Test void realVanillaProviderIsDeterministicAndFindsASnowHint() {
 		int buildsBefore=OverworldSnowLocator.vanillaLookupBuilds();
 		long coldStart=System.nanoTime();

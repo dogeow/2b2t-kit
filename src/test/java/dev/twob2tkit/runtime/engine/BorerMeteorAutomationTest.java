@@ -24,6 +24,7 @@ class BorerMeteorAutomationTest {
 		int calls;
 		public boolean isActive() { return active; }
 		public boolean shouldEat() { calls++; return needFood; }
+		public boolean isEating(){return eating;}
 		Module() {
 			settings.put("threshold-mode", Mode.Any); settings.put("health-threshold", 10.0);
 			settings.put("hunger-threshold", 16); settings.put("search-inventory", false);
@@ -32,11 +33,19 @@ class BorerMeteorAutomationTest {
 		}
 	}
 	@Test void delegatesFoodEligibilityToNativePredicateNotJustLowHealthOrHunger() {
-		var m = new Module(); var bridge = new BorerMeteorAutomation(_ -> m);
+		var m = new Module(); var bridge = new BorerMeteorAutomation(name -> name.equals("player.AutoEat")?m:null);
 		assertFalse(bridge.meal().requested()); // Native may reject a blacklisted/unavailable food.
 		m.needFood = true;
 		assertTrue(bridge.meal().requested()); assertEquals(2, m.calls);
 		m.eating = true; assertTrue(bridge.meal().eating()); assertEquals(2, m.calls);
+	}
+	@Test void nativeGapUseYieldsEvenWhenOrdinaryAutoEatIsDisabled(){
+		var food=new Module();food.active=false;
+		var gap=new Module();gap.eating=true;
+		var bridge=new BorerMeteorAutomation(name->name.equals("player.AutoGap")?gap:food);
+		assertTrue(bridge.meal().requested());assertTrue(bridge.meal().eating());
+		assertEquals("module=AutoGap",bridge.meal().settings());assertEquals(0,food.calls);
+		gap.active=false;assertEquals(BorerMeteorAutomation.Meal.NONE,bridge.meal());
 	}
 	@Test void reflectsChangedLiveThresholdsAndNeverCachesOldSettingsValues() {
 		var m = new Module(); var bridge = new BorerMeteorAutomation(_ -> m);

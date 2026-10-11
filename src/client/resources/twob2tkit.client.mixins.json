@@ -3,6 +3,7 @@
   "package": "dev.twob2tkit.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "XaeroMapCruiseMenuMixin",
     "AdvancementsScreenMixin",
     "BorerCombatCameraMixin",
     "ClientHealthSafetyMixin",

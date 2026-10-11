@@ -552,21 +552,28 @@ class FlatMapBackend(Backend):
         not be fabricated for a flight back to the selected construction area.
         Each ordinary route below stays under the existing direct-route limit.
         """
-        from material_jobs.acquisition import _travel, SEGMENT_ROUTE_LIMIT
+        from material_jobs.acquisition import _travel
         from material_jobs.navigation import lift_for_travel
         out = Path(out)
         out.mkdir(parents=True, exist_ok=True)
         trace = []
         try:
             lift_for_travel(client)
-            for segment in range(16):
+            initial=client.status()['pos']
+            initial_gap=math.hypot(initial[0]-center[0],initial[2]-center[2])
+            # A 256-block destination can extend past current server chunks
+            # before _travel can validate its cruise band. Keep ordinary
+            # return legs within three chunks, on the same straight line.
+            segment_limit=48.
+            budget=min(256,max(16,math.ceil(initial_gap/segment_limit)+2))
+            for segment in range(budget):
                 self.checkpoint()
                 state = client.status()
                 if state.get('projection_selection', {}).get('key') != projection_key:
                     raise JobBlocked('返程期间投影选择已改变，保留当前航段')
                 here = state['pos']
                 gap = math.hypot(here[0] - center[0], here[2] - center[2])
-                ratio = min(1., SEGMENT_ROUTE_LIMIT / gap) if gap else 1.
+                ratio = min(1., segment_limit / gap) if gap else 1.
                 target = [here[0] + (center[0]-here[0])*ratio,
                           max(here[1], center[1]),
                           here[2] + (center[2]-here[2])*ratio]
