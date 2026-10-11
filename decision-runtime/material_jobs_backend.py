@@ -340,6 +340,14 @@ class Backend:
         require_unlocked(self.root, state)
         require_scope(state, self.request['context'])
         self.latest = state
+        # Processing waits call checkpoint()/observe() between native menu
+        # polls. This fresh owned observation is control-loop liveness too;
+        # without it, a healthy furnace wait expires the ten-second watchdog.
+        client=getattr(self,'client',None)
+        heartbeat=getattr(client,'heartbeat',None)
+        if (heartbeat is not None and owns_material_state(client,state)
+                and (state.get('control_revision')==client.rev or state.get('phase')=='running')):
+            heartbeat.touch()
         if (self.request['mode'] == 'projection' and (self.audit is None or self.audit_dirty)
                 and not self.checking and not self.busy and not self.cleaning):
             # Travel calls checkpoint directly as well as through raw polling.

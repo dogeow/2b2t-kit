@@ -1094,6 +1094,41 @@ class BackendTest(unittest.TestCase):
         def deferred(error):raise JobPaused(str(error))
         self.job.hold_failed_finish=Mock(side_effect=deferred)
 
+    def prepare_observation_fixture(self):
+        self.job.initial_revision=3;self.job.warehouse_hint={};self.job.audit=None
+        self.job.publish_progress=Mock()
+
+    def test_owned_checkpoint_observation_renews_processing_wait_heartbeat_without_native_input(self):
+        self.prepare_observation_fixture()
+        with patch.object(backend,'read_fresh',return_value=self.current):
+            observed=self.job.observe()
+        self.assertEqual('w',observed['world_session'])
+        self.client.heartbeat.touch.assert_called_once()
+        self.client.request.assert_not_called();self.client.checked.assert_not_called()
+
+    def test_observation_does_not_renew_foreign_manual_or_stale_revision_owner(self):
+        self.prepare_observation_fixture()
+        original=copy.deepcopy(self.current)
+        cases=[{'manual_movement':True},
+               {'supervision_lease':{**original['supervision_lease'],'id':'other'}},
+               {'supervision_lease':{**original['supervision_lease'],'kind':'parking'}},
+               {'supervision_lease':{**original['supervision_lease'],'job_session':'other'}},
+               {'control_revision':5,'supervision_lease':{**original['supervision_lease'],'revision':5}}]
+        for changes in cases:
+            with self.subTest(changes=changes):
+                self.current={**copy.deepcopy(original),**changes};self.client.heartbeat.touch.reset_mock()
+                with patch.object(backend,'read_fresh',return_value=self.current):
+                    if changes.get('manual_movement'):
+                        with self.assertRaises(JobPaused):self.job.observe()
+                    else:self.job.observe()
+                self.client.heartbeat.touch.assert_not_called()
+
+    def test_observation_world_change_stops_before_renewing_old_heartbeat(self):
+        self.prepare_observation_fixture();self.current['world_session']='new-world'
+        with patch.object(backend,'read_fresh',return_value=self.current):
+            with self.assertRaises((JobPaused,JobBlocked)):self.job.observe()
+        self.client.heartbeat.touch.assert_not_called()
+
     def publish_native_finish(self):
         self.client.rev=4
         self.current.update(time=201,control_revision=4,phase='parking',

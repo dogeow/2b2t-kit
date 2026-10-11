@@ -680,7 +680,19 @@ class MaterialJob:
         if not targets:
             return False
         self.fetch_tried.update(targets)
-        self._call('fetch', [targets], 'fetching', targets)
+        receipt=self._call('fetch', [targets], 'fetching', targets)
+        route=receipt.get('local_storage_search')or{}
+        blocked=route.get('capacity_blocked_items',[])if isinstance(route,dict)else[]
+        blocked={item for item in blocked if isinstance(item,str)and item in targets
+                 and self.held.get(item,0)<targets[item]}if isinstance(blocked,list)else set()
+        if (blocked and receipt.get('phase')=='waiting'and receipt.get('pending')is not True
+                and not self.pending_ready_build):
+            # Capacity refusal is not a warehouse miss. Complete the confirmed
+            # storage pass, then search only these blocked items again before
+            # mining. Unchanged make_room remains bounded by its progress guard.
+            self._make_room({item:targets[item]for item in blocked},self._plan(targets),
+                            '仓库取料需要周转空间，当前不能安全腾出位置')
+            for item in blocked:self.fetch_tried.pop(item,None)
         return True
 
     def _fetch_intermediates(self, targets, planned):

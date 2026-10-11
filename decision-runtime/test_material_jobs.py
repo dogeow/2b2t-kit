@@ -1007,6 +1007,59 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertEqual('completed',result['state'],result);self.assertEqual(1,len(room))
         self.assertIn('minecraft:sand',room[0][1]);self.assertEqual(256,b.held['minecraft:sand'])
 
+    def test_capacity_refused_depot_is_retried_after_room_before_missing_stock_is_mined(self):
+        coal='minecraft:coal';b=FakeBackend(self.catalog,
+            held={'minecraft:filler_'+str(i):1 for i in range(34)},depot={coal:6})
+        normal=b.fetch;acquired_from=[]
+        def fetch(targets):
+            free=sum(not r['count']for r in b.observe()['inventory'])
+            if free<3:
+                b.calls.append(('fetch',dict(targets)))
+                return {'phase':'waiting','local_storage_search':{'capacity_blocked_items':[coal]}}
+            return normal(targets)
+        def make_room(targets,keep):
+            b.calls.append(('make_room',dict(targets),list(keep)))
+            self.assertIn(coal,keep)
+            for i in range(2):
+                name='minecraft:filler_'+str(i);b.depot[name]+=b.held.pop(name)
+            return {'phase':'done'}
+        acquire=b.acquire
+        def collect(item,target):
+            acquired_from.append(b.held[item]);return acquire(item,target)
+        b.fetch=fetch;b.make_room=make_room;b.acquire=collect
+        result=self.job(b,self.request('coal',16),name='capacity-depot-retry').run()
+        self.assertEqual('completed',result['state'],result)
+        self.assertEqual([6],acquired_from)
+        self.assertEqual(['fetch','make_room','fetch','acquire'],[c[0]for c in b.calls])
+        self.assertEqual((16,0,1,1),(b.held[coal],b.depot[coal],
+            b.depot['minecraft:filler_0'],b.depot['minecraft:filler_1']))
+
+    def test_capacity_refusal_cannot_spin_when_room_makes_no_progress(self):
+        coal='minecraft:coal';b=FakeBackend(self.catalog);rooms=[]
+        b.fetch=lambda targets:{'phase':'waiting','local_storage_search':{'capacity_blocked_items':[coal]}}
+        b.make_room=lambda targets,keep:rooms.append(1)or{'phase':'waiting'}
+        b.acquire=Mock()
+        result=self.job(b,self.request('coal',16),name='capacity-depot-no-room').run()
+        self.assertEqual('blocked',result['state']);self.assertEqual(2,len(rooms));b.acquire.assert_not_called()
+
+    def test_unrelated_capacity_refusal_does_not_repeat_a_known_empty_depot(self):
+        b=FakeBackend(self.catalog);fetches=[]
+        b.fetch=lambda targets:fetches.append(dict(targets))or{
+            'phase':'waiting','local_storage_search':{'capacity_blocked_items':['minecraft:diamond']}}
+        b.make_room=Mock()
+        result=self.job(b,self.request('coal',16),name='capacity-other-item').run()
+        self.assertEqual('completed',result['state']);self.assertEqual(1,len(fetches));b.make_room.assert_not_called()
+
+    def test_unknown_fetch_keeps_inflight_before_any_capacity_cleanup(self):
+        coal='minecraft:coal';b=FakeBackend(self.catalog)
+        def fetch(targets):
+            b.pending={'kind':'unknown_transfer'}
+            return {'phase':'waiting','pending':True,'local_storage_search':{'capacity_blocked_items':[coal]}}
+        b.fetch=fetch;b.make_room=Mock();b.acquire=Mock()
+        job=self.job(b,self.request('coal',16),name='capacity-unknown-transfer');result=job.run()
+        self.assertEqual('blocked',result['state']);self.assertTrue((job.out/'inflight.json').exists())
+        b.make_room.assert_not_called();b.acquire.assert_not_called()
+
     def test_intermediate_space_cleanup_keeps_required_recipe_materials(self):
         b=FakeBackend(self.catalog,held={'minecraft:stone':33*64,'minecraft:white_concrete':8});kept=[]
         def make_room(targets,keep):
