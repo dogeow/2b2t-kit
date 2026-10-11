@@ -67,6 +67,18 @@ class QuarryWorkspaceTests(unittest.TestCase):
         self.assertTrue(result['staging_not_required']);select.assert_not_called();exchange.assert_not_called()
         self.b.prepare_travel.assert_not_called()
 
+    def test_mining_byproducts_can_be_stored_but_needed_projection_stock_is_retained(self):
+        del self.held['minecraft:fixture_0'];del self.held['minecraft:fixture_1']
+        self.held['minecraft:granite']=28;self.held['minecraft:diorite']=28
+        cfg=self.b.profile['quarry_inventory_staging'];cfg['minimum_empty_slots']=4
+        cfg['reserves'].update({'minecraft:granite':0,'minecraft:diorite':2})
+        self.b.audit={'replacement_items':{'minecraft:granite':16}}
+        with patch('material_storage_index.select_destinations',return_value={'positions':[[1,64,1]]}),\
+             patch('material_depots.exchange',side_effect=self.exchange)as exchange:
+            run(self.b)
+        self.assertEqual(2,self.held['minecraft:diorite']);self.assertEqual(28,self.held['minecraft:granite'])
+        self.assertNotIn('minecraft:granite',exchange.call_args.kwargs['deposit'])
+
     def test_invalid_or_unregistered_profile_never_stores(self):
         self.b.profile['quarry_inventory_staging']['authorized']=False
         self.assertFalse(run(self.b)['prepared']);self.b.prepare_travel.assert_not_called()

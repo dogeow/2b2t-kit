@@ -6,7 +6,8 @@ from material_plan import inventory_counts
 from .protocol import JobBlocked
 
 ALLOWED = {'minecraft:'+name for name in ('wheat_seeds','glass_bottle','mud_bricks',
-           'dirt','grass_block','coarse_dirt','rotten_flesh','nautilus_shell')}
+           'dirt','grass_block','coarse_dirt','rotten_flesh','nautilus_shell',
+           'cobblestone','andesite','granite','diorite')}
 
 
 def run(backend):
@@ -28,6 +29,8 @@ def run(backend):
     if free>=trigger:return {'phase':'done','prepared':True,'free_slots':free,
                             'staging_not_required':True,'trigger_below_empty_slots':trigger}
     before=dict(inventory_counts(state));protected=set(backend.request.get('targets',{}))
+    audit=getattr(backend,'audit',None)or{}
+    protected.update(i for i,n in (audit.get('replacement_items')or{}).items()if type(n)is int and n>0)
     deposit={i:n for i,n in reserves.items()if i not in protected and before.get(i,0)>n}
     if not deposit:return {'phase':'waiting','code':'WAIT_WORKSPACE','detail':'登记周转料不足，保留当前背包'}
     from material_storage_index import select_destinations

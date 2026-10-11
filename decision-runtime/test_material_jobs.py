@@ -685,6 +685,15 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertEqual({}, json.loads((job.out/'receipts'/'000002.json').read_text())['output_targets'])
         self.assertGreater(next(i for i,c in enumerate(b.calls) if c[0]=='acquire'), 1)
 
+    def test_uncertain_acquisition_stops_after_original_leaf_without_workspace_or_replay(self):
+        b=FakeBackend(self.catalog);b.stack_sizes['minecraft:tuff']=64
+        b.acquire=Mock(return_value={'phase':'waiting','code':'WAIT_RECONCILE','pending':True,
+                                     'detail':'Original quarry result retained'})
+        b.make_room=Mock()
+        result=self.job(b,self.request(item='tuff',count=8)).run()
+        self.assertEqual('blocked',result['state']);self.assertEqual('Original quarry result retained',result['detail'])
+        b.acquire.assert_called_once();b.make_room.assert_not_called()
+
     def test_flat_ready_gate_prevents_reserve_only_depot_return(self):
         item='minecraft:stone'
         b=FakeBackend(self.catalog,held={item:2},projection={item:31})

@@ -1036,6 +1036,18 @@ def rock_choice(rows, low, high, item, player, required_entry=None):
     return best[1] if best else None
 
 
+def rock_collect_seconds(remaining,target):
+    """Allow the actual observed rock walk, retaining the host's hard limit.
+
+    Collection still stops as soon as the requested inventory gain is proved;
+    this is a deadline budget, never an instruction to clear the whole box.
+    """
+    if (type(remaining)is not int or type(target)is not int
+            or not 1<=target<=remaining<=648):
+        raise ValueError('Observed rock count and collection target required')
+    return min(600,max(90,remaining*3))
+
+
 def _key(item, low, high):
     return hashlib.sha256(json.dumps([item, low, high], separators=(',', ':')).encode()).hexdigest()[:24]
 
@@ -1776,7 +1788,7 @@ def acquire(c, item, target_count, profile, out, checkpoint):
                                  [hi[0]+3,hi[1]+2,hi[2]+3],checkpoint)
                 fresh_choice=(choose_quarry(fresh_rows,lo,hi,c.status()['pos']) if sand
                               else rock_choice(fresh_rows,lo,hi,item,c.status()['pos'],
-                                               region.get('access_shaft')))
+                                               region.get('access_shaft')or region.get('open_entry')))
                 if (fresh_choice is None or fresh_choice['min']!=choice['min']
                         or fresh_choice['max']!=choice['max']):
                     raise Unavailable('清怪后原采坑候选改变，暂停并从原区域重扫', 'waiting')
@@ -1790,11 +1802,14 @@ def acquire(c, item, target_count, profile, out, checkpoint):
                 checkpoint()
                 reply = c.request('quarry_batch' if sand else 'rock_quarry_batch',
                                   min=choice['min'], max=choice['max'], item=item, target_count=amount,
-                                  **({} if sand else {'completion': 'collect'}), seconds=min(600, max(60, amount*3)))
+                                  **({} if sand else {'completion': 'collect'}),
+                                  seconds=min(600,max(60,amount*3))if sand else rock_collect_seconds(fresh_choice['remaining'],amount))
                 after = c.status(); _safe(after)
                 return _receipt(c, item, target_count, before, after, reply, entry, ledger, path, checkpoint)
         return {'phase': 'blocked', 'detail': '已授权区域没有新的安全候选；空区和无进展位置已记录，不重复空跑', 'code': 'no_safe_candidate'}
     except Unavailable as error:
+        if any(entry.get('state')=='inflight'for entry in ledger.get('visited',{}).values()):
+            return {'phase':'waiting','code':'WAIT_RECONCILE','pending':True,'detail':error.detail}
         if item in SNOW_PRODUCTS and hasattr(c,'snow_expedition_token'):
             stopped=c.status()
             can_return=(stopped.get('health',0)>=18 and stopped.get('food',0)>=8

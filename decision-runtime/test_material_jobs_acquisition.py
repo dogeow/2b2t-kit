@@ -67,6 +67,26 @@ class FakeClient:
 
 
 class AcquisitionTest(unittest.TestCase):
+    def test_rock_deadline_counts_observed_overburden_and_keeps_native_limit(self):
+        from material_jobs.acquisition import rock_collect_seconds
+        self.assertEqual(216,rock_collect_seconds(72,5))
+        self.assertEqual(600,rock_collect_seconds(340,19))
+        self.assertEqual(600,rock_collect_seconds(648,1))
+        for remaining,target in ((0,1),(72,73),(True,1),(72,True),(649,1)):
+            with self.subTest(remaining=remaining,target=target):
+                with self.assertRaises(ValueError):rock_collect_seconds(remaining,target)
+
+    def test_fresh_collect_check_retains_exact_open_entry_constraint(self):
+        with tempfile.TemporaryDirectory()as out:
+            c=FakeClient();profile=self.profile(c.item)
+            entry={'min':[0,68,0],'max':[1,69,1]}
+            profile['resource_regions'][0].update(source='natural_survey',open_entry=entry,surface_y=67)
+            with patch('material_jobs.acquisition.rock_choice',wraps=rock_choice)as choose:
+                result=self.run_acquire(c,out,target=12,profile=profile)
+            self.assertEqual('done',result['phase'])
+            self.assertGreaterEqual(choose.call_count,2)
+            self.assertTrue(all(call.args[-1]==entry for call in choose.call_args_list))
+
     def test_open_side_entry_never_becomes_the_box_centre_or_clears_a_cap(self):
         from material_jobs.acquisition import _open_entry_centre,_route_region_key
         region={'min':[0,25,0],'max':[5,35,5],'source':'natural_survey',

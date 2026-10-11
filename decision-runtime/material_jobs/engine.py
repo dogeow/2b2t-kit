@@ -589,6 +589,8 @@ class MaterialJob:
                 raise JobBlocked(receipt.get('detail', '流水线动作尚未核对；保留原回执，不重复执行'))
             if receipt.get('target_scope', args[2]) != args[2]:
                 raise JobBlocked('流水线回执的数量范围不符；保留原动作记录')
+        elif operation=='acquire'and(receipt.get('pending')or str(receipt.get('code','')).lower()in('wait_reconcile','wait_receipt')):
+            raise JobBlocked(receipt.get('detail','采集原动作尚未确认，保留回执，不继续其它动作'))
         elif receipt.get('requirements'):
             requirements = dict(quantities(receipt['requirements']))
             if len(requirements) > 32:

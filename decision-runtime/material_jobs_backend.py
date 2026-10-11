@@ -1458,6 +1458,8 @@ class Backend:
                     self.profile['resource_regions'].append(region)
             if any(r.get('item')==item for r in self.profile['resource_regions']):
                 self.stage_registered_resource(c,item,out)
+                from material_jobs.prior_quarry_observation import verify as verify_prior_quarry
+                verify_prior_quarry(c,self.profile,item,out)
                 receipt=acquire(c,item,count,self.profile,directory,self.checkpoint)
                 if (receipt.get('code')=='route_geometry_blocked'
                         and self.repair_resource_entry(c,item,directory)):

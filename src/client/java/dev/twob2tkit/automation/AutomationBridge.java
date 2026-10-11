@@ -41,13 +41,15 @@ public final class AutomationBridge {
     private static final StackSnapshotCache stackSnapshots=new StackSnapshotCache();
     private static final class ScanJob {
         final JsonObject request;final Object level,connection;final String world;final long revision,startedAt;
-        final int startedTick;final ScanCursor cursor;final boolean details;final NativeMaterialSession owner;
+        final int startedTick;final ScanCursor cursor;final boolean details,predictions;final NativeMaterialSession owner;
+        final ScanPredictionReport predictionReport=new ScanPredictionReport();
         final JsonArray rows=new JsonArray();final Path replyPath;int steppedTick=-1;JsonObject terminal;ExactScanReplyWriter.Job replyWrite;long nextIoWarning,nextIoRetry;
 
         ScanJob(Minecraft c,JsonObject request,ScanCursor cursor){
             this.request=request.deepCopy();this.level=c.level;this.connection=c.getConnection();
             this.world=session(c);this.revision=controlRevision;this.startedAt=System.currentTimeMillis();this.startedTick=ticks;
             this.cursor=cursor;this.details=request.has("details")&&request.get("details").getAsBoolean();
+            this.predictions=request.has("include_predictions")&&request.get("include_predictions").getAsBoolean();
             this.owner=nativeMaterialDispatch?nativeMaterialOwner:null;
             this.replyPath=root(c).resolve("reply-"+safeId(str(request,"id"))+".json");
         }
@@ -3872,6 +3874,9 @@ public final class AutomationBridge {
     }
     private static void startScan(Minecraft c,JsonObject request){
         if(pendingScan!=null)throw new IllegalStateException("Another scan is pending; its records are retained");
+        if(request.has("include_predictions")&&(!request.get("include_predictions").isJsonPrimitive()
+                ||!request.getAsJsonPrimitive("include_predictions").isBoolean()))
+            throw new IllegalArgumentException("Prediction scan flag must be boolean");
         var low=request.getAsJsonArray("min");var high=request.getAsJsonArray("max");checkSiteTarget(request,low);checkSiteTarget(request,high);
         var cursor=new ScanCursor(low.get(0).getAsInt(),low.get(1).getAsInt(),low.get(2).getAsInt(),
             high.get(0).getAsInt(),high.get(1).getAsInt(),high.get(2).getAsInt());
@@ -3918,6 +3923,10 @@ public final class AutomationBridge {
             out.addProperty("scan_entity_scope","current_client_loaded_entities_intersecting_scan_AABB_sampled_at_scan_end_not_whole_herd");
             out.addProperty("light_survey_scope","client_light_layers_and_ordinary_zombie_geometry_block_light_only_not_complete_spawn_rules");
         }
+        if(scan.predictions)out.add("scan_predictions",scan.predictionReport.receipt(
+            out.get("phase").getAsString().equals("done"),scan.cursor.read(),scan.cursor.total(),
+            c.level==scan.level&&c.getConnection()==scan.connection&&scan.world.equals(session(c)),
+            scan.revision,controlRevision));
         scan.terminal=out;publishScan(scan);
     }
     private static void publishScan(ScanJob scan){
@@ -3945,7 +3954,12 @@ public final class AutomationBridge {
             net.minecraft.world.level.chunk.status.ChunkStatus.FULL,false);
         if(!dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence.isServerChunk(c.level,chunk))
             throw new IllegalStateException("Server chunk is not loaded: "+x+" "+z);
-        BlockPos p=new BlockPos(x,y,z);var bs=c.level.getBlockState(p);if(bs.isAir())return;
+        BlockPos p=new BlockPos(x,y,z);
+        if(scan.predictions){
+            if(rockQuarryConfirmation==null)rockQuarryConfirmation=new dev.twob2tkit.runtime.engine.BorerMiningConfirmation();
+            scan.predictionReport.observe(x,y,z,rockQuarryConfirmation.pending(c.level,p));
+        }
+        var bs=c.level.getBlockState(p);if(bs.isAir())return;
         JsonObject v=new JsonObject();v.add("pos",JSON.toJsonTree(new int[]{x,y,z}));v.addProperty("state",bs.toString());
         if(scan.details){
                 v.addProperty("solid",bs.isCollisionShapeFullBlock(c.level,p));v.addProperty("replaceable",bs.canBeReplaced());
@@ -4091,6 +4105,7 @@ public final class AutomationBridge {
         j.addProperty("material_job_control_protocol",1);
         j.addProperty("material_task_api_protocol",dev.twob2tkit.material.MaterialTaskProtocol.VERSION);j.add("material_task",dev.twob2tkit.material.MaterialJobs.snapshot());
         j.addProperty("projection_load_protocol",1);
+        j.addProperty("scan_prediction_protocol",1);
         j.addProperty("projection_batch_protocol",ProjectionBatchScope.PROTOCOL);j.addProperty("projection_model_protocol",1);j.addProperty("dry_paving_protocol",2);j.addProperty("terrain_replace_protocol",1);j.add("projection_batch",projectionBatchSnapshot());
         if(rockQuarryProgress!=null&&str(rockQuarryProgress,"world_session").equals(session(c)))
             j.add("rock_quarry",rockQuarryProgress.deepCopy());
