@@ -40,7 +40,7 @@ def run(backend):
         backend.prepare_travel();backend.stage_near_base(route['positions'])
         receipt=exchange(c,route['positions'],deposit=deposit)
         after=inventory_counts(c.status())
-        if (receipt.get('phase')!='done' or any(after.get(i,0)!=n for i,n in deposit.items())
+        if (receipt.get('complete')is not True or any(after.get(i,0)!=n for i,n in deposit.items())
                 or any(after.get(i,0)!=n for i,n in before.items()if i not in deposit)):
             raise JobBlocked('采坑存放与物资预留未完整确认，保留原回执')
         free=sum(not r.get('count',0)for r in c.status()['inventory']if 0<=r.get('slot',-1)<36)

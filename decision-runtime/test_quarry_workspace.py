@@ -35,7 +35,7 @@ class QuarryWorkspaceTests(unittest.TestCase):
         for n in range(28):self.held['minecraft:fixture_'+str(n)]=1
         def exchange(c,positions,deposit):
             for item,amount in deposit.items():self.held[item]=amount
-            return {'phase':'done','source_and_destination_conserved':True}
+            return {'complete':True,'remaining_deposit':{},'remaining_withdraw':{}}
         self.exchange=exchange
 
     def test_registered_deposit_preserves_target_gear_and_records_real_space(self):
@@ -51,7 +51,7 @@ class QuarryWorkspaceTests(unittest.TestCase):
         self.assertTrue(book['complete']);self.assertIsNone(book['pending']);self.assertEqual(0,book['discarded_items'])
 
     def test_source_receipt_cannot_hide_unrelated_inventory_loss(self):
-        def wrong(*args,**kwargs):self.exchange(*args,**kwargs);self.held['minecraft:diamond']-=1;return {'phase':'done'}
+        def wrong(*args,**kwargs):self.exchange(*args,**kwargs);self.held['minecraft:diamond']-=1;return {'complete':True}
         with patch('material_storage_index.select_destinations',return_value={'positions':[[1,64,1]]}),\
              patch('material_depots.exchange',side_effect=wrong):
             with self.assertRaises(JobBlocked):run(self.b)
