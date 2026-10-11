@@ -464,6 +464,32 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual(calls,[16]);self.assertEqual(self.c.count('minecraft:wheat'),0)
         self.assertIsNone(json.loads((self.root/'job/mud-pipeline.json').read_text())['pending'])
 
+    def test_opt_in_capacity_proved_visit_packs_and_crafts_sixteen_once(self):
+        self.sea_source();self.c.add('minecraft:dirt',12);self.c.add('minecraft:wheat',12)
+        self.c.add('minecraft:mud_bricks',2)
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'},
+                              flat_map={'bulk_mud_recipe_batches':True})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        result=self.go(target=18)
+        self.assertEqual('done',result['phase']);self.assertEqual(18,self.c.count('minecraft:mud_bricks'))
+        self.assertEqual([{'minecraft:packed_mud':16},{'minecraft:mud_bricks':18}],
+                         [t for op,t in self.b.calls if op=='craft'])
+        self.assertEqual(16,sum(op=='bottle_fill'for op,_ in self.c.calls))
+        self.assertEqual((0,0,0),(self.c.count('minecraft:dirt'),self.c.count('minecraft:wheat'),self.c.count('minecraft:packed_mud')))
+
+    def test_opt_in_bulk_visit_uses_existing_packed_stock_and_keeps_unknown_mine_unreplayed(self):
+        self.sea_source();self.c.add('minecraft:dirt',8);self.c.add('minecraft:wheat',8)
+        self.c.add('minecraft:mud_bricks',2);self.c.add('minecraft:packed_mud',4)
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'},
+                              flat_map={'bulk_mud_recipe_batches':True})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        self.c.uncertain_mine=True
+        first=self.go(target=18);second=self.go(target=18)
+        self.assertEqual('WAIT_RECONCILE',first['code']);self.assertEqual('WAIT_RECONCILE',second['code'])
+        self.assertEqual(1,sum(op=='mine_block'for op,_ in self.c.calls))
+        self.assertEqual(4,self.c.count('minecraft:packed_mud'))
+        self.assertFalse(any(op=='craft'for op,_ in self.b.calls))
+
     def test_bulk_visit_crosses_output_stack_without_consuming_workspace(self):
         self.sea_source();self.c.add('minecraft:mud_bricks',50)
         self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'})

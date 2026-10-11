@@ -444,7 +444,8 @@ def run(c,profile,item,target_count,out,checkpoint):
         while stock()[item]<target_count:
             # Match derived recipe demand to the real four-cell source budget.
             # A large goal must not require 64 wheat before producing any stock.
-            increment=4 if item in ('minecraft:packed_mud','minecraft:mud_bricks') else 64
+            recipe_batch=(16 if bulk and backend.request.get('flat_map',{}).get('bulk_mud_recipe_batches')is True else 4)
+            increment=recipe_batch if item in ('minecraft:packed_mud','minecraft:mud_bricks') else 64
             ensure(item,min(target_count,stock()[item]+increment));fetched.clear()
         after=stock()[item];book.update(complete=True,verified_output=after);save()
         return {'phase':'done','item':item,'before':start,'after':after,'gained':after-start,
