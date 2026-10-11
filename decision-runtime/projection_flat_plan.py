@@ -52,7 +52,13 @@ def full_block(state, item):
     name, props = block_state(state)
     short = name.removeprefix('minecraft:')
     return (name == item and (short in PLAIN_BLOCKS or short.endswith(('_planks', '_concrete', '_terracotta')))
-            and not props)  # Stateful blocks keep their existing dedicated adapters.
+            and (not props or plain_mushroom_stem(state,item)))
+
+
+def plain_mushroom_stem(state,item):
+    name,props=block_state(state)
+    return (name==item=='minecraft:mushroom_stem'
+            and props=={face:'true'for face in ('down','east','north','south','up','west')})
 
 
 class FlatLayout:
@@ -85,6 +91,11 @@ class FlatLayout:
             self.expected[p] = dict(row)
         self.key = model['placement_key']
         self.fillable = frozenset(p for p, row in self.expected.items() if full_block(row['state'], row['item']))
+        self.single_seed_only = frozenset(p for p in self.fillable
+            if plain_mushroom_stem(self.expected[p]['state'],self.expected[p]['item']))
+        # Same-type adjacency hides a stem face, so an all-true state must be isolated.
+        self.fillable -= {p for p in self.single_seed_only
+            if any(self.expected.get(n,{}).get('item')=='minecraft:mushroom_stem'for n in neighbors(p))}
         if not self.config['excluded_positions'] <= self.expected.keys():
             raise ValueError('Retained targets must belong to this projection')
         if any(p[1] != self.low[1] + 1 or (p[0], self.low[1], p[2]) not in self.expected
@@ -163,6 +174,8 @@ def next_batch(layout, actual, snapshot, *, cell_budget=None):
     if not missing:
         return {**base, 'phase': 'done', 'operation': 'physical_complete'}
     candidates = (missing - layout.config['excluded_positions']) & layout.fillable
+    if snapshot.get('projection_mushroom_stem_seed_protocol')!=1:
+        candidates-=layout.single_seed_only
     if not candidates:
         return {**base, 'phase': 'blocked', 'operation': 'review',
                 'detail': '仅剩保留坐标或需要专用状态修复的方块'}
@@ -174,7 +187,8 @@ def next_batch(layout, actual, snapshot, *, cell_budget=None):
     for stack in stacks:
         item = stack['item']
         targets = by_item.get(item, set())
-        ready = {p for p in targets if any(n in actual for n in neighbors(p))}
+        ready = {p for p in targets if p not in layout.single_seed_only
+                 and any(n in actual for n in neighbors(p))}
         buckets = {(int((p[0] - layout.low[0]) // 4), int((p[2] - layout.low[2]) // 4)) for p in ready}
         for bx, bz in buckets:
             low = (layout.low[0] + bx * 4, layout.low[1], layout.low[2] + bz * 4)
@@ -193,7 +207,8 @@ def next_batch(layout, actual, snapshot, *, cell_budget=None):
         return min(choices, key=lambda r: r[:4])[4]
     if type(snapshot.get('projection_air_seed_protocol')) is int and snapshot['projection_air_seed_protocol'] == 1:
         seeds = [(math.dist(feet, [p[0] + .5, p[1] + 2.75, p[2] + .5]), p, s)
-                 for s in stacks for p in candidates if layout.expected[p]['item'] == s['item']]
+                 for s in stacks for p in candidates if layout.expected[p]['item'] == s['item']
+                 and (p not in layout.single_seed_only or snapshot.get('projection_mushroom_stem_seed_protocol')==1)]
         if seeds:
             _, p, stack = min(seeds, key=lambda r: (r[0], r[1], r[2]['slot']))
             return {**base, 'phase': 'ready', 'operation': 'air_seed', 'item': stack['item'],

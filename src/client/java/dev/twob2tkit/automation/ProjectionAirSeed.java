@@ -57,7 +57,9 @@ final class ProjectionAirSeed {
         expected=placementState(projected,string(request,"expected_item"));
         boolean axisOnly=expected.getBlock() instanceof RotatedPillarBlock
             &&expected.getProperties().size()==1&&expected.hasProperty(RotatedPillarBlock.AXIS);
-        if(expected.isAir()||!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty()||axisOnly,
+        boolean isolatedStem=MushroomStemPlacementPolicy.isolated(expected,target,schematic::getBlockState)
+            &&MushroomStemPlacementPolicy.isolated(expected,target,c.level::getBlockState);
+        if(expected.isAir()||!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty()||axisOnly||isolatedStem,
                 expected.isCollisionShapeFullBlock(schematic,target),expected.getBlock() instanceof FallingBlock,
                 expected.getBlock() instanceof EntityBlock)||!expected.getFluidState().isEmpty()
                 ||!expected.toString().equals(string(request,"expected_state")))
@@ -131,6 +133,10 @@ final class ProjectionAirSeed {
     }
     private void validateBeforeSend(Minecraft c) {
         validateProjection();
+        if(MushroomStemPlacementPolicy.allFaces(expected)
+                &&(!MushroomStemPlacementPolicy.isolated(expected,target,c.level::getBlockState)
+                   ||!MushroomStemPlacementPolicy.isolated(projected,target,LitematicaAccess.schematicWorld()::getBlockState)))
+            throw new IllegalStateException("Isolated mushroom stem adjacency changed before the single use");
         if(!serverChunk(c)||!c.level.getBlockState(target).isAir())
             throw new IllegalStateException("Air seed target is not actual air in a loaded server chunk");
         var held=c.player.getMainHandItem();
