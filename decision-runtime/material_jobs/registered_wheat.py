@@ -7,7 +7,7 @@ from pathlib import Path
 from kit_runtime.journal import write_json
 from material_plan import inventory_counts
 from potato_farm import FarmWait, _properties, plan, request_from_layout
-from potato_harvest import _registered_wheat, run as harvest
+from potato_harvest import _registered_wheat, run as harvest,distant_existing_horses
 from potato_loot_flight import make_pickup,make_plant_access
 from .protocol import server_key
 
@@ -162,6 +162,16 @@ def run(backend,target,out,checkpoint):
                 return wait('WAIT_SCAN','Registered wheat maturity scan incomplete')
             rows={tuple(row['pos']):row for row in scan['blocks']}
             mature=[p for p in layout['cells'] if _properties(rows.get((p[0],p[1]+1,p[2]),{}),'wheat','age',7)==7]
+            if layout.get('existing_source'):
+                safe=[]
+                for p in mature:
+                    try:distant_existing_horses(scan,layout,[p])
+                    except FarmWait as error:
+                        if error.code!='WAIT_ENTITY':raise
+                        continue
+                    safe.append(p)
+                if mature and not safe:return wait('WAIT_ENTITY','Current animals occupy all mature crop work areas')
+                mature=safe
             write_json(home/'source-observation.json',{'world_session':c.world,'registry':str(registry),
                        'mature_cells':mature,'inventory_credit':0})
             if not mature and reused is None:continue

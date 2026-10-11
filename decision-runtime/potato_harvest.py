@@ -112,6 +112,34 @@ def _owned_drops(state, active, before_ids, known_loot, *, crop='potato'):
     return owned
 
 
+def distant_existing_horses(state,layout,targets=()):
+    """Allow only typed live horses away from this observed wheat work area."""
+    if not layout.get('existing_source'):return set()
+    def vector(v):return isinstance(v,list)and len(v)==3 and all(type(n)in(int,float)and math.isfinite(n)for n in v)
+    if not valid_entity_scope(state.get('scan_entity_scope'))or not isinstance(state.get('scan_entities'),list):
+        raise FarmWait('WAIT_ENTITY','Current bounded field entity scope is required')
+    player=state.get('pos');center=layout['center']
+    if not vector(player):raise FarmWait('WAIT_ENTITY','Current player body is unproved')
+    boxes=[([player[0]-1.3,player[1]-1,player[2]-1.3],[player[0]+1.3,player[1]+2.8,player[2]+1.3]),
+           ([center[0]-1.5,center[1]-1,center[2]-1.5],[center[0]+2.5,center[1]+4,center[2]+2.5])]
+    boxes.extend(([p[0]-3,p[1]-1,p[2]-3],[p[0]+4,p[1]+4,p[2]+4])for p in targets)
+    allowed=set()
+    for e in state['scan_entities']:
+        if not isinstance(e,dict):raise FarmWait('WAIT_ENTITY','Malformed field entity')
+        if e.get('type')!='minecraft:horse':continue
+        bounds=e.get('bounds')or{};lo,hi=bounds.get('min'),bounds.get('max');pos=e.get('pos')
+        if (not vector(lo)or not vector(hi)or not vector(pos)
+                or any(not 0<hi[i]-lo[i]<=4 or not lo[i]<=pos[i]<=hi[i]for i in range(3))
+                or e.get('alive')is not True or e.get('hostile')is not False
+                or type(e.get('health'))not in(int,float)or not math.isfinite(e['health'])or e['health']<=0
+                or type(e.get('id'))is not int or not isinstance(e.get('uuid'),str)or not e['uuid']):
+            raise FarmWait('WAIT_ENTITY','Horse identity, live body or health is unproved')
+        if any(all(lo[i]<b[i]and hi[i]>a[i]for i in range(3))for a,b in boxes):
+            raise FarmWait('WAIT_ENTITY','Horse is near the selected crop, field return or player')
+        allowed.add(e['uuid'])
+    return allowed
+
+
 def _same_except(before, after, allowed):
     a, b = _counts(before), _counts(after)
     return all(a[item] == b[item] for item in a.keys() | b.keys() if item not in allowed)
@@ -196,13 +224,14 @@ def _registered_wheat(c, request, journal, known_replant=None, *, bind_active=Tr
                     or observed.get('unloaded_chunks',0)):
                 raise FarmWait('WAIT_REGISTERED_FARM','Current complete field scope or inventory changed')
             records={_key(pos):{'planted':pos!=known_replant}for pos in layout['cells']}
-            soil_state=observed
+            horses=distant_existing_horses(observed,layout,plan(request)['harvest_cells']if bind_active else ())
+            soil_state={**observed,'scan_entities':[e for e in observed['scan_entities']if e.get('uuid')not in horses]}
             if known_capture:
                 known={d['uuid']:d for d in known_loot.get('owned_loot',[])}
                 if any(row.get('type')=='minecraft:item' and row.get('uuid')not in known
                        for row in observed.get('scan_entities',[])):
                     raise FarmWait('WAIT_ENTITY','Known-loot recovery cannot adopt a new item identity')
-                _owned_drops(observed,known_replant,set(known_loot.get('pre_drop_ids',[])),known,crop='wheat')
+                _owned_drops(soil_state,known_replant,set(known_loot.get('pre_drop_ids',[])),known,crop='wheat')
                 soil_state={**observed,'scan_entities':[]}
             rows=survey_rows(soil_state,layout,records)
             if any(_properties(rows.get(tuple(pos),{}),'farmland','moisture',7)is None
@@ -322,7 +351,9 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
             known_loot = {d['uuid']: d for r in book['cells'].values()
                           for d in r.get('harvest', {}).get('owned_loot', [])}
             known_loot.update({d['uuid']: d for d in (book.get('pending') or {}).get('owned_loot', [])})
-            drops = _owned_drops(state, active, before_ids, known_loot, crop=descriptor)
+            horses=distant_existing_horses(state,layout,layout['harvest_cells'])
+            loot_state={**state,'scan_entities':[e for e in state.get('scan_entities',[])if e.get('uuid')not in horses]}
+            drops = _owned_drops(loot_state, active, before_ids, known_loot, crop=descriptor)
             if active is None and any(d['item'] in (loot_items if wheat else {POTATO}) for d in drops):
                 raise FarmWait('WAIT_LOOT', 'Previously harvested potatoes remain uncollected; no extra break')
             # The existing farm validator protects source, support, light and

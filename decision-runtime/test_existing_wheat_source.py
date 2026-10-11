@@ -48,6 +48,19 @@ class Tests(unittest.TestCase):
         self.assertEqual(79,len(harvest_plan({**req,'cells':layout['cells']})['harvest_cells']))
         with self.assertRaises(ValueError):harvest_plan({**req,'cells':layout['cells']+[[3,63,0]]})
 
+    def test_distant_horse_does_not_block_other_cells_but_near_unknown_or_hostile_horse_stops(self):
+        from potato_harvest import distant_existing_horses
+        req=observed_request(self.frames,self.center,4);layout=plan(req)
+        horse={'type':'minecraft:horse','id':1,'uuid':'horse','pos':[4.,64.,4.],
+               'alive':True,'hostile':False,'health':21.,'bounds':{'min':[3.3,64.,3.3],'max':[4.7,65.6,4.7]}}
+        state={**self.frames[0],'pos':[.5,65.6,.5],'scan_entities':[horse]}
+        self.assertEqual({'horse'},distant_existing_horses(state,layout,[[-4,63,-4]]))
+        for change in ({'hostile':True},{'health':0},{'bounds':{}},{'alive':False}):
+            with self.assertRaises(FarmWait):distant_existing_horses({**state,'scan_entities':[{**horse,**change}]},layout,[[-4,63,-4]])
+        with self.assertRaises(FarmWait):distant_existing_horses(state,layout,[[4,63,4]])
+        with self.assertRaises(FarmWait):distant_existing_horses({**state,'pos':[4.,65.,4.]},layout,[[-4,63,-4]])
+        self.assertEqual(set(),distant_existing_horses(state,{'center':self.center},[[-4,63,-4]]))
+
     def test_changed_protected_chest_or_crop_selection_rejects_registration(self):
         for change in ('chest','crop','volume','world','inventory'):
             with self.subTest(change=change):
