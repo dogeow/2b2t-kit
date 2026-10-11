@@ -357,7 +357,8 @@ class FlatMapBackend(Backend):
                 or printer.get('rotate') is not True or printer.get('in_air') is not False
                 or printer.get('air_place') is not False):
             raise JobBlocked('当前角色、工作回执或打印设置不适合新地图画窗口')
-        state = dict(state, target_stack_sizes=self.request.get('target_stack_sizes', {}))
+        state = dict(state, target_stack_sizes=self.request.get('target_stack_sizes', {}),
+                     preferred_materials=self.request.get('preferred_materials',[]))
         return state
 
     def _scan_flat(self, client, layout, plan, directory, label):

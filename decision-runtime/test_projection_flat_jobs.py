@@ -194,6 +194,21 @@ class FlatPlanningTests(unittest.TestCase):
         self.assertEqual(result['load_plan']['construction_cells'], 62)
         self.assertEqual(next_batch(layout, {}, state(free=0))['phase'], 'blocked')
 
+    def test_supply_respects_material_priority_and_carried_output_still_builds_first(self):
+        m=model(128,1)
+        for n,row in enumerate(m['expected']):
+            item='minecraft:acacia_planks'if n<64 else'minecraft:deepslate'
+            row.update(item=item,state='Block{'+item+'}'+(''if n<64 else'[axis=y]'))
+        m['content_hash']=native_content_hash(m['expected']);layout=layout_for(m)
+        s=state(free=2);s['target_stack_sizes']={'minecraft:acacia_planks':64,'minecraft:deepslate':64}
+        s['projection_air_seed_axis_protocol']=1
+        self.assertEqual('minecraft:acacia_planks',next_batch(layout,{},s)['item'])
+        s['preferred_materials']=['minecraft:deepslate']
+        self.assertEqual('minecraft:deepslate',next_batch(layout,{},s)['item'])
+        s['inventory'][5]={'slot':5,'item':'minecraft:acacia_planks','count':4,'max_stack':64}
+        result=next_batch(layout,{},s)
+        self.assertEqual('air_seed',result['operation']);self.assertEqual('minecraft:acacia_planks',result['item'])
+
     def test_world_coordinates_come_from_model_and_per_job_policy(self):
         layout = layout_for(model(origin=(450, 90, -70)))
         s = state(8); s['pos'] = [450.5, 92.75, -69.5]

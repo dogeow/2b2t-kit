@@ -42,6 +42,13 @@ ENTRY_MATERIALS = frozenset(NATURAL | AIR | LIGHTS)
 WILD_GRASS = frozenset('minecraft:'+name for name in ('short_grass','tall_grass','fern','large_fern'))
 
 
+def scan_levels(item):
+    if item in LOGS:return ((48,110),(111,164))
+    if item in ('minecraft:dirt','minecraft:grass_block'):return ((57,110),(111,165))
+    if item in SNOW_PRODUCTS:return ((58,110),(111,164),(165,220),(221,280),(281,319))
+    return ((-60,-1),(0,59),(60,120),(121,164))
+
+
 def excluded(low, high, profile, selection):
     for pos in profile.get('depots', []) + [profile[k] for k in ('workbench','ender_chest') if k in profile]:
         if low[0]-48 <= pos[0] <= high[0]+48 and low[2]-48 <= pos[2] <= high[2]+48:
@@ -923,9 +930,7 @@ def discover(c,item,profile,directory,checkpoint,max_tiles=8):
         if not _search_travel(c,[x+8.5,cruise,z+8.5],checkpoint,ledger,path,(x,z)):
             return None
         rows=[]
-        levels=(((57,110),(111,165)) if item in ('minecraft:dirt','minecraft:grass_block') else
-                ((58,110),(111,164),(165,220),(221,280),(281,319)) if item in SNOW_PRODUCTS else
-                ((-60,-1),(0,59),(60,120),(121,164)))
+        levels=scan_levels(item)
         for bottom,top in levels:
             checkpoint()
             reply=c.request('scan',min=[x-3,bottom,z-3],max=[x+18,top,z+18],details=True)

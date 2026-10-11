@@ -2,7 +2,7 @@ import hashlib,json,tempfile,unittest
 from collections import defaultdict
 from pathlib import Path
 from unittest.mock import patch
-from material_jobs.discovery import tiles, excluded, choose_region, frontier, representative_seeds, discover, ALGORITHM_VERSION, _entrance
+from material_jobs.discovery import tiles, excluded, choose_region, frontier, representative_seeds, discover, ALGORITHM_VERSION, _entrance, scan_levels
 from material_jobs.acquisition import record_route_failure
 
 
@@ -12,6 +12,12 @@ def row(x,y,z,name='deepslate',**extra):
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_tree_search_reads_only_existing_surface_canopy_classification_range(self):
+        for name in ('oak','acacia','dark_oak','cherry','spruce'):
+            self.assertEqual(((48,110),(111,164)),scan_levels('minecraft:'+name+'_log'))
+        self.assertEqual(((-60,-1),(0,59),(60,120),(121,164)),scan_levels('minecraft:coal'))
+        self.assertEqual(((57,110),(111,165)),scan_levels('minecraft:dirt'))
+
     def test_bounded_unique_frontier_keeps_negative_coordinates(self):
         found=list(tiles([-1,80,-1],64))
         self.assertEqual(len(found),len(set(found)))

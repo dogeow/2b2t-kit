@@ -229,6 +229,10 @@ def next_batch(layout, actual, snapshot, *, cell_budget=None):
     if not isinstance(known_sizes, dict) or any(type(v) is not int or not 1 <= v <= 99 for v in known_sizes.values()):
         raise ValueError('Actual or explicitly registered stack limits required')
     offers = []
+    preferred=snapshot.get('preferred_materials',[])
+    if (not isinstance(preferred,list)or len(preferred)>256
+            or any(not isinstance(item,str)for item in preferred)):
+        raise ValueError('Bounded material priority list required')
     for item, amount in needs.items():
         sizes = {r['max_stack'] for r in rows if r['item'] == item and r['count']}
         if item in known_sizes:
@@ -241,9 +245,10 @@ def next_batch(layout, actual, snapshot, *, cell_budget=None):
         load = plan_stock(snapshot['inventory'], item, min(amount, budget), size,
                           stack_metadata={'item': item, 'max_stack': size})
         if load['construction_cells'] and load['withdraw_amount'] and not load.get('protected_different_metadata_target_slots'):
-            offers.append((-load['usable_before'], -load['construction_cells'], item, load))
+            priority=preferred.index(item)if item in preferred else len(preferred)
+            offers.append((priority,-load['usable_before'], -load['construction_cells'], item, load))
     if offers:
-        load = min(offers, key=lambda r: r[:3])[3]
+        load = min(offers, key=lambda r: r[:4])[4]
         return {**base, 'phase': 'waiting', 'operation': 'supply', 'item': load['item'],
                 'requirements': {load['item']: load['stock_total_target']}, 'load_plan': load,
                 'detail': '按实际容量补一批材料；取料、配方及加工由现有材料调度器计算'}
