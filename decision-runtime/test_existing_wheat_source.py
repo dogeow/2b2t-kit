@@ -42,6 +42,12 @@ class Tests(unittest.TestCase):
         self.assertEqual(layout,plan(request_from_layout(layout)))
         with self.assertRaises(ValueError):plan({'authorized':True,'crop':'wheat','center':self.center,'radius':4})
 
+    def test_full_existing_field_preflight_accepts_registered_cells_without_expanding_execution_cap(self):
+        from potato_harvest import plan as harvest_plan
+        req=observed_request(self.frames,self.center,4);layout=plan(req)
+        self.assertEqual(79,len(harvest_plan({**req,'cells':layout['cells']})['harvest_cells']))
+        with self.assertRaises(ValueError):harvest_plan({**req,'cells':layout['cells']+[[3,63,0]]})
+
     def test_changed_protected_chest_or_crop_selection_rejects_registration(self):
         for change in ('chest','crop','volume','world','inventory'):
             with self.subTest(change=change):

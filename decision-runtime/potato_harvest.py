@@ -30,12 +30,13 @@ def _counts(state):
 
 
 def plan(request):
-    """Authorize floor cells in a source-water-centered radius 1..2 field."""
+    """Validate registered crop cells; the executor still handles at most four."""
     layout = farm_plan(request)
     x, y, z = layout['center']
     cells = request.get('cells', [[x+1, y, z], [x-1, y, z],
                                   [x, y, z+1], [x, y, z-1]])
-    if (not isinstance(cells, list) or not 1 <= len(cells) <= 24
+    maximum=len(layout['cells'])if layout.get('existing_source')else 24
+    if (not isinstance(cells, list) or not 1 <= len(cells) <= maximum
             or any(not isinstance(p, list) or len(p) != 3
                    or any(type(v) is not int for v in p) or p not in layout['cells'] for p in cells)
             or len({tuple(p) for p in cells}) != len(cells)):
