@@ -2,11 +2,20 @@ import copy
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
-from material_jobs.mud_batch import carried_visit_target
+from material_jobs.mud_batch import carried_visit_target,visit_cells
 from material_jobs.engine import MaterialJob
 
 
 class MudVisitTest(unittest.TestCase):
+    def test_configured64_visit_makes_a_full_stack_without_exceeding_the_real_remaining_target(self):
+        self.profile['mud_station']['cells_per_visit']=64
+        self.assertEqual(66,self.offer());self.assertEqual(20,self.offer(20))
+        self.request['flat_map']={'mud_cells_per_visit':32}
+        self.assertEqual(34,self.offer())
+        for bad in (0,3,65,128,True,16.0):
+            self.request['flat_map']['mud_cells_per_visit']=bad
+            with self.assertRaises(ValueError):visit_cells(self.request,self.profile)
+
     def setUp(self):
         self.request={'mode':'projection','context':{'world_session':'w'}}
         self.profile={'mud_station':{'authorized':True},'mud_bucket_source':{'authorized':True}}

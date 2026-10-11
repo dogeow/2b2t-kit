@@ -73,6 +73,9 @@ def run(c,profile,item,target_count,out,checkpoint):
     if any(book.get(k)!=v for k,v in scope.items()):raise JobPaused('Mud journal scope changed')
     if book.get('pending'):
         return {'phase':'waiting','code':'WAIT_RECONCILE','detail':'Previous mud action unknown; no replay','journal':str(path)}
+    from .mud_batch import visit_cells
+    cell_budget=visit_cells(backend.request,profile)if backend.request.get('mode')=='projection'else 4
+    action_budget=max(256,cell_budget*16)if cell_budget>4 else 64
     prepare=getattr(backend,'prepare_mud_inventory',None)
     if (callable(prepare) and inventory_counts(c.status()).get(item,0)<target_count
             and book.get('owned_cell')is False and book.get('derived_water_slot')is None):
@@ -85,8 +88,6 @@ def run(c,profile,item,target_count,out,checkpoint):
         book['pending']=None;write_json(path,book)
         if prepared['phase']!='done':
             return {**prepared,'target_scope':TARGET_SCOPE,'journal':str(path),'safe_to_leave':True}
-    cell_budget=16 if backend.request.get('mode')=='projection' else 4
-    action_budget=256 if cell_budget==16 else 64
     catalog=RecipeCatalog(profile['recipe_jar']);actions=0;fetched=set();new_mud=0
     from .mud_batch import carried_visit_target
     bulk=carried_visit_target(backend.request,profile,c.status(),item,target_count) is not None
@@ -466,7 +467,7 @@ def run(c,profile,item,target_count,out,checkpoint):
         while stock()[item]<target_count:
             # Match derived recipe demand to the real four-cell source budget.
             # A large goal must not require 64 wheat before producing any stock.
-            recipe_batch=(16 if bulk and backend.request.get('flat_map',{}).get('bulk_mud_recipe_batches')is True else 4)
+            recipe_batch=(cell_budget if bulk and backend.request.get('flat_map',{}).get('bulk_mud_recipe_batches')is True else 4)
             increment=recipe_batch if item in ('minecraft:packed_mud','minecraft:mud_bricks') else 64
             ensure(item,min(target_count,stock()[item]+increment));fetched.clear()
         after=stock()[item];book.update(complete=True,verified_output=after);save()

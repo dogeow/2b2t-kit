@@ -1,5 +1,7 @@
 """Bounded material visits reuse Kit's AutoPlanter, rather than per-crop navigation."""
 import json
+import hashlib
+import shutil
 from pathlib import Path
 
 from kit_runtime.journal import write_json
@@ -98,6 +100,19 @@ def run(c, registry, layout, cells, out, checkpoint):
         raise FarmWait('WAIT_SEED', 'Native wheat visit keeps four seeds after all scoped replants')
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
     journal = out/'native-wheat-batch.json'
+    if journal.exists():
+        old=journal.read_bytes();prior=json.loads(old)
+        if prior.get('complete')is not True or prior.get('pending'):
+            raise FarmWait('WAIT_RECONCILE','Previous visit in this directory is unresolved; no overwrite')
+        archive=out/'completed-visits'/hashlib.sha256(old).hexdigest()[:24]
+        archive.mkdir(parents=True,exist_ok=True)
+        for name in ('native-wheat-batch.json','native-wheat-receipt.json',
+                     'native-wheat-final-0.json','native-wheat-final-1.json','farmland-exit.json'):
+            source=out/name;target_file=archive/name
+            if source.exists():
+                if target_file.exists()and target_file.read_bytes()!=source.read_bytes():
+                    raise FarmWait('WAIT_RECONCILE','Completed wheat archive conflicts; preserve original')
+                if not target_file.exists():shutil.copy2(source,target_file)
     book = {'schema': 1, 'world_session': c.world, 'registry': str(registry),
             'scope': layout, 'cells': cells, 'inventory_before': before,
             'pending': {'operation': 'planter_wheat_batch', 'soils': cells},

@@ -1,5 +1,13 @@
-"""Read-only capacity offer for the real16-cell mud worker, not a whole-recipe plan."""
+"""Read-only capacity offer for a bounded mud visit using actual backpack space."""
 import math
+
+
+def visit_cells(request,profile):
+    value=request.get('flat_map',{}).get('mud_cells_per_visit',
+        profile.get('mud_station',{}).get('cells_per_visit',16))
+    if type(value)is not int or not 4<=value<=64 or value%4:
+        raise ValueError('Mud visit size must be a multiple of four, from four to64')
+    return value
 
 
 def carried_visit_target(request,profile,state,item,final_count):
@@ -21,7 +29,7 @@ def carried_visit_target(request,profile,state,item,final_count):
     if not 1<=bottle<=64 or not plain or free<3:return None
     held=sum(r['count']for r in rows if r.get('item')==item)
     if type(final_count)is not int or final_count<=held:return None
-    gain=min(16,final_count-held);rounded=math.ceil(gain/4)*4
+    gain=min(visit_cells(request,profile),final_count-held);rounded=math.ceil(gain/4)*4
     # A fourth free slot can receive output that crosses a64-item stack;
     # retain the original three-slot work reserve instead of shrinking inputs.
     output_room=sum(64-r['count']for r in plain)+max(0,free-3)*64

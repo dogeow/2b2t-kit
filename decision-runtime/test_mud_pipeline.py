@@ -506,6 +506,30 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual(16,sum(op=='bottle_fill'for op,_ in self.c.calls))
         self.assertEqual((0,0,0),(self.c.count('minecraft:dirt'),self.c.count('minecraft:wheat'),self.c.count('minecraft:packed_mud')))
 
+    def test_configured_full_stack_visit_uses_one_bulk_recipe_pair_and_actual64_cell_deltas(self):
+        self.sea_source();self.c.add('minecraft:dirt',28);self.c.add('minecraft:gravel',32)
+        self.c.add('minecraft:wheat',60);self.c.add('minecraft:mud_bricks',2)
+        self.profile['mud_station'].update(feedstock_item='minecraft:coarse_dirt',cells_per_visit=64)
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'},
+                              flat_map={'bulk_mud_recipe_batches':True,'mud_cells_per_visit':64})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        result=self.go(target=66)
+        self.assertEqual('done',result['phase']);self.assertEqual(66,self.c.count('minecraft:mud_bricks'))
+        self.assertEqual(64,sum(op=='bottle_fill'for op,_ in self.c.calls))
+        self.assertEqual([{'minecraft:coarse_dirt':64},{'minecraft:packed_mud':64},{'minecraft:mud_bricks':66}],
+                         [t for op,t in self.b.calls if op=='craft'])
+        self.assertEqual((0,0,0),(self.c.count('minecraft:dirt'),self.c.count('minecraft:gravel'),self.c.count('minecraft:wheat')))
+
+    def test_full_stack_limit_still_only_crafts_four_for_the_last_two_requested_bricks(self):
+        self.sea_source();self.c.add('minecraft:mud_bricks',18)
+        self.profile['mud_station']['cells_per_visit']=64
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'},
+                              flat_map={'bulk_mud_recipe_batches':True,'mud_cells_per_visit':64})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        result=self.go(target=20)
+        self.assertEqual('done',result['phase']);self.assertEqual(22,self.c.count('minecraft:mud_bricks'))
+        self.assertEqual(4,sum(op=='bottle_fill'for op,_ in self.c.calls))
+
     def test_bulk_workspace_rechecks_finished_inputs_before_work_cell_or_bottle_use(self):
         self.sea_source();self.c.add('minecraft:dirt',12);self.c.add('minecraft:wheat',12)
         self.c.add('minecraft:gravel',8);self.c.add('minecraft:mud_bricks',2)

@@ -19,6 +19,20 @@ def receipt():
 
 
 class NativeWheatTests(unittest.TestCase):
+    def test_larger_visit_preserves_prior_completed_harvest_before_next_native_dispatch(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            root=Path(tmp);out=root/'visit';out.mkdir();registry=root/'registry.json';registry.write_text('{}')
+            original=b'{"complete":true,"pending":null,"historical_grain_gain":16}'
+            (out/'native-wheat-batch.json').write_bytes(original)
+            (out/'native-wheat-receipt.json').write_text('{"original":"receipt"}')
+            c=Mock(world='world');c.checked.side_effect=RuntimeError('unknown new visit')
+            with patch('material_jobs.native_wheat.inventory_counts',return_value=COUNTS):
+                with self.assertRaises(RuntimeError):run(c,registry,{'cells':CELLS},CELLS,out,lambda:None)
+            archives=list((out/'completed-visits').glob('*/native-wheat-batch.json'))
+            self.assertEqual(1,len(archives));self.assertEqual(original,archives[0].read_bytes())
+            self.assertEqual('{"original":"receipt"}',(archives[0].parent/'native-wheat-receipt.json').read_text())
+            self.assertTrue(unresolved(registry));self.assertEqual(1,c.checked.call_count)
+
     def test_restored_flight_may_coast_across_two_dry_original_cells_but_never_water_or_foreign_soil(self):
         frame={'blocks':[row for p in CELLS for row in [
             {'pos':p,'state':'Block{minecraft:farmland}[moisture=7]','fluid':False,'block_entity':False},
