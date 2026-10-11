@@ -7,7 +7,8 @@ from .protocol import JobBlocked
 
 ALLOWED = {'minecraft:'+name for name in ('wheat_seeds','glass_bottle','mud_bricks',
            'dirt','grass_block','coarse_dirt','rotten_flesh','nautilus_shell',
-           'cobblestone','andesite','granite','diorite')}
+           'cobblestone','andesite','granite','diorite','cobbled_deepslate',
+           'lapis_lazuli','redstone','raw_iron')}
 
 
 def run(backend,protected_items=()):

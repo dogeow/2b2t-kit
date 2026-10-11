@@ -88,5 +88,36 @@ class QuarryWorkspaceTests(unittest.TestCase):
             with self.assertRaises(JobBlocked):run(self.b)
             exchange.assert_not_called()
 
+    def test_registered_deep_quarry_drops_free_space_without_discarding_valuables(self):
+        for n in range(6):del self.held['minecraft:fixture_'+str(n)]
+        self.held.update({'minecraft:cobbled_deepslate':91,'minecraft:lapis_lazuli':8,
+                          'minecraft:redstone':5,'minecraft:raw_iron':3,'minecraft:tuff':2})
+        self.b.request={'targets':{'minecraft:tuff':66}}
+        self.b.profile['quarry_inventory_staging']['reserves']={
+            'minecraft:wheat_seeds':32,'minecraft:cobbled_deepslate':0,
+            'minecraft:lapis_lazuli':0,'minecraft:redstone':0,'minecraft:raw_iron':0}
+        with patch('material_storage_index.select_destinations',return_value={'positions':[[1,64,1]]}),\
+             patch('material_depots.exchange',side_effect=self.exchange):
+            result=run(self.b)
+        self.assertEqual('done',result['phase'])
+        self.assertGreaterEqual(result['free_slots'],4)
+        self.assertEqual({'minecraft:wheat_seeds':56,'minecraft:cobbled_deepslate':91,
+                          'minecraft:lapis_lazuli':8,'minecraft:redstone':5,
+                          'minecraft:raw_iron':3},result['stored'])
+        self.assertEqual((22,2,0),(self.held['minecraft:diamond'],self.held['minecraft:tuff'],
+                                result['discarded_items']))
+
+    def test_registered_mineral_requested_by_current_job_is_not_deposited(self):
+        del self.held['minecraft:fixture_0'];del self.held['minecraft:fixture_1']
+        self.held.update({'minecraft:cobbled_deepslate':91,'minecraft:raw_iron':3})
+        self.b.request={'targets':{'minecraft:cobbled_deepslate':100}}
+        self.b.profile['quarry_inventory_staging']['reserves'].update(
+            {'minecraft:cobbled_deepslate':0,'minecraft:raw_iron':0})
+        with patch('material_storage_index.select_destinations',return_value={'positions':[[1,64,1]]}),\
+             patch('material_depots.exchange',side_effect=self.exchange)as exchange:
+            run(self.b)
+        self.assertEqual(91,self.held['minecraft:cobbled_deepslate'])
+        self.assertNotIn('minecraft:cobbled_deepslate',exchange.call_args.kwargs['deposit'])
+
 
 if __name__=='__main__':unittest.main()
