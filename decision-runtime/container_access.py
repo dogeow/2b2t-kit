@@ -42,6 +42,19 @@ def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=
     if any(r['pos'][1]>y and r['state']!='Block{minecraft:air}' for r in rows):
         raise RuntimeError('Chest landing column is obstructed')
     hand=select_container_hand(client)
+    state=client.status();point=state.get('pos');lease=state.get('supervision_lease')or{}
+    if (state.get('air_only_navigation_protocol',0)>=2 and lease.get('kind')=='materials'
+            and lease.get('job_session')==getattr(client,'task',None)
+            and lease.get('world_session')==getattr(client,'world',None)
+            and isinstance(point,list)and len(point)==3 and point[1]>y+4):
+        # The precise native air navigator verifies the entire body sweep.
+        # Descend above the known chest before the short-range supply planner,
+        # which otherwise has to traverse many vertical grid nodes at cruise height.
+        from material_jobs.navigation import settled_state
+        above=[x+.5,point[1],z+.5];near=[x+.5,y+1.8,z+.5]
+        client.checked('navigate',target=above,arrival=.15,air_only=True,seconds=45)
+        client.checked('navigate',target=near,arrival=.15,air_only=True,seconds=45)
+        settled_state(client,near,.4)
     # Cruise can finish with horizontal momentum and a one-block arrival radius.
     # Use the collision-aware block approach before disabling Flight to land.
     client.checked('approach_block',pos=pos,face='up',expected_state=expected,stand_distance=.65,seconds=90)

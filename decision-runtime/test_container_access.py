@@ -23,6 +23,31 @@ class FakeClient:
 
 
 class ContainerAccessTest(unittest.TestCase):
+    def test_owned_high_chest_approach_uses_verified_air_descent_before_supply_route(self):
+        clock=[0.0];client=FakeClient(clock);client.task='task';client.world='world'
+        client.status=lambda:{'hand':{'item':'minecraft:diamond_sword'},'pos':[1.5,85,2.5],
+            'air_only_navigation_protocol':2,'supervision_lease':{'kind':'materials','job_session':'task','world_session':'world'}}
+        with patch('container_access.time.monotonic',side_effect=lambda:clock[0]), \
+                patch('container_access.time.sleep',side_effect=lambda n:clock.__setitem__(0,clock[0]+n)), \
+                patch('material_jobs.navigation.settled_state')as settled:
+            open_grounded_chest(client,[1,64,2])
+        self.assertEqual(['navigate','navigate','approach_block','walk','interact'],[op for op,_ in client.actions])
+        self.assertEqual([1.5,65.8,2.5],client.actions[1][1]['target'])
+        self.assertTrue(all(client.actions[n][1]['air_only']for n in (0,1)))
+        settled.assert_called_once_with(client,[1.5,65.8,2.5],.4)
+
+    def test_unknown_precise_descent_never_opens_or_repeats_the_chest(self):
+        client=FakeClient([0]);client.task='task';client.world='world'
+        client.status=lambda:{'hand':{'item':'minecraft:diamond_sword'},'pos':[1.5,85,2.5],
+            'air_only_navigation_protocol':2,'supervision_lease':{'kind':'materials','job_session':'task','world_session':'world'}}
+        def checked(op,**params):
+            client.actions.append((op,params))
+            if len(client.actions)==2:raise RuntimeError('unknown descent')
+            return {'phase':'done'}
+        client.checked=checked
+        with self.assertRaisesRegex(RuntimeError,'unknown descent'):open_grounded_chest(client,[1,64,2])
+        self.assertEqual(['navigate','navigate'],[op for op,_ in client.actions])
+
     def test_open_menu_waits_for_delayed_item_contents(self):
         clock=[0.0]
         class DelayedContents(FakeClient):
