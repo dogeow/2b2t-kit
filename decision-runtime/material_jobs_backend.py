@@ -1441,7 +1441,10 @@ class Backend:
                     and r.get('single_block_air_approach')is True for r in self.profile.get('natural_source_regions',[])):
                 from material_jobs.natural_block_pipeline import run as targeted_natural
                 c.natural_backend=self
-                return targeted_natural(c,self.profile,item,count,out,self.checkpoint)
+                result=targeted_natural(c,self.profile,item,count,out,self.checkpoint)
+                if str(result.get('code','')).lower()in('wait_reconcile','wait_receipt','route_uncertain'):
+                    raise JobBlocked(result.get('detail')or'单块天然源结果尚未确认，保留原回执，不重放')
+                return result
             if item in ROCK_SOURCES:
                 from material_jobs.quarry_workspace import run as prepare_quarry_workspace
                 workspace=prepare_quarry_workspace(self)

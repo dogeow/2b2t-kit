@@ -244,6 +244,25 @@ class BackendTest(unittest.TestCase):
         discover.assert_called_once()
         self.client.request.assert_not_called()
 
+    def test_unknown_surface_receipt_stops_acquisition_before_another_leaf(self):
+        source={'item':'minecraft:diorite','authorized':True,'source':'natural_survey',
+                'single_block_air_approach':True,'min':[1,32,1],'max':[1,34,2]}
+        old={'item':'minecraft:diorite','min':[3,26,1],'max':[8,35,6]}
+        self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld',
+                          'resource_regions':[old],'natural_source_regions':[source]}
+        @contextmanager
+        def owned_action(name):yield self.client,self.root
+        self.job.action=owned_action;self.job.prepare_travel=Mock()
+        with patch.object(backend,'read_fresh',return_value=self.current),\
+             patch('material_jobs.acquisition.held_resource_route',return_value=None)as hold,\
+             patch('material_jobs.natural_block_pipeline.run',return_value={
+                   'phase':'waiting','code':'WAIT_RECONCILE','detail':'owned source outcome uncertain'})as run,\
+             patch('material_jobs.equipment.prepare')as equipment:
+            with self.assertRaisesRegex(JobBlocked,'outcome uncertain'):self.job.acquire('minecraft:diorite',33)
+        run.assert_called_once();equipment.assert_not_called()
+        self.assertEqual([source],hold.call_args.args[3]['resource_regions'])
+        self.client.request.assert_not_called()
+
     def test_coarse_biome_coverage_returns_waiting_for_next_bounded_search(self):
         self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld',
                           'resource_regions':[]}
