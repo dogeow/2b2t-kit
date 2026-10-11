@@ -73,6 +73,10 @@ class ConcreteClient:
 
 class ProcessingTest(unittest.TestCase):
     def setUp(self):
+        # This fixture cooks instantly on open. Scheduling/continuous safety
+        # uses a virtual clock in test_material_smelting_poll_schedule instead.
+        delay=patch('material_jobs.processing.first_collection_delay',return_value=0)
+        delay.start();self.addCleanup(delay.stop)
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.jar=self.root/'recipes.jar'
         with zipfile.ZipFile(self.jar,'w') as archive:

@@ -166,6 +166,20 @@ def _load_batch(c, positions, spec, amount, journal, fuel_plan=None):
     return job
 
 
+def first_collection_delay(job,spec,now):
+    """Use recipe time only to schedule an observation, never to credit output."""
+    stamp=job.get('loaded_at');ticks=spec.get('cooking_ticks')
+    if (type(stamp)not in (int,float) or not math.isfinite(stamp) or stamp<=0
+            or type(now)not in (int,float) or not math.isfinite(now) or now<stamp
+            or type(ticks)is not int or ticks<=0):return 0
+    entries=job.get('furnaces')
+    if (not isinstance(entries,list) or not entries
+            or any(e.get('stage')!='loaded' or type(e.get('amount'))is not int
+                   or not 1<=e['amount']<=64 for e in entries)):return 0
+    estimate=max(e['amount'] for e in entries)*ticks/20
+    return max(0,estimate-(now-stamp))
+
+
 def _wait_collect(c, journal, spec, checkpoint):
     job = json.loads(journal.read_text())
     if (job.get('world_session') != c.world or job.get('source') != spec['source']
@@ -175,7 +189,7 @@ def _wait_collect(c, journal, spec, checkpoint):
             or any(e.get('stage') not in ('loaded', 'output_collected', 'collected') or e.get('pending') for e in job['furnaces'])):
         raise JobBlocked('装炉只完成一部分或含未知操作，先核对炉内现物，不能自动重投')
     deadline = time.monotonic() + max(120, max(e['amount'] for e in job['furnaces']) * spec['cooking_ticks'] / 20 + 120)
-    next_poll = 0
+    next_poll = time.monotonic()+first_collection_delay(job,spec,time.time())
     while True:
         checkpoint()
         if time.monotonic() >= deadline:
