@@ -94,6 +94,7 @@ def run(c,profile,item,target_count,out,checkpoint):
     visit_units=min(cell_budget,max(0,math.ceil(gain/4)*4-initial['minecraft:packed_mud']))if item=='minecraft:mud_bricks'else 0
     bulk_inputs_ready=False
     bulk_wheat_ready=False
+    bulk_workspace_ready=False
     feedstock = profile.get('mud_station', {}).get('feedstock_item', 'minecraft:dirt')
     if feedstock not in ('minecraft:dirt', 'minecraft:coarse_dirt'):
         raise JobBlocked('Mud feedstock must be ordinary dirt or registered coarse dirt')
@@ -287,7 +288,7 @@ def run(c,profile,item,target_count,out,checkpoint):
         return added[0] # No generic old potion is classified as water from water_breathing=False.
 
     def make_mud(target):
-        nonlocal new_mud,bulk_inputs_ready
+        nonlocal new_mud,bulk_inputs_ready,bulk_workspace_ready
         natural=any(r.get('item')=='minecraft:mud' and r.get('authorized') is True for r in profile.get('colored_source_regions',[]))
         if natural:
             reply,_,_=operation('natural_mud',lambda:colored_sources.acquire(client(),'minecraft:mud',target,profile,out/'natural-mud',checkpoint))
@@ -307,6 +308,13 @@ def run(c,profile,item,target_count,out,checkpoint):
             if inventory_counts(state())[feedstock]<desired:
                 raise Wait('WAIT_SOURCE','Registered feedstock did not fill this real work visit',requirements={feedstock:desired})
             bulk_inputs_ready=True
+        if bulk and not bulk_workspace_ready and callable(prepare):
+            # Fetching grain and preparing coarse dirt can consume the slots
+            # proved at entry. Recheck before any work-cell or bottle action.
+            ready,_,_=operation('inventory_staging_after_inputs',prepare)
+            if ready.get('phase')!='done':
+                raise Wait(ready.get('code','WAIT_WORKSPACE'),ready.get('detail','Mud input workspace changed'))
+            bulk_workspace_ready=True
         if math.hypot(state()['pos'][0]-work[0],state()['pos'][2]-work[2])>32:
             from .navigation import lift_for_travel
             from .acquisition import _travel

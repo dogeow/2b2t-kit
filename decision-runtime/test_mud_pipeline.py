@@ -477,6 +477,23 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual(16,sum(op=='bottle_fill'for op,_ in self.c.calls))
         self.assertEqual((0,0,0),(self.c.count('minecraft:dirt'),self.c.count('minecraft:wheat'),self.c.count('minecraft:packed_mud')))
 
+    def test_bulk_workspace_rechecks_finished_inputs_before_work_cell_or_bottle_use(self):
+        self.sea_source();self.c.add('minecraft:dirt',12);self.c.add('minecraft:wheat',12)
+        self.c.add('minecraft:gravel',8);self.c.add('minecraft:mud_bricks',2)
+        self.profile['mud_station']['feedstock_item']='minecraft:coarse_dirt'
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        observations=[]
+        def prepare():
+            observations.append({item:self.c.count(item)for item in ('minecraft:wheat','minecraft:coarse_dirt','minecraft:mud')})
+            return {'phase':'done'}if len(observations)==1 else {'phase':'waiting','code':'WAIT_WORKSPACE','detail':'no safe bottle output slot'}
+        self.b.prepare_mud_inventory=prepare
+        result=self.go(target=18)
+        self.assertEqual('WAIT_WORKSPACE',result['code']);self.assertTrue(result['safe_to_leave'])
+        self.assertEqual(2,len(observations));self.assertEqual({'minecraft:wheat':16,'minecraft:coarse_dirt':16,'minecraft:mud':0},observations[1])
+        self.assertFalse(any(op in('interact','bottle_fill','mine_block')for op,_ in self.c.calls))
+        book=json.loads((self.root/'job/mud-pipeline.json').read_text());self.assertIsNone(book['pending']);self.assertFalse(book['owned_cell'])
+
     def test_opt_in_bulk_visit_uses_existing_packed_stock_and_keeps_unknown_mine_unreplayed(self):
         self.sea_source();self.c.add('minecraft:dirt',8);self.c.add('minecraft:wheat',8)
         self.c.add('minecraft:mud_bricks',2);self.c.add('minecraft:packed_mud',4)
