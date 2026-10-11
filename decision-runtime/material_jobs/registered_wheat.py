@@ -95,6 +95,9 @@ def run(backend,target,out,checkpoint):
         for number,(request,registry) in enumerate(fields):
             checkpoint();layout=plan(request);home=out/('field-%02d'%number);home.mkdir(exist_ok=True)
             harvest_out=home;reused=None
+            from .native_wheat import unresolved as native_unresolved
+            if native_unresolved(registry):
+                return wait('WAIT_RECONCILE','Original native wheat batch remains unresolved; no legacy replay')
             active=registry.parent/'harvest-active.json'
             if active.exists():
                 prior=Path(json.loads(active.read_text())['journal'])
@@ -175,13 +178,16 @@ def run(backend,target,out,checkpoint):
             write_json(home/'source-observation.json',{'world_session':c.world,'registry':str(registry),
                        'mature_cells':mature,'inventory_credit':0})
             if not mature and reused is None:continue
-            if inventory_counts(c.status())['minecraft:wheat_seeds']<5:
-                fetched=backend.fetch({'minecraft:wheat_seeds':5})
+            native_planter=(reused is None and c.status().get('planter_wheat_batch_protocol')==1)
+            selected=mature[:min(16,target-before)] if native_planter else []
+            seed_need=len(selected)+4 if native_planter else 5
+            if inventory_counts(c.status())['minecraft:wheat_seeds']<seed_need:
+                fetched=backend.fetch({'minecraft:wheat_seeds':seed_need})
                 if fetched.get('phase') not in ('done','waiting'):
                     return wait('WAIT_RECONCILE','Registered field seed supply uncertain',receipt=fetched)
-                if inventory_counts(c.status())['minecraft:wheat_seeds']<5:
+                if inventory_counts(c.status())['minecraft:wheat_seeds']<seed_need:
                     return wait('WAIT_SEED','Registered wheat harvest keeps the existing four-seed reserve',
-                                requirements={'minecraft:wheat_seeds':5})
+                                requirements={'minecraft:wheat_seeds':seed_need})
             backend.prepare_travel()
             from .navigation import lift_for_travel,settled_state
             from .acquisition import _travel
@@ -190,6 +196,19 @@ def run(backend,target,out,checkpoint):
             _travel(c,[center[0]+.5,max(c.status()['pos'][1],center[1]+24),center[2]+.5],
                     checkpoint,trace,keep_cruise=True)
             write_json(home/'travel.json',trace)
+            if native_planter:
+                # One approach per visit; native farming then stays beside the crops.
+                selected=sorted(mature,key=lambda p:math.hypot(p[0]-center[0],p[2]-center[2]))[:min(16,target-before)]
+                first=selected[0];above=[first[0]+.5,c.status()['pos'][1],first[2]+.5]
+                c.checked('navigate',target=above,arrival=.15,air_only=True,seconds=45)
+                hover=[first[0]+.5,first[1]+1.05,first[2]+.5]
+                c.checked('navigate',target=hover,arrival=.15,air_only=True,seconds=45)
+                settled_state(c,hover,.6)
+                from .native_wheat import run as native_visit
+                result=native_visit(c,registry,layout,selected,home,checkpoint)
+                write_json(home/'result.json',result)
+                after=inventory_counts(c.status())['minecraft:wheat']
+                return {**result,'phase':'done' if after>=target else 'waiting','code':'SOURCE_BATCH'}
             hover=[center[0]+.5,center[1]+1.6,center[2]+.5]
             c.checked('navigate',target=hover,arrival=.15,air_only=True,seconds=45)
             settled_state(c,hover,.6)

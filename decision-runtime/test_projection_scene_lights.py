@@ -1,10 +1,23 @@
 import copy
 import unittest
-from projection_scene_lights import registered_map_light, completed_map_light_positions, matching_map_support
+from projection_scene_lights import registered_map_light, completed_map_light_positions, matching_map_support, neighbour_map_light
 from lighting_cli import EVIDENCE
 
 
 class RegisteredMapLightTests(unittest.TestCase):
+    def test_neighbour_torch_is_passable_without_becoming_image_credit_or_obstacle_exemption(self):
+        torch={'pos':[3,65,8],'state':'Block{minecraft:torch}','passable':True,
+               'solid':False,'fluid':False,'block_entity':False}
+        observed={(3,64,8):{'solid':True,'fluid':False,'block_entity':False}}
+        expected={(4,64,8):{'state':'Block{minecraft:stone}'}}
+        self.assertTrue(neighbour_map_light(torch,expected,observed,64))
+        for change in [{'state':'Block{minecraft:chest}'},{'passable':False},
+                       {'pos':[3,66,8]},{'fluid':True},{'block_entity':True}]:
+            self.assertFalse(neighbour_map_light({**torch,**change},expected,observed,64))
+        self.assertFalse(neighbour_map_light(torch,{(3,64,8):{'state':'Block{minecraft:stone}'}},observed,64))
+        self.assertFalse(neighbour_map_light(torch,expected,{},64))
+        self.assertFalse(neighbour_map_light(torch,expected,{(3,64,8):{'solid':False,'fluid':False,'block_entity':False}},64))
+
     def test_exact_map_wood_support_never_generalizes_to_other_buildings_or_unsafe_pixels(self):
         expected={(4,64,8):'Block{minecraft:oak_planks}'}
         row={'pos':[4,64,8],'state':'Block{minecraft:oak_planks}','solid':True,'fluid':False,

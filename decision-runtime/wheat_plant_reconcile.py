@@ -17,7 +17,8 @@ HOST_CONTRACTS={HOST:HOST_CLASS_SHA,
     '2026.10.10.2':'ef5f1bbccaa2746e9aaff2782c4c58ec8ef15c9cb6a0cf5cf1088a2819c09688',
     '2026.10.10.3':'ef5f1bbccaa2746e9aaff2782c4c58ec8ef15c9cb6a0cf5cf1088a2819c09688',
     '2026.10.11.1':'ef5f1bbccaa2746e9aaff2782c4c58ec8ef15c9cb6a0cf5cf1088a2819c09688',
-    '2026.10.11.2':'ef5f1bbccaa2746e9aaff2782c4c58ec8ef15c9cb6a0cf5cf1088a2819c09688'}
+    '2026.10.11.2':'ef5f1bbccaa2746e9aaff2782c4c58ec8ef15c9cb6a0cf5cf1088a2819c09688',
+    '2026.10.11.3':'4a49797ec1eee48e2309f0cad4336a7468cb55c8c9dca7bfae8c841c620a5d9c'}
 
 
 def contract(root):

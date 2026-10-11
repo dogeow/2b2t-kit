@@ -90,6 +90,7 @@ public final class AutoPlanter {
 	private String lastFileLog = "";
 	private PlanterPolicy.RowPlan rowPlan;
 	private PlanterFieldBoundary field = PlanterFieldBoundary.empty();
+	private PlanterMaterialBatch materialBatch;
 
 	/** 按配置构造自动种田。 */
 	public AutoPlanter(KitConfig config) {
@@ -152,6 +153,7 @@ public final class AutoPlanter {
 	/** 锁定作物并开始。 */
 	public void start(Minecraft client) {
 		if (client.player == null || client.level == null) return;
+		materialBatch = null;
 		active = true;
 		sessionLevel = client.level;
 		sessionPlayer = client.player;
@@ -190,6 +192,50 @@ public final class AutoPlanter {
 			+ "再按 "
 			+ KitKeys.boundLabel(KitKeys.TOGGLE_PLANTER) + " 或 End 停止");
 	}
+
+	/** Reuse the ordinary planter loop within an explicit material-task boundary. */
+	public void startMaterialWheat(Minecraft client, List<BlockPos> soils) {
+		if (active || client.player == null || client.level == null || client.screen != null)
+			throw new IllegalStateException("Planter requires an idle current world");
+		var batch = new PlanterMaterialBatch(soils, inventoryCount(client.player, Items.WHEAT));
+		if (inventoryCount(client.player, Items.WHEAT_SEEDS) < soils.size() + 4)
+			throw new IllegalStateException("Keep four seeds after this explicit wheat batch");
+		for (BlockPos soil : soils) {
+			if (!client.level.hasChunkAt(soil) || !client.level.hasChunkAt(soil.above())
+				|| client.player.position().distanceTo(Vec3.atCenterOf(soil)) > 16
+				|| !client.level.getBlockState(soil).is(Blocks.FARMLAND)
+				|| !client.level.getBlockState(soil.above()).is(Blocks.WHEAT)
+				|| !((CropBlock)Blocks.WHEAT).isMaxAge(client.level.getBlockState(soil.above())))
+				throw new IllegalStateException("Each scoped wheat cell must currently be loaded mature farmland");
+		}
+		start(client);
+		field = PlanterFieldBoundary.capture(soils, client.level::getBlockState);
+		materialBatch = batch;
+		lockedCrop = Items.WHEAT_SEEDS;
+		loot.boundary(soils);
+	}
+	private static int inventoryCount(LocalPlayer player, Item item) {
+		int count = 0;
+		for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+			ItemStack stack = player.getInventory().getItem(i); if (stack.is(item)) count += stack.getCount();
+		}
+		return count;
+	}
+	public com.google.gson.JsonObject materialSnapshot() {
+		return materialBatch == null ? new com.google.gson.JsonObject() : materialBatch.snapshot();
+	}
+	public boolean materialDone(Minecraft client) {
+		return materialBatch != null && client.player != null && client.level == sessionLevel
+			&& materialBatch.done(inventoryCount(client.player, Items.WHEAT), inventoryCount(client.player, Items.WHEAT_SEEDS))
+			&& materialBatch.currentCrops(materialBatch.crops().stream().map(client.level::getBlockState).toList());
+	}
+	public void serverBlock(Minecraft client, BlockPos pos, BlockState state, boolean applied) {
+		if (active && materialBatch != null && client.level == sessionLevel && client.player == sessionPlayer)
+			materialBatch.serverBlock(pos, state, applied);
+	}
+	private boolean harvestEnabled() { return materialBatch != null || config.planterHarvest; }
+	private boolean pickupEnabled() { return materialBatch != null || config.planterPickup; }
+	private boolean walkEnabled() { return materialBatch != null || config.planterWalk; }
 
 	/** 停止、松键并说明原因。 */
 	public void stop(Minecraft client, String reason) {
@@ -241,16 +287,17 @@ public final class AutoPlanter {
 		logTicks++;
 		if (logTicks % LOG_EVERY_TICKS == 0) logPeriodic(client, player);
 
+		if (materialBatch != null && materialDone(client)) { releaseKeys(client); status = "本批小麦收获补种已确认"; return; }
 		refreshLockedCrop(client, player);
 		if (lockedCrop == null) {
 			releaseKeys(client);
-			stop(client, config.planterHarvest
+			stop(client, harvestEnabled()
 				? "手里没有农作物，附近也没有成熟的可收"
 				: "手里或背包没有可种的农作物");
 			return;
 		}
 		boolean hasSeeds = hasItem(player, lockedCrop);
-		if (PlanterPolicy.stopBecauseNoSeeds(config.planterHarvest, hasSeeds)) {
+		if (PlanterPolicy.stopBecauseNoSeeds(harvestEnabled(), hasSeeds)) {
 			releaseKeys(client);
 			stop(client, cropLabel() + " 用完了，不改种别的。拿着要种的种子再继续");
 			return;
@@ -266,16 +313,18 @@ public final class AutoPlanter {
 
 		boolean needsFarm = needsFarmland(lockedCrop, plant);
 		boolean hasHoe = false; // Daily maintenance never selects or uses a hoe.
-		List<Spot> spots = collect(client, player, plant, needsFarm, hasSeeds, hasHoe, now);
+		List<Spot> spots = materialBatch == null
+			? collect(client, player, plant, needsFarm, hasSeeds, hasHoe, now)
+			: collectMaterial(client, player, plant, hasSeeds, now);
 		try {
 			emitGizmos(spots);
 		} catch (IllegalStateException ignored) {
 		}
 
-		if (config.planterPickup) {
+		if (pickupEnabled()) {
 			if (loot.active()) {
 				releaseAttack(client);
-				if (loot.tick(client, player, config.planterWalk)) {
+				if (loot.tick(client, player, walkEnabled())) {
 					status = loot.status();
 					overlay(client, status, 0x55FFFF);
 					return;
@@ -287,9 +336,13 @@ public final class AutoPlanter {
 			}
 		}
 
+		if (materialBatch != null && spots.isEmpty() && (materialBatch.hasUnacknowledgedAction() || materialBatch.cellsConfirmed())) {
+			releaseKeys(client); status = "等待本批小麦补种与背包确认"; return;
+		}
+
 		if (PlanterPolicy.shouldStopNoHoeNoWork(
 			hasSeeds, hasPlantOrHarvest(spots), needsFarm, false, false)) {
-			if (config.planterPickup && loot.beginNear(client, player, lockedCrop, plant, config.planterRange)) {
+			if (pickupEnabled() && loot.beginNear(client, player, lockedCrop, plant, config.planterRange)) {
 				status = loot.status().isEmpty() ? "去捡掉落物" : loot.status();
 				overlay(client, status, 0x55FFFF);
 				return;
@@ -310,7 +363,7 @@ public final class AutoPlanter {
 		Spot next = pick(player, spots);
 		target = next;
 		if (next == null) {
-			if (config.planterPickup && loot.beginNear(client, player, lockedCrop, plant, config.planterRange)) {
+			if (pickupEnabled() && loot.beginNear(client, player, lockedCrop, plant, config.planterRange)) {
 				status = loot.status().isEmpty() ? "去捡掉落物" : loot.status();
 				overlay(client, status, 0x55FFFF);
 				return;
@@ -335,7 +388,7 @@ public final class AutoPlanter {
 		if (next.harvest()) {
 			if (harvest(client, player, next, plant, now)) {
 				harvestedCount++;
-				if (config.planterPickup) loot.begin(next.pos, lockedCrop, plant);
+				if (pickupEnabled()) loot.begin(next.pos, lockedCrop, plant);
 				status = "已收 " + cropLabel()
 					+ "  种" + plantedCount + " 锄" + tilledCount + " 收" + harvestedCount;
 				overlay(client, status, 0x55FF55);
@@ -386,7 +439,7 @@ public final class AutoPlanter {
 
 	/** 走近目标格。 */
 	private boolean approach(Minecraft client, LocalPlayer player, Spot spot, int now) {
-		if (!config.planterWalk) {
+		if (!walkEnabled()) {
 			releaseWalk(client);
 			holdSneak(client, player, false);
 			status = "太远，走近一点或打开「走近再种」";
@@ -463,7 +516,7 @@ public final class AutoPlanter {
 			harvestPos = null;
 			harvestTicks = 0;
 			harvestStarted = false;
-			if (config.planterWalk && player.position().distanceTo(Vec3.atCenterOf(spot.pos)) > 0.85) {
+			if (walkEnabled() && player.position().distanceTo(Vec3.atCenterOf(spot.pos)) > 0.85) {
 				if (approach(client, player, spot, now)) {
 					status = "换角度收，避免打到围墙";
 					overlay(client, status, 0xFFFF55);
@@ -490,6 +543,10 @@ public final class AutoPlanter {
 		// Never replace the crosshair entity or synthesize an attack-key click.
 		client.options.keyAttack.setDown(false);
 		if (!harvestStarted || !client.gameMode.isDestroying()) {
+			if (materialBatch != null) {
+				if (!materialBatch.mayHarvest(spot.pos)) return false;
+				materialBatch.harvestSent(spot.pos);
+			}
 			harvestStarted = client.gameMode.startDestroyBlock(spot.pos, hit.getDirection());
 		} else {
 			client.gameMode.continueDestroyBlock(spot.pos, hit.getDirection());
@@ -533,6 +590,10 @@ public final class AutoPlanter {
 				&& player.getItemInHand(hand).is(lockedCrop);
 		}, () -> {
 			BlockHitResult hit = new BlockHitResult(clickLocation(spot), spot.face, spot.click, false);
+			if (materialBatch != null) {
+				if (!materialBatch.mayPlant(spot.pos) || inventoryCount(player, lockedCrop) <= 4) return false;
+				materialBatch.plantSent(spot.pos);
+			}
 			InteractionResult result = client.gameMode.useItemOn(player, hand, hit);
 			player.swing(hand);
 			boolean ok = result.consumesAction() || client.level.getBlockState(spot.pos).is(plant);
@@ -558,6 +619,19 @@ public final class AutoPlanter {
 		return best;
 	}
 
+	private List<Spot> collectMaterial(Minecraft client, LocalPlayer player, Block plant, boolean hasSeeds, int now) {
+		List<Spot> spots = new ArrayList<>();
+		for (BlockPos pos : materialBatch.crops()) {
+			if (!client.level.hasChunkAt(pos) || skipUntilTick.getOrDefault(pos, 0) > now) continue;
+			if (materialBatch.mayHarvest(pos)) {
+				Spot candidate = harvestSpot(client, pos, plant); if (candidate != null) spots.add(candidate);
+			} else if (hasSeeds && materialBatch.mayPlant(pos)) {
+				Spot candidate = plantSpot(client, player, pos, plant); if (candidate != null) spots.add(candidate);
+			}
+		}
+		return spots;
+	}
+
 	/** 范围内只收集本次已登记耕地上的播种和收成点。 */
 	private List<Spot> collect(Minecraft client, LocalPlayer player, Block plant, boolean needsFarm,
 		boolean hasSeeds, boolean hasHoe, int now) {
@@ -572,7 +646,7 @@ public final class AutoPlanter {
 					if (!client.level.hasChunkAt(pos)) continue;
 					Integer skip = skipUntilTick.get(pos);
 					if (skip != null && now < skip) continue;
-					if (config.planterHarvest) {
+					if (harvestEnabled()) {
 						Spot harvest = harvestSpot(client, pos, plant);
 						if (harvest != null) {
 							spots.add(harvest);
@@ -841,10 +915,11 @@ public final class AutoPlanter {
 
 	/** 从手或田刷新锁定作物。 */
 	private void refreshLockedCrop(Minecraft client, LocalPlayer player) {
+		if (materialBatch != null) { lockedCrop = Items.WHEAT_SEEDS; return; }
 		Item held = cropInHand(player);
 		if (held != null) lockedCrop = held;
 		if (lockedCrop == null) lockedCrop = resolveCrop(player);
-		if (!config.planterHarvest) {
+		if (!harvestEnabled()) {
 			if (lockedCrop == null) lockedCrop = resolveCropFromField(client, player);
 			return;
 		}

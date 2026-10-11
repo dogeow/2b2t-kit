@@ -96,6 +96,7 @@ public final class AutomationBridge {
             switch(op){
                 case "navigate" -> own.add("navigation");
                 case "chop" -> own.add("chopper");
+                case "planter_wheat_batch" -> own.add("planter");
                 case "print" -> own.add("machine_printer");
                 case "concrete_batch" -> own.add("concrete");
                 case "rock_quarry_batch","quarry_batch" -> own.add("borer");
@@ -640,7 +641,7 @@ public final class AutomationBridge {
         nativeMaterialCheck(owner,c);
         if(owner.pendingId!=null||active!=null)throw new IllegalStateException("Native material child is already running");
         if(!Set.of("guard","select_item","snapshot","scan","scan_snow_biomes","snow_seed_candidates","air_return_set","mine_block","rock_quarry_batch",
-                "walk","navigate","collect_item","approach_block","bucket_fill","bucket_place","bottle_fill","material_slaughter_attack").contains(command))
+                "walk","navigate","collect_item","approach_block","bucket_fill","bucket_place","bottle_fill","material_slaughter_attack","planter_wheat_batch").contains(command))
             throw new IllegalArgumentException("Native material command is not allowed: "+command);
         JsonObject request=params==null?new JsonObject():params.deepCopy();
         for(String protectedKey:List.of("id","op","task_session","server","dimension","site",
@@ -1386,6 +1387,7 @@ public final class AutomationBridge {
     public static void cancelWork(Minecraft c,String reason){
         terminalInventoryClick(c,false,"Inventory click interrupted: "+reason);
         if(pendingScan!=null)finishScan(c,"waiting","scan interrupted by control cleanup: "+reason);
+        if(active!=null&&op.equals("planter_wheat_batch")&&KitClient.planter()!=null)KitClient.planter().stop(c,reason);
         JsonObject cancelledMining=ordinaryMiningRequested(active)?active.deepCopy():null;
         JsonObject cancelledPrinter=active!=null&&op.equals("professional_print")?active.deepCopy():null;
         if(cancelledMining!=null){
@@ -1917,6 +1919,15 @@ public final class AutomationBridge {
                         if(op.equals("walk_path") && ++pathIndex<active.getAsJsonArray("path").size())active.add("target",active.getAsJsonArray("path").get(pathIndex).deepCopy());
                         else finish(c,"done","walk target reached");
                     }
+                }else if(op.equals("planter_wheat_batch")){
+                    var planter=KitClient.planter();
+                    if(guardBusy)deadline++;
+                    if(!currentMaterialRequest(c,active)||!guardArmed()||!pveOnly()||c.player.getHealth()<19)
+                        finish(c,"waiting","wheat batch ownership or health changed; original actions retained");
+                    else if(planter.materialDone(c))finish(c,"done","explicit mature wheat batch collected and all replants server-confirmed");
+                    else if(!planter.isActive())finish(c,"waiting","native planter stopped: "+planter.status());
+                    else detail="原生种田 "+planter.materialSnapshot().get("replanted_confirmed").getAsInt()
+                        +"/"+planter.materialSnapshot().get("total").getAsInt()+" · "+planter.status();
                 }else if(op.equals("chop")){
                     if(count(c,str(active,"item"))>=desiredCount)KitClient.chopper().finishCurrentTree();
                     if(KitClient.chopper().waitingForTree()){KitClient.chopper().stop(c,"当前附近没有该树种，交回跑图搜索");finish(c,"waiting","no matching tree in local reach");}
@@ -2347,6 +2358,32 @@ public final class AutomationBridge {
             active.addProperty("printer_completion_world",session(c));
             active.addProperty("printer_completion_key",completionTargets.isEmpty()?"":projectionBatch.owner().projection());
             deadline=ticks+20*Math.max(1,Math.min(30,r.has("seconds")?r.get("seconds").getAsInt():10));
+        }else if(command.equals("planter_wheat_batch")){
+            externalMaterialScope(c,r);
+            if(!currentMaterialRequest(c,r)||!guardArmed()||!pveOnly()||c.player.getHealth()<19
+                ||loadedHostileNearby(c)||c.screen!=null||KitClient.anyAfkAuto())
+                throw new IllegalStateException("Scoped wheat batch requires the sole protected material owner");
+            JsonArray positions=r.getAsJsonArray("soils");
+            if(positions==null||positions.isEmpty()||positions.size()>16)
+                throw new IllegalArgumentException("One to sixteen explicit wheat soils required");
+            List<BlockPos> soils=new ArrayList<>();
+            for(JsonElement value:positions){
+                if(!value.isJsonArray()||value.getAsJsonArray().size()!=3)
+                    throw new IllegalArgumentException("Exact integer soil coordinates required");
+                var row=value.getAsJsonArray(); int[] xyz=new int[3];
+                for(int i=0;i<3;i++){
+                    if(!row.get(i).isJsonPrimitive()||!row.get(i).getAsJsonPrimitive().isNumber()
+                        ||row.get(i).getAsDouble()!=row.get(i).getAsInt())
+                        throw new IllegalArgumentException("Exact integer soil coordinates required");
+                    xyz[i]=row.get(i).getAsInt();
+                }
+                soils.add(new BlockPos(xyz[0],xyz[1],xyz[2]));
+            }
+            stopWorkForScript(r,true);
+            active=r.deepCopy();op=command;phase="running";
+            deadline=ticks+20*Math.max(10,Math.min(180,r.has("seconds")?r.get("seconds").getAsInt():120));
+            KitClient.planter().startMaterialWheat(c,soils);
+            detail="原生种田 0/"+soils.size();
         }else if(command.equals("craft_recipe")){
             if(!survival(r))throw new IllegalArgumentException("Recipe macros currently require the local survival scope");
             craftSpec=r.deepCopy();craftRemaining=0;craftTask=new SurvivalCraftTask(c,r);active=r.deepCopy();op=command;phase="running";detail="native recipe workflow";deadline=ticks+1200;
@@ -2915,6 +2952,7 @@ public final class AutomationBridge {
         if(dryPavingRequest!=null&&p.equals("done")&&!dryPavingConfirmed){
             p="waiting";text="matching server block update was not received; dry paving outcome unknown";
         }
+        if(op.equals("planter_wheat_batch")&&KitClient.planter()!=null)KitClient.planter().stop(c,text);
         closeMaterialAirNavigation(c,p);
         if(Set.of("quarry_batch","rock_quarry_batch").contains(op)&&KitClient.borer()!=null)KitClient.borer().stop(c,text);
         if(op.equals("rock_quarry_batch"))rockQuarryStopped(p,text);
@@ -3699,6 +3737,7 @@ public final class AutomationBridge {
         if(c.player==null||c.level==null||active==null||!c.level.hasChunkAt(pos))return;
         String actual=packetState.toString();
         boolean applied=state(c,pos).equals(actual);
+        if(op.equals("planter_wheat_batch")&&KitClient.planter()!=null)KitClient.planter().serverBlock(c,pos,packetState,applied);
         if(bucketWaterTask!=null&&Set.of("bucket_fill","bucket_place").contains(op))
             bucketWaterTask.serverBlock(c,pos,packetState,applied,ticks);
         if(op.equals("projection_scaffold_fill")&&scaffoldFillTask!=null)
@@ -4136,6 +4175,7 @@ public final class AutomationBridge {
         if(lastScaffoldFill!=null)j.add("last_projection_scaffold_fill",lastScaffoldFill.deepCopy());
         try{var selected=dev.twob2tkit.builder.LitematicaAccess.buildSelection();var pick=new JsonObject();pick.addProperty("key",selected.key());pick.addProperty("name",selected.name());pick.add("min",JSON.toJsonTree(new int[]{selected.min().getX(),selected.min().getY(),selected.min().getZ()}));pick.add("max",JSON.toJsonTree(new int[]{selected.max().getX(),selected.max().getY(),selected.max().getZ()}));j.add("projection_selection",pick);}catch(Exception ignored){}
         j.addProperty("borer_status",KitClient.borer().status());
+        j.addProperty("planter_wheat_batch_protocol",1);j.add("planter_material_batch",KitClient.planter().materialSnapshot());
         j.addProperty("planter_status",KitClient.planter().status());j.addProperty("planter_count",KitClient.planter().plantedCount());j.addProperty("harvest_count",KitClient.planter().harvestedCount());
         j.addProperty("feeder_status",KitClient.feeder().status());j.addProperty("feeder_count",KitClient.feeder().fedCount());
         j.addProperty("borer_control_session",ownedBorerSession);j.addProperty("guard_reconnect_pending",pendingGuardReconnect!=null);j.addProperty("borer_active",KitClient.borer().isActive());j.addProperty("planter_active",KitClient.planter().isActive());j.addProperty("feeder_active",KitClient.feeder().isActive());j.addProperty("fisher_active",KitClient.fisher()!=null&&KitClient.fisher().isActive());j.addProperty("fisher_status",KitClient.fisher()==null?"":KitClient.fisher().status());j.add("build_job",KitClient.buildJob().snapshot());j.add("concrete",KitClient.concrete().snapshot());j.addProperty("guard_busy",guardBusy);j.addProperty("guard_armed",guardScope!=null);j.addProperty("decision_image_protocol",1);j.addProperty("guard_pve_only",guardScope!=null && guardScope.has("pve_only") && guardScope.get("pve_only").getAsBoolean());j.addProperty("health_recovery_hold",healthRecoveryHold);j.add("guard_food",dev.twob2tkit.combat.GuardFoodLease.snapshot());j.addProperty("guard_status",healthRecoveryHold?"等待生命恢复到 19 后继续工作":KitClient.borer().status());j.add("professional_printer",ProfessionalPrinter.status());j.addProperty("chopping",KitClient.chopper().isActive());j.addProperty("chopper_status",KitClient.chopper().status());j.addProperty("chopper_remaining",KitClient.chopper().remainingLogs());j.addProperty("chopper_verified_trees",KitClient.chopper().treesDone());j.addProperty("chopper_platforms",KitClient.chopper().platforms());j.addProperty("guide_active",KitClient.structureGuide().isActive());j.addProperty("guide_status",KitClient.structureGuide().status());j.addProperty("navigating",KitClient.controller().isActive());j.addProperty("printing",KitClient.machines().isPlacing());j.addProperty("printer_status",KitClient.machines().status());

@@ -210,8 +210,8 @@ def _below_vertical_start(row, position):
     """Known partial collision tops are below feet even when Flight reports airborne.
 
     Keep this deliberately limited to shapes whose collision height is fixed by
-    the observed state.  In particular, only a dry bottom slab is proven here;
-    top/double/waterlogged slabs remain obstacles.
+    the observed state. Dry farmland is 15/16 high; dry bottom slabs and chest
+    tops have their known collision heights. Other shapes remain obstacles.
     """
     from .acquisition import block_id
     name,state=block_id(row),row.get('state','')
@@ -221,6 +221,9 @@ def _below_vertical_start(row, position):
     if (name in {'minecraft:chest','minecraft:trapped_chest','minecraft:ender_chest'}
             and row.get('block_entity') is True and 'waterlogged=true' not in state):
         return position[1]>=row['pos'][1]+.875-1e-7
+    if (name=='minecraft:farmland' and row.get('block_entity') is False
+            and state in {'Block{minecraft:farmland}[moisture=%d]'%n for n in range(8)}):
+        return position[1]>=row['pos'][1]+.9375-1e-7
     return (name.endswith('_slab') and row.get('block_entity') is False
             and '[type=bottom,' in state and 'waterlogged=false]' in state
             and position[1]>=row['pos'][1]+.5)

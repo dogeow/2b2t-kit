@@ -15,7 +15,7 @@ from material_jobs_backend import Backend
 from material_plan import inventory_counts
 from projection_flat_plan import FlatLayout, next_batch, policy, position, full_block
 from projection_patch_plan import connected_mask
-from projection_scene_lights import registered_map_light
+from projection_scene_lights import registered_map_light, neighbour_map_light
 from projection_completion import block_state
 from projection_flat_cache import FlatMaterialLedger
 
@@ -43,7 +43,8 @@ def scene(layout, reply, low, high, world, revision):
                               if registered_map_light(row, layout.expected, observed, {p}, layout.low[1])}
     for p, row in observed.items():
         if p[1] != layout.low[1]:
-            if registered_map_light(row, layout.expected, observed, registered_lights, layout.low[1]):
+            if (registered_map_light(row, layout.expected, observed, registered_lights, layout.low[1])
+                    or neighbour_map_light(row, layout.expected, observed, layout.low[1])):
                 continue
             raise JobBlocked('地图画站位上方存在未登记方块；先核对现场')
         if any(row.get(k) is not False for k in ('fluid', 'block_entity')):

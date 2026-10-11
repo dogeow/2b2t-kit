@@ -42,6 +42,13 @@ public final class PlanterLoot {
 	private int entityCount;
 	private int picked;
 	private String status = "";
+	private java.util.Set<BlockPos> materialSoils;
+	public void boundary(java.util.Collection<BlockPos> soils) { materialSoils = java.util.Set.copyOf(soils); }
+	private boolean withinBoundary(ItemEntity entity) {
+		if (materialSoils == null) return true;
+		return materialSoils.stream().anyMatch(p -> Math.abs(entity.getX()-(p.getX()+.5)) <= 1.0
+			&& Math.abs(entity.getZ()-(p.getZ()+.5)) <= 1.0 && Math.abs(entity.getY()-(p.getY()+1)) <= 2.0);
+	}
 
 	/** 是否正在捡掉落物。 */
 	public boolean active() {
@@ -61,6 +68,7 @@ public final class PlanterLoot {
 	/** 清忽略表与计数，结束本局捡取。 */
 	public void resetSession() {
 		ignored.clear();
+		materialSoils = null;
 		picked = 0;
 		clear();
 	}
@@ -104,7 +112,7 @@ public final class PlanterLoot {
 		ItemEntity nearest = null;
 		double best = Double.MAX_VALUE;
 		for (ItemEntity entity : client.level.getEntitiesOfClass(ItemEntity.class, search)) {
-			if (!entity.isAlive() || ignored.containsKey(entity.getId())) continue;
+			if (!entity.isAlive() || ignored.containsKey(entity.getId()) || !withinBoundary(entity)) continue;
 			if (!isFarmLoot(entity.getItem(), crop, plant)) continue;
 			if (inLava(client, entity)) continue;
 			double dist = player.distanceTo(entity);
@@ -201,7 +209,7 @@ public final class PlanterLoot {
 		if (entityId >= 0) {
 			Entity existing = client.level.getEntity(entityId);
 			boolean alive = existing instanceof ItemEntity item
-				&& item.isAlive()
+				&& item.isAlive() && withinBoundary(item)
 				&& isFarmLoot(item.getItem(), cropItem, plantBlock);
 			if (alive && !ignored.containsKey(entityId)) return (ItemEntity) existing;
 			if (existing == null) return null;
@@ -220,7 +228,7 @@ public final class PlanterLoot {
 		ItemEntity best = null;
 		double bestFound = Double.MAX_VALUE;
 		for (ItemEntity entity : client.level.getEntitiesOfClass(ItemEntity.class, search)) {
-			if (!entity.isAlive() || ignored.containsKey(entity.getId())) continue;
+			if (!entity.isAlive() || ignored.containsKey(entity.getId()) || !withinBoundary(entity)) continue;
 			if (!isFarmLoot(entity.getItem(), cropItem, plantBlock)) continue;
 			double dist = player.distanceTo(entity);
 			if (dist < bestFound) {

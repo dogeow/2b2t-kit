@@ -266,6 +266,7 @@ public final class KitClient implements ClientModInitializer {
         if(idleScope.contains("navigation")){instance.controller.cancelPendingLogout();instance.controller.stop(client,reason);}
         if(idleScope.contains("navigation_logout"))instance.controller.cancelPendingLogout();
         if(idleScope.contains("chopper"))instance.autoChopper.stop(client,reason);
+        if(idleScope.contains("planter"))instance.autoPlanter.stop(client,reason);
         if(idleScope.contains("borer"))instance.tunnelBorer.stop(client,reason);
         if(idleScope.contains("machine_printer"))instance.machineBuilder.cancel(client,reason);
         if(idleScope.contains("concrete"))instance.concreteMaker.stop(client,reason);

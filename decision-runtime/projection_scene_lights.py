@@ -70,3 +70,17 @@ def registered_map_light(row, expected, observed, registered_positions, image_y)
                 and actual.get('solid') is True
                 and actual.get('fluid') is False
                 and actual.get('block_entity') is False)
+
+
+def neighbour_map_light(row, expected, observed, image_y):
+    """An ordinary passable standing torch outside the image is never pixel credit."""
+    p = row.get('pos')
+    if (not isinstance(p, list) or len(p) != 3 or any(type(n) is not int for n in p)
+            or p[1] != image_y+1 or (p[0],image_y,p[2]) in expected
+            or row.get('state') != 'Block{minecraft:torch}'
+            or row.get('passable') is not True or row.get('solid') is not False
+            or row.get('fluid') is not False or row.get('block_entity') is not False):
+        return False
+    base = observed.get((p[0],image_y,p[2]), {})
+    return (base.get('solid') is True and base.get('fluid') is False
+            and base.get('block_entity') is False)

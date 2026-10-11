@@ -496,6 +496,16 @@ class ProjectionExitTest(unittest.TestCase):
             with self.subTest(state=row['state']):
                 self.assertFalse(_below_vertical_start(row,[.5,67.838,.5]))
 
+    def test_dry_farmland_top_is_below_the_native_planters_feet_without_relaxing_other_shapes(self):
+        row={'pos':[0,63,0],'state':'Block{minecraft:farmland}[moisture=7]',
+             'solid':False,'passable':False,'fluid':False,'block_entity':False}
+        self.assertTrue(_below_vertical_start(row,[.5,63.9375,.5]))
+        self.assertFalse(_below_vertical_start(row,[.5,63.93,.5]))
+        for change in [{'fluid':True},{'block_entity':True},{'solid':True},
+                       {'state':'Block{minecraft:farmland}[moisture=8]'},
+                       {'state':'Block{minecraft:dirt}'},{'pos':[0,64,0]}]:
+            self.assertFalse(_below_vertical_start({**row,**change},[.5,63.9375,.5]))
+
     def test_open_sky_scan_starts_from_settled_position(self):
         waits=[]
         def settle(client,*args,**kwargs):
