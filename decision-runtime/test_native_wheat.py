@@ -5,7 +5,7 @@ from pathlib import Path
 from collections import Counter
 from unittest.mock import Mock, patch
 from potato_farm import FarmWait
-from material_jobs.native_wheat import run, validate_receipt, unresolved, leave_field
+from material_jobs.native_wheat import run, validate_receipt, unresolved, leave_field, dry_footprint
 
 CELLS = [[0,63,0],[1,63,0]]
 COUNTS = Counter({'minecraft:wheat':5,'minecraft:wheat_seeds':8})
@@ -19,13 +19,26 @@ def receipt():
 
 
 class NativeWheatTests(unittest.TestCase):
+    def test_restored_flight_may_coast_across_two_dry_original_cells_but_never_water_or_foreign_soil(self):
+        frame={'blocks':[row for p in CELLS for row in [
+            {'pos':p,'state':'Block{minecraft:farmland}[moisture=7]','fluid':False,'block_entity':False},
+            {'pos':[p[0],64,0],'state':'Block{minecraft:wheat}[age=2]',
+             'passable':True,'fluid':False,'block_entity':False}]]}
+        self.assertTrue(dry_footprint([.704,63.9375,.5],{'cells':CELLS},frame))
+        self.assertFalse(dry_footprint([.704,63.9375,.5],{'cells':CELLS[:1]},frame))
+        frame['blocks'][2]['fluid']=True
+        self.assertFalse(dry_footprint([.704,63.9375,.5],{'cells':CELLS},frame))
+        frame['blocks'][2]['fluid']=False;frame['blocks'][3]['state']='Block{minecraft:fire}'
+        self.assertFalse(dry_footprint([.704,63.9375,.5],{'cells':CELLS},frame))
+
     def test_crop_exit_centers_once_on_observed_farmland_without_resource_actions(self):
         with tempfile.TemporaryDirectory() as tmp:
             c=Mock(world='world');c.status.return_value={'pos':[.787,63.9375,.994]}
             c.checked.return_value={'phase':'done'}
             frame={'blocks':[{'pos':[0,63,0],'state':'Block{minecraft:farmland}[moisture=7]',
                                'fluid':False,'block_entity':False},
-                              {'pos':[0,64,0],'state':'Block{minecraft:wheat}[age=2]'}]}
+                              {'pos':[0,64,0],'state':'Block{minecraft:wheat}[age=2]',
+                               'passable':True,'fluid':False,'block_entity':False}]}
             with patch('material_jobs.native_wheat.inventory_counts',return_value=COUNTS), \
                     patch('material_jobs.navigation.settled_state',return_value={'pos':[.5,63.9375,.5]}):
                 leave_field(c,{'cells':CELLS},frame,tmp,lambda:None)
@@ -59,7 +72,8 @@ class NativeWheatTests(unittest.TestCase):
                      'scan_total_cells':4,'scan_start_revision':7,'scan_end_revision':7,
                      'blocks':[row for p in CELLS for row in [
                          {'pos':p,'state':'Block{minecraft:farmland}[moisture=7]','fluid':False,'block_entity':False},
-                         {'pos':[p[0],64,0],'state':'Block{minecraft:wheat}[age=1]'}]]}
+                         {'pos':[p[0],64,0],'state':'Block{minecraft:wheat}[age=1]',
+                          'passable':True,'fluid':False,'block_entity':False}]]}
                     for n in [11,12]]
             def dispatch(op,**kw):
                 if op=='planter_wheat_batch':

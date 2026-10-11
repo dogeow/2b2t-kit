@@ -31,6 +31,28 @@ def validate_receipt(receipt, cells, before, world):
     return counts
 
 
+def dry_footprint(position, layout, frame):
+    """A body may span several original dry farmland cells after Flight restores."""
+    import math
+    if (not isinstance(position,list) or len(position)!=3
+            or any(type(n)not in(int,float)or not math.isfinite(n)for n in position)):
+        return False
+    rows={tuple(r['pos']):r for r in frame['blocks']};owned={tuple(p)for p in layout['cells']}
+    y=math.floor(position[1])
+    if abs(position[1]-(y+.9375))>.15:return False
+    for x in range(math.floor(position[0]-.31),math.floor(position[0]+.31)+1):
+        for z in range(math.floor(position[2]-.31),math.floor(position[2]+.31)+1):
+            soil=rows.get((x,y,z),{})
+            if ((x,y,z)not in owned or _properties(soil,'farmland','moisture',7)is None
+                    or soil.get('fluid')is not False or soil.get('block_entity')is not False):return False
+            for h in (y+1,y+2):
+                row=rows.get((x,h,z))
+                if row and (row.get('passable')is not True or row.get('fluid')is not False
+                            or row.get('block_entity')is not False or h==y+2
+                            or _properties(row,'wheat','age',7)is None):return False
+    return True
+
+
 def leave_field(c, layout, frame, out, checkpoint, book=None, journal=None):
     """Center once on nearby registered dry farmland before the vertical takeoff."""
     import math
@@ -46,7 +68,7 @@ def leave_field(c, layout, frame, out, checkpoint, book=None, journal=None):
     if not candidates:
         raise FarmWait('WAIT_EXIT','No nearby currently observed original dry farmland footing')
     soil=min(candidates,key=lambda q:math.hypot(p[0]-(q[0]+.5),p[2]-(q[2]+.5)))
-    if (soil[0]+.31<=p[0]<=soil[0]+.69 and soil[2]+.31<=p[2]<=soil[2]+.69):
+    if dry_footprint(p,layout,frame):
         return
     target=[soil[0]+.5,soil[1]+.9375,soil[2]+.5]
     intent={'world_session':c.world,'operation':'registered_farmland_exit_step','target':target,
@@ -57,8 +79,7 @@ def leave_field(c, layout, frame, out, checkpoint, book=None, journal=None):
     checkpoint();reply=c.checked('walk',target=target,arrival=.15,seconds=12)
     after=settled_state(c,target,.3)
     if (reply.get('phase')!='done' or inventory_counts(after)!=inventory_counts(state)
-            or not soil[0]+.31<=after['pos'][0]<=soil[0]+.69
-            or not soil[2]+.31<=after['pos'][2]<=soil[2]+.69):
+            or not dry_footprint(after['pos'],layout,frame)):
         raise FarmWait('WAIT_EXIT','Original farmland exit step needs its exact outcome; no replay')
     write_json(out/'farmland-exit.json',{**intent,'pending':False,'phase':'done','actual':after['pos'],
                'inventory_after':dict(inventory_counts(after)),'receipt':reply})
