@@ -19,12 +19,13 @@ def make_plant_access(center, *, radius=2, checkpoint=lambda:None, existing_sour
     request={'authorized':True,'center':center,'radius':radius,'crop':'wheat'}
     if existing_source is not None:request['existing_source']=existing_source
     layout=plan(request)
-    home=[center[0]+.5,center[1]+1.6,center[2]+.5]
+    offset=2.6 if existing_source is not None else 1.6
+    home=[center[0]+.5,center[1]+offset,center[2]+.5]
     def access(c,pos,observation,stage):
-        if pos not in layout['cells']or stage not in ('before_plant','after_plant'):
+        if pos not in layout['cells']or stage not in ('before_harvest','before_plant','after_plant'):
             raise FarmWait('WAIT_ROUTE','Plant access must stay in the exact original field')
         checkpoint();_lease(c,observation,observation['recent_hurt_at'])
-        target=[pos[0]+.5,pos[1]+1.6,pos[2]+.5]if stage=='before_plant'else home
+        target=[pos[0]+.5,pos[1]+offset,pos[2]+.5]if stage in('before_harvest','before_plant')else home
         current=c.status();safe_y=max(current['pos'][1],target[1])
         # Ground pickup may end one block below the planted field. Rise within
         # that actual clear column before crossing the higher farmland edge.

@@ -225,7 +225,7 @@ def _registered_wheat(c, request, journal, known_replant=None, *, bind_active=Tr
 
 def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
         bonemeal_budget=16, max_bonemeal_per_cell=4, pickup_seconds=6,
-        pickup=None, plant_access=None, sleep=time.sleep, monotonic=time.monotonic, _recover_only=False,
+        pickup=None, plant_access=None, harvest_access=None, sleep=time.sleep, monotonic=time.monotonic, _recover_only=False,
         allow_unrecovered_seed_loss=False,allow_unrecovered_grain_loss=False):
     """Grow optionally, harvest only fresh age=7, prove pickup, then reseed once.
 
@@ -460,6 +460,10 @@ def run(c, request, out, checkpoint=lambda: None, *, max_cells=4,
                 book['pending'] = None; save()
 
             if not recovering:
+                if harvest_access is not None:
+                    book['pending']={'operation':'harvest_access','pos':pos[:],'before_time':status()['time']};save()
+                    answer=harvest_access(c,pos,status(),'before_harvest')
+                    status();record['harvest_access']=str(type(answer).__name__);book['pending']=None;save()
                 select(seed); before, rows, _ = survey()
                 if _properties(rows.get(crop, {}), descriptor.block, 'age', descriptor.age_max) != 7:
                     raise FarmWait('WAIT_GROWTH', 'Only a fresh exact age-seven '+descriptor.name+' crop may be harvested')

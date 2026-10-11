@@ -192,6 +192,9 @@ def run(backend,target,out,checkpoint):
                                                     existing_source=layout.get('existing_source')),
                      'plant_access':make_plant_access(center,radius=layout['radius'],checkpoint=checkpoint,
                                                      existing_source=layout.get('existing_source'))}
+            if layout.get('existing_source'):
+                options['harvest_access']=make_plant_access(center,radius=layout['radius'],checkpoint=checkpoint,
+                                                            existing_source=layout['existing_source'])
             result=harvest(*args,**options)
             from wheat_plant_reconcile import REJECTION,reconcile
             journal=Path(result['journal']);inner=json.loads(journal.read_text());pending=inner.get('pending')or{}

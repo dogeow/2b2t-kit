@@ -86,6 +86,26 @@ class HarvestClient(FarmClient):
 
 
 class HarvestTests(unittest.TestCase):
+    def test_injected_harvest_access_reaches_far_cell_before_one_harvest(self):
+        client=HarvestClient();client.extra['pos']=[20.,64.5,20.]
+        calls=[]
+        def access(c,pos,observation,stage):
+            self.assertEqual('before_harvest',stage);calls.append(pos)
+            c.extra['pos']=[pos[0]+.5,pos[1]+1.6,pos[2]+.5]
+        result,book=self.execute(client,{**SPEC,'cells':[[1,63,0]]},harvest_access=access)
+        self.assertEqual('done',result['phase'],result);self.assertEqual([[1,63,0]],calls)
+        self.assertEqual(1,sum(op=='mine_block'for op,_ in client.calls))
+
+    def test_unknown_harvest_access_retains_intent_and_never_mines_or_replays(self):
+        client=HarvestClient();calls=[]
+        def access(*args):calls.append(1);raise RuntimeError('unknown navigation result')
+        with tempfile.TemporaryDirectory()as directory:
+            request={**SPEC,'cells':[[1,63,0]]}
+            first=self.execute(client,request,out=directory,harvest_access=access)
+            self.assertEqual('WAIT_CONTROL',first['code']);self.assertIn('unknown navigation',first['detail'])
+            result=self.execute(client,request,out=directory,harvest_access=access)
+            self.assertEqual('WAIT_RECONCILE',result['code']);self.assertEqual([1],calls)
+            self.assertFalse(any(op in('mine_block','interact')for op,_ in client.calls))
     def execute(self, client, request=None, out=None, **options):
         clock = Clock()
         if out is None:

@@ -82,7 +82,7 @@ class Tests(unittest.TestCase):
             pickup=make_registered_pickup(self.center,radius=4,existing_source=source)
             pickup(c,drop,c.status());collect.assert_called_once()
         access(c,[4,63,0],c.status(),'before_plant')
-        self.assertEqual([4.5,64.6,0.5],c.extra['pos'])
+        self.assertEqual([4.5,65.6,0.5],c.extra['pos'])
         with self.assertRaises(FarmWait):access(c,[3,63,0],c.status(),'before_plant')
         for factory in (make_registered_pickup,make_plant_access):
             with self.assertRaises(ValueError):factory(self.center,radius=4)
