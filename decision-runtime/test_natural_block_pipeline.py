@@ -108,6 +108,24 @@ class NaturalBlockTests(unittest.TestCase):
             return natural.run(self.c, self.profile, self.c.item, target, self.out, lambda: None)
     def mines(self):
         return [p for op,p in self.c.actions if op == 'mine_block']
+
+    def test_five_registered_surface_blocks_finish_absolute_33_without_bulk_quarry(self):
+        self.reset('minecraft:diorite');self.c.count=28
+        region=self.profile['natural_source_regions'][0];region['single_block_air_approach']=True
+        region['approach_stations']=[{'target':[x,64,100],'station':[x+1.5,63,100.5]}for x in range(100,106)]
+        with patch('material_jobs.local_air_path.move',return_value={'complete':True})as move:
+            first=self.go(target=33);second=self.go(target=33)
+        self.assertEqual('SOURCE_BATCH',first['code']);self.assertEqual('done',second['phase'])
+        self.assertEqual(33,self.c.count);self.assertEqual(5,len(self.mines()));self.assertEqual(5,move.call_count)
+        self.assertEqual(5,len({tuple(r['pos'])for r in self.mines()}))
+        self.assertFalse(any(op=='rock_quarry_batch'for op,_ in self.c.actions))
+
+    def test_invalid_surface_station_does_not_mine(self):
+        self.reset('minecraft:diorite')
+        region=self.profile['natural_source_regions'][0];region['single_block_air_approach']=True
+        region['approach_stations']=[{'target':[100,64,100],'station':[100.9,63,101.1]}]
+        with self.assertRaises(JobBlocked):self.go()
+        self.assertEqual([],self.mines())
     def test_dripstone_uses_plain_mine_not_quarry_and_exact_actual_gain(self):
         result = self.go()
         self.assertEqual(('done', 'absolute_backpack', 1),

@@ -1407,6 +1407,13 @@ class Backend:
             require_unlocked(self.root,current)
             require_scope(current,self.request['context'])
             combined=list(self.profile.get('resource_regions',[]))
+            if item=='minecraft:diorite' and any(r.get('item')==item and r.get('authorized')is True
+                    and r.get('single_block_air_approach')is True for r in self.profile.get('natural_source_regions',[])):
+                # This fresh surface-only intent never re-enters an older
+                # uncertain bulk quarry. Its own sources still use route holds.
+                combined=[r for r in combined if r.get('item')!=item]
+                combined.extend(r for r in self.profile['natural_source_regions']if r.get('item')==item
+                                and r.get('authorized')is True and r.get('single_block_air_approach')is True)
             combined.extend(region for region in known_regions if region not in combined)
             checked_profile={**self.profile,'resource_regions':combined}
             held=held_resource_route(self.root,current['world_session'],item,checked_profile,
@@ -1430,6 +1437,11 @@ class Backend:
                 if not isinstance(protected,list) or not protected or any(_box(box) is None for box in protected):
                     return {'phase':'blocked','detail':'表层土方采集需要先登记有效的建造保护区域'}
             from material_jobs.equipment import prepare
+            if item=='minecraft:diorite' and any(r.get('item')==item and r.get('authorized')is True
+                    and r.get('single_block_air_approach')is True for r in self.profile.get('natural_source_regions',[])):
+                from material_jobs.natural_block_pipeline import run as targeted_natural
+                c.natural_backend=self
+                return targeted_natural(c,self.profile,item,count,out,self.checkpoint)
             if item in ROCK_SOURCES:
                 from material_jobs.quarry_workspace import run as prepare_quarry_workspace
                 workspace=prepare_quarry_workspace(self)

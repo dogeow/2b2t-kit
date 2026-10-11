@@ -398,6 +398,18 @@ class QuarryExitTest(unittest.TestCase):
         self.client.pos=[100.5,10,100.5]
         self.assertFalse(leave_quarry(self.client,self.directory));self.assertFalse(self.client.calls)
 
+    def test_attempted_open_entry_can_exit_using_fresh_air_without_clearing_old_receipt(self):
+        region={'source':'natural_survey','min':[0,8,0],'max':[5,14,5],
+                'surface_y':14,'open_entry':{'min':[0,15,0],'max':[1,16,1]}}
+        self.ledger['resource_regions']=[region]
+        self.ledger['visited']={'unknown':{'state':'inflight','min':[0,8,0],'max':[5,14,5]}}
+        self.save();raw=self.path.read_bytes()
+        candidates=quarry_exit_candidates(self.directory,'w',[4.5,10,1.5])
+        self.assertEqual(1,len(candidates));self.assertEqual(0,candidates[0]['clearance_credit'])
+        self.assertEqual(region['open_entry'],candidates[0]['original_open_entry'])
+        self.assertTrue(leave_quarry(self.client,self.directory))
+        self.assertEqual(raw,self.path.read_bytes())
+
     def test_incomplete_scan_cannot_be_interpreted_as_air(self):
         self.client.scan_phase='error'
         with self.assertRaisesRegex(JobBlocked,'尚未完整确认'):leave_quarry(self.client,self.directory)

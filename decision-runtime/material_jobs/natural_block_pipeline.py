@@ -18,7 +18,7 @@ from .acquisition import NATURAL, FALLING
 from .colored_sources import _name, _point, _protected, _safe
 from .protocol import JobBlocked, JobPaused
 
-OUTPUTS = frozenset(('minecraft:dripstone_block', 'minecraft:mushroom_stem'))
+OUTPUTS = frozenset(('minecraft:dripstone_block', 'minecraft:mushroom_stem','minecraft:diorite'))
 TARGET_SCOPE = 'absolute_backpack'
 CAPS = {'minecraft:red_mushroom_block', 'minecraft:brown_mushroom_block'}
 SOIL = {'minecraft:dirt', 'minecraft:grass_block', 'minecraft:podzol', 'minecraft:mycelium'}
@@ -185,7 +185,21 @@ def run(c, profile, item, target_count, out, checkpoint):
             write_json(path, book)
             backend.prepare_travel()
             try:
-                face = approach_faces(c, pos, target['state'], ('up', 'north', 'south', 'west', 'east'), seconds=45)
+                if region.get('single_block_air_approach') is True:
+                    stations=region.get('approach_stations')or[]
+                    offered=next((r.get('station')for r in stations if r.get('target')==pos),None)
+                    if (not isinstance(offered,list)or len(offered)!=3
+                            or any(type(v)not in(int,float)or not math.isfinite(v)for v in offered)
+                            or offered[1]!=pos[1]-1
+                            or (offered[0]-(pos[0]+.5),offered[2]-(pos[2]+.5))not in
+                                {(1,0),(-1,0),(0,1),(0,-1)}):
+                        raise JobBlocked('单块采集站位不是登记的相邻空气格')
+                    from .local_air_path import move
+                    step=out/('approach-'+str(len(book['receipts'])));step.mkdir(exist_ok=True)
+                    move(c,offered,step)
+                    face='east'if offered[0]>pos[0]+.5 else'west'if offered[0]<pos[0]+.5 else'south'if offered[2]>pos[2]+.5 else'north'
+                else:
+                    face = approach_faces(c, pos, target['state'], ('up', 'north', 'south', 'west', 'east'), seconds=45)
             except ApproachUnavailable:
                 book['pending'] = None; write_json(path, book)
                 continue

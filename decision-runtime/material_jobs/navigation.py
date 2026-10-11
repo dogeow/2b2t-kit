@@ -32,6 +32,19 @@ def quarry_exit_candidates(directory, world, position):
         clear=[entry for key,entry in visited.items() if key.startswith('access-')
                and entry.get('state')=='clear_verified' and _bounds(entry)]
         for region in ledger.get('resource_regions',[]):
+            opened=_bounds(region.get('open_entry'));box=_bounds(region)
+            if box and opened and region.get('source')=='natural_survey' and not region.get('access_shaft'):
+                low,high=box;sl,sh=opened;surface=high[1]
+                if (sh[0]-sl[0]==1 and sh[2]-sl[2]==1 and sl[1]==surface+1 and sh[1]==surface+2
+                        and all(low[i]<=sl[i]<=sh[i]<=high[i]for i in(0,2))
+                        and all(low[i]-1<=position[i]<=high[i]+2 for i in(0,2))
+                        and low[1]-2<=position[1]<surface+3
+                        and any(_bounds(e)and e.get('state')in('inflight','progress','done','clear_verified')
+                                and all(low[i]<=e['min'][i]<=e['max'][i]<=high[i]for i in range(3))
+                                for e in visited.values())):
+                    shaft={'min':[sl[0],low[1],sl[2]],'max':[sh[0],surface,sh[2]]}
+                    found.append({'min':low,'max':high,'shaft':shaft,'surface_y':surface,
+                                  'ledger':str(path),'original_open_entry':region['open_entry'],'clearance_credit':0})
             box,shaft=_bounds(region),_bounds(region.get('access_shaft'))
             surface=region.get('surface_y')
             if not box or not shaft or region.get('source')!='natural_survey' or type(surface) is not int:continue
