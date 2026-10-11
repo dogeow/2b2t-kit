@@ -495,8 +495,15 @@ class FlatMapBackend(Backend):
 
     def projection_loading_target(self, client, selection):
         low, high = selection['min'], selection['max']
-        return [(low[0]+high[0]+1)/2, max(client.status()['pos'][1],high[1]+24),
-                (low[2]+high[2]+1)/2]
+        center=[(low[0]+high[0]+1)/2,0,(low[2]+high[2]+1)/2]
+        here=client.status()['pos'];cruise=max(here[1],high[1]+24)
+        remote=getattr(self,'profile',{}).get('remote_map_loading_cruise_y')
+        if remote is not None:
+            if type(remote)not in(int,float)or not math.isfinite(remote)or not high[1]+24<=remote<=250:
+                raise JobBlocked('远资源区返图巡航高度登记无效，未移动')
+            if math.hypot(center[0]-here[0],center[2]-here[2])>256:cruise=max(cruise,remote)
+        center[1]=cruise
+        return center
 
     def travel_to_projection(self, client, center, projection_key, out):
         """Return to the current selection through bounded existing Kit routes.

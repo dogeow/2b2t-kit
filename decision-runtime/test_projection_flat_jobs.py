@@ -24,6 +24,15 @@ ITEM = 'minecraft:stone'
 
 
 class FlatLoadingTest(unittest.TestCase):
+    def test_registered_remote_cruise_keeps_high_trip_out_of_local_window_policy(self):
+        job=FlatMapBackend.__new__(FlatMapBackend);job.profile={'remote_map_loading_cruise_y':160}
+        selected={'min':[0,64,0],'max':[127,64,128]}
+        remote=SimpleNamespace(status=lambda:{'pos':[-400,115,300]})
+        local=SimpleNamespace(status=lambda:{'pos':[64,88,64]})
+        self.assertEqual([64,160,64.5],job.projection_loading_target(remote,selected))
+        self.assertEqual([64,88,64.5],job.projection_loading_target(local,selected))
+        job.profile={'remote_map_loading_cruise_y':True}
+        with self.assertRaises(JobBlocked):job.projection_loading_target(remote,selected)
     def test_native_unloaded_error_waits_for_same_selected_model(self):
         with tempfile.TemporaryDirectory()as d:
             job=FlatMapBackend.__new__(FlatMapBackend);job.out=Path(d);job.busy=False
