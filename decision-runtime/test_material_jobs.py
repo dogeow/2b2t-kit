@@ -1143,6 +1143,41 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertEqual(6,b.held['minecraft:smooth_stone'])
         self.assertTrue(any(c[0]=='fetch' and c[1].get('minecraft:coal')==1 for c in b.calls))
 
+    def test_new_fuel_dependency_precedes_old_projection_finished_output_requirement(self):
+        stone='minecraft:stone';coal='minecraft:coal'
+        b=FakeBackend(self.catalog,held={stone:2,'minecraft:cobblestone':4},
+                      depot={coal:1},projection={stone:6})
+        b.has_ready_projection_output=lambda snapshot:b.held[stone]>0
+        original_build=b.build;original_smelt=b.smelt
+        def build(key):
+            result=original_build(key)
+            return {**result,'requirements':{stone:b.projection[stone]}if b.projection[stone]else{}}
+        def smelt(recipe,target):
+            if not b.held[coal]:
+                b.calls.append(('needs_fuel',recipe['output'],target))
+                return {'phase':'waiting','requirements':{coal:1}}
+            return original_smelt(recipe,target)
+        b.build=build;b.smelt=smelt
+        result=self.job(b,self.request(projection=True)).run()
+        self.assertEqual('completed',result['state'],result)
+        self.assertEqual(6,b.matched)
+        self.assertEqual(1,len([c for c in b.calls if c[0]=='needs_fuel']))
+        coal_fetch=next(n for n,c in enumerate(b.calls)if c[0]=='fetch'and c[1].get(coal))
+        retry=next(n for n,c in enumerate(b.calls)if c[0]=='smelt')
+        self.assertLess(coal_fetch,retry)
+
+    def test_missing_fuel_does_not_bypass_pending_owned_processing(self):
+        coal='minecraft:coal';b=FakeBackend(self.catalog,held={'minecraft:cobblestone':4},depot={coal:1})
+        def pending(recipe,target):
+            b.pending=(recipe['output'],4)
+            b.calls.append(('pending_smelt',recipe['output'],target))
+            return {'phase':'waiting','requirements':{coal:1},'pending':True}
+        b.smelt=pending
+        result=self.job(b,self.request('stone',4)).run()
+        self.assertEqual('blocked',result['state'],result)
+        self.assertFalse([c for c in b.calls if c[0]=='fetch'and c[1].get(coal)])
+        self.assertEqual(1,len([c for c in b.calls if c[0]=='pending_smelt']))
+
     def test_iron_is_acquired_as_raw_iron_then_actually_smelted(self):
         self.add_recipes();b=FakeBackend(self.catalog)
         result=self.job(b,self.request('iron_ingot',16)).run()

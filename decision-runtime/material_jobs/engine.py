@@ -595,7 +595,11 @@ class MaterialJob:
             requirements = dict(quantities(receipt['requirements']))
             if len(requirements) > 32:
                 raise JobBlocked('加工前置材料数量异常')
-            self.prerequisites.update(requirements)
+            # A processing dependency must precede the older output request
+            # that led to it (for example build -> stone -> missing coal).
+            # Appending coal after stone repeatedly retries the unfueled smelt.
+            self.prerequisites = {**requirements, **{item:count for item,count in self.prerequisites.items()
+                                                     if item not in requirements}}
             self._write(requirements=self.prerequisites)
         self._observe()
         if operation == 'run_pipeline' and receipt['phase'] == 'done':

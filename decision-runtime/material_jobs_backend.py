@@ -411,7 +411,10 @@ class Backend:
 
     def local_recipe_target(self,item,count):
         from local_rock_recipe import offer
-        return offer(self,item,count)
+        local=offer(self,item,count)
+        if local is not None:return local
+        from projection_smelting_batch import offer as carried_smelting
+        return carried_smelting(self,item,count)
 
     def ensure_client(self):
         if self.client is not None:
