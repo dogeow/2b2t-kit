@@ -6,6 +6,7 @@ window retains its journal until native ACK, physical cells and stock agree.
 """
 import json
 import math
+from collections import Counter
 from pathlib import Path
 import time
 
@@ -275,10 +276,15 @@ class FlatMapBackend(Backend):
         rows = snapshot.get('inventory', [])
         if len(rows) != 43 or {r.get('slot') for r in rows} != set(range(43)):
             return False
-        usable = {r['item'] for r in rows if set(r) == {'slot','item','count','max_stack'}
-                  and r['slot'] < 36 and type(r['count']) is int
-                  and type(r['max_stack']) is int and 2 < r['count'] <= r['max_stack']}
+        usable=Counter()
+        for r in rows:
+            if (set(r)=={'slot','item','count','max_stack'}and r['slot']<36 and type(r['count'])is int
+                    and type(r['max_stack'])is int and 2<r['count']<=r['max_stack']):usable[r['item']]+=r['count']
+        minimum=getattr(self,'profile',{}).get('minimum_projection_trip_stack',3)
+        if type(minimum)is not int or not 3<=minimum<=64:
+            raise JobBlocked('地图材料单次返图数量登记无效')
         excluded = policy(self.request['flat_map'])['excluded_positions']
+        needed={}
         for row in audit.get('mismatches', []):
             item, _ = block_state(row.get('expected', ''))
             if item not in usable:
@@ -291,8 +297,8 @@ class FlatMapBackend(Backend):
                     and (not plain_mushroom_stem(row['expected'],item)
                          or snapshot.get('projection_mushroom_stem_seed_protocol')==1)
                     and full_block(row['expected'], item)):
-                return True
-        return False
+                needed[item]=needed.get(item,0)+1
+        return any(usable[item]>=min(minimum,count+2)for item,count in needed.items())
 
     def _safe_flat(self, client, layout):
         self.checkpoint()

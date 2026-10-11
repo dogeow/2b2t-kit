@@ -457,6 +457,19 @@ class SimulatedFlatBackend(FakeBackend):
 
 
 class FlatIntegrationTests(unittest.TestCase):
+    def test_registered_whole_trip_uses_stack_or_exact_tail_before_returning(self):
+        m=model(100,1);layout=layout_for(m);backend=FlatMapBackend.__new__(FlatMapBackend)
+        backend.profile={'minimum_projection_trip_stack':64}
+        backend.request={'projection_key':'ship','flat_map':{**CONFIG,'content_hash':m['content_hash']}}
+        s=state(7);s['projection_audit']=audit(layout,{})
+        self.assertFalse(backend.has_ready_projection_output(s))
+        s['inventory'][5]['count']=64;self.assertTrue(backend.has_ready_projection_output(s))
+        s['inventory'][5]['count']=32;s['inventory'][6]={'slot':6,'item':ITEM,'count':32,'max_stack':64}
+        self.assertTrue(backend.has_ready_projection_output(s))
+        m=model(5,1);layout=layout_for(m);backend.request['flat_map']['content_hash']=m['content_hash']
+        s=state(7);s['projection_audit']=audit(layout,{})
+        self.assertTrue(backend.has_ready_projection_output(s))
+
     def test_small_plain_carried_output_is_ready_without_supplying_a_full_batch(self):
         m=model(3,1); layout=layout_for(m)
         backend=FlatMapBackend.__new__(FlatMapBackend)
