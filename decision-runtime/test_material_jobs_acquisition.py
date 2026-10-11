@@ -97,6 +97,33 @@ class AcquisitionTest(unittest.TestCase):
             self.assertGreaterEqual(choose.call_count,2)
             self.assertTrue(all(call.args[-1]==entry for call in choose.call_args_list))
 
+    def test_rectangle_reaches_remaining_vein_from_original_entry_after_partial_square(self):
+        rows=[]
+        for x in range(-3,9):
+            for z in range(-3,9):
+                for y in range(-1,21):
+                    name='tuff'if x in (0,1)and z in (2,3)and 1<=y<=18 else'stone'
+                    row=block((x,y,z),name)
+                    if 2<=x<=5 and 0<=z<=3 and 9<=y<=18:
+                        row=block((x,y,z),'air');row.update(solid=False,passable=True)
+                    rows.append(row)
+        entry={'min':[4,19,2],'max':[5,20,3]}
+        choice=rock_choice(rows,[0,1,0],[5,18,5],'minecraft:tuff',[5,20,3],entry,max_remaining=180)
+        self.assertEqual(([0,1,2],[5,18,3],72,136),
+                         (choice['min'],choice['max'],choice['available'],choice['remaining']))
+        self.assertTrue(all(choice['min'][i]<=entry['min'][i]<=entry['max'][i]<=choice['max'][i]
+                            for i in(0,2)))
+
+    def test_narrow_registered_rectangle_and_hazard_checks_remain_supported(self):
+        rows=[block((x,y,z),'tuff')for x in range(-3,9)for z in range(-3,5)for y in range(-1,21)]
+        entry={'min':[4,19,0],'max':[5,20,1]}
+        choice=rock_choice(rows,[0,1,0],[5,18,1],'minecraft:tuff',[5,20,1],entry,max_remaining=180)
+        self.assertEqual(144,choice['available'])
+        self.assertEqual([2,1,0],choice['min']);self.assertEqual([5,18,1],choice['max'])
+        for row in rows:
+            if row['pos']==[4,18,0]:row.update(fluid=True,state='Block{minecraft:lava}')
+        self.assertIsNone(rock_choice(rows,[0,1,0],[5,18,1],'minecraft:tuff',[5,20,1],entry,max_remaining=180))
+
     def test_open_side_entry_never_becomes_the_box_centre_or_clears_a_cap(self):
         from material_jobs.acquisition import _open_entry_centre,_route_region_key
         region={'min':[0,25,0],'max':[5,35,5],'source':'natural_survey',

@@ -1017,25 +1017,30 @@ def rock_choice(rows, low, high, item, player, required_entry=None, max_remainin
     if type(max_remaining)is not int or not 8<=max_remaining<=648:
         raise ValueError('Bounded observed rock workload required')
     best = None
-    widths = sorted({min(6, high[0]-low[0]+1, high[2]-low[2]+1), 4, 2}, reverse=True)
+    widths = sorted({min(6, high[0]-low[0]+1), 4, 2}, reverse=True)
+    lengths = sorted({min(6, high[2]-low[2]+1), 4, 2}, reverse=True)
+    # A narrow rectangle can connect the same entrance to the remaining vein
+    # after part of a square quarry has been excavated, within the same budget.
     for width in widths:
-        if width > min(high[0]-low[0]+1, high[2]-low[2]+1):continue
-        for depth in sorted({min(18, high[1]-low[1]+1), 10, 6, 2}, reverse=True):
-            if not 2 <= depth <= high[1]-low[1]+1:continue
-            bottom = high[1]-depth+1
-            for x in range(low[0], high[0]-width+2):
-                for z in range(low[2], high[2]-width+2):
-                    lo, hi = [x, bottom, z], [x+width-1, high[1], z+width-1]
-                    if required_entry and not all(lo[i] <= required_entry['min'][i] <= required_entry['max'][i] <= hi[i] for i in (0, 2)):continue
-                    observed = _rock_observation(rows, lo, hi, item)
-                    if observed is None:continue
-                    available = observed['available']
-                    if not available:continue
-                    remaining = observed['remaining']
-                    if remaining>max_remaining:continue
-                    score = (available, -math.hypot(x+width/2-player[0], z+width/2-player[2]))
-                    if best is None or score > best[0]:
-                        best = (score, {'min': lo, 'max': hi, 'available': available, 'remaining': remaining})
+        if not 2 <= width <= high[0]-low[0]+1:continue
+        for length in lengths:
+            if not 2 <= length <= high[2]-low[2]+1:continue
+            for depth in sorted({min(18, high[1]-low[1]+1), 10, 6, 2}, reverse=True):
+                if not 2 <= depth <= high[1]-low[1]+1:continue
+                bottom = high[1]-depth+1
+                for x in range(low[0], high[0]-width+2):
+                    for z in range(low[2], high[2]-length+2):
+                        lo, hi = [x, bottom, z], [x+width-1, high[1], z+length-1]
+                        if required_entry and not all(lo[i] <= required_entry['min'][i] <= required_entry['max'][i] <= hi[i] for i in (0, 2)):continue
+                        observed = _rock_observation(rows, lo, hi, item)
+                        if observed is None:continue
+                        available = observed['available']
+                        if not available:continue
+                        remaining = observed['remaining']
+                        if remaining>max_remaining:continue
+                        score = (available, -remaining, -math.hypot(x+width/2-player[0], z+length/2-player[2]))
+                        if best is None or score > best[0]:
+                            best = (score, {'min': lo, 'max': hi, 'available': available, 'remaining': remaining})
     return best[1] if best else None
 
 
