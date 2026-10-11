@@ -21,6 +21,19 @@ from projection_completion import block_state
 from projection_flat_cache import FlatMaterialLedger
 
 
+def printer_sent_nothing(reply, client):
+    """A terminal native interval with no proposal is distinct from unknown ACK."""
+    pp=reply.get('professional_printer')or{}
+    return (reply.get('phase')=='waiting' and reply.get('op')=='professional_print'
+            and reply.get('detail')=='printer interval ended without complete current bounded-mask server confirmation'
+            and reply.get('world_session')==client.world and reply.get('control_revision')==client.rev
+            and reply.get('id')==client.last and bool(client.last)
+            and isinstance(pp,dict) and pp.get('last_proposal')=={} and pp.get('failure')==''
+            and all(type(pp.get(k))is int and pp[k]==0 for k in
+                    ('server_confirmed','fast_proposals','complex_proposals','travel_pending'))
+            and all(pp.get(k)is False for k in ('owned','enabled','waiting_for_server')))
+
+
 def scene(layout, reply, low, high, world, revision):
     """Accept a complete bounded native scan, including explicit light rules."""
     volume = math.prod(b - a + 1 for a, b in zip(low, high))
@@ -88,6 +101,22 @@ def accept_window(plan, before, after, stock_before, stock_after, receipt, expec
 
 class FlatMapBackend(Backend):
     PROJECTION_LOADING_RADIUS=48
+
+    def _release_no_effect_print(self,client,layout,plan,directory,journal,reply,before,stock_before):
+        if plan['operation']!='print' or not printer_sent_nothing(reply,client):return False
+        state=self._safe_flat(client,layout)
+        after,_,_=self._scan_flat(client,layout,plan,directory,'no-effect')
+        if (after!=before or inventory_counts(state).get(plan['item'],0)!=stock_before
+                or inventory_counts(self._safe_flat(client,layout)).get(plan['item'],0)!=stock_before):
+            raise JobBlocked('零提案打印的现场或物资已变化；保留原窗口')
+        cleared=client.checked('projection_batch_clear',placement_key=layout.key)
+        write_json(directory/'no-effect-clear-receipt.json',cleared)
+        if cleared.get('projection_batch',{}).get('active')is not False:
+            raise JobBlocked('零提案打印掩码未清除；保留原窗口')
+        journal.update(pending=None,no_effect_verified=True,placement_credit=0,
+                       inventory_before=stock_before,inventory_after=stock_before)
+        write_json(directory/'flat-window.json',journal)
+        return True
 
     def refresh_audit(self):
         """Wait for the entire server map at the already verified loading pose."""
@@ -428,6 +457,8 @@ class FlatMapBackend(Backend):
         write_json(directory / 'native-receipt.json', reply)
         # Confirm settled native output before any new inventory read or cleanup.
         if reply.get('phase') != 'done':
+            if self._release_no_effect_print(client,layout,plan,directory,journal,reply,before,stock_before):
+                raise JobBlocked('打印器未发出放置提案；已核验零消耗并清除本窗口，正常高空收尾')
             raise JobBlocked('地图画原生窗口未结束；保留回执，不重放')
         if plan['operation'] == 'print':
             pp = reply.get('professional_printer', {})
@@ -566,6 +597,11 @@ class FlatMapBackend(Backend):
         for path in self.out.glob('*-build/window-*/flat-window.json'):
             record = json.loads(path.read_text())
             if record.get('pending') is None and record.get('complete') is True:
+                continue
+            if (record.get('pending')is None and record.get('no_effect_verified')is True
+                    and record.get('placement_credit')==0
+                    and type(record.get('inventory_before'))is int
+                    and record['inventory_before']==record.get('inventory_after')):
                 continue
             # A stopped preflight has consumed nothing. Its journal remains
             # unresolved, but it must not prevent ordinary healthy parking.

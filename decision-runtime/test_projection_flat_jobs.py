@@ -13,7 +13,7 @@ import zipfile
 
 from material_jobs import MaterialJob
 from material_jobs.protocol import JobBlocked
-from projection_flat_backend import FlatMapBackend, accept_window, scene
+from projection_flat_backend import FlatMapBackend, accept_window, scene, printer_sent_nothing
 from projection_flat_jobs_cli import main
 from projection_flat_plan import FlatLayout, next_batch
 from projection_material_plan import ProcessingCatalog
@@ -243,6 +243,51 @@ class FlatPlanningTests(unittest.TestCase):
 
 
 class FlatReceiptTests(unittest.TestCase):
+    def no_effect_fixture(self):
+        client=SimpleNamespace(world='world',rev=7,last='request',checked=Mock(return_value={'projection_batch':{'active':False}}))
+        reply={'phase':'waiting','op':'professional_print','id':'request','world_session':'world','control_revision':7,
+            'detail':'printer interval ended without complete current bounded-mask server confirmation',
+            'professional_printer':{'server_confirmed':0,'fast_proposals':0,'complex_proposals':0,'travel_pending':0,
+                'last_proposal':{},'failure':'','owned':False,'enabled':False,'waiting_for_server':False}}
+        return client,reply
+
+    def test_only_exact_owned_zero_proposal_receipt_is_no_effect_candidate(self):
+        client,reply=self.no_effect_fixture();self.assertTrue(printer_sent_nothing(reply,client))
+        for key,value in [('phase','running'),('id','foreign'),('world_session','old'),('control_revision',8),('detail','timeout')]:
+            bad=deepcopy(reply);bad[key]=value;self.assertFalse(printer_sent_nothing(bad,client))
+        for key,value in [('server_confirmed',False),('fast_proposals',1),('complex_proposals',1),('travel_pending',1),
+                          ('last_proposal',{'sent_tick':1}),('failure','error'),('owned',True),('enabled',True),('waiting_for_server',True)]:
+            bad=deepcopy(reply);bad['professional_printer'][key]=value
+            self.assertFalse(printer_sent_nothing(bad,client),key)
+
+    def test_no_effect_print_requires_unchanged_scene_and_stock_then_allows_parking(self):
+        client,reply=self.no_effect_fixture()
+        with tempfile.TemporaryDirectory()as tmp:
+            backend=FlatMapBackend.__new__(FlatMapBackend);backend.out=Path(tmp)
+            directory=backend.out/'0001-build/window-0000';directory.mkdir(parents=True)
+            backend._safe_flat=Mock(return_value=state(64));backend._scan_flat=Mock(return_value=({},None,None))
+            journal={'complete':False,'pending':'professional_print'}
+            plan={'operation':'print','item':ITEM}
+            self.assertTrue(backend._release_no_effect_print(client,layout_for(model()),plan,directory,journal,reply,{},64))
+            self.assertEqual(0,journal['placement_credit']);self.assertIsNone(journal['pending'])
+            self.assertFalse(journal['complete']);client.checked.assert_called_once_with('projection_batch_clear',placement_key='ship')
+            with patch('material_jobs_backend.Backend.finish',return_value={'parked':True})as finish:
+                self.assertEqual({'parked':True},backend.finish());finish.assert_called_once()
+
+    def test_changed_no_effect_scene_and_unknown_reply_keep_pending_without_cleanup(self):
+        client,reply=self.no_effect_fixture()
+        with tempfile.TemporaryDirectory()as tmp:
+            backend=FlatMapBackend.__new__(FlatMapBackend)
+            backend._safe_flat=Mock(return_value=state(64))
+            backend._scan_flat=Mock(return_value=({(0,64,0):'Block{minecraft:stone}'},None,None))
+            journal={'complete':False,'pending':'professional_print'};plan={'operation':'print','item':ITEM}
+            with self.assertRaises(JobBlocked):
+                backend._release_no_effect_print(client,layout_for(model()),plan,Path(tmp),journal,reply,{},64)
+            client.checked.assert_not_called();self.assertEqual('professional_print',journal['pending'])
+            reply['professional_printer']['waiting_for_server']=True;backend._safe_flat.reset_mock()
+            self.assertFalse(backend._release_no_effect_print(client,layout_for(model()),plan,Path(tmp),journal,reply,{},64))
+            backend._safe_flat.assert_not_called();client.checked.assert_not_called()
+
     def setUp(self):
         self.layout = layout_for(model(3, 1))
         self.before = {(0, 64, 0): 'Block{minecraft:stone}'}
@@ -475,7 +520,7 @@ class FlatIntegrationTests(unittest.TestCase):
         self.assertEqual('air_seed',first['operation']);self.assertEqual('minecraft:deepslate',first['item'])
         actual={tuple(first['positions'][0]):'Block{minecraft:deepslate}[axis=y]'}
         s['inventory'][5]['count']=63
-        self.assertEqual('print',next_batch(layout,actual,s)['operation'])
+        self.assertEqual('air_seed',next_batch(layout,actual,s)['operation'])
         for props in ('axis=x','axis=z','axis=y,waterlogged=false'):
             altered=deepcopy(m)
             for row in altered['expected']:row['state']='Block{minecraft:deepslate}['+props+']'
