@@ -10,7 +10,7 @@ ALLOWED = {'minecraft:'+name for name in ('wheat_seeds','glass_bottle','mud_bric
            'cobblestone','andesite','granite','diorite')}
 
 
-def run(backend):
+def run(backend,protected_items=()):
     cfg=backend.profile.get('quarry_inventory_staging')or{}
     if cfg.get('authorized')is not True:return {'phase':'done','prepared':False}
     minimum=cfg.get('minimum_empty_slots');reserves=cfg.get('reserves')
@@ -28,7 +28,7 @@ def run(backend):
     free=sum(not r.get('count',0)for r in rows)
     if free>=trigger:return {'phase':'done','prepared':True,'free_slots':free,
                             'staging_not_required':True,'trigger_below_empty_slots':trigger}
-    before=dict(inventory_counts(state));protected=set(backend.request.get('targets',{}))
+    before=dict(inventory_counts(state));protected=set(backend.request.get('targets',{}))|set(protected_items)
     audit=getattr(backend,'audit',None)or{}
     protected.update(i for i,n in (audit.get('replacement_items')or{}).items()if type(n)is int and n>0)
     deposit={i:n for i,n in reserves.items()if i not in protected and before.get(i,0)>n}
@@ -52,7 +52,7 @@ def run(backend):
         free=sum(not r.get('count',0)for r in c.status()['inventory']if 0<=r.get('slot',-1)<36)
         book.update(pending=None,complete=True,after=dict(after),exchange=receipt,free_slots=free)
         write_json(path,book)
-        return {'phase':'done'if free>=minimum else'waiting',
-                'code':'WORKSPACE_READY'if free>=minimum else'WAIT_WORKSPACE',
-                'prepared':free>=minimum,'free_slots':free,'discarded_items':0,
+        return {'phase':'done'if free>=trigger else'waiting',
+                'code':'WORKSPACE_READY'if free>=trigger else'WAIT_WORKSPACE',
+                'prepared':free>=trigger,'free_slots':free,'desired_empty_slots':minimum,'discarded_items':0,
                 'stored':{i:before[i]-after.get(i,0)for i in deposit}}

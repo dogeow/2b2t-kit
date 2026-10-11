@@ -263,6 +263,13 @@ class BackendTest(unittest.TestCase):
         self.assertEqual([source],hold.call_args.args[3]['resource_regions'])
         self.client.request.assert_not_called()
 
+    def test_projection_quarry_resupply_reuses_registered_workspace_and_protects_plan_inputs(self):
+        self.job.request['mode']='projection';self.job.profile={'quarry_inventory_staging':{'authorized':True}}
+        with patch('material_jobs.quarry_workspace.run',return_value={'phase':'done','free_slots':7})as prepare:
+            result=self.job.make_room({'minecraft:tuff':127},['minecraft:coal','minecraft:tuff'])
+        self.assertEqual('done',result['phase'])
+        self.assertEqual({'minecraft:coal','minecraft:tuff'},prepare.call_args.args[1])
+
     def test_coarse_biome_coverage_returns_waiting_for_next_bounded_search(self):
         self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld',
                           'resource_regions':[]}

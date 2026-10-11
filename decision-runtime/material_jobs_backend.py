@@ -1128,6 +1128,12 @@ class Backend:
 
     def make_room(self, targets, keep_items):
         """Deposit only this job's newly acquired mining byproducts, never gear."""
+        from material_jobs.acquisition import ROCK_SOURCES
+        if (getattr(self,'request',{}).get('mode')=='projection'
+                and targets and all(i in ROCK_SOURCES for i in targets)
+                and(getattr(self,'profile',{}).get('quarry_inventory_staging')or{}).get('authorized')is True):
+            from material_jobs.quarry_workspace import run as prepare_quarry_workspace
+            return prepare_quarry_workspace(self,set(keep_items)|set(targets))
         from material_depots import exchange
         safe={'minecraft:'+name for name in ('stone','cobblestone','cobbled_deepslate','deepslate',
             'dirt','coarse_dirt','rooted_dirt','gravel','sand','red_sand','flint','granite','andesite','diorite',

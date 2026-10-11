@@ -334,8 +334,10 @@ class Client:
    destinations=menu['slots'][:boundary] if deposit else menu['slots'][boundary:]
    source=next((v for v in pool if v['item']==item and v['count']),None)
    if source is None:return before
-   destination=next((v for v in destinations if v['count'] and v['item']==item and v['count']<v.get('max_stack',64)),None)
-   if destination is None:destination=next((v for v in destinations if not v['count']),None)
+   # Item IDs alone do not prove component-compatible stacking. A fresh empty
+   # receiving slot cannot turn a partial placement into a cursor exchange.
+   destination=next((v for v in destinations if not v['count']),None)
+   if destination is None:destination=next((v for v in destinations if v['count'] and v['item']==item and v['count']<v.get('max_stack',64)),None)
    if destination is None:raise RuntimeError('Destination has no space for '+item)
    needed=before-target if deposit else target-before
    if source['count']<=needed:

@@ -6,6 +6,20 @@ from unittest.mock import Mock, patch
 from material_client import Client,MaterialClient,high_park_clearance,credit_guard_pause,vertical_surface_escape,pending_request_state,bounded_canopy_path,Handoff
 BUSY='Construction guard is defending or eating; wait before changing items or starting work'
 class Tests(unittest.TestCase):
+ def test_partial_deposit_prefers_empty_slot_over_same_id_component_unknown_stack(self):
+  import copy
+  state={'inventory':[{'slot':0,'item':'minecraft:granite','count':54,'max_stack':64}],
+         'menu':{'id':3,'type':'ChestMenu','cursor':{'item':'minecraft:air','count':0,'max_stack':1},
+                 'slots':[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(90)]}}
+  state['menu']['slots'][15]={'slot':15,'item':'minecraft:granite','count':28,'max_stack':64}
+  state['menu']['slots'][55]={'slot':55,'item':'minecraft:granite','count':54,'max_stack':64}
+  c=Client.__new__(Client);c.status=lambda:copy.deepcopy(state)
+  def move(session,s,source,destination,amount):
+   self.assertEqual(0,destination['slot']);self.assertEqual(24,amount)
+   state['inventory'][0]['count']-=amount;return state
+  with patch('material_storage_index.remember_current'),patch('kit_runtime.storage.move_amount',side_effect=move)as transfer:
+   self.assertEqual(30,c.transfer('minecraft:granite',30,deposit=True))
+  transfer.assert_called_once()
  def test_combat_pause_extends_only_guarded_native_wait_with_a_cap(self):
   deadline,paused=credit_guard_pause(100,0,35,True)
   self.assertEqual((135,35),(deadline,paused))
