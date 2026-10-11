@@ -494,6 +494,34 @@ class MudPipelineTest(unittest.TestCase):
         self.assertFalse(any(op in('interact','bottle_fill','mine_block')for op,_ in self.c.calls))
         book=json.loads((self.root/'job/mud-pipeline.json').read_text());self.assertIsNone(book['pending']);self.assertFalse(book['owned_cell'])
 
+    def test_raw_ingredient_workspace_wait_never_becomes_remote_dirt_acquisition(self):
+        self.sea_source();self.c.add('minecraft:dirt',-4);self.c.add('minecraft:wheat',12)
+        self.c.add('minecraft:gravel',8);self.c.add('minecraft:mud_bricks',2)
+        self.profile['mud_station']['feedstock_item']='minecraft:coarse_dirt'
+        self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'})
+        self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}
+        calls=[]
+        def prepare():
+            calls.append(1)
+            return {'phase':'done'}if len(calls)==1 else {'phase':'waiting','code':'WAIT_WORKSPACE'}
+        self.b.prepare_mud_inventory=prepare
+        result=self.go(target=18)
+        self.assertEqual('WAIT_WORKSPACE',result['code']);self.assertTrue(result['safe_to_leave'])
+        self.assertEqual(2,len(calls))
+        self.assertFalse(any(op=='acquire'for op,_ in self.b.calls))
+        self.assertFalse(any(op in('interact','bottle_fill','mine_block')for op,_ in self.c.calls))
+
+    def test_typed_packed_capacity_wait_is_preserved_without_mining(self):
+        self.sea_source();self.c.add('minecraft:dirt',-4)
+        original=self.b.fetch
+        def fetch(targets):
+            if 'minecraft:dirt'in targets:return {'phase':'waiting','code':'packed_workspace_required','detail':'needs three slots'}
+            return original(targets)
+        self.b.fetch=fetch
+        result=self.go()
+        self.assertEqual('WAIT_WORKSPACE',result['code'])
+        self.assertFalse(any(op=='acquire'for op,_ in self.b.calls))
+
     def test_opt_in_bulk_visit_uses_existing_packed_stock_and_keeps_unknown_mine_unreplayed(self):
         self.sea_source();self.c.add('minecraft:dirt',8);self.c.add('minecraft:wheat',8)
         self.c.add('minecraft:mud_bricks',2);self.c.add('minecraft:packed_mud',4)

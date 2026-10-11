@@ -142,7 +142,7 @@ def run(c,profile,item,target_count,out,checkpoint):
         book['pending'].update(returned_receipt=result,after=dict(inventory_counts(after)));save()
         phase=(result or {}).get('phase')
         known_wait=phase=='waiting' and ((result.get('code','').startswith('WAIT_') and result.get('code')!='WAIT_RECONCILE')
-                                       or result.get('code')=='SOURCE_BATCH'
+                                       or result.get('code')in('SOURCE_BATCH','packed_workspace_required')
                                        or kind=='fetch' and 'missing' in result)
         if phase!='done' and not known_wait:
             raise Wait('WAIT_RECONCILE','Native mud action uncertain; no replay',receipt=result)
@@ -162,6 +162,9 @@ def run(c,profile,item,target_count,out,checkpoint):
         fetched.add((output,target))
         result,_,_=operation('fetch',lambda:backend.fetch({output:target}))
         if result.get('phase') not in ('done','waiting'):raise Wait('WAIT_SOURCE','Depot fetch incomplete')
+        if result.get('code')in('packed_workspace_required','WAIT_WORKSPACE'):
+            raise Wait('WAIT_WORKSPACE',result.get('detail','Ingredient withdrawal needs workspace'),
+                       requirements={output:target})
     def craft(output,target,recipe_id):
         recipe=next((r for r in catalog.recipes[output] if r.id==recipe_id),None)
         if recipe is None:raise JobBlocked('Current game jar lacks '+recipe_id)
@@ -181,6 +184,10 @@ def run(c,profile,item,target_count,out,checkpoint):
         result,_,_=operation('craft',call,valid)
         if result.get('phase')!='done':raise Wait('WAIT_RECONCILE','Craft not finished')
     def require_raw(output,target):
+        if output in('minecraft:dirt','minecraft:gravel') and stock()[output]<target and callable(prepare):
+            ready,_,_=operation('inventory_staging_before_raw_inputs',prepare)
+            if ready.get('phase')!='done':
+                raise Wait(ready.get('code','WAIT_WORKSPACE'),ready.get('detail','Ingredient workspace is unavailable'))
         fetch(output,target)
         if stock()[output]>=target:return
         if output=='minecraft:coarse_dirt':
