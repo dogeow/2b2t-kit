@@ -285,6 +285,8 @@ def clean_for_replan(state, client=None):
 class Backend:
     PROJECTION_LOADING_RADIUS=96
     def __init__(self, request, automation, out, checkpoint):
+        from material_jobs.runtime_update import validate as validate_runtime_update
+        self.runtime_update=validate_runtime_update(request.get('runtime_update'))
         self.request, self.root, self.out = request, Path(automation), Path(out)
         self.checkpoint = checkpoint
         self.client, self.native_gravel_session = None, None
@@ -439,6 +441,8 @@ class Backend:
                                remote_finish='guard', park_target=park)
             self.client = client
             client.registered_direct_air_routes = self.profile.get('direct_registered_resource_routes') is True
+            from material_jobs.runtime_update import ensure as ensure_runtime_update
+            ensure_runtime_update(client,self.root,directory,self.runtime_update)
         except RuntimeError as error:
             if str(error)=='Material session cannot acquire control':
                 current=read_fresh(self.root)
