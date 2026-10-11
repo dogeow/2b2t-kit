@@ -123,17 +123,24 @@ def run(c,profile,item,target_count,out,checkpoint):
         retained=book.get('derived_water_slot');before=state()
         client().checked('select_item',item=item,**({'slot':slot}if slot is not None else {}))
         if retained is None:return
-        rows=state()['inventory'];current=next((r for r in rows if r.get('slot')==retained['slot']),None)
-        if current==retained:return
         old={r['slot']:r for r in before['inventory']}
         payload=lambda r:{k:v for k,v in r.items()if k!='slot'}
-        moved=[r for r in rows if r.get('slot',99)<36 and payload(r)==payload(retained)
-               and payload(old.get(r['slot'],{}))!=payload(retained)]
-        changed=[r['slot']for r in rows if payload(r)!=payload(old.get(r['slot'],{}))]
-        if (len(moved)!=1 or set(changed)!={retained['slot'],moved[0]['slot']}
-                or payload(current or {})!=payload(old[moved[0]['slot']])):
-            raise Wait('WAIT_RECONCILE','Derived water selection swap identity is unproved')
-        book['derived_water_slot']=moved[0];save()
+        until=time.monotonic()+3
+        while True:
+            observed=state();rows=observed['inventory'];current=next((r for r in rows if r.get('slot')==retained['slot']),None)
+            hand=observed.get('hand')or{};selected=observed.get('selected_slot',hand.get('slot'))
+            if (current==retained and hand.get('item')==item
+                    and not(slot==retained['slot'] and slot>=9)
+                    and not(selected==retained['slot'] and item!=retained['item'])):return
+            moved=[r for r in rows if r.get('slot',99)<36 and payload(r)==payload(retained)
+                   and payload(old.get(r['slot'],{}))!=payload(retained)]
+            changed=[r['slot']for r in rows if payload(r)!=payload(old.get(r['slot'],{}))]
+            if (len(moved)==1 and set(changed)=={retained['slot'],moved[0]['slot']}
+                    and payload(current or {})==payload(old[moved[0]['slot']])):
+                book['derived_water_slot']=moved[0];save();return
+            if time.monotonic()>=until:
+                raise Wait('WAIT_RECONCILE','Derived water selection swap identity is unproved')
+            checkpoint();time.sleep(.15) # Observe the original selection; never send it again.
     def operation(kind,fn,validate=None):
         nonlocal actions
         if actions>=action_budget:raise Wait('WAIT_BUDGET','Bounded mud action budget reached')

@@ -327,6 +327,35 @@ class MudPipelineTest(unittest.TestCase):
         self.assertEqual('done',self.go('minecraft:mud',1)['phase'])
         after=len([p for op,p in self.c.calls if op=='interact'and p.get('expected_hand')=='minecraft:glass_bottle'])
         self.assertEqual(before,after)
+
+    def test_water_swap_waits_for_original_two_slot_update_without_reselecting_or_refilling(self):
+        def access(c,pos,expected,faces,**kw):
+            if expected==DIRT:raise RuntimeError('pre-use access stop')
+            return 'up'
+        with patch('work_access.approach_faces',side_effect=access):
+            with self.assertRaises(RuntimeError):
+                run(self.c,self.profile,'minecraft:mud',1,self.root/'job',lambda:None)
+        # Move the proven derived bottle out of the hotbar using its recorded
+        # ordinary swap, then simulate one intermediate native inventory frame.
+        p=self.root/'job/mud-pipeline.json';book=json.loads(p.read_text());water=book['derived_water_slot']
+        src=water['slot'];other=20;self.c.rows[src],self.c.rows[other]=self.c.rows[other],self.c.rows[src]
+        self.c.rows[src]['slot']=src;self.c.rows[other]['slot']=other
+        book['derived_water_slot']=copy.deepcopy(self.c.rows[other]);p.write_text(json.dumps(book))
+        base_checked=self.c.checked;base_status=self.c.status;stale=[]
+        def checked(op,**kw):
+            result=base_checked(op,**kw)
+            if op=='select_item'and kw.get('slot')==other:
+                frame=base_status();frame['inventory'][other]=copy.deepcopy(book['derived_water_slot'])
+                frame['inventory'][src]={'slot':src,'item':'minecraft:air','count':0,'max_stack':64}
+                stale.append(frame)
+            return result
+        self.c.checked=checked;self.c.status=lambda:stale.pop(0)if stale else base_status()
+        before_fills=sum(op=='interact'and kw.get('expected_hand')=='minecraft:glass_bottle'for op,kw in self.c.calls)
+        with patch('material_jobs.mud_pipeline.time.sleep'):
+            result=self.go('minecraft:mud',1)
+        self.assertEqual('done',result['phase'])
+        self.assertEqual(1,sum(op=='select_item'and kw.get('slot')==other for op,kw in self.c.calls))
+        self.assertEqual(before_fills,sum(op=='interact'and kw.get('expected_hand')=='minecraft:glass_bottle'for op,kw in self.c.calls))
     def test_unowned_grass_work_cell_remains_protected(self):
         self.c.blocks[(100,64,100)]=GRASS
         self.assertEqual('WAIT_SOURCE',self.go('minecraft:mud',1)['code'])
