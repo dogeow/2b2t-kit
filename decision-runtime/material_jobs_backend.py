@@ -654,7 +654,9 @@ class Backend:
         c=self.ensure_client()
         from material_jobs.construction_access import recover_pending
         recover_pending(self)
-        leave_quarry(c,self.out/'acquisition')
+        if not leave_quarry(c,self.out/'acquisition'):
+            from material_jobs.registered_quarry_exit import leave as leave_registered_quarry
+            leave_registered_quarry(c,self.profile)
         leave_projection(c)
 
     def stage_near_base(self, positions):
