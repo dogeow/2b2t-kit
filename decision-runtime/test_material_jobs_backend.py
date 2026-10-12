@@ -1768,6 +1768,26 @@ class BackendTest(unittest.TestCase):
         self.assertTrue(travel.call_args.kwargs['keep_cruise'])
         self.client.request.assert_not_called()
 
+    def test_far_existing_authorized_sand_site_loads_before_scan_at_surface_clearance(self):
+        self.current['pos']=[0,90,0]
+        r={'item':'minecraft:sand','min':[200,66,0],'max':[207,69,7],
+           'source':'previous_authorized_sand_site'}
+        self.job.profile={'resource_regions':[r]}
+        with patch('material_jobs.navigation.lift_for_travel',return_value=self.current)as lift, \
+             patch('material_jobs.acquisition._resource_route_scope',return_value=None), \
+             patch('material_jobs.acquisition._travel')as travel:
+            self.job.stage_registered_resource(self.client,'minecraft:sand',self.root)
+        lift.assert_called_once_with(self.client);self.assertEqual([204.,93,4.],travel.call_args.args[1])
+        self.assertTrue(travel.call_args.kwargs['keep_cruise']);self.client.request.assert_not_called()
+
+    def test_near_or_unregistered_sand_source_does_not_create_new_travel(self):
+        for source,low in [('previous_authorized_sand_site',[1,66,1]),('unregistered',[200,66,1])]:
+            self.job.profile={'resource_regions':[{'item':'minecraft:sand','source':source,'min':low,
+                                                    'max':[low[0]+1,69,low[2]+1]}]}
+            with patch('material_jobs.acquisition._travel')as travel,patch('material_jobs.navigation.lift_for_travel')as lift:
+                self.job.stage_registered_resource(self.client,'minecraft:sand',self.root)
+            travel.assert_not_called();lift.assert_not_called()
+
     def test_registered_source_beyond_direct_limit_first_approaches_original_search_origin(self):
         r={'item':'minecraft:diorite','min':[600,55,0],'max':[601,68,1],
            'source':'natural_survey','surface_y':77}

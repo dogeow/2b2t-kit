@@ -1579,12 +1579,13 @@ class Backend:
             return receipt
 
     def stage_registered_resource(self, client, item, out):
-        """Load a registered rock source before asking for its real block scan."""
+        """Load registered rock or sand sources before their real block scan."""
         from material_jobs.acquisition import ROCK_SOURCES,_resource_route_scope,_travel
         from material_jobs.navigation import lift_for_travel
-        if item not in ROCK_SOURCES:return
+        if item not in ROCK_SOURCES and item!='minecraft:sand':return
         regions=[r for r in self.profile.get('resource_regions',[])
-                 if r.get('item')==item and r.get('source')=='natural_survey']
+                 if r.get('item')==item and (r.get('source')=='natural_survey'
+                     or item=='minecraft:sand'and r.get('source')=='previous_authorized_sand_site')]
         if not regions:return
         state=client.status()
         def centre(r):return [(r['min'][i]+r['max'][i]+1)/2 for i in range(3)]
@@ -1600,7 +1601,8 @@ class Backend:
             state=client.status()
             if math.hypot(point[0]-state['pos'][0],point[2]-state['pos'][2])<=64:return
         state=lift_for_travel(client)
-        point[1]=min(315,max(145,state['pos'][1],region.get('surface_y',region['max'][1])+24))
+        floor=145 if item in ROCK_SOURCES else region['max'][1]+24
+        point[1]=min(315,max(floor,state['pos'][1],region.get('surface_y',region['max'][1])+24))
         trace=[]
         try:
             _travel(client,point,self.checkpoint,trace,keep_cruise=True,
