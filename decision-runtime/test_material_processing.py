@@ -246,6 +246,8 @@ class ProcessingTest(unittest.TestCase):
             result=processing.harden(c,'minecraft:white_concrete',16,self.profile,self.root/'harden',self.checkpoint)
         self.assertEqual('waiting',result['phase'],result)
         self.assertEqual({'minecraft:cobblestone':1},result['requirements'])
+        self.assertEqual('WAIT_WORKSPACE_INPUT',result['code']);self.assertTrue(result['safe_to_leave'])
+        self.assertIs(result['hardening_started'],False)
         enter.assert_not_called();convert.assert_not_called()
         self.assertEqual([],json.loads((self.root/'harden/hardening.json').read_text())['batches'])
 

@@ -223,6 +223,14 @@ def run(c, profile, item, target_count, out, checkpoint, *, acquire=None, craft=
             fn = (lambda:backend.harden(output,target)) if backend is not None else lambda:_process("harden",client(),output,target,profile,out/("harden-"+output.split(":")[-1]),checkpoint)
             result = action("harden",output,target,fn,
                             ingredient_totals={output+"_powder":1})
+            if (result.get('phase')=='waiting' and result.get('code')=='WAIT_WORKSPACE_INPUT'
+                    and result.get('safe_to_leave')is True and result.get('hardening_started')is False
+                    and result.get('requirements')=={'minecraft:cobblestone':1}):
+                # This pre-entry refusal dispatched no solidification. Its
+                # one recorded closure input belongs to this same dependency
+                # walk, rather than an unknown action or a new controller.
+                ensure('minecraft:cobblestone',1,ancestors+(output,))
+                result=action('harden',output,target,fn,ingredient_totals={output+'_powder':1})
             if result.get("phase") != "done":
                 raise Pending(result)
             return

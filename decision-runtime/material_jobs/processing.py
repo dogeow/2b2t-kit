@@ -339,7 +339,10 @@ def harden(c, item, target_count, profile, out, checkpoint):
                 leave()
                 return {'phase':'waiting','detail':'先取得本批混凝土粉末','requirements':{powder:amount},'journal':str(path)}
             if shelter_path and not entered and choose_hatch_item(client.status()) is None:
+                outside=job.get('shelter',{}).get('phase')in(None,'outside')
                 return {'phase':'waiting','detail':'固化工位需要一块临时封口材料，先自动补料',
+                        'code':'WAIT_WORKSPACE_INPUT' if outside else 'WAIT_RECONCILE',
+                        'safe_to_leave':outside,'hardening_started':False,
                         'requirements':{'minecraft:cobblestone':1},'journal':str(path)}
             enter()
             before = stocks(client.status())

@@ -571,6 +571,37 @@ class FlatIntegrationTests(unittest.TestCase):
             else:s['projection_audit']['loaded_server_chunks_verified']=False
             self.assertFalse(backend.has_ready_projection_output(s),change)
 
+    def test_exact_tail_split_between_40_and_2_stacks_builds_before_other_materials(self):
+        m=model(42,1);layout=layout_for(m);backend=FlatMapBackend.__new__(FlatMapBackend)
+        backend.profile={'minimum_projection_trip_stack':64}
+        backend.request={'projection_key':'ship','flat_map':{**CONFIG,'content_hash':m['content_hash']}}
+        s=state(40);s['inventory'][6]={'slot':6,'item':ITEM,'count':2,'max_stack':64};s['projection_audit']=audit(layout,{})
+        self.assertTrue(backend.has_ready_projection_output(s))
+        self.assertEqual('ready',next_batch(layout,{},s)['phase'])
+        protected=deepcopy(s);protected['inventory'][6]['custom_name']='keep'
+        self.assertFalse(backend.has_ready_projection_output(protected))
+        # The remaining two are still reserved. Visiting the builder is a
+        # planning offer, never permission to spend that protected reserve.
+        actual={p:layout.expected[p]['state']for p in list(layout.expected)[:40]}
+        tail=state(2);tail['projection_audit']=audit(layout,actual)
+        self.assertTrue(backend.has_ready_projection_output(tail))
+        remaining=next_batch(layout,actual,tail)
+        self.assertEqual('waiting',remaining['phase']);self.assertEqual({ITEM:4},remaining['requirements'])
+
+    def test_two_reserved_fragments_merge_in_inventory_before_new_supply(self):
+        m=model(2,1);layout=layout_for(m);backend=FlatMapBackend.__new__(FlatMapBackend)
+        s=state(2);s['inventory'][6]={'slot':6,'item':ITEM,'count':2,'max_stack':64}
+        plan=next_batch(layout,{},s);self.assertEqual('waiting',plan['phase'])
+        self.assertEqual({ITEM:6},plan['requirements'])
+        with patch('material_stack_consolidation.run_inventory',return_value={'phase':'done','inventory_credit':0})as merge:
+            self.assertTrue(backend.consolidate_waiting_stock(plan,s));self.assertEqual(ITEM,merge.call_args.args[1])
+        protected=deepcopy(s);protected['inventory'][6]['custom_name']='keep'
+        with patch('material_stack_consolidation.run_inventory')as merge:
+            self.assertFalse(backend.consolidate_waiting_stock(plan,protected));merge.assert_not_called()
+        s['inventory'][5]['count']=1;s['inventory'][6]['count']=1
+        with patch('material_stack_consolidation.run_inventory')as merge:
+            self.assertFalse(backend.consolidate_waiting_stock(plan,s));merge.assert_not_called()
+
     def test_scheduler_builds_ready_carried_output_before_advice_or_fetch(self):
         with tempfile.TemporaryDirectory() as tmp:
             request={'schema':1,'id':'carried-first','mode':'projection','targets':{},'projection_key':'ship','created_at':1000,

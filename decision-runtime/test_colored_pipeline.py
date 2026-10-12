@@ -93,6 +93,36 @@ class Backend:
 
 
 class ColoredPipelineTest(unittest.TestCase):
+    def test_pre_entry_hatch_refusal_fetches_one_known_input_on_the_same_controller(self):
+        c=Client({'minecraft:black_concrete_powder':4})
+        class HatchBackend(Backend):
+            def harden(self,item,target):
+                if not self.client.stock['minecraft:cobblestone']:
+                    self.calls.append(('hatch_refused',item,target))
+                    return {'phase':'waiting','code':'WAIT_WORKSPACE_INPUT','safe_to_leave':True,
+                            'hardening_started':False,'requirements':{'minecraft:cobblestone':1}}
+                return super().harden(item,target)
+            def fetch(self,targets):
+                if targets=={'minecraft:cobblestone':1}:
+                    self.calls.append(('fetch',dict(targets)));self.client.stock['minecraft:cobblestone']=1
+                    return {'phase':'done'}
+                return super().fetch(targets)
+        b=HatchBackend(c,self.jar);result=self.execute(c,'minecraft:black_concrete',4)
+        self.assertEqual('done',result['phase']);self.assertEqual(4,c.stock['minecraft:black_concrete'])
+        self.assertEqual(1,b.calls.count(('fetch',{'minecraft:cobblestone':1})))
+        self.assertEqual(1,b.calls.count(('harden','minecraft:black_concrete',4)))
+        book=json.loads((self.root/'job/colored-pipeline.json').read_text());self.assertIsNone(book['inflight'])
+    def test_unknown_hardening_wait_cannot_become_a_workspace_fetch_or_replay(self):
+        c=Client({'minecraft:black_concrete_powder':4});b=Backend(c,self.jar)
+        def unknown(item,target):
+            b.calls.append(('unknown_harden',item,target))
+            return {'phase':'waiting','code':'WAIT_RECONCILE','safe_to_leave':True,
+                    'hardening_started':False,'requirements':{'minecraft:cobblestone':1}}
+        b.harden=unknown;first=self.execute(c,'minecraft:black_concrete',4)
+        second=self.execute(c,'minecraft:black_concrete',4)
+        self.assertEqual('WAIT_RECONCILE',first['code']);self.assertEqual('WAIT_RECONCILE',second['code'])
+        self.assertEqual(1,b.calls.count(('unknown_harden','minecraft:black_concrete',4)))
+        self.assertNotIn(('fetch',{'minecraft:cobblestone':1}),b.calls)
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name); self.jar=self.root/"recipes.jar"; fixture(self.jar)

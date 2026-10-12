@@ -308,7 +308,7 @@ class FlatMapBackend(Backend):
         usable=Counter()
         for r in rows:
             if (set(r)=={'slot','item','count','max_stack'}and r['slot']<36 and type(r['count'])is int
-                    and type(r['max_stack'])is int and 2<r['count']<=r['max_stack']):usable[r['item']]+=r['count']
+                    and type(r['max_stack'])is int and 0<r['count']<=r['max_stack']):usable[r['item']]+=r['count']
         minimum=getattr(self,'profile',{}).get('minimum_projection_trip_stack',3)
         if type(minimum)is not int or not 3<=minimum<=64:
             raise JobBlocked('地图材料单次返图数量登记无效')
@@ -329,7 +329,27 @@ class FlatMapBackend(Backend):
                          or snapshot.get('projection_air_seed_axis_protocol')==1)
                     and full_block(row['expected'], item)):
                 needed[item]=needed.get(item,0)+1
-        return any(usable[item]>=min(minimum,count+2)for item,count in needed.items())
+        # Trip size is a batching preference, not an extra final-map demand.
+        # Count plain stacks together; next_batch/plan_stock retain the two
+        # protected items and report their exact top-up before spending them.
+        return any(usable[item]>=min(minimum,count)for item,count in needed.items())
+
+    def consolidate_waiting_stock(self, plan, state):
+        """Combine plain fragments before buying material solely for per-stack reserves."""
+        if plan.get('phase')!='waiting' or plan.get('operation')!='supply':return False
+        item=plan.get('item');load=plan.get('load_plan')or{}
+        if (not isinstance(item,str)or load.get('item')!=item or load.get('usable_before')!=0
+                or type(load.get('current_eligible_stock'))is not int
+                or type(load.get('missing_cells'))is not int or type(load.get('reserve_per_stack'))is not int
+                or load['current_eligible_stock']<load['missing_cells']+load['reserve_per_stack']):return False
+        from material_stack_consolidation import offer,run_inventory
+        minimum=1+sum(not row.get('count')for row in state.get('inventory',[])if row.get('slot',99)<36)
+        candidate=offer(state,item,minimum)
+        if candidate is None or candidate['total']!=load['current_eligible_stock']:return False
+        result=run_inventory(self,item,minimum)
+        if not isinstance(result,dict)or result.get('phase')!='done' or result.get('inventory_credit')!=0:
+            raise JobBlocked('图面余料合堆尚未确认，保留原回执')
+        return True
 
     def _safe_flat(self, client, layout):
         self.checkpoint()
@@ -520,6 +540,8 @@ class FlatMapBackend(Backend):
                 state = self._safe_flat(client, layout)
                 plan = next_batch(layout, actual, state, cell_budget=layout.config['max_cells_per_build'] - gained)
                 write_json(out / 'flat-next-batch.json', plan)
+                if self.consolidate_waiting_stock(plan,state):
+                    continue
                 if plan['phase'] != 'ready':
                     result = {'phase': plan['phase'], 'detail': plan.get('detail', '当前图面方块已齐'),
                               'requirements': plan.get('requirements', {}), 'placed': gained}
