@@ -640,11 +640,17 @@ class MaterialJob:
                       or sum(not row.get('count') for row in self.snapshot.get('inventory',[])
                              if 0<=row.get('slot',-1)<36)>before['free_slots'])
         search=receipt.get('search_progress') or {}
-        if (operation=='acquire' and receipt['phase']=='waiting' and search.get('has_more') is True
+        if (operation in ('acquire','run_pipeline') and receipt['phase']=='waiting' and search.get('has_more') is True
                 and 0<search_coverage(search)<=32):
-            # Search coverage is useful progress, never an item receipt.
-            progressed=True
-            self._write(search_progress=search)
+            # Only an advancing frontier is progress. Starting the same eight
+            # tiles in a new transaction directory must not hide a stuck loop.
+            total=search.get('scanned_total');key=fingerprint([operation,args[:3] if operation=='run_pipeline'else args])
+            if not hasattr(self,'search_frontiers'):self.search_frontiers={}
+            prior=self.search_frontiers.get(key,0)
+            if operation=='acquire' or type(total)is int and total>prior:
+                if type(total)is int:self.search_frontiers[key]=max(prior,total)
+                progressed=True
+                self._write(search_progress=search)
         # New construction materials change the reachable build frontier. Only
         # repeating the same build with the same useful stock is a stuck loop.
         relevant={item:before['stock'].get(item,0) for item in before['replacement_items']}

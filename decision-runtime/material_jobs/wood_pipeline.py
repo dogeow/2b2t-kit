@@ -13,7 +13,7 @@ from kit_runtime.journal import write_json
 from material_depots import audit, exchange
 from material_plan import inventory_counts
 from material_trip_policy import room_for_item
-from .protocol import JobBlocked, JobPaused
+from .protocol import JobBlocked, JobPaused, fingerprint
 
 SPECIES = ('oak', 'dark_oak', 'cherry', 'acacia', 'spruce')
 LOGS = {'minecraft:' + name + '_log': name for name in SPECIES}
@@ -322,8 +322,15 @@ def _run(c,profile,item,target_count,out,checkpoint,carried_scope=None):
                 stopped_search = job['discovery_exhausted'].get(raw)
                 if isinstance(stopped_search, dict) and stopped_search.get('scope') == search_key:
                     return [], _wait('wait_source', 'Discovery returned a previously empty source; retain its rejection before another route')
+                # Acquisition journals stay per transaction, while known
+                # read-only search coverage advances across those journals.
+                root=Path(getattr(backend,'out',out))/'resource-discovery'
+                scope_key=fingerprint([c.world,profile.get('server'),profile.get('dimension'),
+                    profile.get('search_origin'),profile.get('search_radius'),
+                    search_profile.get('protected_regions'),search_profile.get('resource_regions')])[:24]
+                search_directory=root/scope_key
                 found = operation('discover', lambda: discover(c, raw, search_profile,
-                                  out / 'discovery', checkpoint, max_tiles=8))
+                                  search_directory, checkpoint, max_tiles=8))
                 after_search = state()
                 progress = getattr(c, 'material_search_progress', {})
                 if (not _unchanged_empty(before_search, after_search) or not isinstance(progress, dict)

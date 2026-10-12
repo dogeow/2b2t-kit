@@ -460,6 +460,19 @@ class MaterialJobsTest(unittest.TestCase):
         self.assertEqual('completed',result['state']);self.assertEqual(3,len(calls))
         self.assertEqual(64,b.held['minecraft:gravel'])
 
+    def test_pipeline_search_advances_across_calls_without_item_credit(self):
+        item='minecraft:oak_planks';b=FakeBackend(self.catalog,held={item:0},projection={item:64})
+        b.has_ready_projection_output=lambda snapshot:False
+        job=self.job(b,self.request(projection=True));job._observe()
+        results=iter([8,16,16,16])
+        b.run_pipeline=lambda *args,**kwargs:{'phase':'waiting','code':'wait_source','target_scope':'approved_depot_total',
+            'search_progress':{'new_tiles':8,'scanned_total':next(results),'has_more':True}}
+        args=[item,64,'approved_depot_total',str(self.root/'leaf')]
+        job._call('run_pipeline',args,'gathering');job._call('run_pipeline',args,'gathering')
+        self.assertEqual(16,job.state['search_progress']['scanned_total']);self.assertEqual(0,b.held[item])
+        job._call('run_pipeline',args,'gathering')
+        with self.assertRaisesRegex(JobBlocked,'两次没有实际进展'):job._call('run_pipeline',args,'gathering')
+
     def test_coarse_biome_coverage_continues_without_inventing_detailed_tiles(self):
         b=FakeBackend(self.catalog);original=b.acquire;calls=[]
         def acquire(item,count):

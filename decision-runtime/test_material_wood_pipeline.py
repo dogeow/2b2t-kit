@@ -75,6 +75,24 @@ def deposited(c, depots, deposit):
 
 
 class WoodPipelineTest(unittest.TestCase):
+    def test_search_frontier_survives_different_known_transaction_directories(self):
+        c=self.client();c.wood_backend.out=self.base/'shared-job'
+        self.profile.update(search_origin=[0,140,0],search_radius=128)
+        dirs=[]
+        def search(client,item,profile,directory,checkpoint,max_tiles):
+            directory.mkdir(parents=True,exist_ok=True);path=directory/'test-known-search.json'
+            total=json.loads(path.read_text())['total']if path.exists()else 0;total+=8
+            path.write_text(json.dumps({'total':total}));dirs.append(directory)
+            client.material_search_progress={'new_tiles':8,'scanned_total':total,'has_more':True,'ledger':str(path)}
+            return None
+        with patch('material_jobs.discovery.discover',side_effect=search):
+            a=self.run_pipeline(c,'minecraft:oak_planks',64,'transaction-one')
+            b=self.run_pipeline(c,'minecraft:oak_planks',64,'transaction-two')
+        self.assertEqual(dirs[0],dirs[1]);self.assertEqual((8,16),(a['search_progress']['scanned_total'],b['search_progress']['scanned_total']))
+        self.assertFalse(c.held.get('minecraft:oak_planks'));self.assertFalse(c.held.get('minecraft:oak_log'))
+        self.profile['search_radius']=256
+        with patch('material_jobs.discovery.discover',side_effect=search):self.run_pipeline(c,'minecraft:oak_planks',64,'other-scope')
+        self.assertNotEqual(dirs[0],dirs[2])
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
@@ -230,7 +248,7 @@ class WoodPipelineTest(unittest.TestCase):
         self.sourcing_profile();c=self.client();original=json.loads(json.dumps(self.profile))
         def discover(client,item,profile,directory,checkpoint,max_tiles):
             self.assertIs(c,client);self.assertEqual(8,max_tiles)
-            self.assertEqual(self.base/'run'/'discovery',directory)
+            self.assertEqual(self.base/'run'/'resource-discovery',directory.parent)
             self.assertEqual([],profile['resource_regions'])
             self.assertEqual(2,len(profile['protected_regions']))
             call=discover.calls;discover.calls+=1
