@@ -1,12 +1,29 @@
 import json,tempfile,unittest
 from unittest.mock import patch
 from pathlib import Path
-from material_jobs.build_progress import BuildMaterialProgress,phase
+from material_jobs.build_progress import BuildMaterialProgress,phase,acquisition_activity
 from material_jobs.build_progress_overlay import overlay
 from test_projection_flat_jobs import model,layout_for,audit
 
 
 class BuildProgressTest(unittest.TestCase):
+    def test_acquisition_activity_uses_live_native_state(self):
+        state={'world_session':'w','op':'navigate','phase':'done'}
+        self.assertEqual('采集',acquisition_activity(state,'minecraft:tuff'))
+        state['navigating']=True
+        self.assertEqual('巡航',acquisition_activity(state,'minecraft:tuff'))
+        state['navigating']=False;state['idle_activity']={'conflicts':['scan','material_lease']}
+        self.assertEqual('扫描',acquisition_activity(state,'minecraft:tuff'))
+        state['idle_activity']['conflicts']=[]
+        state['rock_quarry']={'active':True,'world_session':'w','item':'minecraft:tuff','completion':'clear'}
+        self.assertEqual('开路',acquisition_activity(state,'minecraft:tuff'))
+        state['rock_quarry']['completion']='collect'
+        self.assertEqual('开采',acquisition_activity(state,'minecraft:tuff'))
+        state['rock_quarry']['world_session']='old'
+        self.assertEqual('采集',acquisition_activity(state,'minecraft:tuff'))
+        state['guard_busy']=True
+        self.assertEqual('防护',acquisition_activity(state,'minecraft:tuff'))
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)
         self.build=self.root/'0001-build';self.build.mkdir();m=model();self.layout=layout_for(m)

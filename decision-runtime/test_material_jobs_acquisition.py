@@ -152,6 +152,25 @@ class AcquisitionTest(unittest.TestCase):
         self.assertEqual([100.5,145.,100.5],c.status()['pos'])
         self.assertTrue(any(r.get('event')=='registered_direct_level_air_leg'for r in trace))
 
+    def test_loaded_leg_does_not_create_one_block_correction_stop(self):
+        c=self.direct_client();ordinary=c.request;trace=[]
+        def request(op,**params):
+            result=ordinary(op,**params)
+            if op=='navigate':c.state['pos']=[params['target'][0],params['target'][1]-.15,params['target'][2]]
+            return result
+        c.request=request
+        with patch('material_jobs.navigation.settled_state',side_effect=lambda *a,**k:c.status()):
+            _travel(c,[96.5,145.,.5],lambda:None,trace,keep_cruise=True)
+        points=[p['target']for op,p in c.actions if op=='navigate']
+        self.assertEqual(4,len(points))
+        previous=[.5,145.,.5]
+        for point in points:
+            distance=math.dist(previous,point)
+            self.assertGreater(distance,5)
+            self.assertLessEqual(distance,31)
+            previous=[point[0],point[1]-.15,point[2]]
+        self.assertAlmostEqual(c.status()['pos'][0],96.5)
+
     def test_known_diagonal_obstacle_retains_clear_axis_route(self):
         from material_jobs.acquisition import _travel_once
         c=self.direct_client();c.rows=[block((10,145,10),'stone')];trace=[]

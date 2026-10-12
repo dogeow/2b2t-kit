@@ -7,6 +7,18 @@ from material_plan import inventory_counts
 from projection_flat_plan import FlatLayout
 
 
+def acquisition_activity(state,item):
+    """Name only live native work; a previous completed request is not activity."""
+    if state.get('guard_busy') is True:return '防护'
+    if state.get('navigating') is True:return '巡航'
+    if 'scan' in (state.get('idle_activity')or{}).get('conflicts',[]):return '扫描'
+    quarry=state.get('rock_quarry')or{}
+    if (quarry.get('active') is True and quarry.get('world_session')==state.get('world_session')
+            and quarry.get('item')==item):
+        return '开路' if quarry.get('completion')=='clear' else '开采'
+    return '采集'
+
+
 class BuildMaterialProgress:
     def __init__(self,automation=None):
         self.cache={};self.layouts={};self.counts={};self.automation=Path(automation)if automation is not None else None
@@ -45,6 +57,7 @@ class BuildMaterialProgress:
                 outputs=pending.get('output_targets')or{}
                 if len(outputs)!=1:return None
                 item=next(iter(outputs));activity={'craft':'制作','smelt':'熔炼','fetch':'取料','harden':'固化','acquire':'采集'}.get(kind,'准备')
+                if kind=='acquire':activity=acquisition_activity(state,item)
         model_path=directory/'flat-model.json'
         if not model_path.exists():
             choices=sorted(root.glob('*-build/flat-model.json'))

@@ -272,8 +272,10 @@ RAW_IRON_BLOCK_MIN_Y, RAW_IRON_BLOCK_MAX_Y = -60, -8
 DIRECT_ROUTE_LIMIT = 384.0
 SEGMENT_ROUTE_LIMIT = 256.0
 SEARCH_TILE_MARGIN = 16.0
-LOADED_ROUTE_LEG = 32.0
 NATIVE_ROUTE_STEP = 31.0
+# A local leg must fit in one native request, including a small altitude drift.
+# 32-block legs used to split into 31 + 1, forcing an extra settled stop.
+LOADED_ROUTE_LEG = NATIVE_ROUTE_STEP - 1.0
 MAX_NATIVE_AXIS_STEPS = 16
 MAX_LOADED_ROUTE_LEGS = 64
 MAX_LOADED_ROUTE_SECONDS = 1800
