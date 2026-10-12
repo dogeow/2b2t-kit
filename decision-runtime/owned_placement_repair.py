@@ -41,7 +41,8 @@ def recover_drops(client, item, before_count, count, sites):
     return False
 
 
-def repair(client, placement_key, errors, item='minecraft:oak_planks'):
+def repair(client, placement_key, errors, item='minecraft:oak_planks', *,
+           tool='minecraft:diamond_axe', faces=('down','west','east','north','south','up')):
     state = client.status();require_unlocked(client.root,state)
     before_count = inventory_counts(state)[item]
     removed = [];deferred=[]
@@ -57,15 +58,21 @@ def repair(client, placement_key, errors, item='minecraft:oak_planks'):
             raise RuntimeError('Incident block changed; do not remove new player work')
         if row.get('block_entity') or row.get('fluid') or not row.get('neighbors_loaded') or row.get('adjacent_fluid') is not False:
             raise RuntimeError('Repair requires fresh dry non-container surroundings')
-        client.checked('select_item',item='minecraft:diamond_axe')
-        try:face=approach_faces(client,error['pos'],row['actual'],('down','west','east','north','south','up'),seconds=120)
+        client.checked('select_item',item=tool)
+        try:face=approach_faces(client,error['pos'],row['actual'],faces,seconds=120)
         except ApproachUnavailable:
             deferred.append(error['pos']);continue
         client.checked('mine_block',pos=error['pos'],face=face,expected_state=row['actual'],seconds=20)
         time.sleep(.4)
-        if client.request('scan',min=error['pos'],max=error['pos']).get('blocks'):
+        removal=client.request('scan',min=error['pos'],max=error['pos'])
+        if (removal.get('phase')not in(None,'done')or removal.get('world_session')!=client.world
+                or not isinstance(removal.get('blocks'),list)or removal['blocks']):
             raise RuntimeError('Block removal not observed; do not repeat blindly')
         removed.append(error['pos'])
+        # Pick up this site's drop before flying to another incident. Distant
+        # drops leave the next site's live entity range even though they still exist.
+        if not recover_drops(client,item,before_count,len(removed),[error['pos']]):
+            raise RuntimeError('Removed blocks still have uncollected drops; inspect before leaving')
     recovered = recover_drops(client,item,before_count,len(removed),[e['pos'] for e in errors])
     # Tool selection may have borrowed the bow's hotbar slot. Restore the best bow explicitly.
     state = client.status()
