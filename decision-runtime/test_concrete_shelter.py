@@ -3,7 +3,8 @@ import json
 from collections import Counter
 from pathlib import Path
 import tempfile
-from unittest.mock import patch
+from unittest.mock import patch,Mock
+from types import SimpleNamespace
 from concrete_shelter import plan,dry_anchors,inside_hostiles
 import concrete_shelter as shelter
 
@@ -46,6 +47,29 @@ def land_fixture(client,block):
     client.pos=[block[0]+.5,block[1]+1,block[2]+.5]
 
 class LayoutTest(unittest.TestCase):
+    def test_high_shelter_entry_descends_with_native_body_sweep_before_short_landing(self):
+        s={'pos':[1.5,85,2.5],'air_only_navigation_protocol':2,'on_ground':True,'velocity':[0,0,0],
+           'supervision_lease':{'kind':'materials','job_session':'t','world_session':'w'}}
+        c=SimpleNamespace(task='t',world='w',status=lambda:s,checked=Mock(),request=Mock())
+        def checked(op,**params):
+            if op in('navigate','walk'):s['pos']=list(params['target'])
+            return {'phase':'done'}
+        c.checked.side_effect=checked;c.request.side_effect=lambda op,**kw:s if op=='snapshot'else{'phase':'done'}
+        with patch.object(shelter,'scan',return_value={(1,66,2):{'solid':True,'fluid':False,'state':'Block{minecraft:cobblestone}'}}), \
+             patch('material_jobs.navigation.settled_state')as settled:
+            shelter.land_on_top(c,[1,66,2])
+        self.assertEqual(['navigate','navigate','walk'],[call.args[0]for call in c.checked.call_args_list])
+        self.assertEqual([1.5,67.8,2.5],c.checked.call_args_list[1].kwargs['target'])
+        self.assertTrue(c.checked.call_args_list[1].kwargs['air_only']);settled.assert_called_once_with(c,[1.5,67.8,2.5],.4)
+
+    def test_unconfirmed_shelter_descent_never_starts_landing_or_replays_navigation(self):
+        s={'pos':[1.5,85,2.5],'air_only_navigation_protocol':2,
+           'supervision_lease':{'kind':'materials','job_session':'t','world_session':'w'}}
+        c=SimpleNamespace(task='t',world='w',status=lambda:s,checked=Mock(side_effect=[{'phase':'done'},RuntimeError('unknown descent')]),request=Mock())
+        with patch.object(shelter,'scan',return_value={(1,66,2):{'solid':True,'fluid':False,'state':'Block{minecraft:cobblestone}'}}):
+            with self.assertRaisesRegex(RuntimeError,'unknown descent'):shelter.land_on_top(c,[1,66,2])
+        self.assertEqual(2,c.checked.call_count);c.request.assert_not_called()
+
     def test_enemy_inside_room_is_detected_before_descent(self):
         state={'entities':[{'type':'minecraft:zombie','pos':[10.5,63,20.5]},
                            {'type':'minecraft:skeleton','pos':[15,63,20.5]},

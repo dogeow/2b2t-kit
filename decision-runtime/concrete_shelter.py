@@ -47,6 +47,18 @@ def land_on_top(client,block):
     row=scan(client,block,block).get(tuple(block),{})
     if not row.get('solid') or row.get('fluid'):raise RuntimeError('A dry verified landing block is required')
     x,y,z=block
+    state=client.status();point=state.get('pos');lease=state.get('supervision_lease')or{}
+    if (state.get('air_only_navigation_protocol',0)>=2 and lease.get('kind')=='materials'
+            and lease.get('job_session')==getattr(client,'task',None)
+            and lease.get('world_session')==getattr(client,'world',None)
+            and isinstance(point,list)and len(point)==3 and point[1]>y+4):
+        # Reuse the proved outdoor-landing primitive: native body sweeps cover
+        # the long descent before the short-range landing planner starts.
+        from material_jobs.navigation import settled_state
+        near=[x+.5,y+1.8,z+.5]
+        client.checked('navigate',target=[x+.5,point[1],z+.5],arrival=.15,air_only=True,seconds=45)
+        client.checked('navigate',target=near,arrival=.15,air_only=True,seconds=45)
+        settled_state(client,near,.4)
     result=client.request('approach_block',pos=block,face='up',expected_state=row['state'],stand_distance=.65,seconds=90)
     if result.get('phase')!='done':
         current=client.status()['pos']
