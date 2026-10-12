@@ -34,6 +34,28 @@ def printer_sent_nothing(reply, client):
             and all(pp.get(k)is False for k in ('owned','enabled','waiting_for_server')))
 
 
+def air_seed_sent_nothing(reply,client):
+    """One exact native admission refusal occurs before constructing/sending a seed.
+
+    Other errors, timeouts and ACKs remain unknown. Scene and stock still need
+    an independent unchanged-state check before this candidate is released.
+    """
+    lease=reply.get('supervision_lease')or{}
+    last=reply.get('last_projection_air_seed')
+    return (reply.get('phase')=='error'
+            and reply.get('detail')=='Air seed requires the current healthy idle guarded material lease'
+            and reply.get('op')in(None,'projection_air_seed')
+            and reply.get('id')==client.last and bool(client.last)
+            and reply.get('world_session')==client.world and type(reply.get('control_revision'))is int and reply['control_revision']==client.rev
+            and isinstance(lease,dict)and lease.get('kind')=='materials'and lease.get('world_session')==client.world
+            and type(lease.get('revision'))is int and lease['revision']==client.rev and lease.get('job_session')==client.task
+            and isinstance(lease.get('id'),str)and bool(lease['id'])
+            and lease.get('id')==getattr(getattr(client,'heartbeat',None),'id',None)
+            and reply.get('projection_air_seed')in(None,{})
+            and (last in(None,{})or isinstance(last,dict)and isinstance(last.get('request_id'),str)
+                 and last['request_id']!=client.last))
+
+
 def scene(layout, reply, low, high, world, revision):
     """Accept a complete bounded native scan, including explicit light rules."""
     volume = math.prod(b - a + 1 for a, b in zip(low, high))
@@ -101,6 +123,21 @@ def accept_window(plan, before, after, stock_before, stock_after, receipt, expec
 
 class FlatMapBackend(Backend):
     PROJECTION_LOADING_RADIUS=48
+
+    def _release_no_effect_seed(self,client,layout,plan,directory,journal,reply,before,stock_before):
+        if plan['operation']!='air_seed' or not air_seed_sent_nothing(reply,client):return False
+        state=self._safe_flat(client,layout)
+        after,_,_=self._scan_flat(client,layout,plan,directory,'no-effect')
+        final=self._safe_flat(client,layout)
+        if (after!=before or inventory_counts(state).get(plan['item'],0)!=stock_before
+                or inventory_counts(final).get(plan['item'],0)!=stock_before
+                or any(s.get('projection_batch',{}).get('active')is not False for s in(state,final))):
+            raise JobBlocked('隔空放置拒绝后的现场或物资未证明无变化；保留原窗口')
+        journal.update(pending=None,no_effect_verified=True,placement_credit=0,
+                       inventory_before=stock_before,inventory_after=stock_before,
+                       native_admission_refused={'request_id':reply['id'],'detail':reply['detail'],'time':reply.get('time')})
+        write_json(directory/'flat-window.json',journal)
+        return True
 
     def _release_no_effect_print(self,client,layout,plan,directory,journal,reply,before,stock_before):
         if plan['operation']!='print' or not printer_sent_nothing(reply,client):return False
@@ -480,6 +517,8 @@ class FlatMapBackend(Backend):
         if reply.get('phase') != 'done':
             if self._release_no_effect_print(client,layout,plan,directory,journal,reply,before,stock_before):
                 raise JobBlocked('打印器未发出放置提案；已核验零消耗并清除本窗口，正常高空收尾')
+            if self._release_no_effect_seed(client,layout,plan,directory,journal,reply,before,stock_before):
+                raise JobBlocked('隔空放置在原生前置检查被拒绝；已核验零消耗，正常高空收尾')
             raise JobBlocked('地图画原生窗口未结束；保留回执，不重放')
         if plan['operation'] == 'print':
             pp = reply.get('professional_printer', {})

@@ -13,7 +13,7 @@ import zipfile
 
 from material_jobs import MaterialJob
 from material_jobs.protocol import JobBlocked
-from projection_flat_backend import FlatMapBackend, accept_window, scene, printer_sent_nothing
+from projection_flat_backend import FlatMapBackend, accept_window, scene, printer_sent_nothing, air_seed_sent_nothing
 from projection_flat_jobs_cli import main
 from projection_flat_plan import FlatLayout, next_batch
 from projection_material_plan import ProcessingCatalog
@@ -258,6 +258,51 @@ class FlatPlanningTests(unittest.TestCase):
 
 
 class FlatReceiptTests(unittest.TestCase):
+    def seed_refusal_fixture(self):
+        client=SimpleNamespace(world='world',rev=7,last='request',task='task',heartbeat=SimpleNamespace(id='lease'),checked=Mock())
+        reply={'phase':'error','id':'request','world_session':'world','control_revision':7,
+               'detail':'Air seed requires the current healthy idle guarded material lease',
+               'supervision_lease':{'id':'lease','kind':'materials','world_session':'world','revision':7,'job_session':'task'},
+               'last_projection_air_seed':{'request_id':'previous'}}
+        return client,reply
+
+    def test_seed_refusal_requires_exact_native_owner_and_no_current_seed_ack(self):
+        client,reply=self.seed_refusal_fixture();self.assertTrue(air_seed_sent_nothing(reply,client))
+        for key,value in [('phase','waiting'),('detail','seed confirmation timed out'),('id','foreign'),
+                          ('world_session','old'),('control_revision',8),('op','professional_print'),
+                          ('projection_air_seed',{'server_confirmed':True}),
+                          ('last_projection_air_seed',{'request_id':'request'}),('last_projection_air_seed','invalid'),
+                          ('supervision_lease','invalid')]:
+            bad=deepcopy(reply);bad[key]=value;self.assertFalse(air_seed_sent_nothing(bad,client),(key,value))
+        for key,value in [('id','foreign'),('kind','parking'),('world_session','old'),('revision',8),('job_session','other')]:
+            bad=deepcopy(reply);bad['supervision_lease'][key]=value;self.assertFalse(air_seed_sent_nothing(bad,client),key)
+
+    def test_seed_admission_refusal_needs_fresh_unchanged_scene_and_stock_without_cleanup_or_credit(self):
+        client,reply=self.seed_refusal_fixture()
+        with tempfile.TemporaryDirectory()as tmp:
+            backend=FlatMapBackend.__new__(FlatMapBackend);backend.out=Path(tmp)
+            directory=backend.out/'0001-build/window-0000';directory.mkdir(parents=True)
+            s=state(64);s['projection_batch']={'active':False}
+            backend._safe_flat=Mock(return_value=s);backend._scan_flat=Mock(return_value=({},None,None))
+            journal={'complete':False,'pending':'projection_air_seed'};plan={'operation':'air_seed','item':ITEM}
+            self.assertTrue(backend._release_no_effect_seed(client,layout_for(model()),plan,directory,journal,reply,{},64))
+            self.assertEqual(0,journal['placement_credit']);self.assertIsNone(journal['pending']);self.assertFalse(journal['complete'])
+            client.checked.assert_not_called()
+            with patch('material_jobs_backend.Backend.finish',return_value={'parked':True})as finish:
+                self.assertEqual({'parked':True},backend.finish());finish.assert_called_once()
+
+    def test_seed_refusal_keeps_pending_when_scene_stock_or_mask_changed(self):
+        client,reply=self.seed_refusal_fixture()
+        for altered,after in [('stock',{}),('mask',{}),('scene',{(0,64,0):'Block{minecraft:stone}'})]:
+            with self.subTest(altered=altered),tempfile.TemporaryDirectory()as tmp:
+                backend=FlatMapBackend.__new__(FlatMapBackend);s=state(63 if altered=='stock'else 64)
+                s['projection_batch']={'active':altered=='mask'};backend._safe_flat=Mock(return_value=s)
+                backend._scan_flat=Mock(return_value=(after,None,None));journal={'complete':False,'pending':'projection_air_seed'}
+                with self.assertRaises(JobBlocked):
+                    backend._release_no_effect_seed(client,layout_for(model()),{'operation':'air_seed','item':ITEM},Path(tmp),journal,reply,{},64)
+                self.assertEqual('projection_air_seed',journal['pending']);self.assertFalse(journal.get('no_effect_verified',False))
+        client.checked.assert_not_called()
+
     def no_effect_fixture(self):
         client=SimpleNamespace(world='world',rev=7,last='request',checked=Mock(return_value={'projection_batch':{'active':False}}))
         reply={'phase':'waiting','op':'professional_print','id':'request','world_session':'world','control_revision':7,
