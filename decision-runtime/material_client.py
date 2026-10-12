@@ -183,10 +183,12 @@ class Client:
             'server':req['server'],'dimension':req['dimension']}
   # Publish the exact envelope before native code can consume the atomic mailbox.
   previous_last=self.last
+  published=False;resolved=False
   try:
    try:
     self.native_inflight=inflight;self.last=rid
     tmp.replace(path)
+    published=True
    except BaseException:
     self.last=previous_last;raise
    end=time.monotonic()+params.get('seconds',20)+15
@@ -297,11 +299,15 @@ class Client:
        with (self.out/'experience-recording-errors.jsonl').open('a') as f:f.write(json.dumps({'request_id':rid,'error':str(e)})+'\n')
       except OSError:pass
      if op=='guard' and result.get('phase')=='done':self.owned=True
+     resolved=True
      return result
     time.sleep(.15)
    raise RuntimeError('Native operation timed out; do not replay it')
   finally:
-   if getattr(self,'native_inflight',None) is inflight:self.native_inflight=None
+   # A cancellation may arrive while the native movement has already advanced
+   # its owned revision. Preserve that exact pending envelope so finish can
+   # observe/drain it instead of mistaking its new revision for a handoff.
+   if getattr(self,'native_inflight',None) is inflight and (resolved or not published):self.native_inflight=None
  def checked(self,op,**params):
   r=self.request(op,**params)
   if r.get('phase')!='done':raise RuntimeError(r.get('detail',op+' failed'))
