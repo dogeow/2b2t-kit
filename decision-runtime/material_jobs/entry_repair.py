@@ -50,6 +50,15 @@ def observe(client, region, profile, out):
     from pathlib import Path
     from kit_runtime.journal import write_json
     out=Path(out);out.mkdir(parents=True,exist_ok=True)
+    # Eligibility is known before reading world blocks. Wide legacy sand sites
+    # cannot use the narrow rock-shaft algorithm; do not scan 50k cells for it.
+    low,high=_bounds(region)
+    if (region.get('source')!='natural_survey' or region.get('item')not in ROCK_SOURCES
+            or not(1<=high[0]-low[0]<=5 and 1<=high[2]-low[2]<=5)):
+        proof={'world_session':client.world,'original_region':region,'planned':None,
+               'reason':'region_not_eligible_for_rock_shaft_repair','game_movement_sent':False,
+               'inventory_credit':0,'original_route_hold_unchanged':True}
+        write_json(out/'entry-repair-plan.json',proof);return proof
     state=client.status();low,high=_bounds(region)
     center=[(low[i]+high[i]+1)/2 for i in range(3)]
     if math.hypot(state['pos'][0]-center[0],state['pos'][2]-center[2])>96:

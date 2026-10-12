@@ -1,7 +1,7 @@
 import unittest
 import tempfile
 from unittest.mock import patch
-from native_sand_quarry import choose_quarry,recover_quarry_drops,preparation_target,select_region
+from native_sand_quarry import choose_quarry,recover_quarry_drops,preparation_target,select_region,sky_entry_hint
 
 
 def fixture():
@@ -15,6 +15,14 @@ def fixture():
 
 
 class NativeSandQuarryTest(unittest.TestCase):
+    def test_sky_entry_hint_rejects_a_leaf_roof_and_selects_another_same_site_box(self):
+        roof=[{'pos':[1,80,1],'state':'Block{minecraft:oak_leaves}','solid':True,'passable':False}]
+        hint=sky_entry_hint(fixture()+roof,[0,65,0],[3,70,3],[1,90,1],93)
+        self.assertIsNotNone(hint);self.assertLess(hint['sand'],64)
+        self.assertTrue(all(0<=hint['min'][i]<=hint['max'][i]<=3 for i in(0,2)))
+        self.assertEqual(64,choose_quarry(fixture()+roof,[0,65,0],[3,70,3],[1,90,1])['sand'])
+        self.assertIsNone(sky_entry_hint(fixture(),[0,65,0],[3,70,3],[1,90,1],80))
+
     def test_empty_space_above_sand_does_not_force_a_high_climb(self):
         choice={'max':[3,68,3]}
         target=preparation_target([1.5,69,1.5],choice,fixture())

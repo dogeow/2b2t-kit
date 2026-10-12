@@ -28,7 +28,7 @@ def recover_quarry_drops(client,low,high):
     return {'attempted':len(attempted),'recovered':carried(client.status(),SAND)-before}
 
 
-def choose_quarry(rows,low,high,player):
+def choose_quarry(rows,low,high,player,*,entry_clear=None):
     cells={tuple(v['pos']):v for v in rows}
     sand_y=[p[1] for p,v in cells.items() if v['state']==SAND_STATE
             and all(low[i]<=p[i]<=high[i] for i in range(3))]
@@ -59,8 +59,27 @@ def choose_quarry(rows,low,high,player):
                     if best_score is None or score>best_score:
                         actual_top=max(y for xx in range(x,x+width) for zz in range(z,z+width)
                                        for y in range(bottom,top+1) if cells.get((xx,y,zz),{}).get('state')==SAND_STATE)
-                        best_score=score;best={'min':[x,bottom,z],'max':[x+width-1,max(bottom+1,actual_top),z+width-1],'sand':count}
+                        candidate={'min':[x,bottom,z],'max':[x+width-1,max(bottom+1,actual_top),z+width-1],'sand':count}
+                        if entry_clear is not None and not entry_clear(candidate):continue
+                        best_score=score;best=candidate
     return best
+
+
+def sky_entry_hint(rows,low,high,player,observed_high_y):
+    """Choose an open landing column inside the same already authorized sand site.
+
+    This is a coordinate hint only; the caller must freshly scan the new box,
+    and native navigation still proves its full actual body sweep before travel.
+    """
+    if observed_high_y<math.ceil(player[1]+2):return None
+    def clear(choice):
+        x=(choice['min'][0]+choice['max'][0]+1)/2
+        z=(choice['min'][2]+choice['max'][2]+1)/2;y=choice['max'][1]+3.1
+        return not any(math.floor(x-.35)<=r['pos'][0]<=math.floor(x+.35)
+            and math.floor(z-.35)<=r['pos'][2]<=math.floor(z+.35)
+            and math.floor(y)<=r['pos'][1]<=observed_high_y
+            and (r.get('fluid')or not r.get('passable',False)) for r in rows)
+    return choose_quarry(rows,low,high,player,entry_clear=clear)
 
 
 def preparation_target(pos,choice,rows):

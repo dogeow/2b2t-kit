@@ -50,6 +50,11 @@ class EntryRepairTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'incomplete'):
                 observe(c,self.region,self.profile,Path(tmp)/'new-dir')
         self.assertEqual('scan',c.checked.call_args.args[0]);self.assertEqual(1,c.checked.call_count)
+    def test_legacy_wide_sand_site_is_rejected_before_any_block_scan(self):
+        c=SimpleNamespace(world='w',status=Mock(),checked=Mock())
+        region={'item':'minecraft:sand','min':[0,64,0],'max':[25,78,34],'source':'previous_authorized_sand_site'}
+        with tempfile.TemporaryDirectory()as tmp:proof=observe(c,region,self.profile,Path(tmp))
+        self.assertIsNone(proof['planned']);c.status.assert_not_called();c.checked.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()
