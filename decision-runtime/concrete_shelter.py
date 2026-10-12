@@ -24,7 +24,12 @@ def plan(stand):
 
 def scan(client,low,high):
     reply=client.request('scan',min=low,max=high,details=True)
-    if 'blocks' not in reply:raise RuntimeError('Shelter survey unavailable')
+    total=math.prod(high[i]-low[i]+1 for i in range(3))
+    if reply.get('phase')in('error','waiting','stopped') or not isinstance(reply.get('blocks'),list):
+        raise RuntimeError('Shelter survey unavailable: '+str(reply.get('detail','missing block scan')))
+    if any(key in reply for key in ('scan_cells_read','scan_total_cells')) and (
+            reply.get('scan_cells_read')!=total or reply.get('scan_total_cells')!=total):
+        raise RuntimeError('Shelter survey incomplete; no missing wall or air inferred')
     return {tuple(v['pos']):v for v in reply['blocks']}
 
 

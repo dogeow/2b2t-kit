@@ -1,11 +1,23 @@
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
 from material_jobs_backend import Backend
 
 class RegisteredWorkbenchEgressTest(unittest.TestCase):
+    def test_hardening_loads_registered_base_before_reading_enclosure(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            b=self.job(tmp,{});order=[];b.profile['concrete_station']={'support':[10,61,20]}
+            @contextmanager
+            def action(name):yield object(),Path(tmp)
+            b.action=action;b.checkpoint=lambda:None
+            b.prepare_travel=lambda:order.append('travel')
+            b.stage_near_base=lambda positions:order.append(('load',positions))
+            with patch('material_jobs.processing.harden',side_effect=lambda *args:order.append('harden')):
+                b.harden('minecraft:black_concrete',42)
+            self.assertEqual(['travel',('load',[[10,61,20]]),'harden'],order)
     def job(self,root,state):
         b=Backend.__new__(Backend);b.out=Path(root)
         b.profile={'workbench':[10,65,20],'workbench_exit':[{'kind':'walk','target':[11.5,65,26.5]}]}

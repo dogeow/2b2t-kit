@@ -1603,6 +1603,8 @@ class Backend:
         from material_jobs.processing import harden
         with self.action('harden') as (c,out):
             self.prepare_travel()
+            support=(self.profile.get('concrete_station')or{}).get('support')
+            self.stage_near_base([support] if isinstance(support,list) and len(support)==3 else [])
             return harden(c,item,count,self.profile,out,self.checkpoint)
 
     def run_pipeline(self, item, target_count, out, *, target_scope, checkpoint=None):
