@@ -45,6 +45,8 @@ def _validate_profile(profile):
             raise JobBlocked('资源区域需要有效物品和有界整数坐标')
         if 'access_shaft' in region and not _block_box(region['access_shaft'],tall=True):
             raise JobBlocked('资源区域入口竖井坐标无效')
+    if 'include_near_search_origin' in profile and type(profile['include_near_search_origin'])is not bool:
+        raise ValueError('Near resource-origin search must be an explicit boolean')
     if 'search_origin' in profile and not point(profile['search_origin']):
         raise JobBlocked('资源搜索起点必须是有限三维坐标')
     radius=profile.get('search_radius',256)

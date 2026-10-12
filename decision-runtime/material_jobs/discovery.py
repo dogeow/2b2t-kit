@@ -60,9 +60,10 @@ def excluded(low, high, profile, selection):
                        or high[2]+16 < box['min'][2] or low[2]-16 > box['max'][2]) for box in boxes)
 
 
-def tiles(origin, radius):
+def tiles(origin, radius, *, include_near=False):
     x,z=math.floor(origin[0]/16)*16,math.floor(origin[2]/16)*16
-    for r in range(3, min(24, max(0, radius//16))+1):
+    if include_near:yield x,z
+    for r in range(1 if include_near else 3, min(24, max(0, radius//16))+1):
         ring=[(dx,-r) for dx in range(-r,r+1)]
         ring += [(r,dz) for dz in range(-r+1,r+1)]
         ring += [(dx,r) for dx in range(r-1,-r-1,-1)]
@@ -73,7 +74,7 @@ def tiles(origin, radius):
 
 def frontier(origin, radius, profile):
     """Prefer already authorized resource ground, without extending the original search radius."""
-    original=list(tiles(origin,radius));allowed=set(original);seen=set();ordered=[]
+    original=list(tiles(origin,radius,include_near=profile.get('include_near_search_origin')is True));allowed=set(original);seen=set();ordered=[]
     hints=sorted(enumerate(profile.get('resource_regions',[])),
                  key=lambda pair:(not str(pair[1].get('source','')).startswith('previous_authorized'),pair[0]))
     for _,region in hints:

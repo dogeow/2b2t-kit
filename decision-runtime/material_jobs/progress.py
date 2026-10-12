@@ -78,6 +78,8 @@ class MaterialProgress:
         self.name = name or ItemNames(automation)
         self.job = None
         self.last_read = 0
+        from .build_progress import BuildMaterialProgress
+        self.build_progress=BuildMaterialProgress()
 
     def publish(self, state, *, now=None):
         now = time.time() if now is None else now
@@ -107,6 +109,14 @@ class MaterialProgress:
                 self.close()
                 return
             title, done, total, phase = summary
+            if self.request.get('mode')=='projection':
+                try:
+                    from .build_progress import phase as material_phase
+                    detail=self.build_progress.details(self.request,status,state,self.out)
+                    if detail is not None:
+                        title,done,total='地图',detail['map_done'],detail['map_total']
+                        phase=material_phase(detail,self.name)
+                except (OSError,ValueError,KeyError,TypeError):pass
             task = lease['job_session']
             if self.job is None or self.job.task != task or self.job.world != state['world_session']:
                 self.close()

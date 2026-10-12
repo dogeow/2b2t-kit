@@ -989,15 +989,16 @@ def _danger(row, rock):
             or rock and (name in FALLING or name.endswith('_concrete_powder')))
 
 
-def _rock_observation(rows, low, high, item, *, allow_cleared=False):
-    cells = {tuple(row['pos']): row for row in rows}
-    inside = [row for p, row in cells.items() if in_box(p, low, high)]
+def _rock_observation(rows, low, high, item, *, allow_cleared=False, cells=None):
+    cells = {tuple(row['pos']): row for row in rows} if cells is None else cells
+    inside = [cells[p] for x in range(low[0],high[0]+1) for y in range(low[1],high[1]+1)
+              for z in range(low[2],high[2]+1) if (p:=(x,y,z)) in cells]
     if any(block_id(row) not in NATURAL | LIGHTS | AIR for row in inside):return None
     if any(block_id(row) == 'minecraft:raw_iron_block'
            and not RAW_IRON_BLOCK_MIN_Y <= row['pos'][1] <= RAW_IRON_BLOCK_MAX_Y
            for row in inside):return None
-    buffer = [row for p, row in cells.items() if all(low[i]-(2 if i == 1 else 3) <= p[i]
-              <= high[i]+(2 if i == 1 else 3) for i in range(3))]
+    buffer = [cells[p] for x in range(low[0]-3,high[0]+4) for y in range(low[1]-2,high[1]+3)
+              for z in range(low[2]-3,high[2]+4) if (p:=(x,y,z)) in cells]
     if any(_danger(row, True) for row in buffer):return None
     remaining = sum(block_id(row) in NATURAL for row in inside)
     # Lower slices remove the old floor of a cleared upper slice. Fresh clear
@@ -1017,6 +1018,7 @@ def rock_choice(rows, low, high, item, player, required_entry=None, max_remainin
     if type(max_remaining)is not int or not 8<=max_remaining<=648:
         raise ValueError('Bounded observed rock workload required')
     best = None
+    cells={tuple(row['pos']):row for row in rows}
     widths = sorted({min(6, high[0]-low[0]+1), 4, 2}, reverse=True)
     lengths = sorted({min(6, high[2]-low[2]+1), 4, 2}, reverse=True)
     # A narrow rectangle can connect the same entrance to the remaining vein
@@ -1032,7 +1034,7 @@ def rock_choice(rows, low, high, item, player, required_entry=None, max_remainin
                     for z in range(low[2], high[2]-length+2):
                         lo, hi = [x, bottom, z], [x+width-1, high[1], z+length-1]
                         if required_entry and not all(lo[i] <= required_entry['min'][i] <= required_entry['max'][i] <= hi[i] for i in (0, 2)):continue
-                        observed = _rock_observation(rows, lo, hi, item)
+                        observed = _rock_observation(rows, lo, hi, item,cells=cells)
                         if observed is None:continue
                         available = observed['available']
                         if not available:continue

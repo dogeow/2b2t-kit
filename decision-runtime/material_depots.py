@@ -4,6 +4,15 @@ from build_supervisor import stocks
 from container_access import open_grounded_chest
 from kit_runtime.journal import write_json
 
+def _open_depot(client,pos,*,deposit_only=False):
+    from material_storage_index import records
+    cached=next((r for r in records(client)if list(pos)in r.get('aliases',[r.get('pos')])and not r.get('missing')),None)
+    kind=(cached or {}).get('block_id','minecraft:chest')
+    if kind not in ('minecraft:chest','minecraft:ender_chest'):
+        raise RuntimeError('Registered depot type is unsupported; no opening or transfer')
+    if kind=='minecraft:chest'and not deposit_only:return open_grounded_chest(client,list(pos))
+    return open_grounded_chest(client,list(pos),block_id=kind,allow_empty=deposit_only)
+
 
 def audit(client,chests,items):
     """Count freshly opened approved depots; never return a partial stock total."""
@@ -48,6 +57,12 @@ def unmet(state,deposit,withdraw):
 
 
 def exchange(client,chests,deposit=None,withdraw=None):
+    """Deposit values are backpack quantities to KEEP; withdraw values are final totals.
+
+    To store a carried stack completely, pass ``deposit={item:0}``. Passing its
+    current quantity intentionally performs no transfer. Every actual move is
+    still acknowledged and recorded in the local storage index.
+    """
     deposit=deposit or {};withdraw=withdraw or {}
     if set(deposit)&set(withdraw):raise ValueError('A material cannot be deposited and withdrawn in the same exchange')
     if any(not isinstance(v,int) or v<0 for v in (*deposit.values(),*withdraw.values())):raise ValueError('Counts must be nonnegative')
@@ -60,7 +75,7 @@ def exchange(client,chests,deposit=None,withdraw=None):
     for pos in chests:
         before=client.status();to_store,to_fetch=unmet(before,deposit,withdraw)
         if not to_store and not to_fetch:break
-        state=open_grounded_chest(client,list(pos));entry={'pos':list(pos),'before':stocks(state)}
+        state=_open_depot(client,pos,deposit_only=bool(deposit and not withdraw));entry={'pos':list(pos),'before':stocks(state)}
         def store_available():
             for item,keep in deposit.items():
                 state=client.status();held=stocks(state).get(item,0);room=capacity(state,item)

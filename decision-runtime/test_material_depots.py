@@ -85,23 +85,23 @@ class DepotsTest(unittest.TestCase):
         for keep in (1,17,32,63):
             with self.subTest(keep=keep),tempfile.TemporaryDirectory() as tmp:
                 c=StorageClient(tmp);c.put(27,'minecraft:cobblestone',64)
-                with patch('material_depots.open_grounded_chest',side_effect=lambda c,p:c.status()):
+                with patch('material_depots.open_grounded_chest',side_effect=lambda c,p,**kwargs:c.status()):
                     result=exchange(c,[[1,2,3]],deposit={'minecraft:cobblestone':keep})
                 self.assertTrue(result['complete'])
                 self.assertEqual(keep,sum(v['count'] for v in c.menu['slots'][27:]))
                 self.assertEqual(64-keep,sum(v['count'] for v in c.menu['slots'][:27]))
                 self.assertEqual(0,c.menu['cursor']['count'])
-    def test_real_transfer_fills_partial_slot_then_empty_slot_without_crossing_reserve(self):
+    def test_real_partial_transfer_uses_empty_slot_and_preserves_requested_reserve(self):
         with tempfile.TemporaryDirectory() as tmp:
             c=StorageClient(tmp);c.put(27,'minecraft:cobblestone',64);c.put(0,'minecraft:cobblestone',60)
             self.assertEqual(32,c.transfer('minecraft:cobblestone',32,deposit=True))
-            self.assertEqual((64,28),(c.menu['slots'][0]['count'],c.menu['slots'][1]['count']))
+            self.assertEqual((60,32),(c.menu['slots'][0]['count'],c.menu['slots'][1]['count']))
             self.assertEqual(32,c.menu['slots'][27]['count'])
     def test_real_transfer_keeps_partial_chest_exchange_incomplete(self):
         with tempfile.TemporaryDirectory() as tmp:
             c=StorageClient(tmp);c.put(27,'minecraft:cobblestone',64);c.put(0,'minecraft:cobblestone',48)
             for slot in range(1,27):c.put(slot,'minecraft:stone',64)
-            with patch('material_depots.open_grounded_chest',side_effect=lambda c,p:c.status()):
+            with patch('material_depots.open_grounded_chest',side_effect=lambda c,p,**kwargs:c.status()):
                 result=exchange(c,[[1,2,3]],deposit={'minecraft:cobblestone':32})
             self.assertFalse(result['complete']);self.assertEqual({'minecraft:cobblestone':16},result['remaining_deposit'])
             self.assertEqual(48,c.menu['slots'][27]['count'])
@@ -170,7 +170,7 @@ class DepotsTest(unittest.TestCase):
                     self.held[item]=target;return target
                 def checked(self,*args,**kwargs):pass
             c=Client()
-            def opening(client,pos):
+            def opening(client,pos,**kwargs):
                 client.visits.append(pos)
                 client.current=[{'item':'minecraft:white_concrete','count':48 if pos[0]==1 else 0,'max_stack':64}]
                 return client.status()
