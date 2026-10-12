@@ -16,6 +16,35 @@ def state():
 
 
 class KitCliTest(unittest.TestCase):
+    def test_depot_channel_does_not_touch_active_gameplay_mailbox_and_accepts_repeated_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'status.json').write_text(json.dumps(state()))
+            (root/'request.json').write_text('{"id":"active-gameplay"}')
+            old={'id':'prior-source','op':'projection_supply_set'}
+            (root/'projection-supply-request.json').write_text(json.dumps(old))
+            (root/'projection-supply-reply-prior-source.json').write_text(json.dumps({**old,'phase':'done'}))
+            request=make_request(state(),'projection_supply_set');request.update(schema=1,pos=[10,64,20],enabled=True)
+            def respond():
+                path=root/'projection-supply-request.json';until=time.monotonic()+1
+                while time.monotonic()<until:
+                    if json.loads(path.read_text()).get('id')==request['id']:
+                        reply={**request,'phase':'done','changed':False,'control_revision':8,'observed_at':int(time.time()*1000)}
+                        (root/('projection-supply-reply-'+request['id']+'.json')).write_text(json.dumps(reply));return
+                    time.sleep(.01)
+            worker=threading.Thread(target=respond);worker.start()
+            try:reply=send(root,request,timeout=1,supply_channel=True)
+            finally:worker.join()
+            self.assertFalse(reply['changed']);self.assertEqual('active-gameplay',json.loads((root/'request.json').read_text())['id'])
+    def test_unconfirmed_depot_permission_is_preserved_and_never_replayed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'status.json').write_text(json.dumps(state()))
+            prior='{ "id": "pending-source", "op": "projection_supply_set" }'
+            (root/'projection-supply-request.json').write_text(prior)
+            request=make_request(state(),'projection_supply_set');request.update(pos=[10,64,20],enabled=False)
+            with self.assertRaisesRegex(KitControlError,'尚未确认'):
+                send(root,request,timeout=.1,supply_channel=True)
+            self.assertEqual(prior,(root/'projection-supply-request.json').read_text())
+
     def test_request_is_scoped_to_current_world_and_never_uses_ui(self):
         request = make_request(state(), 'gravel_start', radius=48, depth=28, limit=0)
         self.assertEqual('world-1', request['world_session'])

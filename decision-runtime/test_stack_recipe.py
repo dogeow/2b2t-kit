@@ -23,6 +23,33 @@ SPEC={'recipe_id':'white_concrete_powder','output':'minecraft:white_concrete_pow
       'ingredients':{'minecraft:sand':[1,2,3,4],'minecraft:gravel':[5,6,7,8],'minecraft:white_dye':[9]}}
 
 class StackRecipeTest(unittest.TestCase):
+    def test_colored_powder_batch_keeps_color_exact_grid_and_material_conservation(self):
+        spec={'output':'minecraft:black_concrete_powder','produces':8,'width':3,
+              'ingredients':{'minecraft:sand':[2,3,4,5],'minecraft:gravel':[6,7,8,9],'minecraft:black_dye':[1]}}
+        self.assertTrue(supported(spec))
+        before=fixture([('sand',32)]*4+[('gravel',32)]*4+[('black_dye',32)])
+        batch=plan_batch(before,spec,32);self.assertEqual((32,256),(batch['rounds'],batch['produced']))
+        after=fixture([('black_concrete_powder',64)]*4,empty=5)
+        self.assertTrue(settled_result(before,after,spec,batch))
+        after['inventory'][0].update(item='minecraft:sand',count=32)
+        self.assertFalse(settled_result(before,after,spec,batch))
+        for change in ({'produces':4},{'width':2},
+                       {'ingredients':{**spec['ingredients'],'minecraft:black_dye':[True]}},
+                       {'ingredients':{'minecraft:sand':[1,2,3,4],'minecraft:gravel':[5,6,7,8],'minecraft:red_dye':[9]}},
+                       {'ingredients':{**spec['ingredients'],'minecraft:gravel':[6,7,8,8]}},
+                       {'ingredients':{**spec['ingredients'],'minecraft:water_bucket':[9]}}):
+            self.assertFalse(supported({**spec,**change}))
+    def test_colored_terracotta_batch_uses_eight_plain_blocks_and_matching_center_dye(self):
+        spec={'output':'minecraft:green_terracotta','produces':8,'width':3,
+              'ingredients':{'minecraft:terracotta':[1,2,3,4,6,7,8,9],'minecraft:green_dye':[5]}}
+        self.assertTrue(supported(spec))
+        batch=plan_batch(fixture([('terracotta',32)]*8+[('green_dye',32)]),spec,32)
+        self.assertEqual(256,batch['produced'])
+        for change in ({'produces':1},{'width':2},
+                       {'ingredients':{'minecraft:terracotta':[1,2,3,4,5,7,8,9],'minecraft:green_dye':[6]}},
+                       {'ingredients':{'minecraft:terracotta':[1,2,3,4,6,7,8,9],'minecraft:blue_dye':[5]}}):
+            self.assertFalse(supported({**spec,**change}))
+
     def test_acacia_and_dark_oak_planks_batch_exact_species_and_consumption(self):
         for species in ('acacia','dark_oak'):
             raw='minecraft:'+species+'_log';output='minecraft:'+species+'_planks'

@@ -11,8 +11,14 @@ public final class MaterialTaskChannel {
     private static final Gson JSON=new Gson();
     private boolean initialized;
     private String lastId="";
+    private final String requestName,replyPrefix;
+    public MaterialTaskChannel(){this(REQUEST,REPLY_PREFIX);}
+    public MaterialTaskChannel(String requestName,String replyPrefix){
+        if(!requestName.matches("[a-z-]+\\.json")||!replyPrefix.matches("[a-z-]+-"))throw new IllegalArgumentException("Invalid mailbox name");
+        this.requestName=requestName;this.replyPrefix=replyPrefix;
+    }
     public void tick(Path root,Function<JsonObject,JsonObject> handler)throws IOException{
-        Path file=root.resolve(REQUEST);
+        Path file=root.resolve(requestName);
         if(!initialized){
             initialized=true;
             // A request left by an earlier game process is never replayed after startup.
@@ -20,7 +26,7 @@ public final class MaterialTaskChannel {
                 try{
                     JsonObject request=JsonParser.parseString(Files.readString(file)).getAsJsonObject();
                     lastId=MaterialTaskProtocol.identifier(request);
-                    Path reply=root.resolve(REPLY_PREFIX+lastId+".json");
+                    Path reply=root.resolve(replyPrefix+lastId+".json");
                     if(!Files.exists(reply)){
                         var stale=new JsonObject();stale.addProperty("phase","error");stale.addProperty("op",request.has("op")&&request.get("op").isJsonPrimitive()&&request.getAsJsonPrimitive("op").isString()?request.get("op").getAsString():"");
                         stale.addProperty("detail","Request predates this client session; not replayed. Inspect current status before a new explicit request.");
@@ -39,7 +45,7 @@ public final class MaterialTaskChannel {
         try{id=MaterialTaskProtocol.identifier(request);}catch(IllegalArgumentException invalid){return;}
         if(id.equals(lastId))return;
         lastId=id;
-        Path destination=root.resolve(REPLY_PREFIX+id+".json");
+        Path destination=root.resolve(replyPrefix+id+".json");
         if(Files.exists(destination))return; // Old ID replay cannot cancel or launch another task.
         JsonObject reply=handler.apply(request);
         writeReply(destination,id,reply);

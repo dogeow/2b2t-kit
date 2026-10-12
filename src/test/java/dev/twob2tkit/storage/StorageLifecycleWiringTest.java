@@ -23,7 +23,13 @@ class StorageLifecycleWiringTest {
         assertTrue(calls("storage/StorageLifecycle","tick").contains("refresh"));
     }
     @Test void supplyPermissionCandidateAndExplicitCollectionAllCheckVerifiedScope()throws Exception{
-        for(String name:List.of("sourceEnabled","toggleSource","sources","approvedSource"))assertTrue(calls("automation/BuildSupplyTask",name).contains("usable"),name);
+        for(String name:List.of("sourceEnabled","sources","approvedSource"))assertTrue(calls("automation/BuildSupplyTask",name).contains("usable"),name);
+        assertTrue(calls("automation/BuildSupplyTask","toggleSource").contains("setSource"));
+        var supply=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/BuildSupplyTask.class")){new ClassReader(in).accept(supply,0);}
+        var setter=supply.methods.stream().filter(m->m.name.equals("setSource")&&m.desc.contains("KitConfig$StorageSnapshot;")).findFirst().orElseThrow();
+        assertTrue(java.util.stream.StreamSupport.stream(setter.instructions.spliterator(),false)
+            .anyMatch(i->i instanceof MethodInsnNode call&&call.name.equals("usable")));
+        assertTrue(calls("automation/AutomationBridge","supplySourceReply").containsAll(List.of("parse","requireScope","setSource")));
         assertTrue(calls("storage/StorageLifecycle","usable").containsAll(List.of("sameScope","observe")));
     }
     @Test void legacyPruneNoLongerDeletesAndRecordReplacementKeepsHistory()throws Exception{

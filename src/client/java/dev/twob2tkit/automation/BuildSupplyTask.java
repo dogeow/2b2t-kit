@@ -74,11 +74,23 @@ public final class BuildSupplyTask {
         return sources!=null && sources.stream().anyMatch(s->AutomationScope.sameServer(server(c),s.server)&&worldId(c).equals(s.worldId)&&s.dimension.equals(record.dimension)&&s.x==record.x&&s.y==record.y&&s.z==record.z);
     }
     public static void toggleSource(Minecraft c,KitConfig.StorageSnapshot record){
-        if(c.player==null||c.level==null||!record.dimension.equals(c.level.dimension().identifier().toString())||!dev.twob2tkit.storage.StorageLifecycle.usable(c,record))throw new IllegalStateException("请先进入这个仓库所在的世界");
-        var config=KitClient.config();if(config.projectionSupplySources==null)config.projectionSupplySources=new ArrayList<>();
-        boolean exists=sourceEnabled(c,record);
-        config.projectionSupplySources.removeIf(s->AutomationScope.sameServer(server(c),s.server)&&worldId(c).equals(s.worldId)&&s.dimension.equals(record.dimension)&&s.x==record.x&&s.y==record.y&&s.z==record.z);
-        if(!exists){var s=new KitConfig.ProjectionSupplySource();s.server=server(c);s.worldId=worldId(c);s.dimension=record.dimension;s.x=record.x;s.y=record.y;s.z=record.z;config.projectionSupplySources.add(s);}config.save();
+        setSource(c,record,!sourceEnabled(c,record));
+    }
+    public static boolean setSource(Minecraft c,BlockPos pos,boolean enabled){
+        var record=KitClient.config().storageSnapshots.stream().filter(r->r.x==pos.getX()&&r.y==pos.getY()&&r.z==pos.getZ()
+            &&dev.twob2tkit.storage.StorageLifecycle.sameScope(c,r)).findFirst()
+            .orElseThrow(()->new IllegalArgumentException("本地尚未登记这个仓库；先取得真实开箱记录"));
+        return setSource(c,record,enabled);
+    }
+    public static boolean setSource(Minecraft c,KitConfig.StorageSnapshot record,boolean enabled){
+        if(c.player==null||c.level==null||record==null||!record.dimension.equals(c.level.dimension().identifier().toString())
+                ||!dev.twob2tkit.storage.StorageLifecycle.sameScope(c,record)
+                ||enabled&&!dev.twob2tkit.storage.StorageLifecycle.usable(c,record))
+            throw new IllegalStateException("请先进入这个仓库所在的世界并核验容器结构");
+        var config=KitClient.config();
+        var update=dev.twob2tkit.storage.ProjectionSupplyRegistry.set(config.projectionSupplySources,server(c),worldId(c),record.dimension,record,enabled);
+        if(update.changed()){config.projectionSupplySources=update.sources();config.save();}
+        return update.changed();
     }
     public static List<Source> sources(Minecraft c){
         var list=new ArrayList<Source>();

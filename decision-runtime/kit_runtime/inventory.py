@@ -73,6 +73,42 @@ class InventorySession:
             state = self.client.status()
             first = False
 
+    def distribute_exact(self,state:dict,source:dict,cells:list[int],amount_each:int)->dict:
+        """One normal vanilla drag, followed by a complete fresh group balance.
+
+        Only exact full/half pickup stacks qualify. An unconfirmed distribution
+        remains owned and never falls back to cell clicks or a second drag.
+        """
+        menu=state['menu'];menu_id=menu['id'];size=source['count'];item=source['item']
+        amount=amount_each*len(cells)
+        if (menu['type']!='CraftingMenu' or menu['cursor']['count']
+                or type(amount_each)is not int or not 1<=amount_each<=64
+                or not 2<=len(cells)<=8 or len(set(cells))!=len(cells)
+                or any(type(cell)is not int or not 1<=cell<=9 or menu['slots'][cell]['count'] for cell in cells)
+                or source['slot']<len(menu['slots'])-36 or source['slot']>=len(menu['slots'])
+                or not(size==amount or (size+1)//2==amount)
+                or getattr(self.client,'sdk_inventory_confirmation',False)is True):
+            raise ValueError('Expected empty ordinary grid and exact full/half group stack')
+        self._expect_slot(state,source['slot'],item,size)
+        self._bind(menu_id);before=copy.deepcopy(menu)
+        state=self.click(state,source['slot'],button=0 if size==amount else 1)
+        state=self._wait_pickup(state,menu_id,source['slot'],item,amount,size-amount,
+                                full_stack=size==amount,settle_prediction=True)
+        if (state['menu']['cursor']['count']!=amount
+                or state['menu']['slots'][source['slot']]['count']!=size-amount):
+            raise RuntimeError('Group source changed after pickup; no distribution sent')
+        state=self.client.checked('distribute',menu_id=menu_id,slots=cells,
+                                  expected_cursor=item,expected_cursor_count=amount)
+        changed=set(cells)|{0,source['slot']}
+        def complete(current):
+            return (not current['cursor']['count']
+                    and current['slots'][source['slot']]['count']==size-amount
+                    and (size==amount or current['slots'][source['slot']]['item']==item)
+                    and all(current['slots'][cell]['item']==item and current['slots'][cell]['count']==amount_each for cell in cells)
+                    and all(self._stack_identity(row)==self._stack_identity(before['slots'][i])
+                            for i,row in enumerate(current['slots']) if i not in changed))
+        return self._wait(state,menu_id,complete,'ingredient_group',confirmations=2,fresh=True)
+
     def click(self, state: dict, slot: int, kind: str = 'pickup', button: int = 0) -> dict:
         menu = state['menu']
         if not 0 <= slot < len(menu['slots']):

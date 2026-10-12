@@ -34,6 +34,7 @@ final class KitCommands {
 			literal("twob2tkit")
 				.executes(context -> help(context.getSource()))
 				.then(literal("help").executes(context -> help(context.getSource())))
+				.then(literal("supply").then(supplyCommand("allow",true)).then(supplyCommand("deny",false)))
 				.then(literal("scenery")
 					.executes(context -> { context.getSource().getClient().setScreen(new SceneryScreen(null, config)); return 1; })
 					.then(literal("start").then(argument("radius", IntegerArgumentType.integer(16, 4096)).executes(context -> {
@@ -257,6 +258,18 @@ final class KitCommands {
 		);
 	}
 
+	private static com.mojang.brigadier.builder.LiteralArgumentBuilder<FabricClientCommandSource> supplyCommand(String name,boolean enabled){
+		return literal(name).then(argument("x",IntegerArgumentType.integer(-30000000,30000000))
+			.then(argument("y",IntegerArgumentType.integer(-2048,2048))
+				.then(argument("z",IntegerArgumentType.integer(-30000000,30000000)).executes(context->{
+					try{
+						var pos=new BlockPos(IntegerArgumentType.getInteger(context,"x"),IntegerArgumentType.getInteger(context,"y"),IntegerArgumentType.getInteger(context,"z"));
+						boolean changed=dev.twob2tkit.automation.BuildSupplyTask.setSource(context.getSource().getClient(),pos,enabled);
+						context.getSource().sendFeedback(Component.literal((enabled?"已允许建造补给箱：":"已取消建造补给箱：")+pos.toShortString()+(changed?"":"（状态已一致）")));
+						return 1;
+					}catch(RuntimeException failure){context.getSource().sendError(Component.literal(failure.getMessage()));return 0;}
+				}))));
+	}
 	/** 打印用法与按键摘要。 */
 	private static int help(FabricClientCommandSource source) {
 		source.sendFeedback(Component.literal("twob2tkit：/twob2tkit start <x> <z> <巡航Y>"));
@@ -267,6 +280,7 @@ final class KitCommands {
 		source.sendFeedback(Component.literal("运行引擎：/twob2tkit reload（盾构/找矿更新后无需退出游戏）"));
 		source.sendFeedback(Component.literal("村庄职业：/twob2tkit villagers"));
 		source.sendFeedback(Component.literal("投影建造：/twob2tkit print（需已装 Litematica 并放置投影）"));
+		source.sendFeedback(Component.literal("补给箱：/twob2tkit supply allow|deny <x> <y> <z>（使用已有本地仓库记录）"));
 		source.sendFeedback(Component.literal("风景预加载：/twob2tkit scenery · scenery start <半径格数> · scenery resume|stop|status"));
 		source.sendFeedback(Component.literal("区域挖：/twob2tkit area a|b [x y z] · area save [名] · area load · area list · area start"));
 		source.sendFeedback(Component.literal("区域显示：/twob2tkit area hide|show；clear 仅清除当前 A/B，保留已保存工程"));

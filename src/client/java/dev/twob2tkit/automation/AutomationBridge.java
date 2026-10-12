@@ -60,6 +60,7 @@ public final class AutomationBridge {
     private static final TerrainServerConfirmation dryPavingServerConfirmation=new TerrainServerConfirmation();
     private static long dryPavingConfirmedTick=-1,dryPavingClientAirTick=-1;
     private static final dev.twob2tkit.material.MaterialTaskChannel materialTaskChannel=new dev.twob2tkit.material.MaterialTaskChannel();
+    private static final dev.twob2tkit.material.MaterialTaskChannel supplySourceChannel=new dev.twob2tkit.material.MaterialTaskChannel("projection-supply-request.json","projection-supply-reply-");
     private static final ProjectionBatchScope<BlockPos> projectionBatch=new ProjectionBatchScope<>();
     private static JsonObject rockQuarryProgress;
     private static JsonObject lastSlaughterAttack;
@@ -351,6 +352,8 @@ public final class AutomationBridge {
         reply.addProperty("world_session",session(c));reply.addProperty("control_revision",controlRevision);reply.addProperty("observed_at",System.currentTimeMillis());return reply;
     }
     private static void pollMaterialTasks(Minecraft c){
+        try{supplySourceChannel.tick(root(c),request->supplySourceReply(c,request));}
+        catch(Exception failure){KitClient.LOGGER.warn("Could not process depot registration command",failure);}
         try{materialTaskChannel.tick(root(c),request->materialTaskReply(c,request));}
         catch(Exception failure){KitClient.LOGGER.warn("[Materials] command reply could not be persisted: {}",failure.getClass().getSimpleName());}
     }
@@ -1994,6 +1997,23 @@ public final class AutomationBridge {
         ProfessionalPrinter.tick(c);
         tickSupervision(c);
         if(ticks%20==0)writeStatus(c);
+    }
+    private static JsonObject supplySourceReply(Minecraft c,JsonObject request){
+        var reply=new JsonObject();reply.addProperty("op",dev.twob2tkit.storage.ProjectionSupplyProtocol.OP);
+        try{
+            var command=dev.twob2tkit.storage.ProjectionSupplyProtocol.parse(request);
+            var context=new JsonObject();context.addProperty("server",c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip);
+            context.addProperty("dimension",c.level==null?"":c.level.dimension().identifier().toString());
+            context.addProperty("world_session",session(c));context.addProperty("expected_revision",controlRevision);
+            dev.twob2tkit.material.MaterialTaskProtocol.requireScope(request,context,System.currentTimeMillis(),
+                c.player!=null&&c.level!=null&&!c.player.isDeadOrDying(),KitKeys.manualMovementDown(c));
+            boolean changed=BuildSupplyTask.setSource(c,new BlockPos(command.x(),command.y(),command.z()),command.enabled());
+            reply.addProperty("changed",changed);reply.addProperty("enabled",command.enabled());
+            reply.add("pos",JSON.toJsonTree(new int[]{command.x(),command.y(),command.z()}));
+            reply.addProperty("phase","done");reply.addProperty("detail","Depot permission saved; no inventory or movement action sent");
+        }catch(RuntimeException failure){reply.addProperty("phase","error");reply.addProperty("detail",failure.getMessage());}
+        reply.addProperty("world_session",session(c));reply.addProperty("control_revision",controlRevision);
+        reply.addProperty("observed_at",System.currentTimeMillis());return reply;
     }
     private static void guard(Minecraft c,JsonObject r){
         if(c.player==null || c.level==null || c.gameMode==null || c.player.isDeadOrDying())throw new IllegalStateException("Not alive in a world");
@@ -4107,6 +4127,7 @@ public final class AutomationBridge {
             j.add("material_air_navigation",lastMaterialAirNavigation.deepCopy());
         j.addProperty("material_job_control_protocol",1);
         j.addProperty("material_task_api_protocol",dev.twob2tkit.material.MaterialTaskProtocol.VERSION);j.add("material_task",dev.twob2tkit.material.MaterialJobs.snapshot());
+        j.addProperty("projection_supply_protocol",1);
         j.addProperty("projection_load_protocol",1);
         j.addProperty("scan_prediction_protocol",1);
         j.addProperty("projection_batch_protocol",ProjectionBatchScope.PROTOCOL);j.addProperty("projection_model_protocol",1);j.addProperty("dry_paving_protocol",2);j.addProperty("terrain_replace_protocol",1);j.add("projection_batch",projectionBatchSnapshot());

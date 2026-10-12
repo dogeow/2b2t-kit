@@ -7,6 +7,19 @@ from test_projection_flat_jobs import model,layout_for,audit
 
 
 class BuildProgressTest(unittest.TestCase):
+    def test_material_pipeline_reports_real_inner_operation_and_live_movement(self):
+        self.request['id']='job';self.status['state']='gathering'
+        pipe=self.root/'pipelines/stone';pipe.mkdir(parents=True)
+        self.write(self.root/'inflight.json',{'job_id':'job','operation':'run_pipeline',
+                   'args':['minecraft:stone',20,'absolute_backpack',str(pipe)]})
+        for kind,expected in [('fetch','取料'),('craft','制作'),('harden','固化'),('smelt','熔炼')]:
+            self.write(self.root/'active-operation.json',{'name':kind,'directory':str(self.root/'0002-step')})
+            self.assertEqual(expected,self.read()['activity'])
+        self.state.update(op='navigate',phase='done',navigating=False)
+        self.assertEqual('熔炼',self.read()['activity'])
+        self.state['phase']='running';self.assertEqual('巡航',self.read()['activity'])
+        self.state['guard_busy']=True;self.assertEqual('防护',self.read()['activity'])
+
     def test_acquisition_activity_uses_live_native_state(self):
         state={'world_session':'w','op':'navigate','phase':'done'}
         self.assertEqual('采集',acquisition_activity(state,'minecraft:tuff'))

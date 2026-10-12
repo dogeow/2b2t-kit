@@ -52,12 +52,17 @@ class BuildMaterialProgress:
                     book=self.read(pipeline/'wood-carried-pipeline.json');step=(book.get('pending')or{}).get('kind')
                     activity=('砍树' if state.get('chopping') else '找树' if step in ('discover','acquire')
                               else '制作' if step=='craft' else '取料' if step in ('fetch_finished','fetch_logs','fetch_packed') else '准备')
-                else:activity='采集' if status.get('state')=='gathering' else '制作'
+                else:
+                    activity={'fetch':'取料','craft':'制作','harden':'固化','smelt':'熔炼',
+                              'acquire':acquisition_activity(state,item)}.get(operation.get('name'),'准备')
             else:
                 outputs=pending.get('output_targets')or{}
                 if len(outputs)!=1:return None
                 item=next(iter(outputs));activity={'craft':'制作','smelt':'熔炼','fetch':'取料','harden':'固化','acquire':'采集'}.get(kind,'准备')
                 if kind=='acquire':activity=acquisition_activity(state,item)
+        if state.get('guard_busy')is True:activity='防护'
+        elif (state.get('navigating')is True or state.get('phase')=='running'
+              and state.get('op')in('navigate','approach_block','walk','walk_path')):activity='巡航'
         model_path=directory/'flat-model.json'
         if not model_path.exists():
             choices=sorted(root.glob('*-build/flat-model.json'))

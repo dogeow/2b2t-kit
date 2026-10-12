@@ -17,6 +17,15 @@ class MaterialTaskChannelTest {
         assertEquals(1,calls.get());assertEquals("native running request",Files.readString(gameplay));assertEquals("native running status",Files.readString(status));
         var result=reply("outer-1");assertEquals(1,result.get("schema").getAsInt());assertEquals("outer-1",result.get("id").getAsString());assertEquals("queued",result.getAsJsonObject("material_task").get("state").getAsString());
     }
+    @Test void depotChannelCannotConsumeMaterialCommandsOrMutateGameplayMailbox()throws Exception{
+        var calls=new AtomicInteger();var channel=new MaterialTaskChannel("projection-supply-request.json","projection-supply-reply-");
+        channel.tick(root,handler(calls));request("material-only");channel.tick(root,handler(calls));assertEquals(0,calls.get());
+        Files.writeString(root.resolve("request.json"),"native unchanged");
+        Files.writeString(root.resolve("projection-supply-request.json"),"{\"id\":\"depot-one\",\"op\":\"projection_supply_set\"}");
+        channel.tick(root,handler(calls));channel.tick(root,handler(calls));assertEquals(1,calls.get());
+        assertTrue(Files.exists(root.resolve("projection-supply-reply-depot-one.json")));
+        assertEquals("native unchanged",Files.readString(root.resolve("request.json")));
+    }
     @Test void startAcceptedReplyDoesNotPretendTaskCompleted()throws Exception{
         var calls=new AtomicInteger();var channel=new MaterialTaskChannel();channel.tick(root,handler(calls));request("start-1");channel.tick(root,handler(calls));
         assertEquals("done",reply("start-1").get("phase").getAsString());assertEquals("queued",reply("start-1").getAsJsonObject("material_task").get("state").getAsString());

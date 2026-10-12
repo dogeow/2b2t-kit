@@ -75,14 +75,22 @@ def make_request(state, op, radius=None, depth=None, limit=None):
     return request
 
 
-def send(root, request, timeout=8):
-    path = root / 'request.json'
+def send(root, request, timeout=8, *, supply_channel=False):
+    path = root / ('projection-supply-request.json' if supply_channel else 'request.json')
+    prefix = 'projection-supply-reply-' if supply_channel else 'reply-'
     state = live_status(root)
     if request.get('op')!='gravel_stop':
         from safety_interlock import require_unlocked
         require_unlocked(root,state)
-    if path.exists() and read_json(path).get('id') != state.get('last_request'):
-        raise KitControlError('已有尚未确认的命令；不会覆盖或重复发送')
+    if path.exists():
+        previous=read_json(path)
+        if supply_channel:
+            previous_reply=root/(prefix+previous.get('id','')+'.json')
+            if (not previous_reply.is_file() or read_json(previous_reply).get('id')!=previous.get('id')
+                    or read_json(previous_reply).get('phase') not in ('done','error')):
+                raise KitControlError('已有尚未确认的补给箱命令；不会覆盖或重复发送')
+        elif previous.get('id') != state.get('last_request'):
+            raise KitControlError('已有尚未确认的命令；不会覆盖或重复发送')
     fd, temporary = tempfile.mkstemp(prefix='.kitcli-', suffix='.json', dir=root)
     try:
         with os.fdopen(fd, 'w') as stream:
@@ -94,13 +102,18 @@ def send(root, request, timeout=8):
         if os.path.exists(temporary):
             os.unlink(temporary)
     deadline = time.monotonic() + timeout
-    reply = root / ('reply-' + request['id'] + '.json')
+    reply = root / (prefix + request['id'] + '.json')
     while time.monotonic() < deadline:
         state = live_status(root)
         result = read_json(reply) if reply.exists() else state
         if result.get('id') == request['id'] and result.get('phase') in ('done', 'error', 'stopped', 'waiting'):
             if result['phase'] != 'done':
                 raise KitControlError(result.get('detail') or result['phase'])
+            if supply_channel and (result.get('schema')!=1 or result.get('op')!='projection_supply_set'
+                    or result.get('world_session')!=request['world_session']
+                    or result.get('control_revision')!=request['expected_revision']
+                    or result.get('enabled') is not request['enabled'] or result.get('pos')!=request['pos']):
+                raise KitControlError('补给箱回执与请求不一致；保留原请求，不自动重发')
             return result
         time.sleep(.1)
     raise KitControlError('命令没有收到回执；请先查看状态，不要直接重发')
@@ -110,6 +123,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='直接调用运行中 Kit 的自动化接口，无需按键或截图')
     parser.add_argument('--game-dir', type=Path, default=DEFAULT_GAME)
     sub = parser.add_subparsers(dest='topic', required=True)
+    supply=sub.add_parser('supply',help='按本地记录允许或取消补给箱，无需打开界面')
+    supply.add_argument('action',choices=('allow','deny'))
+    supply.add_argument('--pos',type=int,nargs=3,required=True)
     recovery=sub.add_parser('recovery',help='只进食、原地升高和等待回血，不解锁或重连')
     recovery.add_argument('action',choices=('run',))
     recovery.add_argument('--out',type=Path,required=True)
@@ -189,6 +205,16 @@ def main(argv=None):
     replies.add_argument('--restore')
     args = parser.parse_args(argv)
     root = args.game_dir / 'config/twob2tkit/automation'
+    if args.topic=='supply':
+        try:
+            state=live_status(root)
+            if state.get('projection_supply_protocol')!=1:
+                raise KitControlError('当前主包尚未提供补给箱命令接口；下次主包更新后可用')
+            request=make_request(state,'projection_supply_set')
+            request.update(schema=1,pos=args.pos,enabled=args.action=='allow')
+            print(json.dumps(send(root,request,supply_channel=True),ensure_ascii=False));return 0
+        except (RuntimeError,ValueError,OSError) as error:
+            print(json.dumps({'phase':'waiting','detail':str(error)},ensure_ascii=False));return 2
     if args.topic=='replies':
         from reply_archive import main as archive_main
         command=['--root',str(root),'--days',str(args.days),'--max-files',str(args.max_files)]
