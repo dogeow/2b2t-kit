@@ -657,7 +657,21 @@ class Backend:
         if not leave_quarry(c,self.out/'acquisition'):
             from material_jobs.registered_quarry_exit import leave as leave_registered_quarry
             leave_registered_quarry(c,self.profile)
+        self.leave_registered_workbench()
         leave_projection(c)
+
+    def leave_registered_workbench(self):
+        """Reuse the registered door exit when a fresh job starts inside its shop."""
+        bench=self.profile.get('workbench');route=self.profile.get('workbench_exit')
+        if not isinstance(bench,list) or len(bench)!=3 or not isinstance(route,list) or not route:return False
+        state=self.ensure_client().status();pos=state.get('pos')
+        if (not isinstance(pos,list) or len(pos)!=3 or state.get('under_water')
+                or state.get('flight')or abs(pos[1]-bench[1])>1
+                or math.hypot(pos[0]-(bench[0]+.5),pos[2]-(bench[2]+.5))>4):return False
+        self.route('workbench_exit')
+        write_json(self.out/'registered-workbench-egress.json',{'world_session':state.get('world_session'),
+            'start_pos':pos,'route':'workbench_exit','inventory_credit':0})
+        return True
 
     def stage_near_base(self, positions):
         """Cruise back into local interaction range after a remote resource trip."""
