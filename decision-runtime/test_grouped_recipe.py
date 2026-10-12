@@ -27,7 +27,10 @@ class Client:
                 cursor.update(item=row['item'],count=amount);row['count']-=amount
                 if not row['count']:row['item']='minecraft:air'
             else:
-                assert not row['count'];row.update(item=cursor['item'],count=cursor['count']);cursor.update(item='minecraft:air',count=0)
+                if args.get('button')==1:
+                    assert not row['count']or row['item']==cursor['item'];row.update(item=cursor['item'],count=row['count']+1);cursor['count']-=1
+                else:
+                    assert not row['count'];row.update(item=cursor['item'],count=cursor['count']);cursor.update(item='minecraft:air',count=0)
         return self.status()
 
 class GroupedRecipeTest(unittest.TestCase):
@@ -52,6 +55,13 @@ class GroupedRecipeTest(unittest.TestCase):
         with patch('kit_runtime.inventory.time.sleep'):
             result=session.distribute_exact(c.status(),c.status()['menu']['slots'][10],[1,2,3,4],8)
         self.assertEqual(32,result['menu']['slots'][10]['count']);self.assertEqual([8]*4,[r['count']for r in result['menu']['slots'][1:5]])
+    def test_three_extra_pickups_do_not_force_a_return_loop_per_cell(self):
+        state=fixture([('sand',23),('gravel',20),('black_dye',5)],empty=4)
+        plan=plan_batch(state,SPEC,5);self.assertEqual('exact_groups',plan['distribution']);self.assertEqual(40,plan['produced'])
+        c=Client(state);session=InventorySession(c)
+        with patch('kit_runtime.inventory.time.sleep'):
+            result=session.distribute_exact(c.status(),c.status()['menu']['slots'][10],[2,3,4,5],5)
+        self.assertEqual(3,result['menu']['slots'][10]['count']);self.assertEqual(5,len(c.calls));self.assertEqual('distribute',c.calls[-1][0])
     def test_predicted_group_then_server_correction_never_replays_distribution(self):
         class Correction(Client):
             def status(self):

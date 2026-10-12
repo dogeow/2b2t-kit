@@ -76,24 +76,36 @@ class InventorySession:
     def distribute_exact(self,state:dict,source:dict,cells:list[int],amount_each:int)->dict:
         """One normal vanilla drag, followed by a complete fresh group balance.
 
-        Only exact full/half pickup stacks qualify. An unconfirmed distribution
+        Full/half pickup may return at most three extras to its original slot.
+        Only the exact cursor amount is distributed. An unconfirmed distribution
         remains owned and never falls back to cell clicks or a second drag.
         """
         menu=state['menu'];menu_id=menu['id'];size=source['count'];item=source['item']
         amount=amount_each*len(cells)
+        pickups=[(picked-amount,picked,button)for picked,button in ((size,0),((size+1)//2,1)) if picked>=amount]
         if (menu['type']!='CraftingMenu' or menu['cursor']['count']
                 or type(amount_each)is not int or not 1<=amount_each<=64
                 or not 2<=len(cells)<=8 or len(set(cells))!=len(cells)
                 or any(type(cell)is not int or not 1<=cell<=9 or menu['slots'][cell]['count'] for cell in cells)
                 or source['slot']<len(menu['slots'])-36 or source['slot']>=len(menu['slots'])
-                or not(size==amount or (size+1)//2==amount)
+                or not pickups or min(pickups)[0]>3
                 or getattr(self.client,'sdk_inventory_confirmation',False)is True):
             raise ValueError('Expected empty ordinary grid and exact full/half group stack')
         self._expect_slot(state,source['slot'],item,size)
         self._bind(menu_id);before=copy.deepcopy(menu)
-        state=self.click(state,source['slot'],button=0 if size==amount else 1)
-        state=self._wait_pickup(state,menu_id,source['slot'],item,amount,size-amount,
-                                full_stack=size==amount,settle_prediction=True)
+        remainder,picked,button=min(pickups)
+        state=self.click(state,source['slot'],button=button)
+        state=self._wait_pickup(state,menu_id,source['slot'],item,picked,size-picked,
+                                full_stack=picked==size,settle_prediction=True)
+        if state['menu']['cursor']['count']!=picked or state['menu']['slots'][source['slot']]['count']!=size-picked:
+            raise RuntimeError('Group pickup changed; no further distribution or return sent')
+        for returned in range(remainder):
+            state=self.click(state,source['slot'],button=1)
+            carried=picked-returned-1;source_count=size-picked+returned+1
+            state=self._wait(state,menu_id,lambda m:
+                m['cursor']['item']==item and m['cursor']['count']==carried
+                and m['slots'][source['slot']]['item']==item and m['slots'][source['slot']]['count']==source_count,
+                'group_remainder',confirmations=2,fresh=True)
         if (state['menu']['cursor']['count']!=amount
                 or state['menu']['slots'][source['slot']]['count']!=size-amount):
             raise RuntimeError('Group source changed after pickup; no distribution sent')

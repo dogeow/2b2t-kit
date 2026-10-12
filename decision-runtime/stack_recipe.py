@@ -81,7 +81,7 @@ def split_cost(size,needed):
 
 
 def grouped_batch(menu,spec,max_rounds):
-    """Use vanilla group distribution only for exact full/half ingredient stacks.
+    """Use vanilla group distribution with at most three source remainder clicks.
 
     A partial 40+24 pair can produce ten rounds then six, without returning
     twenty items one at a time. Other recipes retain their ordinary cell path.
@@ -92,7 +92,7 @@ def grouped_batch(menu,spec,max_rounds):
         for item,cells in spec['ingredients'].items():
             amount=rounds*len(cells)
             available=[v for v in slots if v['item']==item and v['count']>=amount
-                       and (len(cells)==1 or v['count']==amount or (v['count']+1)//2==amount)]
+                       and (len(cells)==1 or group_pickup(v['count'],amount)[0]<=3)]
             if not available:break
             source=min(available,key=lambda v:(split_cost(v['count'],amount),v['slot']))
             actions.append({'source':source['slot'],'source_count':source['count'],
@@ -104,6 +104,10 @@ def grouped_batch(menu,spec,max_rounds):
             if room>=rounds*spec['produces']:
                 return {'rounds':rounds,'produced':rounds*spec['produces'],'actions':actions,'distribution':'exact_groups'}
     return None
+
+
+def group_pickup(size,amount):
+    return min((picked-amount,picked,button)for picked,button in ((size,0),((size+1)//2,1))if picked>=amount)
 
 
 def plan_batch(state,spec,max_rounds=32,*,grouped=True):
@@ -136,7 +140,8 @@ def plan_batch(state,spec,max_rounds=32,*,grouped=True):
         if room>=rounds*spec['produces']:
             if group is not None:
                 ordinary_cost=1+sum(split_cost(a['source_count'],a['count']) for a in actions)
-                group_cost=1+sum(2 if len(a['cells'])>1 else split_cost(a['source_count'],a['count']) for a in group['actions'])
+                group_cost=1+sum(2+group_pickup(a['source_count'],a['count']*len(a['cells']))[0]
+                    if len(a['cells'])>1 else split_cost(a['source_count'],a['count']) for a in group['actions'])
                 if group['rounds']*ordinary_cost>=rounds*group_cost:return group
             return {'rounds':rounds,'produced':rounds*spec['produces'],'actions':actions}
     if group is not None:return group
