@@ -236,7 +236,7 @@ class ManufactureTests(unittest.TestCase):
         self.assertTrue(all(op=='slot_click' for op,_ in c.calls))
         self.assertTrue(all(not c.status()['menu']['slots'][i]['count'] for i in range(1,5)))
         self.assertEqual('',c.screen);self.assertEqual(0,c.cursor['count'])
-        self.assertEqual(12,sum(params['slot']==0 and params['kind']=='quick_move' for _,params in c.calls))
+        self.assertEqual(1,sum(params['slot']==0 and params['kind']=='quick_move' for _,params in c.calls))
 
     def test_allowlisted_two_by_two_chain_uses_one_output_click_per_44_item_stage(self):
         c=InventoryCraftClient(self.root,stock={'minecraft:cobbled_deepslate':44})
@@ -411,11 +411,22 @@ class ManufactureTests(unittest.TestCase):
         self.assertEqual(1,len(c.calls));self.assertEqual('InventoryScreen',c.screen)
 
     def test_inventory_manufacture_without_output_capacity_does_not_touch_grid(self):
-        c=InventoryCraftClient(self.root)
+        # This source retains sixteen stone, so input placement cannot free
+        # a slot for the 48 bricks. A fully consumed 48-stack may now do so.
+        c=InventoryCraftClient(self.root,stock={'minecraft:stone':64})
         for row in c.slots[10:45]:row.update(item='minecraft:diamond_sword',count=1,max_stack=1)
         result=manufacture(c,self.catalog,{'minecraft:stone_bricks':48})
         self.assertFalse(result['complete']);self.assertEqual([],c.calls)
         self.assertEqual('waiting_for_inventory_space',result['steps'][0]['state'])
+
+    def test_bulk_stone_inputs_can_free_a_slot_in_an_initially_full_inventory(self):
+        c=InventoryCraftClient(self.root)
+        for row in c.slots[10:45]:row.update(item='minecraft:diamond_sword',count=1,max_stack=1)
+        with patch('kit_runtime.inventory.time.sleep'),patch('material_manufacture.time.sleep'):
+            result=manufacture(c,self.catalog,{'minecraft:stone_bricks':48})
+        self.assertTrue(result['complete']);self.assertEqual(0,c.cursor['count'])
+        self.assertEqual(1,sum(p['slot']==0 and p['kind']=='quick_move'for _,p in c.calls))
+        self.assertEqual(35,sum(row['item']=='minecraft:diamond_sword'and row['count']==1 for row in c.slots[9:45]))
 
     def test_verified_material_recipe_uses_stack_executor_with_exact_balances(self):
         c=Client(self.root,{'minecraft:bone_meal':64})

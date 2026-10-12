@@ -25,6 +25,11 @@ COLORS=('white','orange','magenta','light_blue','yellow','lime','pink','gray',
 COLOR_OUTPUTS={f'minecraft:{color}_{kind}':(color,kind)
                for color in COLORS for kind in ('concrete_powder','terracotta')
                if kind!='concrete_powder'or color!='white'}
+STONE_SHAPES={
+ 'minecraft:stone_bricks':('minecraft:stone',4,{2:[1,2,3,4],3:[1,2,4,5]}),
+ 'minecraft:stone_brick_slab':('minecraft:stone_bricks',6,{3:[1,2,3]}),
+ 'minecraft:chiseled_stone_bricks':('minecraft:stone_brick_slab',1,{2:[1,3],3:[1,4]}),
+}
 
 
 def _color_recipe(spec):
@@ -43,6 +48,11 @@ def _color_recipe(spec):
             and sorted(cell for cells in ingredients.values()for cell in cells)==list(range(1,10)))
 
 def supported(spec):
+    if spec.get('output')in STONE_SHAPES:
+        raw,produces,shapes=STONE_SHAPES[spec['output']];width=spec.get('width');cells=shapes.get(width)if type(width)is int else None
+        ingredients=spec.get('ingredients')or{}
+        return bool(cells and type(spec.get('produces'))is int and spec['produces']==produces
+                    and ingredients=={raw:cells}and all(type(cell)is int for cell in ingredients[raw]))
     if spec.get('output')in COLOR_OUTPUTS:return _color_recipe(spec)
     if spec.get('output') in PLANK_INPUTS:
         ingredients=spec.get('ingredients')or{}
