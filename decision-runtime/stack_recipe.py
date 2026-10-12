@@ -17,8 +17,18 @@ STACKABLE_OUTPUTS={'minecraft:bone_meal','minecraft:white_dye','minecraft:white_
     'minecraft:polished_deepslate','minecraft:deepslate_bricks','minecraft:deepslate_tiles'}
 WOOD_INPUTS={'minecraft:cherry_wood':'minecraft:cherry_log',
              'minecraft:stripped_cherry_wood':'minecraft:stripped_cherry_log'}
+PLANK_INPUTS={f'minecraft:{wood}_planks':frozenset(f'minecraft:{prefix}{wood}_{kind}'
+              for prefix in ('','stripped_')for kind in ('log','wood'))
+              for wood in ('acacia','dark_oak')}
 
 def supported(spec):
+    if spec.get('output') in PLANK_INPUTS:
+        ingredients=spec.get('ingredients')or{}
+        return bool(spec.get('width')in(2,3)and type(spec.get('produces'))is int and spec['produces']==4
+            and isinstance(ingredients,dict)and len(ingredients)==1
+            and next(iter(ingredients))in PLANK_INPUTS[spec['output']]
+            and next(iter(ingredients.values()))==[1]
+            and type(next(iter(ingredients.values()))[0])is int)
     if spec.get('output')=='minecraft:coarse_dirt':
         ingredients=spec.get('ingredients')or{}
         return bool(spec.get('width')in(2,3)and spec.get('produces')==4

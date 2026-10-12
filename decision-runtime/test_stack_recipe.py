@@ -23,6 +23,25 @@ SPEC={'recipe_id':'white_concrete_powder','output':'minecraft:white_concrete_pow
       'ingredients':{'minecraft:sand':[1,2,3,4],'minecraft:gravel':[5,6,7,8],'minecraft:white_dye':[9]}}
 
 class StackRecipeTest(unittest.TestCase):
+    def test_acacia_and_dark_oak_planks_batch_exact_species_and_consumption(self):
+        for species in ('acacia','dark_oak'):
+            raw='minecraft:'+species+'_log';output='minecraft:'+species+'_planks'
+            spec={'output':output,'produces':4,'width':3,'ingredients':{raw:[1]}}
+            self.assertTrue(supported(spec))
+            before=fixture([(species+'_log',64)],empty=3)
+            batch=plan_batch(before,spec,32)
+            self.assertEqual((32,128,1),(batch['rounds'],batch['produced'],len(batch['actions'])))
+            after=fixture([(species+'_log',32),(species+'_planks',64),(species+'_planks',64)],empty=1)
+            self.assertTrue(settled_result(before,after,spec,batch))
+            after['inventory'][0]['count']=64
+            self.assertFalse(settled_result(before,after,spec,batch))
+            for change in ({'produces':1},{'produces':True},{'width':1},
+                           {'ingredients':{'minecraft:oak_log':[1]}},
+                           {'ingredients':{raw:[True]}},
+                           {'ingredients':{raw:[1,2]}},
+                           {'ingredients':{raw:[1],'minecraft:water_bucket':[2]}}):
+                self.assertFalse(supported({**spec,**change}))
+
     def test_coarse_dirt_batch_requires_exact_four_output_and_two_of_each_input(self):
         spec={'output':'minecraft:coarse_dirt','produces':4,'width':2,
               'ingredients':{'minecraft:dirt':[1,4],'minecraft:gravel':[2,3]}}
