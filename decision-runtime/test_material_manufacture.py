@@ -13,6 +13,34 @@ from recipe_catalog import RecipeCatalog
 
 
 class CherryBatchCapacityTest(unittest.TestCase):
+    def test_gray_dye_inventory_batch_fills_eight_rounds_and_keeps_ingredient_remainders(self):
+        slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]
+        slots[9].update(item='minecraft:black_dye',count=9,max_stack=64)
+        slots[10].update(item='minecraft:white_dye',count=10,max_stack=64)
+        state={'menu':{'slots':slots},'inventory':[{**r,'slot':i}for i,r in enumerate(slots[9:45])]}
+        initial=copy.deepcopy(state)
+        spec={'recipe_id':'gray_dye','output':'minecraft:gray_dye','produces':2,'width':2,
+              'ingredients':{'minecraft:black_dye':[1],'minecraft:white_dye':[2]}}
+        batch=_inventory_batch(state,spec,16)
+        self.assertEqual((8,16),(batch['rounds'],batch['produced']))
+        self.assertEqual([8,8],[a['count']for a in batch['actions']])
+        self.assertEqual(initial,state)
+        self.assertEqual(1,_inventory_batch(state,{**spec,'recipe_id':'unknown'},16)['rounds'])
+
+    def test_light_gray_batch_requires_two_white_dye_cells_and_real_output_space(self):
+        slots=[{'slot':i,'item':'minecraft:stick','count':64,'max_stack':64}for i in range(45)]
+        slots[9].update(item='minecraft:black_dye',count=8)
+        slots[10].update(item='minecraft:white_dye',count=16)
+        state={'menu':{'slots':slots},'inventory':[{**r,'slot':i}for i,r in enumerate(slots[9:45])]}
+        spec={'recipe_id':'light_gray_dye_from_black_white_dye','output':'minecraft:light_gray_dye',
+              'produces':3,'width':2,'ingredients':{'minecraft:black_dye':[1],'minecraft:white_dye':[2,3]}}
+        batch=_inventory_batch(state,spec,24)
+        self.assertEqual((8,24),(batch['rounds'],batch['produced']))
+        self.assertEqual([8,8,8],[a['count']for a in batch['actions']])
+        slots[9]['count']=9;slots[10]['count']=17
+        state['inventory']=[{**r,'slot':i}for i,r in enumerate(slots[9:45])]
+        with self.assertRaises(InventoryCapacity):_inventory_batch(state,spec,24)
+
     def test_coarse_dirt_stock_visit_batches_all_four_rounds_without_more_inputs(self):
         slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]
         slots[9].update(item='minecraft:dirt',count=8,max_stack=64)

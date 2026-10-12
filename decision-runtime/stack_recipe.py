@@ -30,6 +30,40 @@ STONE_SHAPES={
  'minecraft:stone_brick_slab':('minecraft:stone_bricks',6,{3:[1,2,3]}),
  'minecraft:chiseled_stone_bricks':('minecraft:stone_brick_slab',1,{2:[1,3],3:[1,4]}),
 }
+DYE_RECIPES={
+ 'black_dye':('black',1,('ink_sac',)),
+ 'black_dye_from_wither_rose':('black',1,('wither_rose',)),
+ 'gray_dye':('gray',2,('black_dye','white_dye')),
+ 'gray_dye_from_closed_eyeblossom':('gray',1,('closed_eyeblossom',)),
+ 'light_gray_dye_from_azure_bluet':('light_gray',1,('azure_bluet',)),
+ 'light_gray_dye_from_black_white_dye':('light_gray',3,('black_dye','white_dye','white_dye')),
+ 'light_gray_dye_from_gray_white_dye':('light_gray',2,('gray_dye','white_dye')),
+ 'light_gray_dye_from_oxeye_daisy':('light_gray',1,('oxeye_daisy',)),
+ 'light_gray_dye_from_white_tulip':('light_gray',1,('white_tulip',)),
+ 'red_dye_from_beetroot':('red',1,('beetroot',)),
+ 'red_dye_from_poppy':('red',1,('poppy',)),
+ 'red_dye_from_rose_bush':('red',2,('rose_bush',)),
+ 'red_dye_from_tulip':('red',1,('red_tulip',)),
+ 'pink_dye_from_cactus_flower':('pink',1,('cactus_flower',)),
+ 'pink_dye_from_peony':('pink',2,('peony',)),
+ 'pink_dye_from_pink_petals':('pink',1,('pink_petals',)),
+ 'pink_dye_from_pink_tulip':('pink',1,('pink_tulip',)),
+ 'pink_dye_from_red_white_dye':('pink',2,('red_dye','white_dye')),
+}
+DYE_OUTPUTS={f'minecraft:{color}_dye'for color,_,_ in DYE_RECIPES.values()}
+
+
+def _dye_recipe(spec):
+    recipe=DYE_RECIPES.get(spec.get('recipe_id'));width=spec.get('width')
+    if (recipe is None or type(width)is not int or width not in (2,3)
+            or type(spec.get('produces'))is not int):return False
+    color,produces,inputs=recipe
+    expected={}
+    for i,item in enumerate(inputs):
+        expected.setdefault('minecraft:'+item,[]).append((i//2)*width+i%2+1)
+    ingredients=spec.get('ingredients')
+    return (spec.get('output')==f'minecraft:{color}_dye'and spec['produces']==produces
+            and ingredients==expected and all(type(cell)is int for cells in ingredients.values()for cell in cells))
 
 
 def _color_recipe(spec):
@@ -48,6 +82,7 @@ def _color_recipe(spec):
             and sorted(cell for cells in ingredients.values()for cell in cells)==list(range(1,10)))
 
 def supported(spec):
+    if spec.get('output')in DYE_OUTPUTS:return _dye_recipe(spec)
     if spec.get('output')in STONE_SHAPES:
         raw,produces,shapes=STONE_SHAPES[spec['output']];width=spec.get('width');cells=shapes.get(width)if type(width)is int else None
         ingredients=spec.get('ingredients')or{}

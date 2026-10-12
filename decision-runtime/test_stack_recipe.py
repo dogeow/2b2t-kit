@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from stack_recipe import plan_batch,settled_result,execute,supported
+from stack_recipe import plan_batch,settled_result,execute,supported,DYE_RECIPES
 from craft_grid import InventoryCapacity
 
 
@@ -23,6 +23,35 @@ SPEC={'recipe_id':'white_concrete_powder','output':'minecraft:white_concrete_pow
       'ingredients':{'minecraft:sand':[1,2,3,4],'minecraft:gravel':[5,6,7,8],'minecraft:white_dye':[9]}}
 
 class StackRecipeTest(unittest.TestCase):
+    def test_dye_allowlist_requires_exact_recipe_output_inputs_and_normalized_cells(self):
+        for recipe_id,(color,produces,inputs) in DYE_RECIPES.items():
+            for width in (2,3):
+                ingredients={}
+                for i,item in enumerate(inputs):
+                    ingredients.setdefault('minecraft:'+item,[]).append((i//2)*width+i%2+1)
+                spec={'recipe_id':recipe_id,'output':f'minecraft:{color}_dye','produces':produces,
+                      'width':width,'ingredients':ingredients}
+                self.assertTrue(supported(spec),(recipe_id,width))
+                for change in ({'recipe_id':'unknown_dye_recipe'},{'produces':produces+1},
+                               {'produces':True},{'width':True},{'width':1},
+                               {'ingredients':{**ingredients,'minecraft:water_bucket':[4]}}):
+                    self.assertFalse(supported({**spec,**change}),(recipe_id,change))
+                wrong=copy.deepcopy(ingredients);first=next(iter(wrong));wrong[first][0]=True
+                self.assertFalse(supported({**spec,'ingredients':wrong}))
+        self.assertFalse(supported({'recipe_id':'black_dye','output':'minecraft:gray_dye',
+                                    'produces':1,'width':2,'ingredients':{'minecraft:ink_sac':[1]}}))
+
+    def test_gray_dye_batch_preserves_exact_black_white_consumption(self):
+        spec={'recipe_id':'gray_dye','output':'minecraft:gray_dye','produces':2,'width':3,
+              'ingredients':{'minecraft:black_dye':[1],'minecraft:white_dye':[2]}}
+        before=fixture([('black_dye',9),('white_dye',10)],empty=2)
+        batch=plan_batch(before,spec,8)
+        self.assertEqual((8,16),(batch['rounds'],batch['produced']))
+        after=fixture([('black_dye',1),('white_dye',2),('gray_dye',16)],empty=1)
+        self.assertTrue(settled_result(before,after,spec,batch))
+        after['inventory'][1]['count']=3
+        self.assertFalse(settled_result(before,after,spec,batch))
+
     def test_colored_powder_batch_keeps_color_exact_grid_and_material_conservation(self):
         spec={'output':'minecraft:black_concrete_powder','produces':8,'width':3,
               'ingredients':{'minecraft:sand':[2,3,4,5],'minecraft:gravel':[6,7,8,9],'minecraft:black_dye':[1]}}
