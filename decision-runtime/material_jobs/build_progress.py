@@ -8,7 +8,8 @@ from projection_flat_plan import FlatLayout
 
 
 class BuildMaterialProgress:
-    def __init__(self):self.cache={};self.layouts={};self.counts={}
+    def __init__(self,automation=None):
+        self.cache={};self.layouts={};self.counts={};self.automation=Path(automation)if automation is not None else None
     def read(self,path):
         path=Path(path);stamp=(path.stat().st_mtime_ns,path.stat().st_size)
         previous=self.cache.get(path)
@@ -47,13 +48,20 @@ class BuildMaterialProgress:
         model_path=directory/'flat-model.json'
         if not model_path.exists():
             choices=sorted(root.glob('*-build/flat-model.json'))
-            if not choices:return None
-            model_path=choices[0]
+            if choices:model_path=choices[0]
+            elif self.automation is not None:model_path=self.automation/'flat-map-continuation-cache.json'
+            else:return None
         reply=self.read(model_path)
-        if reply.get('world_session')!=state.get('world_session'):return None
+        cached_expected=model_path.name=='flat-map-continuation-cache.json'
+        if cached_expected:
+            if reply.get('schema')!=1 or reply.get('native_parking_verified') is not True:return None
+            model=reply['model']  # Immutable denominator only, never its saved actual audit.
+        else:
+            if reply.get('world_session')!=state.get('world_session'):return None
+            model=reply['projection_model']
         stamp=self.cache[model_path][0]
         if self.layouts.get(model_path,(None,None))[0]!=stamp:
-            layout=FlatLayout(reply['projection_model'],request['flat_map'])
+            layout=FlatLayout(model,request['flat_map'])
             self.layouts[model_path]=(stamp,layout,Counter(row['item'] for row in layout.expected.values()))
         layout=self.layouts[model_path][1]
         audit=self.read(root/'projection-latest.json');ledger=audit.get('material_ledger')or{}

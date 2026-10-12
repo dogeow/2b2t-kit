@@ -69,3 +69,10 @@ class BuildProgressTest(unittest.TestCase):
         for step,expected in [('discover','找树'),('craft','制作')]:
             self.write(folder/'wood-carried-pipeline.json',{'pending':{'kind':step}})
             self.assertEqual(self.read()['activity'],expected)
+    def test_cached_expected_table_can_supply_denominator_before_first_build_but_not_actual_credit(self):
+        native=self.root/'automation';native.mkdir();m=model()
+        self.write(native/'flat-map-continuation-cache.json',{'schema':1,'native_parking_verified':True,
+                   'world_session':'old','model':m,'audit':{'matched':99999}})
+        (self.build/'flat-model.json').unlink();self.reader=BuildMaterialProgress(native)
+        self.assertEqual(self.read()['done'],7)
+        self.assertEqual(self.read()['total'],18)

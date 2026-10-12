@@ -41,7 +41,7 @@ def overlay(request,root,out,reader,name):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for key in ('automation','request','out'):p.add_argument('--'+key,type=Path,required=True)
-    args=p.parse_args();request=json.loads(args.request.read_text());reader=BuildMaterialProgress();name=ItemNames(args.automation)
+    args=p.parse_args();request=json.loads(args.request.read_text());reader=BuildMaterialProgress(args.automation);name=ItemNames(args.automation)
     while True:
         try:
             if not overlay(request,args.automation,args.out,reader,name):return

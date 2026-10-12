@@ -79,7 +79,7 @@ class MaterialProgress:
         self.job = None
         self.last_read = 0
         from .build_progress import BuildMaterialProgress
-        self.build_progress=BuildMaterialProgress()
+        self.build_progress=BuildMaterialProgress(automation)
 
     def publish(self, state, *, now=None):
         now = time.time() if now is None else now
