@@ -9,7 +9,8 @@ from unittest.mock import patch
 import zipfile
 
 from material_jobs.colored_pipeline import (run, coverage, choose_recipe, COLORS,
-                                           _ingredients)
+                                           _ingredients,_craft_site_balanced)
+from types import SimpleNamespace
 from material_jobs.protocol import JobPaused, JobBlocked
 from projection_material_plan import ProcessingCatalog
 from recipe_catalog import RecipeCatalog
@@ -93,6 +94,40 @@ class Backend:
 
 
 class ColoredPipelineTest(unittest.TestCase):
+    def test_positive_ingredient_arrival_during_travel_uses_exact_craft_site_balance(self):
+        c=Client({'minecraft:pink_dye':1,'minecraft:sand':4,'minecraft:gravel':4});c.task='task';c.rev=7
+        class ArrivalBackend(Backend):
+            def craft(self,targets):
+                self.client.stock['minecraft:sand']+=1
+                before=dict(self.client.stock);result=super().craft(targets)
+                result.update(complete=True,inventory_observed_at=2,craft_site_observation={
+                    'schema':1,'world_session':c.world,'task_session':c.task,'revision_before':7,'revision_after':7,
+                    'before_time':1,'after_time':3,'before':before,'after':dict(self.client.stock)})
+                return result
+        b=ArrivalBackend(c,self.jar);result=self.execute(c,'minecraft:pink_concrete',8)
+        self.assertEqual('done',result['phase']);self.assertEqual(8,c.stock['minecraft:pink_concrete'])
+        self.assertEqual(1,c.stock['minecraft:sand']);self.assertEqual(1,sum(k=='craft'for k,*_ in b.calls))
+        book=json.loads((self.root/'job/colored-pipeline.json').read_text());self.assertIsNone(book['inflight'])
+
+    def test_craft_site_witness_rejects_stale_foreign_or_unexplained_consumption(self):
+        output='minecraft:pink_concrete_powder';before=Counter({'minecraft:sand':4,'minecraft:gravel':4,'minecraft:pink_dye':1})
+        after=Counter({output:8,'minecraft:sand':1});ingredients={'minecraft:sand':4,'minecraft:gravel':4,'minecraft:pink_dye':1}
+        c=SimpleNamespace(world='world',task='task',rev=7)
+        w={'schema':1,'world_session':'world','task_session':'task','revision_before':7,'revision_after':7,
+           'before_time':1,'after_time':3,'before':{**before,'minecraft:sand':5},'after':dict(after)}
+        result={'complete':True,'inventory_observed_at':2,'craft_site_observation':w}
+        self.assertTrue(_craft_site_balanced(result,before,after,output,ingredients,8,c))
+        for change in({'world_session':'other'},{'task_session':'other'},{'revision_after':8},
+                      {'before_time':3},{'before':{**w['before'],'minecraft:sand':6}},
+                      {'after':{**w['after'],'minecraft:sand':2}},
+                      {'before':{**w['before'],output:1}}):
+            bad=copy.deepcopy(result);bad['craft_site_observation'].update(change)
+            self.assertFalse(_craft_site_balanced(bad,before,after,output,ingredients,8,c),change)
+        bad=copy.deepcopy(result);bad['complete']=False
+        self.assertFalse(_craft_site_balanced(bad,before,after,output,ingredients,8,c))
+        depleted=Counter(after);depleted['minecraft:sand']=0
+        self.assertFalse(_craft_site_balanced(result,before,depleted,output,ingredients,8,c))
+
     def test_pre_entry_hatch_refusal_fetches_one_known_input_on_the_same_controller(self):
         c=Client({'minecraft:black_concrete_powder':4})
         class HatchBackend(Backend):

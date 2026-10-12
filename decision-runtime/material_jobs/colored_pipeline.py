@@ -35,6 +35,33 @@ class Pending(Exception):
         self.receipt = receipt
 
 
+def _craft_site_balanced(receipt,before,after,output,ingredients,multiple,c):
+    """A post-travel craft observation may contain newly collected ingredients.
+
+    Exact recipe consumption stays mandatory at the actual craft site. Only
+    positive ingredient arrivals outside that interval are permitted here.
+    """
+    w=receipt.get('craft_site_observation');observed=receipt.get('inventory_observed_at')
+    if (not isinstance(w,dict)or w.get('schema')!=1 or receipt.get('complete')is not True
+            or w.get('world_session')!=c.world or w.get('task_session')!=getattr(c,'task',None)
+            or not isinstance(w.get('task_session'),str)
+            or any(type(w.get(k))is not int for k in('revision_before','revision_after'))or w['revision_before']!=w['revision_after']
+            or type(getattr(c,'rev',None))is not int or w['revision_after']>c.rev
+            or any(type(w.get(k))is not int for k in('before_time','after_time'))
+            or type(observed)is not int or not w['before_time']<=observed<=w['after_time']
+            or w['before_time']>=w['after_time']
+            or not isinstance(w.get('before'),dict)or not isinstance(w.get('after'),dict)):
+        return False
+    left,right=w['before'],w['after'];keys=set(ingredients)|{output}
+    if any(type(d.get(i,0))is not int or d.get(i,0)<0 for d in(left,right)for i in keys):return False
+    gain=after[output]-before[output]
+    if (gain<=0 or gain%multiple or left.get(output,0)!=before[output]
+            or right.get(output,0)!=after[output]):return False
+    rounds=gain//multiple
+    return all(left.get(i,0)>=before[i] and right.get(i,0)<=after[i]
+               and left.get(i,0)-right.get(i,0)==n*rounds for i,n in ingredients.items())
+
+
 def _ingredients(recipe, rounds):
     result = Counter()
     for _, options in recipe.cells:
@@ -177,7 +204,9 @@ def run(c, profile, item, target_count, out, checkpoint, *, acquire=None, craft=
                 if gain <= 0 or gain % output_multiple:
                     raise Pending({"phase":"waiting", "code":"WAIT_RECONCILE", "detail":"Craft output net delta is invalid"})
                 rounds = gain//output_multiple
-                if any(before[i]-after[i] != n*rounds for i,n in ingredient_totals.items()):
+                if (any(before[i]-after[i] != n*rounds for i,n in ingredient_totals.items())
+                        and not(kind=='craft'and _craft_site_balanced(result,before,after,output,
+                                            ingredient_totals,output_multiple,client()))):
                     raise Pending({"phase":"waiting", "code":"WAIT_RECONCILE", "detail":"Craft ingredient/output conservation differs"})
             book["receipts"].append({**book["inflight"], "receipt":result, "after":dict(after)})
             book["inflight"] = None; write_json(path,book)

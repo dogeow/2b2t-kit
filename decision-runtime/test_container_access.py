@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import patch
-from container_access import OutdoorChestChanged, open_grounded_chest
+from container_access import OutdoorChestChanged, open_grounded_chest,open_chest_from_pose
+from copy import deepcopy
+from unittest.mock import Mock
 
 
 class FakeClient:
@@ -23,6 +25,78 @@ class FakeClient:
 
 
 class ContainerAccessTest(unittest.TestCase):
+    def indoor_client(self):
+        pose=[1.5,65,5.5];pos=[1,66,2]
+        state={'world_session':'w','control_revision':7,'connected':True,'pos':pose,'velocity':[0,0,0],
+               'flight':False,'on_ground':True,'under_water':False,'manual_movement':False,'screen':'',
+               'health':20,'guard_busy':False,'guard_armed':True,'guard_pve_only':True,
+               'hand':{'item':'minecraft:diamond_sword'},
+               'supervision_lease':{'kind':'materials','world_session':'w','job_session':'t','revision':7},
+               'menu':{'id':0,'type':'InventoryMenu','cursor':{'count':0}}}
+        scan={'phase':'done','world_session':'w','control_revision':7,'scan_start_revision':7,'scan_end_revision':7,
+              'scan_cells_read':1,'scan_total_cells':1,'blocks':[{'pos':pos,'state':'Block{minecraft:chest}[facing=south]','fluid':False}]}
+        client=Mock();client.world='w';client.task='t';client.rev=7;client.status.side_effect=lambda:deepcopy(state)
+        client.request.return_value=scan
+        return client,state,scan,pos,pose
+
+    def test_indoor_chest_opens_only_from_registered_grounded_pose_without_navigation(self):
+        c,s,scan,pos,pose=self.indoor_client();opened={'menu':{'id':8,'type':'ChestMenu','cursor':{'count':0}}}
+        with patch('container_access.wait_container_contents',return_value=opened)as wait, \
+             patch('container_access.verify_opened_chest')as verify,patch('material_storage_index.bind_source')as bind:
+            result=open_chest_from_pose(c,pos,pose,'south',allow_empty=True)
+        c.checked.assert_called_once_with('interact',pos=pos,face='south',
+             expected_state='Block{minecraft:chest}[facing=south]',expected_hand='minecraft:diamond_sword')
+        wait.assert_called_once_with(c,'ChestMenu',require_nonempty=False)
+        verify.assert_called_once_with(c,result['_verified_chest']);bind.assert_called_once_with(c,opened,pos,'minecraft:chest')
+
+    def test_indoor_chest_refuses_flying_drifting_foreign_or_player_ui_before_scan_or_interaction(self):
+        for change in ({'flight':True},{'pos':[1.5,66,5.5]},
+                       {'pos':[float('nan'),65,5.5]},{'manual_movement':True},{'screen':'InventoryScreen'},
+                       {'guard_busy':True},{'health':18},{'world_session':'other'}):
+            with self.subTest(change=change):
+                c,s,scan,pos,pose=self.indoor_client();s.update(change)
+                with self.assertRaises(RuntimeError):open_chest_from_pose(c,pos,pose,'south')
+                c.checked.assert_not_called();c.request.assert_not_called()
+
+    def test_indoor_chest_observes_bounded_ground_settle_without_moving_or_opening_early(self):
+        c,s,scan,pos,pose=self.indoor_client();clock=[0.0];s.update(on_ground=False,velocity=[.04,0,0])
+        def observe(op,**params):
+            if op=='snapshot':s.update(on_ground=True,velocity=[0,0,0]);return deepcopy(s)
+            return scan
+        c.request.side_effect=observe
+        with patch('container_access.time.monotonic',side_effect=lambda:clock[0]), \
+             patch('container_access.time.sleep',side_effect=lambda n:clock.__setitem__(0,clock[0]+n)), \
+             patch('container_access.wait_container_contents',return_value={'menu':{'id':8}}), \
+             patch('container_access.verify_opened_chest'),patch('material_storage_index.bind_source'):
+            open_chest_from_pose(c,pos,pose,'south')
+        self.assertEqual('snapshot',c.request.call_args_list[0].args[0]);self.assertEqual(1,c.checked.call_count)
+        self.assertEqual('interact',c.checked.call_args.args[0])
+
+    def test_indoor_chest_unsettled_pose_times_out_without_interaction(self):
+        c,s,scan,pos,pose=self.indoor_client();clock=[0.0];s.update(on_ground=False,velocity=[.04,0,0])
+        with patch('container_access.time.monotonic',side_effect=lambda:clock[0]), \
+             patch('container_access.time.sleep',side_effect=lambda n:clock.__setitem__(0,clock[0]+n)):
+            with self.assertRaises(RuntimeError):open_chest_from_pose(c,pos,pose,'south')
+        self.assertGreaterEqual(clock[0],4);c.checked.assert_not_called()
+
+    def test_indoor_chest_incomplete_changed_or_wet_scan_never_interacts(self):
+        for change in ('waiting','unloaded','foreign','changed','wet'):
+            with self.subTest(change=change):
+                c,s,scan,pos,pose=self.indoor_client()
+                if change=='waiting':scan['phase']='waiting'
+                elif change=='unloaded':scan['scan_cells_read']=0
+                elif change=='foreign':scan['scan_end_revision']=8
+                elif change=='changed':scan['blocks'][0]['state']='Block{minecraft:air}'
+                else:scan['blocks'][0]['fluid']=True
+                with self.assertRaises(RuntimeError):open_chest_from_pose(c,pos,pose,'south')
+                c.checked.assert_not_called()
+
+    def test_indoor_chest_bad_registration_never_reads_or_interacts(self):
+        c,s,scan,pos,pose=self.indoor_client()
+        for point,stand,face in ([pos,[True,65,5.5],'south'],[pos,pose,'up'],[[True,66,2],pose,'south']):
+            with self.assertRaises(ValueError):open_chest_from_pose(c,point,stand,face)
+        c.checked.assert_not_called();c.request.assert_not_called()
+
     def test_owned_high_chest_approach_uses_verified_air_descent_before_supply_route(self):
         clock=[0.0];client=FakeClient(clock);client.task='task';client.world='world'
         client.status=lambda:{'hand':{'item':'minecraft:diamond_sword'},'pos':[1.5,85,2.5],

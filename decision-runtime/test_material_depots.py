@@ -1,6 +1,6 @@
 import copy,json,tempfile,unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch,Mock
 from material_depots import capacity,exchange,audit
 from material_client import Client as NativeClient
 
@@ -55,6 +55,16 @@ class StorageClient:
     def put(self,slot,item,count,max_stack=64):self.menu['slots'][slot].update(item=item,count=count,max_stack=max_stack)
 
 class DepotsTest(unittest.TestCase):
+    def test_exchange_uses_material_backends_registered_opener_and_exit_for_indoor_chest(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            c=StorageClient(tmp);c.put(0,'minecraft:stone',8)
+            c.registered_depot_opener=Mock(side_effect=lambda client,pos,**kw:client.status())
+            c.registered_depot_exit=Mock()
+            with patch('material_depots.open_grounded_chest')as outdoor:
+                result=exchange(c,[[1,66,2]],withdraw={'minecraft:stone':8})
+            self.assertTrue(result['complete']);c.registered_depot_opener.assert_called_once_with(c,[1,66,2],allow_empty=False)
+            c.registered_depot_exit.assert_called_once();outdoor.assert_not_called()
+
     def test_audit_counts_all_depots_but_excludes_carried_items(self):
         with tempfile.TemporaryDirectory() as tmp:
             c=StorageClient(tmp);c.world='world';c.put(27,'minecraft:furnace',23)

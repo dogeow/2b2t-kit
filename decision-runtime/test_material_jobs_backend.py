@@ -32,6 +32,50 @@ def inventory_rows(counts):
 
 
 class BackendTest(unittest.TestCase):
+    def indoor_depot_profile(self):
+        bench=[10,65,10];pos=[9,66,7];pose=[9.5,65,10.5]
+        return {'workbench':bench,'workbench_entry':[{'kind':'walk','target':[10.5,65,15.5]}],
+                'workbench_exit':[{'kind':'walk','target':[10.5,65,15.5]}],
+                'depots':[pos],'indoor_depots':[{'authorized':True,'pos':pos,'workbench':bench,'pose':pose,'face':'south'}]}
+
+    def test_indoor_depot_reuses_registered_door_route_then_verified_pose_opener(self):
+        self.job.profile=self.indoor_depot_profile();self.job.prepare_travel=Mock();self.job.route=Mock()
+        entry=self.job.profile['indoor_depots'][0]
+        with patch('container_access.open_chest_from_pose',return_value={'opened':True})as opened, \
+             patch('container_access.open_grounded_chest')as outdoor:
+            result=self.job.open_depot(self.client,entry['pos'])
+        self.assertTrue(result['opened']);self.job.prepare_travel.assert_called_once()
+        self.job.route.assert_called_once_with('workbench_entry');self.job.stage_near_base.assert_called_once_with([entry['workbench']])
+        self.client.checked.assert_called_once_with('walk',target=entry['pose'],arrival=.25,restore_flight=False,seconds=45)
+        opened.assert_called_once_with(self.client,entry['pos'],entry['pose'],'south',allow_empty=True);outdoor.assert_not_called()
+
+    def test_indoor_depot_invalid_registration_refuses_before_travel_or_opening(self):
+        for change in ({'authorized':False},{'workbench':[1,65,1]},{'pose':[9.5,66,10.5]},
+                       {'pose':[20.5,65,10.5]},{'face':'up'}):
+            with self.subTest(change=change):
+                self.job.profile=self.indoor_depot_profile();self.job.profile['indoor_depots'][0].update(change)
+                self.job.prepare_travel=Mock();self.job.route=Mock()
+                with patch('container_access.open_chest_from_pose')as opened:
+                    with self.assertRaises(JobBlocked):self.job.open_depot(self.client,[9,66,7])
+                self.job.prepare_travel.assert_not_called();self.job.route.assert_not_called();opened.assert_not_called()
+        self.client.checked.assert_not_called()
+
+    def test_changed_indoor_depot_leaves_by_existing_exit_before_reporting_unavailable(self):
+        from container_access import OutdoorChestChanged
+        self.job.profile=self.indoor_depot_profile();self.job.prepare_travel=Mock();self.job.route=Mock()
+        self.job.leave_registered_workbench=Mock(return_value=True)
+        with patch('container_access.open_chest_from_pose',side_effect=OutdoorChestChanged([9,66,7],'minecraft:chest','Block{minecraft:air}',[])):
+            with self.assertRaises(OutdoorChestChanged):self.job.open_depot(self.client,[9,66,7])
+        self.job.leave_registered_workbench.assert_called_once()
+
+    def test_outdoor_depot_keeps_existing_opener_and_rejects_foreign_client(self):
+        self.job.profile={'depots':[[1,64,1]]};self.job.leave_registered_workbench=Mock(return_value=False)
+        with patch('container_access.open_grounded_chest',return_value={'opened':True})as opened:
+            self.assertTrue(self.job.open_depot(self.client,[1,64,1])['opened'])
+            opened.assert_called_once_with(self.client,[1,64,1],allow_empty=True)
+            with self.assertRaises(JobBlocked):self.job.open_depot(object(),[1,64,1])
+        self.client.checked.assert_not_called()
+
     def test_discovered_region_old_guard_hold_prevents_all_early_side_effects(self):
         from material_jobs.acquisition import record_route_failure
         item='minecraft:cobbled_deepslate'

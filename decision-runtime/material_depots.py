@@ -10,6 +10,8 @@ def _open_depot(client,pos,*,deposit_only=False):
     kind=(cached or {}).get('block_id','minecraft:chest')
     if kind not in ('minecraft:chest','minecraft:ender_chest'):
         raise RuntimeError('Registered depot type is unsupported; no opening or transfer')
+    opener=getattr(client,'__dict__',{}).get('registered_depot_opener')
+    if kind=='minecraft:chest'and callable(opener):return opener(client,list(pos),allow_empty=deposit_only)
     if kind=='minecraft:chest'and not deposit_only:return open_grounded_chest(client,list(pos))
     return open_grounded_chest(client,list(pos),block_id=kind,allow_empty=deposit_only)
 
@@ -27,7 +29,7 @@ def audit(client,chests,items):
     def save():write_json(journal,record)
     save()
     for pos in positions:
-        state=open_grounded_chest(client,pos)
+        state=_open_depot(client,pos)
         menu=state.get('menu',{});slots=menu.get('slots',[])
         if menu.get('type')!='ChestMenu' or len(slots) not in (63,90) or menu.get('cursor',{}).get('count',0):
             raise RuntimeError('Verified depot menu changed during stock audit')
@@ -35,6 +37,8 @@ def audit(client,chests,items):
         for row in slots[:-36]:
             if row.get('item') in counts:counts[row['item']]+=row['count']
         client.checked('close_menu')
+        leave=getattr(client,'__dict__',{}).get('registered_depot_exit')
+        if callable(leave):leave()
         record['visited'].append({'pos':pos,'counts':counts,'at_ms':state['time']})
         for item,count in counts.items():record['counts'][item]+=count
         save()
@@ -95,7 +99,10 @@ def exchange(client,chests,deposit=None,withdraw=None):
                 client.transfer(item,min(target,held+source['count'],held+room))
                 store_available()
         state=client.status();entry.update(after=stocks(state),at_ms=state.get('time'))
-        client.checked('close_menu');visited.append(entry)
+        client.checked('close_menu')
+        leave=getattr(client,'__dict__',{}).get('registered_depot_exit')
+        if callable(leave):leave()
+        visited.append(entry)
         with (client.out/'depot-exchanges.jsonl').open('a') as stream:stream.write(json.dumps(entry,ensure_ascii=False)+'\n')
     store,fetch=unmet(client.status(),deposit,withdraw)
     return {'visited':visited,'remaining_deposit':store,'remaining_withdraw':fetch,

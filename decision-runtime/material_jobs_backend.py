@@ -441,6 +441,8 @@ class Backend:
                                remote_finish='guard', park_target=park)
             self.client = client
             client.registered_direct_air_routes = self.profile.get('direct_registered_resource_routes') is True
+            client.registered_depot_opener=self.open_depot
+            client.registered_depot_exit=self.leave_registered_workbench
             from material_jobs.runtime_update import ensure as ensure_runtime_update
             ensure_runtime_update(client,self.root,directory,self.runtime_update)
         except RuntimeError as error:
@@ -662,7 +664,8 @@ class Backend:
 
     def leave_registered_workbench(self):
         """Reuse the registered door exit when a fresh job starts inside its shop."""
-        bench=self.profile.get('workbench');route=self.profile.get('workbench_exit')
+        profile=getattr(self,'profile',{})
+        bench=profile.get('workbench');route=profile.get('workbench_exit')
         if not isinstance(bench,list) or len(bench)!=3 or not isinstance(route,list) or not route:return False
         state=self.ensure_client().status();pos=state.get('pos')
         if (not isinstance(pos,list) or len(pos)!=3 or state.get('under_water')
@@ -686,6 +689,32 @@ class Backend:
             raise JobBlocked('远程返回仓库或工位需要登记室外接近点')
         from material_jobs.acquisition import _travel
         _travel(c,staging,self.checkpoint,[])
+
+    def open_depot(self,c,pos,*,allow_empty=True):
+        """Use an explicitly registered shop stand for indoor storage only."""
+        from container_access import open_grounded_chest,open_chest_from_pose,OutdoorChestChanged
+        if c is not self.ensure_client():raise JobBlocked('仓库入口不属于本材料控制者')
+        entries=[r for r in self.profile.get('indoor_depots',[])if isinstance(r,dict)and r.get('pos')==list(pos)]
+        if not entries:
+            if self.leave_registered_workbench():self.stage_near_base([pos])
+            return open_grounded_chest(c,list(pos),allow_empty=allow_empty)
+        r=entries[0];bench=self.profile.get('workbench');pose=r.get('pose')
+        if (len(entries)!=1 or r.get('authorized')is not True or r.get('workbench')!=bench
+                or not isinstance(bench,list)or len(bench)!=3
+                or any(type(v)is not int for v in bench)
+                or not isinstance(pose,list)or len(pose)!=3
+                or any(type(v)not in(int,float)or not math.isfinite(v)for v in pose)
+                or pose[1]!=bench[1]or math.hypot(pose[0]-bench[0]-.5,pose[2]-bench[2]-.5)>4
+                or abs(pos[1]-bench[1])>2 or math.hypot(pos[0]-bench[0],pos[2]-bench[2])>8
+                or r.get('face')not in('north','south','west','east')
+                or not self.profile.get('workbench_entry')or not self.profile.get('workbench_exit')):
+            raise JobBlocked('室内仓库需要明确登记的原工作间站位及进出路线；不猜穿墙路线')
+        self.prepare_travel();self.stage_near_base([bench]);self.route('workbench_entry')
+        c.checked('walk',target=pose,arrival=.25,restore_flight=False,seconds=45)
+        try:return open_chest_from_pose(c,list(pos),pose,r['face'],allow_empty=allow_empty)
+        except OutdoorChestChanged:
+            self.leave_registered_workbench()
+            raise
 
     def acquire_registered_wheat(self, target, out, checkpoint):
         from material_jobs.registered_wheat import run
@@ -767,7 +796,7 @@ class Backend:
                 # Verify the actual chest and clear landing column. A recorded
                 # indoor/obstructed position cannot authorize a blind approach.
                 try:
-                    state = open_grounded_chest(c, list(pos), allow_empty=True)
+                    state = self.open_depot(c,list(pos),allow_empty=True)
                 except OutdoorChestChanged as error:
                     entry = unavailable_registered_source(pos, error)
                     visited.append(entry)
@@ -840,6 +869,7 @@ class Backend:
                     entry['provided'][item] = gain
                     entry['phase'] = 'done'
                 self.close_owned_menu()
+                self.leave_registered_workbench()
                 write_json(out/'sources.json', visited)
             packed_receipt=self.fetch_packed(targets)
             held = self.stock()
@@ -898,7 +928,7 @@ class Backend:
         for pos in route['positions']:
             self.checkpoint()
             try:
-                state=open_grounded_chest(c,list(pos),allow_empty=True)
+                state=self.open_depot(c,list(pos),allow_empty=True)
             except OutdoorChestChanged as error:
                 visited.append(unavailable_registered_source(pos,error))
                 unavailable.append(list(pos))
@@ -949,6 +979,7 @@ class Backend:
                     # inputs for the previously selected material chain.
                     break
             self.close_owned_menu()
+            self.leave_registered_workbench()
             entry['phase']='done';write_json(record_path,record)
         after=dict(inventory_counts(c.status()))
         provided={item:min(count,max(0,after.get(item,0)-before.get(item,0)))
@@ -1117,6 +1148,24 @@ class Backend:
         with self.action('craft') as (c, out):
             from goal_workflow import open_workbench
             from material_manufacture import manufacture, inventory_plan
+            def manufacture_at_site():
+                before=c.status()
+                result=manufacture(c,self.crafting_catalog,targets)
+                after=c.status()
+                witness={'schema':1,'world_session':getattr(c,'world',None),'task_session':getattr(c,'task',None),
+                         'revision_before':before.get('control_revision'),'revision_after':after.get('control_revision'),
+                         'before_time':before.get('time'),'after_time':after.get('time'),
+                         'before':dict(inventory_counts(before)),'after':dict(inventory_counts(after))}
+                observed=result.get('inventory_observed_at')
+                valid=(all(isinstance(witness[k],str)and bool(witness[k])for k in('world_session','task_session'))
+                       and all(type(witness[k])is int for k in('revision_before','revision_after','before_time','after_time'))
+                       and witness['revision_before']==witness['revision_after']
+                       and type(observed)is int and witness['before_time']<=observed<=witness['after_time']
+                       and witness['before_time']<witness['after_time'])
+                if valid:
+                    write_json(out/'craft-site-observation.json',witness)
+                    return {**result,'craft_site_observation':witness}
+                return result
             current = c.status()
             if inventory_plan(self.crafting_catalog, targets, inventory_counts(current)) is not None:
                 if current.get('screen') or current.get('menu', {}).get('type') != 'InventoryMenu':
@@ -1132,7 +1181,7 @@ class Backend:
                         or inventory_plan(self.crafting_catalog, targets,
                                           inventory_counts(current)) is None):
                     raise JobPaused('离开采坑后背包或合成物料已变化，请按新现物重新规划')
-                result = manufacture(c, self.crafting_catalog, targets)
+                result = manufacture_at_site()
                 write_json(out/'result.json', result)
                 return {'phase':'done' if result['complete'] else 'waiting',
                         'detail':'2×2背包合成结果已核对，无需前往工作台', 'crafting_location':'inventory', **result}
@@ -1149,7 +1198,7 @@ class Backend:
                 _travel(c,staging,self.checkpoint,[])
             self.route('workbench_entry')
             open_workbench(c,pos)
-            result = manufacture(c,self.crafting_catalog,targets)
+            result = manufacture_at_site()
             self.close_owned_menu()
             # The crafted stock is already verified. Preserve its receipt even
             # if the subsequent door exit cannot be confirmed.
@@ -1988,6 +2037,7 @@ class Backend:
                 # Recover held crafting contents before movement, then leave
                 # the actual pit before any callback can open a distant chest.
                 self.close_owned_menu()
+                self.leave_registered_workbench()
                 leave_quarry(c,self.out/'acquisition')
                 tools_path=self.out/'equipment'/'silk-tools.json'
                 if tools_path.exists():
