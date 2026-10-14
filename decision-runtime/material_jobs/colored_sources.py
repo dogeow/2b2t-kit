@@ -198,6 +198,12 @@ otherwise WAIT_SOURCE. Wet clay is rejected by the current native mine guard.
     regions = list(_regions(profile, item))
     if not regions:
         return _wait(item, target_count)
+    if item in ('minecraft:clay','minecraft:clay_ball'):
+        for index,region in enumerate(regions):
+            if isinstance(region.get('dry_columns'),dict):
+                from .dry_clay_columns import run as harvest_columns
+                return harvest_columns(c,profile,region,item,target_count,
+                                       out/('dry-columns-%d'%index),checkpoint)
     if item == "minecraft:ink_sac":
         for drop in state.get("entities", []):
             pos = drop.get("pos", [])
