@@ -168,9 +168,9 @@ class LightingPreloadTest(unittest.TestCase):
             result=self.dispatch()
         route=json.loads((Path(result['directory'])/'preload-route.json').read_text())
         self.assertTrue(route['arrived_near'])
-        for leg in route['legs']:
-            for step in leg['route']:
-                self.assertLessEqual(math.dist(step['target'],step['actual']),.55)
+        moves=[step for leg in route['legs']for step in leg['route']if 'target'in step and 'actual'in step]
+        self.assertTrue(moves)
+        for step in moves:self.assertLessEqual(math.dist(step['target'],step['actual']),.55)
         remote=next(i for i,row in enumerate(self.calls) if row[0]=='scan' and row[1]['min']==[153,-64,153])
         for op,params,here in self.calls[:remote]:
             if op=='navigate':self.assertLessEqual(math.dist(here,params['target']),32.000001)

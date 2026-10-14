@@ -5,8 +5,8 @@ from pathlib import Path
 
 INTERVAL_MS=15*60*1000
 MAX_PACKET=1_048_576
-DEFAULT_STATE=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation/server-probe-simpcraft.json')
-DEFAULT_JAR=Path('/Applications/.minecraft/versions/26.1.2/26.1.2.jar')
+DEFAULT_STATE=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation/server-probe-simpcraft.json')
+DEFAULT_JAR=Path('/Applications/.minecraft/versions/26.2/26.2.jar')
 
 
 def varint(value):

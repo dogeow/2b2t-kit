@@ -230,10 +230,14 @@ class InflightLifecycleTests(unittest.TestCase):
                      patch('safety_interlock.require_unlocked'),patch('material_client.time.sleep'):
                     with self.assertRaises(error):client.request('navigate',target=[1.5,110,.5])
                 req=json.loads((client.root/'request.json').read_text())
-                self.assertEqual(req['id'],client.last);self.assertIsNone(client.native_inflight)
+                self.assertEqual(req['id'],client.last)
+                self.assertEqual(req['id'],client.native_inflight['request_id'])
+                self.assertEqual(req['world_session'],client.native_inflight['world_session'])
+                self.assertEqual(req['expected_revision'],client.native_inflight['base_revision'])
                 self.assertEqual(13,client.rev);self.assertEqual(1,len(client.seen_ids))
+                if fail=='world':self.assertFalse(owns_material_state(client,client.owner.latest))
 
-    def test_python_timeout_clears_short_lived_authority_but_retains_unresolved_dispatch(self):
+    def test_python_timeout_retains_exact_envelope_only_for_its_owned_pending_request(self):
         with tempfile.TemporaryDirectory() as folder:
             client=self.make_client(Path(folder));clock=iter(range(1000))
             with patch('live_snapshot.read_fresh',side_effect=self.reader(client,fail='timeout')), \
@@ -241,20 +245,26 @@ class InflightLifecycleTests(unittest.TestCase):
                  patch('material_client.time.monotonic',side_effect=lambda:next(clock)):
                 with self.assertRaisesRegex(RuntimeError,'do not replay'):client.request('navigate',target=[1.5,110,.5],seconds=0)
             req=json.loads((client.root/'request.json').read_text())
-            self.assertEqual(req['id'],client.last);self.assertIsNone(client.native_inflight)
+            self.assertEqual(req['id'],client.last)
+            self.assertEqual(req['id'],client.native_inflight['request_id'])
+            self.assertEqual(13,client.native_inflight['base_revision'])
             self.assertEqual(13,client.rev);self.assertEqual(1,len(client.seen_ids))
-            self.assertFalse(owns_material_state(client,client.owner.latest))
+            self.assertTrue(owns_material_state(client,client.owner.latest))
+            self.assertFalse(owns_material_state(client,{**client.owner.latest,'id':'foreign'}))
 
-    def test_terminal_logging_failure_still_clears_descriptor(self):
+    def test_terminal_logging_failure_retains_descriptor_without_replaying_completed_action(self):
         with tempfile.TemporaryDirectory() as folder:
             client=self.make_client(Path(folder));(client.out/'events.jsonl').mkdir()
             with patch('live_snapshot.read_fresh',side_effect=self.reader(client)), \
                  patch('safety_interlock.require_unlocked'),patch('material_client.time.sleep'):
                 with self.assertRaises(IsADirectoryError):client.request('navigate',target=[1.5,110,.5])
-            self.assertEqual(14,client.rev);self.assertIsNone(client.native_inflight)
+            self.assertEqual(14,client.rev)
+            req=json.loads((client.root/'request.json').read_text())
+            self.assertEqual(req['id'],client.native_inflight['request_id'])
+            self.assertEqual(14,client.native_inflight['expected_revision'])
             self.assertEqual(1,len(client.seen_ids))
 
-    def test_logout_offline_early_return_clears_descriptor_without_claiming_offline_ownership(self):
+    def test_logout_offline_early_return_retains_envelope_without_claiming_offline_ownership(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
             class Fake(Client):
@@ -265,7 +275,9 @@ class InflightLifecycleTests(unittest.TestCase):
             client=Fake.__new__(Fake);client.root=client.out=root;client.world='world';client.rev=13
             client.anchor=[.5,110,.5];client.last=None;client.owned=False;client.native_inflight=None
             result=client.request('safe_logout')
-            self.assertFalse(result['connected']);self.assertIsNone(client.native_inflight)
+            self.assertFalse(result['connected'])
+            self.assertEqual(json.loads((root/'request.json').read_text())['id'],client.native_inflight['request_id'])
+            self.assertFalse(owns_material_state(client,result))
             self.assertEqual(json.loads((root/'request.json').read_text())['id'],client.last)
 
 

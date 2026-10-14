@@ -179,7 +179,7 @@ def main():
                         help='Verified dry marker near the water cell; prevents standing over fresh powder')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
-    root = '/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation'
+    root = '/Applications/.minecraft/versions/26.2/config/twob2tkit/automation'
     client = MaterialClient(root, args.out,
                             remote_finish='guard' if args.park_high else 'disconnect',
                             park_target=args.park_high)

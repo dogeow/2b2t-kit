@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from kit_runtime.diagnostics import redact, tail_events
 
-ROOT = Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation')
+ROOT = Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation')
 
 
 def read_object(path: Path) -> dict:

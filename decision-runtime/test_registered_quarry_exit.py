@@ -60,7 +60,7 @@ class ExitTest(unittest.TestCase):
         from types import SimpleNamespace
         from material_jobs_backend import Backend
         backend=SimpleNamespace(close_owned_menu=lambda:None,ensure_client=lambda:self.c,
-                                out=self.c.out,profile=profile())
+                                leave_registered_workbench=lambda:False,out=self.c.out,profile=profile())
         with patch('material_jobs_backend.leave_quarry',return_value=False),\
              patch('material_jobs.construction_access.recover_pending'),\
              patch('material_jobs.registered_quarry_exit.leave',return_value=True)as registered,\

@@ -1,9 +1,12 @@
 import json
 from pathlib import Path
+import contextlib
+import io
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from kit_cli import KitControlError, compact, make_request, send
 
@@ -16,6 +19,19 @@ def state():
 
 
 class KitCliTest(unittest.TestCase):
+    def test_default_status_reads_current_26_2_instance_without_sending_actions(self):
+        import kit_cli
+        with patch('kit_cli.live_status',return_value=state())as observe,patch('kit_cli.compact',return_value={}),patch('kit_cli.send')as send,contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0,kit_cli.main(['gravel','status']))
+        self.assertEqual(Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation'),observe.call_args.args[0])
+        send.assert_not_called()
+
+    def test_explicit_legacy_instance_remains_available_for_rollback(self):
+        import kit_cli
+        legacy='/Applications/.minecraft/versions/26.1.2'
+        with patch('kit_cli.live_status',return_value=state())as observe,patch('kit_cli.compact',return_value={}),patch('kit_cli.send')as send,contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0,kit_cli.main(['--game-dir',legacy,'gravel','status']))
+        self.assertEqual(Path(legacy)/'config/twob2tkit/automation',observe.call_args.args[0]);send.assert_not_called()
     def test_depot_channel_does_not_touch_active_gameplay_mailbox_and_accepts_repeated_set(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'status.json').write_text(json.dumps(state()))

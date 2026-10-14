@@ -13,7 +13,7 @@ from material_client import MaterialClient, Handoff
 from potato_farm import CROPS, crop_descriptor, plan, run
 from safety_interlock import require_unlocked
 
-DEFAULT_GAME = Path('/Applications/.minecraft/versions/26.1.2')
+DEFAULT_GAME = Path('/Applications/.minecraft/versions/26.2')
 
 
 def journal_directory(root, state, request, out=None):

@@ -107,7 +107,15 @@ Minecraft 当前状态接口约每秒刷新，动作请求按客户端 tick 处�
 
 ## 验证与资料
 
-`python -m unittest -v` 使用临时文件/模拟回包，不操作游戏。基准保存每次响应、耗时、问题和期望答案；6 条指令重复调用不等于 48 个独立准确率样本。
+在仓库根目录使用托管 Python 环境执行完整回归：
+
+```bash
+PYTHONPATH=decision-runtime \
+  "$HOME/Library/Application Support/MinecraftDecisions/venv/bin/python" \
+  -m unittest discover -s decision-runtime -p 'test_*.py'
+```
+
+新环境的依赖使用 `decision-runtime/requirements.txt` 中已锁定的版本。测试使用临时文件/模拟回包，不操作游戏；系统 Python 缺少依赖时的导入错误不代表游戏逻辑回归。基准保存每次响应、耗时、问题和期望答案；6 条指令重复调用不等于 48 个独立准确率样本。
 
 - [TypeSafe API](https://docs.typesafe.ai/api)
 - [Jev 的能力边界](https://docs.typesafe.ai/model-jaggedness/jev-1.13)

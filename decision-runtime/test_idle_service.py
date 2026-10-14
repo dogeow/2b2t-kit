@@ -37,6 +37,7 @@ class FakeKit:
             'idle_fishing_protocol':1,'fisher_chest_range':8,'fisher_deposit_allowed':False,
             'kill_aura':True,'auto_log':True,'recent_hurt_at':0,'recent_attacker':'','velocity':[0,0,0],
             'idle_activity_protocol':1,'idle_activity':{'busy':False,'conflicts':[],'idle_task_session':''},
+            'player_uuid':'player','projection_selection':None,
             'supervision_lease':{},'material_task':{'occupied':False,'process_alive':False,'cancelling':False},
             'menu':{'type':'InventoryMenu','cursor':{'item':'minecraft:air','count':0}},
             'movement_keys':{'forward':False,'back':False,'jump':False,'sneak':False},
@@ -73,6 +74,7 @@ class FakeKit:
             def _settle_owned_ground_walk(self,state):
                 from material_client import MaterialClient
                 return MaterialClient._settle_owned_ground_walk(self,state)
+            def raw(self,*args,**kwargs):return self.status(wait_seconds=0)
             def request(self,op,**params):
                 before=native.observe();native.clock.step(.25 if op=='scan' else .03)
                 native.calls.append((op,deepcopy(params)));self.last='fake-'+str(len(native.calls));native.state['last_request']=self.last
@@ -84,6 +86,7 @@ class FakeKit:
                     if op=='walk' and native.move_fault!='walk':
                         terminal=native.observe()
                         self.last_owned_ground_walk={'request_id':self.last,'world_session':self.world,'task_session':self.task,'revision':self.rev,
+                            'pose_rebase_schema':1,'before_inventory':deepcopy(before['inventory'][:36]),
                             'op':'walk','phase':'done','params':deepcopy(params),'before_damage':{k:before[k] for k in ('recent_hurt_at','recent_attacker')},
                             'before_safety_hold':deepcopy(before['safety_hold']),'terminal':terminal}
                     if native.inject_move is not None:
@@ -91,6 +94,9 @@ class FakeKit:
                 if op=='scan':
                     bounded=[r for r in native.blocks if all(low<=value<=high for low,value,high in zip(params['min'],r['pos'],params['max']))]
                     result=native.observe();result.update(blocks=deepcopy(bounded),scan_entities=[],unloaded_chunks=0,
+                        scan_start_revision=self.rev,scan_end_revision=self.rev,
+                        scan_cells_read=math.prod(b-a+1 for a,b in zip(params['min'],params['max'])),
+                        scan_total_cells=math.prod(b-a+1 for a,b in zip(params['min'],params['max'])),
                         scan_entity_scope='current_client_loaded_entities_intersecting_scan_AABB_sampled_at_scan_end_not_whole_herd')
                 else:
                     if op=='look':native.state.update(yaw=params['yaw'],pitch=params['pitch'])
@@ -105,6 +111,8 @@ class FakeKit:
                     result['material_air_navigation']={'phase':'confirmed','outcome':'done','world_session':'w','stable_ticks':8,
                         'restored_ticks':0 if native.move_fault=='restore' and params['target']==native.shore['stand'] else 8,'injury_interrupted':False}
                 if phase=='waiting' and op in ('navigate','walk'):result.pop('world_session',None)
+                self.last_terminal_evidence={'request_id':self.last,'op':op,'phase':phase,
+                    'world_session':self.world,'task_session':self.task,'revision_after':self.rev}
                 return result
             def finish(self):
                 assert not native.state['fisher_active']

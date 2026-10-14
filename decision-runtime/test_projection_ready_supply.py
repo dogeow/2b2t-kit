@@ -42,7 +42,8 @@ class ChestClient:
             s['screen']='ContainerScreen';s['menu']={'id':self.owned_material_menu,'type':'ChestMenu','cursor':{'count':0},
                 'slots':source+[{**row,'slot':27+row['slot']} for row in inv]}
         return s
-    def transfer(self,item,target):
+    def transfer(self,item,target,*,reserve_empty=0):
+        assert reserve_empty==1
         self.transfers.append((self.current,item,target))
         amount=min(max(0,target-self.held[item]),self.chests[self.current][item])
         if not self.fail_ack:
@@ -185,7 +186,7 @@ class ProjectionSupplyTest(unittest.TestCase):
             return {**state,'_verified_chest':{'pos':list(pos),'state':block['state']}}
         self.client.request=Mock(side_effect=lambda op,**params:{'blocks':[
             {'pos':params['min'],'state':block['state']}]})
-        def changed(item,target):
+        def changed(item,target,*,reserve_empty=0):
             block['state']='Block{minecraft:air}'
         self.client.transfer=Mock(side_effect=changed)
         with patch('container_access.open_grounded_chest',side_effect=opening):

@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
-DEFAULT_GAME = Path('/Applications/.minecraft/versions/26.1.2')
+DEFAULT_GAME = Path('/Applications/.minecraft/versions/26.2')
 JDK = Path('/Users/sam/Code/DogeOW/minecraft-kit/jdk25/Contents/Home')
 
 

@@ -20,7 +20,7 @@ from material_jobs.protocol import server_key
 from safety_interlock import require_unlocked
 from container_hand import SWORDS, select_container_hand
 
-DEFAULT_GAME=Path('/Applications/.minecraft/versions/26.1.2')
+DEFAULT_GAME=Path('/Applications/.minecraft/versions/26.2')
 ALLOWED=frozenset(('scan','snapshot','navigate','walk','approach_block','select_item',
                    'interact','close_menu','material_job_park'))
 ITEM=re.compile(r'[a-z0-9_.-]+:[a-z0-9_./-]+')

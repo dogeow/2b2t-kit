@@ -51,6 +51,10 @@ class CookingClient(FurnaceBankClient):
 @unittest.skipUnless(JAR.exists(),'Actual Minecraft jar unavailable')
 class ProcessingFuelsTest(unittest.TestCase):
     def setUp(self):
+        # CookingClient completes cooking on open. Scheduling and continued
+        # guard observations have separate virtual-clock coverage.
+        delay=patch('material_jobs.processing.first_collection_delay',return_value=0)
+        delay.start();self.addCleanup(delay.stop)
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)
         self.recipe={'recipe_id':'smelting/charcoal','source':'minecraft:oak_log','output':'minecraft:charcoal','fuel_allow_items':['minecraft:oak_planks'],'fuel_keep':{'minecraft:oak_planks':2}}
         self.profile={'recipe_jar':str(JAR),'furnace_positions':[[1,64,1]]}

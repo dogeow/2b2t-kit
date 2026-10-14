@@ -18,7 +18,10 @@ from .acquisition import NATURAL, FALLING
 from .colored_sources import _name, _point, _protected, _safe
 from .protocol import JobBlocked, JobPaused
 
-OUTPUTS = frozenset(('minecraft:dripstone_block', 'minecraft:mushroom_stem','minecraft:diorite'))
+OUTPUTS = frozenset(('minecraft:dripstone_block', 'minecraft:mushroom_stem'))
+# Diorite keeps its public mineral/depot contract. The same-client natural
+# helper also supports explicitly registered single-block air access.
+DIRECT_AIR_OUTPUTS=frozenset(('minecraft:diorite',))
 TARGET_SCOPE = 'absolute_backpack'
 CAPS = {'minecraft:red_mushroom_block', 'minecraft:brown_mushroom_block'}
 SOIL = {'minecraft:dirt', 'minecraft:grass_block', 'minecraft:podzol', 'minecraft:mycelium'}
@@ -114,7 +117,7 @@ def run(c, profile, item, target_count, out, checkpoint):
     before/after and require the real one-stem drop; a changed tool or unknown
     receipt remains WAIT_RECONCILE and is never retried or called completed.
     """
-    if item not in OUTPUTS or type(target_count) is not int or not 1 <= target_count <= 2304:
+    if item not in OUTPUTS|DIRECT_AIR_OUTPUTS or type(target_count) is not int or not 1 <= target_count <= 2304:
         raise ValueError('Expected natural block and absolute backpack target 1..2304')
     backend = getattr(c, 'natural_backend', None) or getattr(c, 'material_backend', None)
     if backend is None or getattr(backend, 'client', None) is not c or backend.profile != profile:

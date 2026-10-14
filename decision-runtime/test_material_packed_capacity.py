@@ -2,6 +2,8 @@ import copy
 from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from material_jobs_backend import Backend
@@ -10,6 +12,8 @@ from packed_supplies import REQUIRED_FREE_SLOTS,workspace_requirement,PackedWork
 
 
 class PackedCapacityTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)
     def setup_job(self, free, *, loose=0, packed=0, before=0):
         inventory=[{'slot':i,'item':'minecraft:diamond_pickaxe','count':1,'max_stack':1} for i in range(36)]
         for i in range(free):inventory[35-i]={'slot':35-i,'item':'minecraft:air','count':0,'max_stack':64}
@@ -22,6 +26,8 @@ class PackedCapacityTest(unittest.TestCase):
         self.state={'inventory':inventory,'menu':{'slots':rows+[{}]*36}}
         client=SimpleNamespace(status=lambda:copy.deepcopy(self.state),checked=Mock(),transfer=Mock())
         job=Backend.__new__(Backend)
+        job.client=client;job.out=self.root;client.root=self.root
+        job.prepare_travel=Mock();job.stage_near_base=Mock()
         job.profile={'ender_chest':[0,64,0],'shulker_pad':[2,64,0]}
         job.request={'target_stack_sizes':{'minecraft:iron_ingot':64}}
         job.ensure_client=lambda:client
@@ -38,7 +44,7 @@ class PackedCapacityTest(unittest.TestCase):
         job,client=self.setup_job(1,loose=64,before=48)
         with patch('packed_supplies.open_box',return_value=copy.deepcopy(self.state)),patch('packed_supplies.take_box'):
             job.fetch_packed({'minecraft:iron_ingot':64})
-        client.transfer.assert_called_once_with('minecraft:iron_ingot',64)
+        client.transfer.assert_called_once_with('minecraft:iron_ingot',64,reserve_empty=1)
 
     def test_portable_material_leaves_box_recovery_and_work_slots(self):
         job,client=self.setup_job(3,packed=128)
@@ -113,19 +119,19 @@ class PackedCapacityTest(unittest.TestCase):
 
     def test_loose_stock_can_fill_partial_stack_without_spending_admission_slots(self):
         job,client=self.setup_job(3,loose=20,packed=64,before=11)
-        def transfer(item,target):
+        def transfer(item,target,*,reserve_empty=0):
             self.state['inventory'][0]['count']=target
             self.state['menu']['slots'][0]['count']=0
         client.transfer.side_effect=transfer
         with patch('packed_supplies.open_box',return_value=copy.deepcopy(self.state)),patch('packed_supplies.take_box') as take:
             job.fetch_packed({'minecraft:iron_ingot':85})
-        client.transfer.assert_called_once_with('minecraft:iron_ingot',31)
+        client.transfer.assert_called_once_with('minecraft:iron_ingot',31,reserve_empty=3)
         take.assert_called_once();self.assertEqual({'minecraft:iron_ingot':85},take.call_args.args[4])
 
     def test_fetch_propagates_workspace_receipt_instead_of_generic_missing_materials(self):
         job,client=self.setup_job(2,packed=28,before=11)
         job.profile['depots']=[];job.request['mode']='item'
-        job.prepare_travel=Mock();job.stage_near_base=Mock();job.action=Mock(return_value=nullcontext((client,None)))
+        job.prepare_travel=Mock();job.stage_near_base=Mock();job.action=Mock(return_value=nullcontext((client,self.root)))
         with patch('packed_supplies.open_box',return_value=copy.deepcopy(self.state)),patch('packed_supplies.take_box') as take:
             result=job.fetch({'minecraft:iron_ingot':85})
         self.assertEqual('packed_workspace_required',result['code']);self.assertEqual('waiting',result['phase'])

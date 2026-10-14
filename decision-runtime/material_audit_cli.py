@@ -15,7 +15,7 @@ from material_client import Client
 from material_jobs.protocol import server_key
 
 
-DEFAULT_GAME = Path('/Applications/.minecraft/versions/26.1.2')
+DEFAULT_GAME = Path('/Applications/.minecraft/versions/26.2')
 
 
 class AuditBlocked(RuntimeError):

@@ -14,7 +14,7 @@ from live_snapshot import read_fresh
 from material_client import MaterialClient, Handoff
 from material_jobs.navigation import _body_sweep, settled_state, shaft_path
 
-ROOT=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation')
+ROOT=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation')
 SERVER='simpcraft.com:25565'
 SHAFT=(760957,797900)
 PARK=[760957.5,145.0,797900.5]

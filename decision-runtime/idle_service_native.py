@@ -43,7 +43,9 @@ def _box_hit(start,end,low,high,padding=.35):
 def verify_shore(state,scan,shore,*,require_standing=True,ground_proof=None):
     if (require_standing and (math.dist(state.get('pos',[0,0,0]),shore['stand'])>.15
                 or state.get('on_ground') is not True and not (isinstance(ground_proof,dict)
-                    and ground_proof.get('scope')=='owned_completed_ground_walk_read_only_settlement'
+                    and ground_proof.get('scope')=='exact_owned_completed_walk_current_pose_rebase'
+                    and ground_proof.get('original_walk_performed')is True
+                    and ground_proof.get('original_walk_replayed')is False
                     and ground_proof.get('world_session')==state.get('world_session')
                     and ground_proof.get('observed_span_ms',0)>=400
                     and math.dist(state.get('pos',[0,0,0]),ground_proof.get('settled',[1e9,1e9,1e9]))<=.08))
@@ -240,9 +242,11 @@ class NativeRunner:
                 if params.get('restore_flight') is not False:raise RuntimeError('Fishing landing must use the owned ground-walk proof')
                 landed=self.client._settle_owned_ground_walk(self.client.status())
                 proof_path=Path(self.client.out)/'park-ground-settlement.json';proof=read(proof_path)
-                if (proof.get('scope')!='owned_completed_ground_walk_read_only_settlement'
+                if (proof.get('scope')!='exact_owned_completed_walk_current_pose_rebase'
                         or proof.get('world_session')!=self.client.world or proof.get('observed_span_ms',0)<400
-                        or proof.get('request_id')!=getattr(self.client,'last',None)
+                        or proof.get('walk_request_id')!=getattr(self.client,'last',None)
+                        or proof.get('last_returned_request')!=getattr(self.client,'last',None)
+                        or proof.get('original_walk_performed')is not True or proof.get('original_walk_replayed')is not False
                         or landed.get('on_ground') is not True or landed.get('flight') is not False
                         or math.dist(landed['pos'],params['target'])>.15):
                     raise RuntimeError('Controlled fishing landing was not actually proved')

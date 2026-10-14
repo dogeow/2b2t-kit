@@ -14,7 +14,7 @@ from survival_bridge import Bridge,Paused,inventory,valid
 from survival_world import World,block_id,cell,center,distance,shelter,support_footprint
 from survival_mining_access import mining_plan,mining_stance
 
-ROOT=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation')
+ROOT=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation')
 LOGS={s+'_log' for s in ('oak','birch','spruce','acacia','dark_oak','jungle','mangrove','cherry','pale_oak')}
 RAW={'beef':'cooked_beef','porkchop':'cooked_porkchop','chicken':'cooked_chicken','mutton':'cooked_mutton'}
 FOOD=set(RAW.values())|{'apple','bread','baked_potato','cooked_salmon','cooked_cod'}

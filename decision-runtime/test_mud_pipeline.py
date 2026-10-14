@@ -26,6 +26,7 @@ def fixture(path):
 
 class Client:
     world='world'
+    rev=1
     def __init__(self,counts):
         self.rows=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':64} for i in range(36)]
         self.selected=0;self.calls=[];self.bad_mine=False;self.uncertain_mine=False
@@ -60,7 +61,8 @@ class Client:
         return {'world_session':self.world,'server':'simpcraft.com','dimension':'minecraft:overworld',
                 'connected':True,'health':20,'food':20,'guard_armed':True,'guard_pve_only':True,
                 'guard_busy':False,'under_water':False,'manual_movement':False,'flight':True,
-                'pos':list(self.pos),
+                'pos':list(self.pos),'control_revision':self.rev,
+                'air_only_navigation_protocol':2,'velocity':[0,0,0],
                 'inventory':copy.deepcopy(self.rows),'entities':[],'hand':copy.deepcopy(self.rows[self.selected])}
     def checked(self,op,**kw):
         if op!='select_item':return self.request(op,**kw)
@@ -75,6 +77,7 @@ class Client:
         return {'phase':'done'}
     def request(self,op,**kw):
         self.calls.append((op,kw))
+        self.last='mud-fixture-'+str(len(self.calls))
         if op=='navigate':
             self.pos=list(kw['target']);return {'phase':'done'}
         if op=='scan':
@@ -84,7 +87,10 @@ class Client:
                 row={'pos':list(p),'state':s}
                 if kw.get('details'):row.update(solid=s not in (MUD,) and not s.startswith('Block{minecraft:wheat}'),fluid=False,block_entity=False)
                 result.append(row)
-            return {'phase':'done','world_session':self.world,'blocks':result}
+            volume=math.prod(b-a+1 for a,b in zip(kw['min'],kw['max']))
+            return {'id':self.last,'phase':'done','world_session':self.world,'blocks':result,
+                    'control_revision':self.rev,'scan_start_revision':self.rev,'scan_end_revision':self.rev,
+                    'scan_cells_read':volume,'scan_total_cells':volume}
         pos=tuple(kw['pos'])
         if op=='interact':
             assert self.blocks[pos]==kw['expected_state'];hand=self.rows[self.selected]
@@ -120,6 +126,7 @@ class Client:
 class Backend:
     def __init__(self,c,profile):
         self.client=c;self.profile=profile;self.request={'mode':'item'};self.calls=[]
+        c.out=Path(profile['recipe_jar']).parent
         self.crafting_catalog=RecipeCatalog(profile['recipe_jar']);c.mud_backend=self
     def ensure_client(self):return self.client
     def fetch(self,target):

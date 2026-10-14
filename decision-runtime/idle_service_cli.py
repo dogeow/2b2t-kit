@@ -9,7 +9,7 @@ from farm_caretaker import validate_profile as validate_caretaker
 from idle_service import IdleService,default_profile,read,validate_profile
 from kit_runtime.journal import write_json
 
-DEFAULT_GAME=Path('/Applications/.minecraft/versions/26.1.2')
+DEFAULT_GAME=Path('/Applications/.minecraft/versions/26.2')
 
 
 def load_profile(path):

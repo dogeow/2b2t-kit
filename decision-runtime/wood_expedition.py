@@ -4,7 +4,7 @@ Usage: wood_expedition.py --wood spruce --count 73 --out /path/to/evidence
 import argparse,json,math,time,collections
 from pathlib import Path
 from material_client import MaterialClient,Handoff,stocks
-DEFAULT_ROOT=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation')
+DEFAULT_ROOT=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation')
 HOME=[761020.5,100,797854.5];DEPOT=[761012,66,797833]
 def horizontal(a,b):return math.hypot(a[0]-b[0],a[2]-b[2])
 def route(home,step=160):

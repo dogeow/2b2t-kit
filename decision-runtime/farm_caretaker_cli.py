@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from farm_caretaker import Caretaker
 
-DEFAULT_GAME = Path('/Applications/.minecraft/versions/26.1.2')
+DEFAULT_GAME = Path('/Applications/.minecraft/versions/26.2')
 
 
 def main(argv=None):

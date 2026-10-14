@@ -20,7 +20,7 @@ from material_trip_policy import carried, room_for_item, trip_complete
 from surface_sand_harvest import (APPROVED_CHESTS, SAND, harvest, safe_state,
                                   validate_region)
 
-ROOT = Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation')
+ROOT = Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation')
 PROJECTION = 'SpaceX 星舰 · 白色生存版 123格'
 LEDGER_VERSION = 1
 SKIPPABLE = {'exhausted'}

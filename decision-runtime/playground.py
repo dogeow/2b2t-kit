@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from decisions import PRIVATE, DecisionError, provider, choose, status, validate_local_scene, execute_walk
 
-TEST_ROOT=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation')
+TEST_ROOT=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation')
 TARGETS={'yellow':[10.5,-60,9.5],'blue':[6.5,-60,13.5]}
 CHOICES={'yellow':'Walk to the yellow marker.','blue':'Walk to the blue marker.','wait':'Stay still; do not walk anywhere.'}
 LABELS={'yellow':'黄色标记','blue':'蓝色标记','wait':'原地等待'}

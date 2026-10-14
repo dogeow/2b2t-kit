@@ -3,7 +3,7 @@
   "id": "twob2tkit",
   "version": "${version}",
   "name": "2b2t-kit",
-  "description": "Client-side high-altitude cruise navigation and AFK safety for Minecraft 26.1.2.",
+  "description": "Client-side high-altitude cruise navigation and AFK safety for Minecraft 26.2.",
   "authors": [
     "Codex"
   ],

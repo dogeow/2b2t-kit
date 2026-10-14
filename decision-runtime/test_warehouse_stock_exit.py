@@ -70,7 +70,8 @@ class WarehouseExitTests(unittest.TestCase):
         self.assertEqual(0,self.core.finish_calls)
 
     def test_roofed_all_side_columns_refuse_before_any_descent(self):
-        for dx,dz in ((-1,0),(0,-1),(0,1),(1,0),(-2,0),(0,-2),(0,2),(2,0)):
+        # Seal all supported canopy/outer routes, not just immediate sides.
+        for dx,dz in ((x,z)for x in range(-6,7)for z in range(-6,7)):
             pos=[20+dx,70,20+dz]
             self.core.scans[tuple(pos)]={'pos':pos,'state':'Block{minecraft:white_concrete}',
                                       'passable':False,'fluid':False,'solid':True,'block_entity':False}
@@ -122,11 +123,12 @@ class WarehouseExitTests(unittest.TestCase):
         p=[20,66,20]
         self.core.scans[tuple(p)]={'pos':p,'state':'Block{minecraft:oak_leaves}',
             'passable':False,'fluid':False,'solid':True,'block_entity':False}
-        for dx,dz in ((-1,0),(0,-1),(0,1),(1,0),(-2,0),(0,-2),(0,2),(2,0)):
+        # Seal all supported canopy/outer routes, not just immediate sides.
+        for dx,dz in ((x,z)for x in range(-6,7)for z in range(-6,7)):
             p=[20+dx,70,20+dz]
             self.core.scans[tuple(p)]={'pos':p,'state':'Block{minecraft:white_concrete}',
                 'passable':False,'fluid':False,'solid':True,'block_entity':False}
-        with self.assertRaisesRegex(stock.StockBlocked,'remain outside'):
+        with self.assertRaisesRegex(stock.StockBlocked,'remain outside|preserve the structure'):
             stock._open_container(self.session,self.pos,self.core.scans[tuple(self.pos)]['state'],{})
         self.assertFalse(any(op in ('navigate','interact','slot_click')for op,_ in self.core.calls))
 

@@ -54,7 +54,7 @@ def main():
     p.add_argument('--origin', type=int, nargs=3, required=True)
     p.add_argument('--size', type=int, nargs=3, required=True)
     p.add_argument('--output', type=Path, required=True)
-    p.add_argument('--root', type=Path, default=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation'))
+    p.add_argument('--root', type=Path, default=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation'))
     p.add_argument('--server', default='simpcraft.com:25565')
     a = p.parse_args()
     client = MaterialClient(a.root, a.output.parent / 'site-survey-session', server=a.server, record_experience=False)

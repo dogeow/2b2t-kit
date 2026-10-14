@@ -11,10 +11,10 @@ from material_client import MaterialClient
 from surface_gravel_expedition import frontier_tiles, centre
 from surface_gravel_ledger import SurfaceGravelLedger
 
-ROOT='/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation'
+ROOT='/Applications/.minecraft/versions/26.2/config/twob2tkit/automation'
 # The previous ledger's empty tiles were produced by exact-state matching,
 # which missed grass_block[snowy=false]. Keep that history but resurvey it.
-DEFAULT_LEDGER=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/deep-gravel-visited-0-20-v2.json')
+DEFAULT_LEDGER=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/deep-gravel-visited-0-20-v2.json')
 
 
 def survey(client,regions,ledger,out,cruise_y=150,min_vein_blocks=16):

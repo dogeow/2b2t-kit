@@ -134,7 +134,7 @@ def main():
     parser.add_argument('--park-high',nargs=3,type=float,required=True)
     parser.add_argument('--out',type=Path,required=True)
     args=parser.parse_args()
-    client=MaterialClient('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation',args.out,
+    client=MaterialClient('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation',args.out,
                           remote_finish='guard',park_target=args.park_high)
     try:
         result=harvest(client,args.min,args.max,args.count,args.out)

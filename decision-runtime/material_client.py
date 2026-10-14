@@ -331,10 +331,11 @@ class Client:
      self.checked('stop')
     self.request('safe_logout')
   except Handoff:pass
- def transfer(self,item,target,deposit=False):
+ def transfer(self,item,target,deposit=False,*,reserve_empty=0):
   from kit_runtime.inventory import InventorySession,destination_capacity
   from kit_runtime.storage import move_amount
   if isinstance(target,bool) or not isinstance(target,int) or target<0:raise ValueError('Transfer target must be a nonnegative count')
+  if type(reserve_empty)is not int or not 0<=reserve_empty<=36:raise ValueError('Transfer reserve must be 0..36 main inventory slots')
   session=InventorySession(self)
   for _ in range(128):
    s=self.status();before=stocks(s).get(item,0)
@@ -349,15 +350,16 @@ class Client:
    if source is None:return before
    # Item IDs alone do not prove component-compatible stacking. A fresh empty
    # receiving slot cannot turn a partial placement into a cursor exchange.
-   destination=next((v for v in destinations if not v['count']),None)
+   empty=[v for v in destinations if not v['count']]
+   destination=empty[0]if empty and (deposit or len(empty)>reserve_empty)else None
    if destination is None:destination=next((v for v in destinations if v['count'] and v['item']==item and v['count']<v.get('max_stack',64)),None)
    if destination is None:raise RuntimeError('Destination has no space for '+item)
    needed=before-target if deposit else target-before
-   if source['count']<=needed:
+   if source['count']<=needed and not reserve_empty:
     session.click(s,source['slot'],'quick_move')
    else:
     room=destination_capacity(source,destination)-destination['count']
-    move_amount(session,s,source,destination,min(needed,room))
+    move_amount(session,s,source,destination,min(needed,room,source['count']))
    deadline=time.monotonic()+6
    while time.monotonic()<deadline:
     fresh=self.status()

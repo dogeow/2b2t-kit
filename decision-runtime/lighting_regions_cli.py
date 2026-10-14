@@ -1428,7 +1428,7 @@ def compact(result):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--game-dir', type=Path, default=Path('/Applications/.minecraft/versions/26.1.2'))
+    parser.add_argument('--game-dir', type=Path, default=Path('/Applications/.minecraft/versions/26.2'))
     parser.add_argument('--profile', type=Path, required=True)
     parser.add_argument('--out', type=Path)
     parser.add_argument('--network-evidence',type=Path)

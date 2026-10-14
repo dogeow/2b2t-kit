@@ -614,7 +614,7 @@ class BackendTest(unittest.TestCase):
                               'slots':chest+[{'slot':27+i,**{k:v for k,v in row.items() if k!='slot'}}
                                              for i,row in enumerate(self.current['inventory'])]}
         transferred=[]
-        def transfer(item,target):
+        def transfer(item,target,*,reserve_empty=0):
             transferred.append((item,target))
             self.assertEqual(('minecraft:snow',58),(item,target))
             source=next(row for row in self.current['menu']['slots'][:27]
@@ -2038,7 +2038,7 @@ class BackendTest(unittest.TestCase):
         self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
         self.job.prepare_travel=Mock();self.job.fetch_packed=Mock(return_value=None)
         self.job.stock=Mock(side_effect=lambda:dict(backend.inventory_counts(self.current)))
-        def transfer(item,target):
+        def transfer(item,target,*,reserve_empty=0):
             self.assertEqual(('minecraft:dirt',4),(item,target))
             self.current['inventory'][-1].update(item=item,count=4,max_stack=64)
             self.current['menu']['slots'][0]['count']-=4

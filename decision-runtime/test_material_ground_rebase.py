@@ -68,6 +68,18 @@ class GroundRebaseTests(unittest.TestCase):
                 with self.assertRaises(module.GroundFinishStop):module.settle(self.c,self.after)
         self.setUp();self.c.last_terminal_evidence['request_id']='old'
         with self.assertRaises(module.GroundFinishStop):module.settle(self.c,self.after)
+
+    def test_explicitly_captured_empty_projection_selection_can_settle(self):
+        self.c.last_owned_ground_walk['terminal']['projection_selection']=None
+        for state in (self.after,self.landed,self.stable):state['projection_selection']=None
+        self.assertEqual(self.LANDED,self.settle()['pos'])
+
+    def test_missing_or_changed_empty_projection_selection_cannot_settle(self):
+        self.c.last_owned_ground_walk['terminal'].pop('projection_selection')
+        with self.assertRaises(module.GroundFinishStop):module.settle(self.c,self.after)
+        self.setUp()
+        self.c.last_owned_ground_walk['terminal']['projection_selection']=None
+        with self.assertRaises(module.GroundFinishStop):module.settle(self.c,self.after)
         self.setUp();self.after['inventory'][5]['count']=9
         with self.assertRaises(module.GroundFinishStop):module.settle(self.c,self.after)
 

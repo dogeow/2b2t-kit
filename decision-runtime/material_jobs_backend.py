@@ -863,7 +863,7 @@ class Backend:
                     held = inventory_counts(fresh).get(item, 0)
                     entry['requested'][item] = target
                     write_json(out/'sources.json', visited)
-                    c.transfer(item, target)
+                    c.transfer(item, target,reserve_empty=reserve)
                     after, remaining, _ = observed()
                     gain = inventory_counts(after).get(item, 0) - held
                     if gain != target - held or source.get(item, 0) - remaining.get(item, 0) != gain:
@@ -970,7 +970,7 @@ class Backend:
                     initial,source,_=observed();held=inventory_counts(initial).get(item,0)
                     if target<=held:continue
                     entry['requested'][item]=target
-                    c.transfer(item,target)
+                    c.transfer(item,target,reserve_empty=1)
                     after,remaining,_=observed();gain=inventory_counts(after).get(item,0)-held
                     if gain<0 or gain>target-held or source.get(item,0)-remaining.get(item,0)!=gain:
                         raise JobBlocked('现货出箱数量与背包增量不一致，不重复取料')
@@ -1099,7 +1099,7 @@ class Backend:
             # fetch still needs an observed portable box afterwards.
             reserve=REQUIRED_FREE_SLOTS if needs_box else 1
             for item,target in supply_targets(state,targets,loose,reserve_empty=reserve,stack_sizes=sizes).items():
-                c.transfer(item,target)
+                c.transfer(item,target,reserve_empty=reserve)
             state = c.status()
             self.warehouse_hint = observed_warehouse_stock(state['menu']['slots'][:-36])
             packed=Counter()

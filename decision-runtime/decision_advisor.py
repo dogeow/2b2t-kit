@@ -209,7 +209,7 @@ class Advisor:
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan',type=Path,required=True)
-    parser.add_argument('--automation',type=Path,default=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation'))
+    parser.add_argument('--automation',type=Path,default=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation'))
     parser.add_argument('--out',type=Path,required=True)
     args=parser.parse_args();plan=json.loads(args.plan.read_text())
     from safety_interlock import require_unlocked

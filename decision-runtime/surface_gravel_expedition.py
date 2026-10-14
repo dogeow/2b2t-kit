@@ -221,18 +221,18 @@ def main():
     parser.add_argument('--cruise-y',type=float,default=95)
     parser.add_argument('--park-high',type=float,nargs=3,required=True)
     parser.add_argument('--ledger',type=Path,
-                        default=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/surface-gravel-visited.json'))
+                        default=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/surface-gravel-visited.json'))
     parser.add_argument('--out',type=Path,required=True)
     args=parser.parse_args()
     selected=args.targets
     if selected is None:
-        config=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit.json')
+        config=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit.json')
         selected=json.loads(config.read_text()).get('borerOreTarget','')
     if route_for_targets(selected)!='surface':
         raise ValueError('Mixed ore selections belong to the existing underground miner')
     if sum(bool(choice) for choice in (args.region,args.search_box,args.frontier_origin))!=1:
         raise ValueError('Provide bounded regions, one search box, or one frontier origin')
-    client=MaterialClient('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation',args.out,
+    client=MaterialClient('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation',args.out,
                           remote_finish='guard',park_target=args.park_high)
     try:
         state=client.status()

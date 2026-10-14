@@ -269,7 +269,7 @@ def main():
         raise ValueError('High safety park must be above this sand patch')
     if not high[1] + 25 <= args.park_high[1] <= 320:
         raise ValueError('High safety park must clear the whole sand patch by 25 blocks')
-    root = '/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation'
+    root = '/Applications/.minecraft/versions/26.2/config/twob2tkit/automation'
     audit = json.loads(args.gravel_audit.read_text())
     preflight = json.loads((Path(root) / 'status.json').read_text())
     require_gravel_complete(audit, preflight, 836, APPROVED_CHESTS)

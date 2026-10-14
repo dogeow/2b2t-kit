@@ -192,7 +192,8 @@ def context(c):
             or not vector(term.get('pos'))or not vector(params.get('target'))
             or proof.get('before_inventory')!=main_inventory(term)
             or not isinstance(term.get('player_uuid'),str)or not term['player_uuid']
-            or not isinstance(term.get('projection_selection'),dict)
+            or 'projection_selection'not in term
+            or term['projection_selection']is not None and not isinstance(term['projection_selection'],dict)
             or proof.get('before_safety_hold')!=term.get('safety_hold')
             or proof.get('before_damage')!={k:term.get(k)for k in ('recent_hurt_at','recent_attacker')}):
         raise GroundFinishStop('Original completed ground walk identity or conservation is unproved')

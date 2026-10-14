@@ -83,6 +83,7 @@ class PipelineExperienceTests(unittest.TestCase):
         backend.profile = {'skill_memory_state': str(self.root / 'existing-observer')}
         backend.request = {'context': {}}; backend.client = None
         backend.sequence = 0; backend.busy = False
+        backend.runtime_update=None
         frame = {'server': 'test', 'pos': [0, 140, 0]}
         client = SimpleNamespace()
         with patch.object(module, 'read_fresh', return_value=frame), \

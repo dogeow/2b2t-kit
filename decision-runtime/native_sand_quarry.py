@@ -10,7 +10,7 @@ from material_trip_policy import carried,room_for_item,trip_complete
 from surface_sand_harvest import SAND,SAND_STATE,validate_region,scan_bounds,safe_state
 from drop_collection import collect_drop
 
-ROOT=Path('/Applications/.minecraft/versions/26.1.2/config/twob2tkit/automation')
+ROOT=Path('/Applications/.minecraft/versions/26.2/config/twob2tkit/automation')
 
 
 def recover_quarry_drops(client,low,high):

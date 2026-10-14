@@ -194,19 +194,19 @@ class TargetedSupplyTest(unittest.TestCase):
     def test_food_changes_cannot_confirm_unacknowledged_target_transfer(self):
         self.client.put(0,'minecraft:gravel',64)
         self.client.put(27,'minecraft:bread',8)
-        def no_transfer(item,target):
+        def no_transfer(item,target,*,reserve_empty=0):
             self.client.menu['slots'][27]['count'] -= 1
         self.client.transfer = Mock(side_effect=no_transfer)
         with patch('container_access.open_grounded_chest',side_effect=lambda *a,**k:self.client.status()) as opened:
             with self.assertRaisesRegex(JobBlocked,'增量未确认'):
                 self.job.fetch({'minecraft:gravel':16})
-        self.client.transfer.assert_called_once_with('minecraft:gravel',16)
+        self.client.transfer.assert_called_once_with('minecraft:gravel',16,reserve_empty=1)
         self.assertEqual(1,opened.call_count)
         self.job.fetch_packed.assert_not_called()
 
     def test_source_loss_must_match_backpack_gain(self):
         self.client.put(0,'minecraft:stone',64)
-        self.client.transfer = Mock(side_effect=lambda item,target:self.client.put(27,item,target))
+        self.client.transfer = Mock(side_effect=lambda item,target,*,reserve_empty=0:self.client.put(27,item,target))
         with self.assertRaisesRegex(JobBlocked,'出箱数量'):
             self.fetch({'minecraft:stone':16})
         self.client.transfer.assert_called_once()
@@ -214,7 +214,7 @@ class TargetedSupplyTest(unittest.TestCase):
     def test_changed_menu_cannot_authorize_second_transfer(self):
         self.client.put(0,'minecraft:stone',64)
         self.job.profile['depots'] = [[1,64,1],[2,64,2],[3,64,3],[4,64,4]]
-        def changed(item,target):
+        def changed(item,target,*,reserve_empty=0):
             self.client.menu['id'] += 1
         self.client.transfer = Mock(side_effect=changed)
         with patch('container_access.open_grounded_chest',side_effect=lambda *a,**k:self.client.status()) as opened:
@@ -251,7 +251,7 @@ class TargetedSupplyTest(unittest.TestCase):
             return {**client.status(), '_verified_chest':{'pos':list(pos),'state':block['state']}}
         self.client.request=Mock(side_effect=lambda op,**params:{'blocks':[
             {'pos':params['min'],'state':block['state']}]})
-        def changed(item,target):
+        def changed(item,target,*,reserve_empty=0):
             block['state']='Block{minecraft:air}'
         self.client.transfer=Mock(side_effect=changed)
         with patch('container_access.open_grounded_chest',side_effect=opening) as opened:
