@@ -20,7 +20,7 @@ final class BorerCombatPeek {
  boolean active(){return active;}
  boolean tick(Minecraft c,LivingEntity enemy){
   var p=c.player;int tick=p.tickCount;
-  if(c.screen!=null||p.getHealth()<18||c.level.getEntity(enemy.getId())!=enemy||!enemy.isAlive()){close(c);return false;}
+  if(c.gui.screen()!=null||p.getHealth()<18||c.level.getEntity(enemy.getId())!=enemy||!enemy.isAlive()){close(c);return false;}
   if(active&&(enemy!=target||tick-started>400||tick-lastMove>40)){close(c);nextPlan=tick+200;return false;}
   if(!active){
    if(tick<nextPlan)return false;nextPlan=tick+200;target=enemy;origin=p.position();
@@ -62,7 +62,7 @@ final class BorerCombatPeek {
   return sideAngleUseful(c.player.position(),enemy.position())
    &&firingSolutionVerified(ranged,!ranged||engine.host.borerBowAim(c,enemy)!=null);
  }
- void reapply(Minecraft c){if(active&&look!=null&&c.screen==null)RotationAim.apply(c.player,look);}
+ void reapply(Minecraft c){if(active&&look!=null&&c.gui.screen()==null)RotationAim.apply(c.player,look);}
  void close(Minecraft c){if(!active)return;engine.pauseGuardMovement(c);flight.closeKeepingFlight();active=false;look=null;route=List.of();}
  private boolean clear(Minecraft c,BlockPos p){
   for(int i=0;i<2;i++){var q=p.above(i);if(!c.level.hasChunkAt(q))return false;var s=c.level.getBlockState(q);if(!s.getFluidState().isEmpty()||s.is(Blocks.FIRE)||s.is(Blocks.SOUL_FIRE)||s.is(Blocks.COBWEB)||s.is(Blocks.POWDER_SNOW))return false;}

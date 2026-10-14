@@ -61,7 +61,7 @@ public final class EmergencyExit {
         try{store(c).write(j);}catch(Exception e){KitClient.LOGGER.error("Cannot persist low-health lock",e);}
         KitClient.emergencyStop("血量不足，停止工作并撤离");
         if(c.player.containerMenu!=c.player.inventoryMenu)c.player.closeContainer();
-        else if(c.screen!=null)c.setScreen(null);
+        else if(c.gui.screen()!=null)c.gui.setScreen(null);
         level=c.level;connection=c.getConnection();startY=c.player.getY();started=lastMoved=System.currentTimeMillis();lastPosition=c.player.position();index=0;escaping=true;
         try{
             MeteorModules.disable(AUTO_RECONNECT);restoreAutoLog=MeteorModules.disable(MeteorModules.AUTO_LOG);
@@ -93,7 +93,7 @@ public final class EmergencyExit {
             return false;
         }
         if(c.level!=level||c.getConnection()!=connection||c.player==null){cancel(c);return false;}
-        if(KitKeys.manualMovementDown(c)||c.screen!=null){cancel(c);KitKeys.restorePhysicalMovement(c);return true;}
+        if(KitKeys.manualMovementDown(c)||c.gui.screen()!=null){cancel(c);KitKeys.restorePhysicalMovement(c);return true;}
         MeteorModules.disable(AUTO_RECONNECT);MeteorModules.disable(MeteorModules.AUTO_LOG);
         long now=System.currentTimeMillis();double rise=c.player.getY()-startY;
         if(EmergencyExitPolicy.decide(c.player.getHealth(),rise,now-started,index<route.size())==EmergencyExitPolicy.Decision.DISCONNECT){finish(c,rise>=11.7?"已升高约 12 格":c.player.getHealth()<=6?"血量危急，不再等待升高":"撤离时间已到");return true;}

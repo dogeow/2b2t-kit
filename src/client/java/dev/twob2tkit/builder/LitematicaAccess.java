@@ -61,12 +61,18 @@ public final class LitematicaAccess {
             if(boxes.isEmpty())throw new IllegalStateException("没有启用的投影区域");java.util.Collections.sort(keys);
             int minX=Integer.MAX_VALUE,minY=Integer.MAX_VALUE,minZ=Integer.MAX_VALUE,maxX=Integer.MIN_VALUE,maxY=Integer.MIN_VALUE,maxZ=Integer.MIN_VALUE;
             for(var box:boxes){minX=Math.min(minX,box.min.getX());minY=Math.min(minY,box.min.getY());minZ=Math.min(minZ,box.min.getZ());maxX=Math.max(maxX,box.max.getX());maxY=Math.max(maxY,box.max.getY());maxZ=Math.max(maxZ,box.max.getZ());}
-            Object range=getRenderLayerRange.invoke(null);String layer="";
-            for(String method:List.of("getLayerMode","getAxis","getLayerMin","getLayerMax"))layer+="/"+range.getClass().getMethod(method).invoke(range);
+            Object range=getRenderLayerRange.invoke(null);String layer=layerKey(range);
             String name=getName.invoke(placement).toString();String key=name+keys+layer;
             for(String method:List.of("getOrigin","getRotation","getMirror"))key+="/"+placement.getClass().getMethod(method).invoke(placement);
             return new BuildSelection(name,key,new BlockPos(minX,minY,minZ),new BlockPos(maxX,maxY,maxZ),List.copyOf(boxes));
         }catch(ReflectiveOperationException e){throw new IllegalStateException("无法读取投影范围："+e.getMessage(),e);}
+    }
+
+    static String layerKey(Object range)throws ReflectiveOperationException{
+        String key="";
+        for(String method:List.of("getLayerMode","getAxis","getMinLayerBoundary","getMaxLayerBoundary"))
+            key+="/"+range.getClass().getMethod(method).invoke(range);
+        return key;
     }
 
     /** Material jobs require the explicitly selected locked placement, never a fallback first item. */

@@ -5,7 +5,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import dev.twob2tkit.KitUi;
 
-/** Compact one-line cruise status at the top center of the game view. */
+/** Task and cruise status occupy independent rows at the top center. */
 public final class CruiseScreenHud {
 	private static final long NOTICE_NANOS = 2_000_000_000L;
 	private static final CruiseHudState state = new CruiseHudState();
@@ -46,23 +46,26 @@ public final class CruiseScreenHud {
 			dev.twob2tkit.hud.WorkHud.clear();
 			return;
 		}
-		if (client.options.hideGui || client.screen != null) return;
+		if (client.gui.hud.isHidden() || client.gui.screen() != null) return;
 		long now = System.nanoTime();
 		var job = dev.twob2tkit.hud.WorkHud.current();
-		String line = job == null ? state.line(now) : job.line();
-		if (line.isBlank()) return;
+		String air=dev.twob2tkit.hud.WorkHud.navigation();
+		var rows = CruiseHudRows.select(job,air.isBlank()?state.line(now):air,air.isBlank()&&state.showingNotice(now));
+		if (rows.isEmpty()) return;
 		Font font = client.font;
 		int maxW = Math.max(48, Math.min(300, graphics.guiWidth() - 32));
-		String fitted = KitUi.fit(font, line, maxW);
-		int width = Math.min(graphics.guiWidth() - 12, font.width(fitted) + 20);
+		var fitted = rows.stream().map(row -> KitUi.fit(font,row.line(),maxW)).toList();
+		int width = Math.min(graphics.guiWidth() - 12, fitted.stream().mapToInt(font::width).max().orElse(0) + 20);
 		int x = (graphics.guiWidth() - width) / 2;
-		int height = 20;
+		int height = rows.size()*22-2;
 		int y = dev.twob2tkit.hud.TargetTooltipSpace.top(x, width, height, graphics.guiHeight());
 		if (y < 0) return;
 		graphics.nextStratum();
-		graphics.fill(x, y, x + width, y + height, 0xC8101720);
-		graphics.fill(x, y, x + 2, y + height, job != null && job.attention() ? 0xFFFFC46B : state.showingNotice(now) ? 0xFF6FE7B5 : 0xFF61AEEB);
-		KitUi.centered(graphics, font, fitted, graphics.guiWidth() / 2, y + 6,
-			state.showingNotice(now) ? 0xE5FFF0 : 0xECF5FF);
+		for(int i=0;i<rows.size();i++) {
+			var row=rows.get(i);int rowY=y+i*22;
+			graphics.fill(x,rowY,x+width,rowY+20,0xC8101720);
+			graphics.fill(x,rowY,x+2,rowY+20,row.attention()?0xFFFFC46B:row.notice()?0xFF6FE7B5:0xFF61AEEB);
+			KitUi.centered(graphics,font,fitted.get(i),graphics.guiWidth()/2,rowY+6,row.notice()?0xE5FFF0:0xECF5FF);
+		}
 	}
 }

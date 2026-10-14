@@ -214,7 +214,7 @@ class FlatPlanningTests(unittest.TestCase):
         s = state(8); s['pos'] = [450.5, 92.75, -69.5]
         result = next_batch(layout, {}, s)
         self.assertEqual(result['positions'], [[450, 90, -70]])
-        self.assertEqual(result['station'], [450.5, 92.75, -69.5])
+        self.assertEqual(result['station'], [450.5, 91.75, -69.5])
 
     def test_actual_limits_and_budget_are_not_guessed(self):
         s = state(); s['target_stack_sizes'] = {}
@@ -229,7 +229,7 @@ class FlatPlanningTests(unittest.TestCase):
         actual = {(0, 64, 0): 'Block{minecraft:stone}'}
         result = next_batch(layout, actual, state(64))
         self.assertEqual(len(result['positions']), 15)
-        self.assertEqual(result['station'], [2.0, 66.75, 2.0])
+        self.assertEqual(result['station'], [2.0, 65.75, 2.0])
         # Far corner top face remains within ordinary survival reach.
         eye = [2.0, 66.75 + 1.62, 2.0]
         self.assertLess(math.dist(eye, [.5, 65, .5]), 4.5)
@@ -646,6 +646,22 @@ class FlatIntegrationTests(unittest.TestCase):
         s['inventory'][5]['count']=1;s['inventory'][6]['count']=1
         with patch('material_stack_consolidation.run_inventory')as merge:
             self.assertFalse(backend.consolidate_waiting_stock(plan,s));merge.assert_not_called()
+
+    def test_reserved_fragments_can_fill_a_partial_window_without_a_full_supply_batch(self):
+        m=model(100,1);layout=layout_for(m);backend=FlatMapBackend.__new__(FlatMapBackend)
+        backend.profile={'minimum_projection_trip_stack':64}
+        backend.request={'projection_key':'ship','flat_map':{**CONFIG,'content_hash':m['content_hash'],
+            'build_carried_partial_batches':True}}
+        s=state(2)
+        for slot in range(6,14):s['inventory'][slot]={'slot':slot,'item':ITEM,'count':2,'max_stack':64}
+        s['projection_audit']=audit(layout,{})
+        self.assertTrue(backend.has_ready_projection_output(s))
+        plan=next_batch(layout,{},s)
+        self.assertEqual('waiting',plan['phase'])
+        with patch('material_stack_consolidation.run_inventory',return_value={'phase':'done','inventory_credit':0})as merge:
+            self.assertTrue(backend.consolidate_waiting_stock(plan,s));merge.assert_called_once()
+        backend.request['flat_map']['build_carried_partial_batches']=False
+        self.assertFalse(backend.has_ready_projection_output(s))
 
     def test_scheduler_builds_ready_carried_output_before_advice_or_fetch(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -94,7 +94,7 @@ public enum UiFeature {
     public static boolean redirect(String id, Screen parent) { open(id, parent); return true; }
     public static boolean redirectCategory(Category category) {
         var c = KitClient.config();
-        if (c != null) Minecraft.getInstance().setScreen(new KitWorkspaceScreen(c, KitClient.controller(), category));
+        if (c != null) Minecraft.getInstance().gui.setScreen(new KitWorkspaceScreen(c, KitClient.controller(), category));
         return true;
     }
     public void open(Screen parent) {
@@ -105,7 +105,7 @@ public enum UiFeature {
         c.recentUiFeatures.remove(name()); c.recentUiFeatures.addFirst(name());
         while (c.recentUiFeatures.size() > 10) c.recentUiFeatures.removeLast(); c.save();
         switch (this) {
-            case AREA -> mc.setScreen(new AreaSetupScreen(parent, c));
+            case AREA -> mc.gui.setScreen(new AreaSetupScreen(parent, c));
             case ORE, FORWARD, DOWN -> ClickGuiPages.mining(parent, c, TunnelBorer.Mode.valueOf(name()));
             case GRAVEL -> ClickGuiPages.gravel(parent, c);
             case CARETAKER -> dev.twob2tkit.material.CaretakerPages.open(parent,c);
@@ -116,7 +116,7 @@ public enum UiFeature {
             case CRUISE_OPTIONS -> ClickGuiPages.cruiseOptions(parent, c);
             case PLACES -> KitRecordPages.places(parent, c);
             case SCENERY -> ClickGuiPages.scenery(parent, c);
-            case STRUCTURES -> mc.setScreen(new dev.twob2tkit.structure.NearbyStructuresScreen(parent, c, controller, KitClient.seedScout()));
+            case STRUCTURES -> mc.gui.setScreen(new dev.twob2tkit.structure.NearbyStructuresScreen(parent, c, controller, KitClient.seedScout()));
             case STRUCTURE_MARKS -> KitRecordPages.marks(parent, c);
             case DEATH -> ClickGuiPages.death(parent, c, controller);
             case CHOPPER -> ClickGuiPages.chopper(parent, c);
@@ -138,7 +138,7 @@ public enum UiFeature {
             case TRUSTED -> KitRecordPages.trusted(parent, c);
             case LOCAL_DECISION -> dev.twob2tkit.material.LocalDecisionPages.open(parent,c);
             case SINGLEPLAYER_TRIAL -> dev.twob2tkit.trial.SingleplayerTrialPages.open(parent,c);
-            case KEYBINDS -> mc.setScreen(new KitKeyBindsScreen(parent));
+            case KEYBINDS -> mc.gui.setScreen(new KitKeyBindsScreen(parent));
             case SETTINGS -> ClickGuiPages.settings(parent, c);
             case DIAGNOSTICS -> ClickGuiPages.diagnostics(parent, c);
         }

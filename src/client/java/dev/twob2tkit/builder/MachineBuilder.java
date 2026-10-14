@@ -157,7 +157,7 @@ public final class MachineBuilder {
 			cancel(client, LitematicaAccess.describe());
 			return;
 		}
-		if (client.screen != null && !(client.screen instanceof KitHudScreen)) {
+		if (client.gui.screen() != null && !(client.gui.screen() instanceof KitHudScreen)) {
 			if (closeAccidentalMenu(client)) {
 				status = "已关掉误开的箱子，继续放置";
 				cooldown = 2;
@@ -260,8 +260,8 @@ public final class MachineBuilder {
 	/** 画建造 HUD。 */
 	public void renderHud(Minecraft client, GuiGraphicsExtractor graphics) {
 		if (!placing && !LitematicaAccess.installed()) return;
-		if (client.options.hideGui) return;
-		if (client.screen != null && !client.screen.isInGameUi()) return;
+		if (client.gui.hud.isHidden()) return;
+		if (client.gui.screen() != null && !client.gui.screen().isInGameUi()) return;
 		if (!placing) return;
 		ItemStack stack = current == null ? ItemStack.EMPTY : new ItemStack(current.item());
 		String name = current == null ? "寻找可摆位置" : itemName(current);
@@ -643,7 +643,7 @@ public final class MachineBuilder {
 
 	/** 误开容器则关掉。 */
 	private static boolean closeAccidentalMenu(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?>) || client.player == null) return false;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?>) || client.player == null) return false;
 		client.player.closeContainer();
 		return true;
 	}
@@ -792,7 +792,7 @@ public final class MachineBuilder {
 	/** 叠字幕。 */
 	private static void overlay(Minecraft client, String text, int color) {
 		if (client.gui != null) {
-			client.gui.setOverlayMessage(Component.literal("[投影建造] " + text).withColor(color), false);
+			client.gui.hud.setOverlayMessage(Component.literal("[投影建造] " + text).withColor(color), false);
 		}
 	}
 

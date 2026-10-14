@@ -119,7 +119,7 @@ public final class LocalRecipeBookInjector {
 		if (changed) config.save();
 		if (enabled) inject(minecraft);
 		else removeInjectedEntries(minecraft);
-		if (minecraft.screen instanceof AbstractRecipeBookScreen<?> screen) screen.recipesUpdated();
+		if (minecraft.gui.screen() instanceof AbstractRecipeBookScreen<?> screen) screen.recipesUpdated();
 	}
 
 	/** 发现新物品时回调刷新。 */
@@ -132,7 +132,7 @@ public final class LocalRecipeBookInjector {
 		if (minecraft.player == null || minecraft.level == null || cachedEntries == null) return;
 		if (cachedRegistryAccess != minecraft.level.registryAccess()) return;
 		if (!applyVisibleEntries(minecraft)) return;
-		if (minecraft.screen instanceof AbstractRecipeBookScreen<?> screen) screen.recipesUpdated();
+		if (minecraft.gui.screen() instanceof AbstractRecipeBookScreen<?> screen) screen.recipesUpdated();
 	}
 
 	/** 按发现把可见条写进书。 */

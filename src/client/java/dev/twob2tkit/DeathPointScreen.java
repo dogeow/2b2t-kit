@@ -75,7 +75,7 @@ public final class DeathPointScreen extends KitHudScreen {
 		if (!config.hasDeathPoint || !sameDimension()) return;
 		double safeY = Math.max(config.cruiseY, config.deathY + 32.0);
 		controller.startDeathRecovery(this.minecraft, config.deathX, config.deathZ, safeY);
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 把死亡 XZ 写入巡航目标并抬高巡航 Y。 */

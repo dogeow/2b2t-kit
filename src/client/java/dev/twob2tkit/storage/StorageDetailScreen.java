@@ -114,10 +114,10 @@ public final class StorageDetailScreen extends KitHudScreen {
 			detail.note(StorageLabels.evidenceSummary(snapshot));
 			detail.note("箱子位置：X " + snapshot.x + " Y " + snapshot.y + " Z " + snapshot.z + "；" + StorageRecordsScreen.dimensionLabel(snapshot.dimension));
 			detail.action("查看相关配方", "只查询本地配方。", () -> dev.twob2tkit.KitRecipePages.open(detail, config, item.name));
-			minecraft.setScreen(detail);
+			minecraft.gui.setScreen(detail);
 		});
 		list.footer("复制箱子坐标", () -> { minecraft.keyboardHandler.setClipboard(snapshot.x + " " + snapshot.y + " " + snapshot.z); list.message("已复制箱子坐标"); });
-		minecraft.setScreen(list); return true;
+		minecraft.gui.setScreen(list); return true;
 	}
 
 	private static void drawSlotBackground(GuiGraphicsExtractor graphics, int x, int y) {

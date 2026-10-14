@@ -46,14 +46,14 @@ public final class GuardHomeScreen extends KitHudScreen {
 			.build());
 		y += 28;
 		addRenderableWidget(Button.builder(Component.literal("生存提醒"), button ->
-			this.minecraft.setScreen(new SurvivalAlertsScreen(this, config)))
+			this.minecraft.gui.setScreen(new SurvivalAlertsScreen(this, config)))
 			.bounds(left, y, 155, 22).build());
 		addRenderableWidget(Button.builder(Component.literal("最近死亡点"), button ->
-			this.minecraft.setScreen(new DeathPointScreen(this, config, controller)))
+			this.minecraft.gui.setScreen(new DeathPointScreen(this, config, controller)))
 			.bounds(left + 165, y, 155, 22).build());
 		y += 28;
 		addRenderableWidget(Button.builder(Component.literal("玩家白名单"), button ->
-			this.minecraft.setScreen(new KitTrustedPlayersScreen(this, config)))
+			this.minecraft.gui.setScreen(new KitTrustedPlayersScreen(this, config)))
 			.bounds(left, y, 320, 22).build());
 		y += 28;
 		PiglinBrawler brawler = KitClient.brawler();
@@ -62,7 +62,7 @@ public final class GuardHomeScreen extends KitHudScreen {
 			PiglinBrawler current = KitClient.brawler();
 			if (current == null) return;
 			current.toggle(this.minecraft);
-			if (current.isActive()) this.minecraft.setScreen(null);
+			if (current.isActive()) this.minecraft.gui.setScreen(null);
 			else rebuildWidgets();
 		}).bounds(left, y, 155, 22)
 			.tooltip(Tooltip.create(Component.literal(
@@ -70,7 +70,7 @@ public final class GuardHomeScreen extends KitHudScreen {
 					+ "背包有弓和箭会射远处的恶魂和弩猪人。不会自己跑动，只在飞行时左右拉扯躲弹。")))
 			.build());
 		addRenderableWidget(Button.builder(Component.literal("打猪人设置"), button ->
-			this.minecraft.setScreen(new PiglinBrawlerScreen(this, config)))
+			this.minecraft.gui.setScreen(new PiglinBrawlerScreen(this, config)))
 			.bounds(left + 165, y, 155, 22)
 			.tooltip(Tooltip.create(Component.literal(
 				"近战交给谁、各种射程、拉弓时长、低血量自动停手，都在这一页。")))
@@ -88,7 +88,7 @@ public final class GuardHomeScreen extends KitHudScreen {
 			.build());
 		y += 30;
 		infoY = y;
-		addRenderableWidget(Button.builder(Component.literal("关闭"), button -> this.minecraft.setScreen(null))
+		addRenderableWidget(Button.builder(Component.literal("关闭"), button -> this.minecraft.gui.setScreen(null))
 			.bounds(left, footerButtonY(), 320, 20).build());
 	}
 

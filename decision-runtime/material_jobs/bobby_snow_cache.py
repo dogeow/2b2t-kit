@@ -1,4 +1,4 @@
-"""Bounded, read-only snow hints from the current Bobby MCA cache.
+"""Bounded, read-only biome hints from the current Bobby MCA cache.
 
 The seed-scout hash is used only to select Bobby's current world directory.  It
 is intentionally absent from candidates, exceptions, and the optional index.
@@ -60,6 +60,15 @@ class _Rejected(Exception):
     """Internal malformed/unsupported region or NBT marker."""
 
 
+def _biome_filter(values=None):
+    if values is None:return SNOW_BIOMES
+    if (not isinstance(values,(list,tuple,set,frozenset)) or not 1<=len(values)<=32
+            or any(type(n)is not str or not re.fullmatch(r'minecraft:[a-z0-9_]+',n)for n in values)
+            or len(set(values))!=len(values)):
+        raise ValueError('Expected1..32 unique explicit vanilla biome names')
+    return frozenset(values)
+
+
 def canonical_server(server):
     """Return a stable server identity, omitting Minecraft's default port."""
     if not isinstance(server, str):
@@ -83,8 +92,11 @@ def canonical_server(server):
 
 
 def candidates(automation_root, server, dimension, origin, visited=(), *,
-               target_y=200.0, max_candidates=MAX_CANDIDATES, index_path=None):
-    """Return nearest unvisited full snowy chunks from the current Bobby world.
+               target_y=200.0, max_candidates=MAX_CANDIDATES, index_path=None, biome_filter=None):
+    """Return nearest unvisited full matching chunks from the current Bobby world.
+
+    Snow remains the default. An explicit resource biome filter is isolated in
+    each index entry, including empty results; it never changes SNOW_BIOMES.
 
     ``automation_root`` is the active Minecraft instance directory containing
     ``.bobby`` and ``config/twob2tkit/seed-scout.json``.  MCA files are never
@@ -92,6 +104,7 @@ def candidates(automation_root, server, dimension, origin, visited=(), *,
     no world hash or absolute path.
     """
     root = Path(automation_root)
+    wanted = _biome_filter(biome_filter)
     cache_server = canonical_server(server)
     dimension = _dimension(dimension)
     ox, oz = _origin(origin)
@@ -136,7 +149,7 @@ def candidates(automation_root, server, dimension, origin, visited=(), *,
             scanned_bytes += stat.st_size
             cached = entries.get(key)
             if _cached_region(cached, cache_server, dimension, cache_folder, name,
-                              stat):
+                              stat, wanted):
                 fingerprint=cached['fingerprint']
                 chunks = cached["chunks"]
             else:
@@ -144,7 +157,7 @@ def candidates(automation_root, server, dimension, origin, visited=(), *,
                 after_hash = path.stat()
                 if not _same_file(stat, after_hash):
                     continue
-                chunks = _scan_region(path, rx, rz, stat.st_size)
+                chunks = _scan_region(path, rx, rz, stat.st_size, wanted)
                 after_scan = path.stat()
                 if not _same_file(stat, after_scan):
                     continue
@@ -158,6 +171,7 @@ def candidates(automation_root, server, dimension, origin, visited=(), *,
                     "size": stat.st_size,
                     "file_id": _file_id(stat),
                     "fingerprint": fingerprint,
+                    **({'biome_filter':sorted(wanted)} if wanted!=SNOW_BIOMES else {}),
                     "chunks": chunks,
                 }
                 changed = True
@@ -217,10 +231,11 @@ def candidates(automation_root, server, dimension, origin, visited=(), *,
     return rows[:max_candidates]
 
 
-def validate_candidate(automation_root, server, dimension, candidate, *, quick=False):
+def validate_candidate(automation_root, server, dimension, candidate, *, quick=False, biome_filter=None):
     """Revalidate a candidate against the current world and region content."""
     try:
         root = Path(automation_root)
+        wanted = _biome_filter(biome_filter)
         cache_server = canonical_server(server)
         dimension = _dimension(dimension)
         if (not isinstance(candidate, dict)
@@ -237,7 +252,7 @@ def validate_candidate(automation_root, server, dimension, candidate, *, quick=F
                 or not isinstance(candidate.get("biomes"), list)
                 or not candidate["biomes"]
                 or candidate["biomes"] != sorted(set(candidate["biomes"]))
-                or any(type(value) is not str or value not in SNOW_BIOMES
+                or any(type(value) is not str or value not in wanted
                        for value in candidate["biomes"])
                 or not isinstance(candidate.get("region_file"), str)
                 or not isinstance(candidate.get("fingerprint"), str)
@@ -287,7 +302,7 @@ def validate_candidate(automation_root, server, dimension, candidate, *, quick=F
             if not _same_file(stat, after_hash):
                 continue
             biomes = _snowy_biomes(
-                _read_chunk(path, rx, rz, cx, cz, stat.st_size), cx, cz)
+                _read_chunk(path, rx, rz, cx, cz, stat.st_size), cx, cz, wanted)
             if not _same_file(stat, path.stat()):
                 continue
             if biomes == candidate["biomes"]:
@@ -493,7 +508,7 @@ def _content_fingerprint(path, expected_size):
     return digest.hexdigest()
 
 
-def _scan_region(path, rx, rz, size):
+def _scan_region(path, rx, rz, size, wanted=SNOW_BIOMES):
     with path.open("rb") as stream:
         header = stream.read(4096)
         if len(header) != 4096:
@@ -506,7 +521,7 @@ def _scan_region(path, rx, rz, size):
             cx, cz = rx * 32 + slot % 32, rz * 32 + slot // 32
             try:
                 tag = _read_location(stream, location)
-                biomes = _snowy_biomes(tag, cx, cz)
+                biomes = _snowy_biomes(tag, cx, cz, wanted)
                 if biomes:
                     chunks.append({"chunk": [cx, cz], "biomes": biomes})
             except _Rejected:
@@ -584,7 +599,7 @@ def _decompress(payload, compression):
     return raw
 
 
-def _snowy_biomes(tag, cx, cz):
+def _snowy_biomes(tag, cx, cz, wanted=SNOW_BIOMES):
     if not isinstance(tag, dict) or tag.get("Status") != "full":
         return []
     if tag.get("xPos") != cx or tag.get("zPos") != cz:
@@ -598,7 +613,7 @@ def _snowy_biomes(tag, cx, cz):
         palette = biomes.get("palette") if isinstance(biomes, dict) else None
         if isinstance(palette, list):
             found.update(name for name in palette
-                         if type(name) is str and name in SNOW_BIOMES)
+                         if type(name) is str and name in wanted)
     return sorted(found)
 
 
@@ -704,7 +719,7 @@ def _index_key(server, dimension, cache_folder, region_file):
     return f"{server}\x00{dimension}\x00{cache_folder}\x00{region_file}"
 
 
-def _cached_region(value, server, dimension, cache_folder, name, stat):
+def _cached_region(value, server, dimension, cache_folder, name, stat, wanted=SNOW_BIOMES):
     return (isinstance(value, dict)
             and value.get("server") == server
             and value.get("dimension") == dimension
@@ -714,20 +729,21 @@ def _cached_region(value, server, dimension, cache_folder, name, stat):
             and value.get("ctime_ns") == stat.st_ctime_ns
             and value.get("size") == stat.st_size
             and value.get("file_id") == _file_id(stat)
+            and _biome_filter(value.get('biome_filter')) == wanted
             and isinstance(value.get("fingerprint"),str)
             and FINGERPRINT.fullmatch(value["fingerprint"])
             and isinstance(value.get("chunks"), list)
             and len(value["chunks"]) <= MAX_INDEX_CHUNKS
-            and all(_valid_index_chunk(chunk) for chunk in value["chunks"]))
+            and all(_valid_index_chunk(chunk,wanted) for chunk in value["chunks"]))
 
 
-def _valid_index_chunk(value):
+def _valid_index_chunk(value,wanted=SNOW_BIOMES):
     return (isinstance(value, dict) and set(value) == {"chunk", "biomes"}
             and isinstance(value.get("chunk"), list) and len(value["chunk"]) == 2
             and all(type(part) is int for part in value["chunk"])
             and isinstance(value.get("biomes"), list) and bool(value["biomes"])
             and value["biomes"] == sorted(set(value["biomes"]))
-            and all(type(name) is str and name in SNOW_BIOMES
+            and all(type(name) is str and name in wanted
                     for name in value["biomes"]))
 
 
@@ -746,7 +762,7 @@ def _load_index(path):
             return empty
         for key, row in value["entries"].items():
             if (not isinstance(key, str) or not isinstance(row, dict)
-                    or set(row) != {"server", "dimension", "cache_folder", "region_file",
+                    or set(row)-{'biome_filter'} != {"server", "dimension", "cache_folder", "region_file",
                                         "mtime_ns", "ctime_ns", "size", "file_id", "fingerprint",
                                         "chunks"}
                     or not isinstance(row.get("server"), str)
@@ -762,8 +778,9 @@ def _load_index(path):
                     or not isinstance(row.get("fingerprint"), str)
                     or not FINGERPRINT.fullmatch(row["fingerprint"])
                     or not isinstance(row.get("chunks"), list)
+                    or not _biome_filter(row.get('biome_filter'))
                     or len(row["chunks"]) > MAX_INDEX_CHUNKS
-                    or any(not _valid_index_chunk(chunk) for chunk in row["chunks"])
+                    or any(not _valid_index_chunk(chunk,_biome_filter(row.get('biome_filter'))) for chunk in row["chunks"])
                     or key != _index_key(row["server"], row["dimension"],
                                          row["cache_folder"], row["region_file"])):
                 return empty

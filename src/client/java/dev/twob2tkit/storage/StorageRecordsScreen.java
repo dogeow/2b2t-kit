@@ -216,7 +216,7 @@ public final class StorageRecordsScreen extends KitHudScreen {
 
 	/** 打开详情。 */
 	private void open(KitConfig.StorageSnapshot snapshot) {
-		this.minecraft.setScreen(new StorageDetailScreen(this, snapshot));
+		this.minecraft.gui.setScreen(new StorageDetailScreen(this, snapshot));
 	}
 
 	/** 开始走向该存储。 */
@@ -228,7 +228,7 @@ public final class StorageRecordsScreen extends KitHudScreen {
 		StructureGuide guide = KitClient.structureGuide();
 		if (guide == null) return;
 		guide.start(StorageLabels.headline(snapshot), snapshot.x, snapshot.y, snapshot.z);
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 删除记录。 */

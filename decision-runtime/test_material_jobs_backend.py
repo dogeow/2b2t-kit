@@ -15,7 +15,7 @@ from projection_wood import POST_ITEM, POST_RAW
 
 def state():
     return {'connected':True,'server':'simpcraft.com','dimension':'minecraft:overworld','world_session':'w',
-            'control_revision':3,'manual_movement':False,'screen':'','health':20,'pos':[0,100,0],
+            'control_revision':3,'manual_movement':False,'screen':'','health':20,'food':20,'pos':[0,100,0],
             'time':100,'flight':True,
             'phase':'done','id':'request-a','last_request':'request-a',
             'supervision_lease':{'id':'lease-a','kind':'materials','job_session':'task-a','world_session':'w','revision':3}}
@@ -100,6 +100,23 @@ class BackendTest(unittest.TestCase):
         equipment.assert_not_called()
         self.client.request.assert_not_called()
         self.client.checked.assert_not_called()
+
+    def test_cached_spruce_source_precedes_blind_discovery_on_existing_owner(self):
+        self.job.profile={'server':'simpcraft.com','dimension':'minecraft:overworld','resource_regions':[]}
+        self.job.prepare_travel=Mock()
+        @contextmanager
+        def action(kind):
+            directory=self.root/'source-action';directory.mkdir()
+            yield self.client,directory
+        self.job.action=action
+        receipt={'phase':'done','after':8,'returned_home':True,'backend_owner_retained':True}
+        with patch.object(backend,'read_fresh',return_value=self.current), \
+                patch('material_jobs.equipment.prepare',return_value={'phase':'done'}), \
+                patch('material_jobs.cached_tree_source.acquire',return_value=receipt)as cached, \
+                patch('material_jobs.discovery.discover')as blind:
+            self.assertEqual(receipt,self.job.acquire('minecraft:spruce_log',8))
+        self.assertIs(self.job,cached.call_args.args[0]);self.assertIs(self.client,cached.call_args.args[1])
+        blind.assert_not_called()
 
     def test_discovery_tile_guard_hold_without_region_prevents_equipment_and_travel(self):
         import hashlib
@@ -856,6 +873,23 @@ class BackendTest(unittest.TestCase):
         self.assertEqual('done',result['phase'])
         self.assertEqual(staging,cruise.call_args.args[1])
 
+    def test_outdoor_workbench_avoids_indoor_entry_and_keeps_supply_room_record(self):
+        self.current.update(server='simpcraft.com',dimension='minecraft:overworld',pos=[100,90,100],inventory=[])
+        old=[0,65,-4];outside=[5,64,5];staging=[5.5,88,5.5]
+        self.job.profile={'workbench':old,'workbench_entry':[{'kind':'walk','target':[0,65,0]}],
+            'outdoor_workbench':{'authorized':True,'server':'simpcraft.com','dimension':'minecraft:overworld',
+                                 'pos':outside,'staging':staging}}
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
+        self.job.prepare_travel=Mock();self.job.crafting_catalog=object();self.job.route=Mock()
+        with patch('material_jobs.acquisition._travel')as movement, \
+             patch('goal_workflow.open_workbench')as workbench, \
+             patch('material_manufacture.inventory_plan',return_value=None), \
+             patch('material_manufacture.manufacture',return_value={'complete':True}):
+            result=self.job.craft({'minecraft:green_terracotta':40})
+        self.assertEqual('outdoor_workbench',result['crafting_location'])
+        self.job.route.assert_not_called();workbench.assert_called_once_with(self.client,outside)
+        self.assertEqual(staging,movement.call_args.args[1]);self.assertEqual(old,self.job.profile['workbench'])
+
     def test_two_by_two_craft_leaves_acquisition_route_before_inventory_clicks(self):
         import zipfile
         from recipe_catalog import RecipeCatalog
@@ -1130,6 +1164,7 @@ class BackendTest(unittest.TestCase):
                                     checked=Mock(return_value={'phase':'done'}),request=Mock(return_value={'phase':'done'}),
                                     finish=Mock(),status=Mock(side_effect=lambda:self.current))
         self.job=backend.Backend.__new__(backend.Backend)
+        self.job.profile={}
         self.job.client=self.client;self.job.root=self.root;self.job.out=self.root
         self.job.cleaning=False;self.job.busy=False;self.job.ready=True;self.job.native_gravel_session=None
         self.job.request={'mode':'item','context':{'server':'simpcraft.com','dimension':'minecraft:overworld','world_session':'w','expected_revision':3}}
@@ -1437,6 +1472,31 @@ class BackendTest(unittest.TestCase):
         self.job.prepare_travel.assert_not_called();self.job.stage_near_base.assert_not_called()
         exchange.assert_not_called();self.client.request.assert_not_called()
 
+    def test_initial_mud_admission_uses_registered_staging_then_real_capacity(self):
+        self.job.profile={'mud_inventory_staging':{'authorized':True}}
+        self.current['inventory']=inventory_rows({'minecraft:dirt':64})
+        self.job.prepare_mud_inventory=Mock(return_value={'phase':'done','free_slots':3})
+        with patch.object(backend,'read_fresh',return_value=self.current):
+            reply=self.job.make_room({'minecraft:mud':8},['minecraft:mud'])
+        self.job.prepare_mud_inventory.assert_called_once()
+        self.assertEqual(('done',True,0),(reply['phase'],reply['actual_capacity_rechecked'],reply['warehouse_inventory_credit']))
+
+    def test_registered_mud_staging_wait_keeps_native_admission_waiting(self):
+        self.job.profile={'mud_inventory_staging':{'authorized':True}}
+        receipt={'phase':'waiting','code':'WAIT_WORKSPACE','detail':'Preserved current inventory'}
+        self.job.prepare_mud_inventory=Mock(return_value=receipt)
+        self.assertEqual(receipt,self.job.make_room({'minecraft:mud':8},['minecraft:mud']))
+        self.client.request.assert_not_called()
+
+    def test_mud_staging_report_cannot_override_still_full_backpack(self):
+        self.job.profile={'mud_inventory_staging':{'authorized':True}}
+        self.current['inventory']=inventory_rows({'minecraft:dirt':36*64})
+        self.job.baseline={'minecraft:dirt':36*64};self.job.request['target_stack_sizes']={'minecraft:mud':64}
+        self.job.prepare_mud_inventory=Mock(return_value={'phase':'done','free_slots':3})
+        with patch.object(backend,'read_fresh',return_value=self.current):
+            reply=self.job.make_room({'minecraft:mud':8},['minecraft:mud'])
+        self.assertEqual(('blocked',0),(reply['phase'],reply['free_slots']))
+
     def test_unloading_one_owned_stack_cannot_start_travel_for_impossible_large_item_target(self):
         item='minecraft:cobbled_deepslate'
         self.current['inventory']=inventory_rows({item:302,'minecraft:stone':64,'minecraft:dirt':30*64})
@@ -1483,6 +1543,20 @@ class BackendTest(unittest.TestCase):
             with self.assertRaisesRegex(JobBlocked,'不重复启动'):self.job.acquire_gravel(64)
         self.assertEqual(1,send.call_count);self.assertFalse(self.job.busy)
 
+    def test_gravel_missing_infinity_arrow_never_starts_native_dive_on_fetch_receipt_alone(self):
+        self.job.stock=Mock(return_value={});self.job.finish=Mock()
+        self.current['supervision_lease']={}
+        self.current['inventory']=[{'slot':8,'item':'minecraft:bow','count':1,'durability':300,
+            'enchantments':[{'id':'minecraft:infinity','level':1}]}]
+        client=Mock();client.status.return_value=self.current
+        self.job.ensure_client=Mock(return_value=client)
+        self.job.fetch=Mock(return_value={'phase':'done'})
+        with patch.object(backend,'read_fresh',return_value=self.current),patch('kit_cli.send')as send:
+            result=self.job.acquire_gravel(64)
+        self.assertEqual('WAIT_COMBAT_EQUIPMENT',result['code'])
+        self.job.fetch.assert_called_once_with({'minecraft:arrow':1})
+        send.assert_not_called()
+
     def test_gravel_busy_scope_stays_set_while_checkpoint_observes(self):
         self.job.client=None;self.job.stock=Mock(side_effect=[{}, {'minecraft:gravel':64}]);self.job.finish=Mock()
         initial=copy.deepcopy(self.current);initial['supervision_lease']={}
@@ -1517,12 +1591,46 @@ class BackendTest(unittest.TestCase):
             with self.assertRaisesRegex(JobBlocked,'base route uncertain'):self.job.acquire_gravel(8)
         send.assert_not_called();self.job.finish.assert_not_called()
 
+    def test_registered_open_water_stages_native_gravel_without_returning_to_warehouse_origin(self):
+        point=[30.5,90,40.5]
+        self.job.request['mode']='projection'
+        self.job.profile={'depots':[[5,64,7]],'gravel_staging':{
+            'authorized':True,'source':'verified_open_water','target':point}}
+        self.current['pos']=point;self.current['supervision_lease']={}
+        self.job.stock=Mock(side_effect=[{}, {'minecraft:gravel':8}]);self.job.finish=Mock()
+        self.job.prepare_travel=Mock();self.job.ensure_client=Mock(return_value=self.client)
+        active=copy.deepcopy(self.current);active['gravel']={'active':True}
+        active['supervision_lease']={'kind':'materials','job_session':'gravel-owned'}
+        ended=copy.deepcopy(active);ended['gravel']['active']=False
+        with patch('material_jobs.acquisition._travel')as travel, \
+                patch.object(backend,'read_fresh',side_effect=[self.current,ended,ended]), \
+                patch('kit_cli.send',return_value=active)as send:
+            self.assertEqual('done',self.job.acquire_gravel(8)['phase'])
+        self.assertEqual(point,travel.call_args.args[1])
+        self.job.stage_near_base.assert_not_called()
+        self.assertEqual(1,send.call_count)
+
     def test_carried_gravel_needs_no_base_trip_or_native_session(self):
         self.job.request['mode']='projection';self.job.profile={'depots':[[5,64,7]]}
         self.job.stock=Mock(return_value={'minecraft:gravel':8});self.job.prepare_travel=Mock()
         self.job.stage_near_base=Mock();self.job.finish=Mock()
         self.assertEqual('done',self.job.acquire_gravel(8)['phase'])
         self.job.prepare_travel.assert_not_called();self.job.stage_near_base.assert_not_called();self.job.finish.assert_not_called()
+
+    def test_low_food_is_restored_on_owned_client_before_next_native_gravel_start(self):
+        self.job.client=None;self.job.stock=Mock(side_effect=[{}, {'minecraft:gravel':8}]);self.job.finish=Mock()
+        food_client=Mock();self.job.ensure_client=Mock(return_value=food_client)
+        hungry=copy.deepcopy(self.current);hungry['food']=17;hungry['supervision_lease']={}
+        fed=copy.deepcopy(hungry);fed['food']=20
+        active=copy.deepcopy(fed);active['gravel']={'active':True}
+        active['supervision_lease']={'kind':'materials','job_session':'gravel-owned','world_session':'w','revision':3}
+        ended=copy.deepcopy(active);ended['gravel']['active']=False
+        with patch.object(backend,'read_fresh',side_effect=[hungry,fed,ended,ended]), \
+                patch('survival_recovery.ensure_work_food',return_value={'phase':'done','food':20})as meal, \
+                patch('kit_cli.send',return_value=active)as send:
+            self.assertEqual('done',self.job.acquire_gravel(8)['phase'])
+        meal.assert_called_once_with(food_client,self.job.out/'gravel-preflight')
+        self.assertEqual(2,self.job.finish.call_count);self.assertEqual(1,send.call_count)
 
     def test_native_gravel_partial_gain_preserves_uncollected_drop_and_reports_source_batch(self):
         self.job.client=None;self.job.stock=Mock(side_effect=[{'minecraft:gravel':2},{'minecraft:gravel':7}]);self.job.finish=Mock()

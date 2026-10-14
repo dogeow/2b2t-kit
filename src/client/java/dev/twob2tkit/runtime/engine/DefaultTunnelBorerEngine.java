@@ -604,7 +604,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 				DisconnectedScreen resultScreen = new DisconnectedScreen(parent, title, detail);
 				if (client.level != null) {
 					client.disconnectFromWorld(ClientLevel.DEFAULT_QUIT_MESSAGE);
-					client.setScreen(resultScreen);
+					client.gui.setScreen(resultScreen);
 				} else {
 					client.disconnect(resultScreen, false);
 				}
@@ -903,7 +903,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			if (standaloneGuard) { mobs.lowerShield(c); engagement.clear(); }
 			standaloneGuard = false; return false;
 		}
-		if (c.screen != null) {
+		if (c.gui.screen() != null) {
 			rangedCombat.pause(c);
 			if (standaloneGuard) mobs.lowerShield(c);
 			standaloneGuard = false; return false;
@@ -928,7 +928,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
         // Preserve actual movement even if used with an older host lacking manual-takeover handling.
         for(var key: new net.minecraft.client.KeyMapping[]{c.options.keyUp,c.options.keyDown,c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint}){
             var bound=net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper.getBoundKeyOf(key);
-            boolean held=c.screen==null && c.isWindowActive() && bound.getType()==com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM
+            boolean held=c.gui.screen()==null && c.isWindowActive() && bound.getType()==com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM
                 && com.mojang.blaze3d.platform.InputConstants.isKeyDown(c.getWindow(),bound.getValue());
             key.setDown(held);
         }
@@ -943,7 +943,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		if ((!active && !standaloneGuard) || client.player == null) return;
 		if (mealPause.paused()) return;
 		if (rangedCombat.reapply(client)) return;
-		if (mode == Mode.ORE && !goingHome && oreMoveLook != null && client.screen == null && !client.options.keyAttack.isDown()) {
+		if (mode == Mode.ORE && !goingHome && oreMoveLook != null && client.gui.screen() == null && !client.options.keyAttack.isDown()) {
 			RotationAim.apply(client.player, oreMoveLook); return;
 		}
 		if (goingHome) {
@@ -1120,7 +1120,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			return;
 		}
 		engagement.update(client);
-		if (client.screen != null && !(mode == Mode.AREA && areaRunner.ownsInventoryScreen(client))) {
+		if (client.gui.screen() != null && !(mode == Mode.AREA && areaRunner.ownsInventoryScreen(client))) {
 			if (mealPause.paused()) releaseMine(client);
 			else {
 				rangedCombat.pause(client);
@@ -3033,7 +3033,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			lastHudAction = text;
 			lastHudDetail = extra;
 			String combined = extra.isBlank() ? "[盾构机] " + text : "[盾构机] " + text + "  |  " + extra;
-			client.gui.setOverlayMessage(Component.literal(combined).withColor(color), false);
+			client.gui.hud.setOverlayMessage(Component.literal(combined).withColor(color), false);
 		}
 	}
 

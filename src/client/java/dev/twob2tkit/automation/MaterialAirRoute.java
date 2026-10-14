@@ -54,6 +54,27 @@ final class MaterialAirRoute {
     }
 
     double returnY(){return returnY;}
+    boolean pickupRebaseClear(Minecraft c,String currentWorld,String currentJob,String helmet,
+                              Vec3 target,long now){
+        if(c.player==null||c.level==null||target==null||!c.player.isUnderWater()
+                ||!fresh(currentWorld,currentJob,helmet,c,now)
+                ||!Double.isFinite(target.x)||!Double.isFinite(target.y)||!Double.isFinite(target.z)
+                ||Math.abs(target.y-c.player.getY())>.01
+                ||Math.hypot(target.x-c.player.getX(),target.z-c.player.getZ())>1.25
+                ||Math.abs(target.x-anchorX)>3||Math.abs(target.z-anchorZ)>3
+                ||!clearColumn(c,c.player.getX(),c.player.getZ(),returnY)
+                ||!clearColumn(c,target.x,target.z,returnY))return false;
+        Vec3 movement=target.subtract(c.player.position());
+        int steps=Math.max(1,(int)Math.ceil(movement.length()/.125));
+        for(int i=0;i<=steps;i++){
+            var body=c.player.getBoundingBox().move(movement.scale((double)i/steps));
+            if(!c.level.noCollision(c.player,body)||lavaIn(c,body)
+                    ||!c.level.getEntities(c.player,body,e->e.isAlive()
+                        &&!(e instanceof net.minecraft.world.entity.item.ItemEntity)
+                        &&!(e instanceof net.minecraft.world.entity.ExperienceOrb)).isEmpty())return false;
+        }
+        return true;
+    }
     long expires(){return expires;}
     long budgetValidUntil(String currentWorld,String currentJob,String helmet){
         return calibration.isPinned(currentWorld,currentJob,helmet)

@@ -98,8 +98,8 @@ public final class StructureGuide {
 	}
 	/** Compact top-centre card, away from the crosshair, hotbar and left-side minimap. */
 	public void renderHud(Minecraft c, GuiGraphicsExtractor g) {
-		if ((!active && System.currentTimeMillis()>completedUntil) || c.player==null || c.level==null || c.options.hideGui
-			|| occupied() || c.screen!=null && !(c.screen instanceof KitHudScreen)) return;
+		if ((!active && System.currentTimeMillis()>completedUntil) || c.player==null || c.level==null || c.gui.hud.isHidden()
+			|| occupied() || c.gui.screen()!=null && !(c.gui.screen() instanceof KitHudScreen)) return;
 		if (active && !session.matches(scope(c))) return;
 		int width=Math.min(220,Math.max(120,g.guiWidth()-24)), left=(g.guiWidth()-width)/2, top=42;
 		int accent=active?0xFF75D8C5:0xFF9AE6A3;
@@ -153,7 +153,7 @@ public final class StructureGuide {
 
 	/** 字幕提示。 */
 	private static void overlay(Minecraft client, String text, int color) {
-		client.gui.setOverlayMessage(Component.literal(text).withColor(color), false);
+		client.gui.hud.setOverlayMessage(Component.literal(text).withColor(color), false);
 	}
 
 	/** 偏航角转八方位中文。 */

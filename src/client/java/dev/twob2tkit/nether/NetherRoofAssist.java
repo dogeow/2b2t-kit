@@ -84,7 +84,7 @@ public final class NetherRoofAssist {
 			stop(client, "离开世界");
 			return;
 		}
-		if (client.screen != null) {
+		if (client.gui.screen() != null) {
 			release(client);
 			status = "先关掉界面";
 			return;
@@ -153,7 +153,7 @@ public final class NetherRoofAssist {
 
 	/** 上顶时保持瞄准。 */
 	public void reapplyLook(Minecraft client) {
-		if (!active || client.player == null || client.level == null || client.screen != null) return;
+		if (!active || client.player == null || client.level == null || client.gui.screen() != null) return;
 		if (client.player.getY() < 118.0) {
 			client.player.setXRot(-35.0F);
 			return;
@@ -294,7 +294,7 @@ public final class NetherRoofAssist {
 
 	/** 叠字幕提示。 */
 	private static void overlay(Minecraft client, String text, int color) {
-		client.gui.setOverlayMessage(Component.literal("[下界顶] " + text).withColor(color), false);
+		client.gui.hud.setOverlayMessage(Component.literal("[下界顶] " + text).withColor(color), false);
 	}
 
 	/** 发系统消息。 */

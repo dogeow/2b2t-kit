@@ -238,6 +238,42 @@ class GenericCanopyExitTest(unittest.TestCase):
                     with self.assertRaises(JobBlocked):_escape_local_canopy(c)
                 c.checked.assert_not_called()
 
+    def lifted_states(self,c):
+        start={'pos':[.5,64.,.5],'world_session':'w'}
+        lifted={'pos':[.5,90.,.5],'world_session':'w','health':20,'flight':True,
+                'guard_armed':True,'guard_pve_only':True,'guard_busy':False,
+                'manual_movement':False,'under_water':False}
+        return start,lifted
+
+    def test_defense_lift_uses_fresh_open_body_column_without_old_ground_walk(self):
+        with tempfile.TemporaryDirectory() as d:
+            c=self.client(Path(d));start,lifted=self.lifted_states(c)
+            with patch('material_jobs.navigation.settled_state',side_effect=[start,lifted,lifted]):
+                result=_escape_local_canopy(c)
+            self.assertEqual(lifted,result);c.checked.assert_not_called()
+            self.assertEqual(2,c.request.call_count)
+            proof=json.loads(next(Path(d).glob('canopy-exit-*.json')).read_text())
+            self.assertFalse(proof['old_ground_walk_sent']);self.assertFalse(proof['parking_confirmed'])
+
+    def test_lifted_pose_with_remaining_roof_does_not_reuse_the_ground_route(self):
+        with tempfile.TemporaryDirectory() as d:
+            c=self.client(Path(d));start,lifted=self.lifted_states(c)
+            first=c.request.return_value
+            blocked={**first,'blocks':first['blocks']+[{'pos':[0,95,0],'passable':False,'fluid':False}]}
+            c.request.side_effect=[first,blocked]
+            with patch('material_jobs.navigation.settled_state',side_effect=[start,lifted,lifted]):
+                with self.assertRaises(JobBlocked):_escape_local_canopy(c)
+            c.checked.assert_not_called()
+
+    def test_lifted_pose_still_requires_fresh_health_control_and_guard(self):
+        for change in ({'health':18},{'manual_movement':True},{'guard_armed':False},
+                       {'flight':False},{'world_session':'other'},{'pos':[.5,91.,.5]}):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as d:
+                c=self.client(Path(d));start,lifted=self.lifted_states(c)
+                with patch('material_jobs.navigation.settled_state',side_effect=[start,lifted,{**lifted,**change}]):
+                    with self.assertRaises(JobBlocked):_escape_local_canopy(c)
+                c.checked.assert_not_called()
+
 class QuarryExitTest(unittest.TestCase):
 
     def setUp(self):

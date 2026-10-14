@@ -86,6 +86,28 @@ class BobbySnowCacheTest(unittest.TestCase):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def test_explicit_resource_biomes_do_not_reuse_an_empty_snow_index(self):
+        folder=self.world();region(folder/'r.0.0.mca',[
+            (0,0,2,chunk_nbt(0,0,'minecraft:dark_forest'),False),
+            (1,0,2,chunk_nbt(1,0,'minecraft:taiga'),False)])
+        args=(self.root,'example.test','minecraft:overworld',[0,0])
+        self.assertEqual([],cache.candidates(*args))
+        rows=cache.candidates(*args,biome_filter={'minecraft:dark_forest'})
+        self.assertEqual([[0,0]],[r['chunk']for r in rows])
+        self.assertTrue(cache.validate_candidate(*args[:3],rows[0],biome_filter={'minecraft:dark_forest'}))
+        self.assertFalse(cache.validate_candidate(*args[:3],rows[0]))
+        self.assertFalse(cache.validate_candidate(*args[:3],rows[0],biome_filter={'minecraft:taiga'}))
+        with patch.object(cache,'_scan_region',side_effect=AssertionError('reparsed same filter')):
+            self.assertEqual(rows,cache.candidates(*args,biome_filter={'minecraft:dark_forest'}))
+        self.assertEqual([],cache.candidates(*args))
+
+    def test_explicit_resource_biome_filter_is_bounded_and_not_a_global_mutation(self):
+        for names in ([],['minecraft:dark_forest']*2,['other:forest'],['../forest'],
+                      ['minecraft:b'+str(i)for i in range(33)]):
+            with self.subTest(names=names),self.assertRaises(ValueError):
+                cache.candidates(self.root,'example.test','minecraft:overworld',[0,0],biome_filter=names)
+        self.assertNotIn('minecraft:dark_forest',cache.SNOW_BIOMES)
+
     def test_gzip_zlib_and_uncompressed_full_snowy_chunks_are_read(self):
         folder = self.world()
         region(folder / "r.0.0.mca", [

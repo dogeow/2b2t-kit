@@ -26,7 +26,7 @@ class CaretakerWiringTest {
     }
     @Test void launchClosesUiAndWaitsForNewStateBeforeAnyProcessOrLeaseAction()throws Exception{
         var c=calls(method("material/CaretakerJobs","prepare"));
-        assertTrue(c.containsAll(List.of("dev/twob2tkit/automation/AutomationBridge.materialJobContext","dev/twob2tkit/material/CaretakerProtocol.requireUnlocked","dev/twob2tkit/material/CaretakerProtocol.requireReady","net/minecraft/client/Minecraft.setScreen")));
+        assertTrue(c.containsAll(List.of("dev/twob2tkit/automation/AutomationBridge.materialJobContext","dev/twob2tkit/material/CaretakerProtocol.requireUnlocked","dev/twob2tkit/material/CaretakerProtocol.requireReady","net/minecraft/client/gui/Gui.setScreen")));
         assertFalse(c.contains("dev/twob2tkit/material/MaterialWorkerProcess.start"));
         c=calls(method("material/CaretakerJobs","tick"));assertTrue(c.indexOf("dev/twob2tkit/material/CaretakerProtocol.requireReady")<c.indexOf("dev/twob2tkit/material/MaterialWorkerProcess.start"));
         assertFalse(c.stream().anyMatch(name->name.contains("Runtime.exec")||name.endsWith(".armPveGuard")||name.endsWith(".emergencyStop")));

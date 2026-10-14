@@ -23,7 +23,7 @@ final class RecoveryAscent {
                 if(!server.equals(j.get("server").getAsString()) || !c.level.dimension().identifier().toString().equals(j.get("dimension").getAsString()))return false;
                 var a=j.getAsJsonArray("start");long expiry=j.get("expires").getAsLong();
                 if(!inScope(c.player.getX(),c.player.getY(),c.player.getZ(),a.get(0).getAsDouble(),a.get(1).getAsDouble(),a.get(2).getAsDouble(),j.get("target_y").getAsDouble(),expiry,System.currentTimeMillis()))return false;
-                if(c.screen!=null&&!c.screen.getClass().getSimpleName().equals("LevelLoadingScreen"))return false;
+                if(c.gui.screen()!=null&&!c.gui.screen().getClass().getSimpleName().equals("LevelLoadingScreen"))return false;
                 lastId=id;command=j;result(c,"running");
             }catch(Exception bad){return false;}
         }
@@ -31,7 +31,7 @@ final class RecoveryAscent {
         var anchor=command.getAsJsonArray("start");
         String currentServer=c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip;
         if(!currentServer.equals(command.get("server").getAsString()) || !c.level.dimension().identifier().toString().equals(command.get("dimension").getAsString()) || Math.hypot(c.player.getX()-anchor.get(0).getAsDouble(),c.player.getZ()-anchor.get(2).getAsDouble())>2){cancel(c,"context_changed");return false;}
-        if(c.screen!=null&&!c.screen.getClass().getSimpleName().equals("LevelLoadingScreen")||c.player.isDeadOrDying()||System.currentTimeMillis()>=command.get("expires").getAsLong()){cancel(c,"cancelled");return false;}
+        if(c.gui.screen()!=null&&!c.gui.screen().getClass().getSimpleName().equals("LevelLoadingScreen")||c.player.isDeadOrDying()||System.currentTimeMillis()>=command.get("expires").getAsLong()){cancel(c,"cancelled");return false;}
         for(var key:new net.minecraft.client.KeyMapping[]{c.options.keyUp,c.options.keyDown,c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift}){
             var bound=KeyMappingHelper.getBoundKeyOf(key);
             if(c.isWindowActive()&&bound.getType()==InputConstants.Type.KEYSYM&&InputConstants.isKeyDown(c.getWindow(),bound.getValue())){cancel(c,"manual_takeover");return false;}

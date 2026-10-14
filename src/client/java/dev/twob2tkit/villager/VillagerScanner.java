@@ -182,8 +182,8 @@ public final class VillagerScanner {
 
 	/** 画在屏幕正中偏上，不跟视角抖。还缺项为「职业（方块）」并自动换行。 */
 	public void renderHud(Minecraft client, GuiGraphicsExtractor graphics) {
-		if (!config.villagerScanEnabled || client.options.hideGui) return;
-		if (client.screen != null && !client.screen.isInGameUi()) return;
+		if (!config.villagerScanEnabled || client.gui.hud.isHidden()) return;
+		if (client.gui.screen() != null && !client.gui.screen().isInGameUi()) return;
 		int center = graphics.guiWidth() / 2;
 		int maxW = Math.max(160, graphics.guiWidth() - 48);
 		int y = Math.max(12, graphics.guiHeight() / 2 - 90);

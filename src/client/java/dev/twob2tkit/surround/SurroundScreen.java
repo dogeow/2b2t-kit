@@ -301,7 +301,7 @@ public final class SurroundScreen extends KitHudScreen {
 		config.surroundMode = mode.name();
 		config.save();
 		KitClient.startSurround(this.minecraft, mode);
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 校验并写入每拍块数、补洞开关与方块列表。 */

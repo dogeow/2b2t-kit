@@ -21,7 +21,7 @@ public final class SingleplayerTrialApi {
         requireEmpty(c);String name="Clef Dragon Trial "+UUID.randomUUID().toString().substring(0,8);
         try{String level=net.minecraft.util.FileUtil.findAvailableName(c.getLevelSource().getBaseDir(),name,"");
             var settings=new LevelSettings(name,GameType.SURVIVAL,new LevelSettings.DifficultySettings(Difficulty.NORMAL,false,false),false,WorldDataConfiguration.DEFAULT);
-            c.createWorldOpenFlows().createFreshLevel(level,settings,WorldOptions.defaultWithRandomSeed(),WorldPresets::createNormalWorldDimensions,c.screen);
+            c.createWorldOpenFlows().createFreshLevel(level,settings,WorldOptions.defaultWithRandomSeed(),WorldPresets::createNormalWorldDimensions,c.gui.screen());
         }catch(Exception e){throw new IllegalStateException("无法通过原版流程新建试验世界",e);}
     }
     private static void requireEmpty(Minecraft c){if(c.player!=null||c.level!=null||c.getSingleplayerServer()!=null||c.getCurrentServer()!=null)
@@ -53,7 +53,7 @@ public final class SingleplayerTrialApi {
                     requireEmpty(c);String requested=text(r,"world_id");Path save=Path.of(requested).toAbsolutePath().normalize();
                     Path saves=c.getLevelSource().getBaseDir().toAbsolutePath().normalize();
                     if(!save.getParent().equals(saves)||Files.isSymbolicLink(save)||!Files.isRegularFile(save.resolve("level.dat")))throw new IllegalArgumentException("Only one existing local save is allowed");
-                    c.createWorldOpenFlows().openWorld(save.getFileName().toString(),()->c.setScreen(new net.minecraft.client.gui.screens.TitleScreen()));
+                    c.createWorldOpenFlows().openWorld(save.getFileName().toString(),()->c.gui.setScreen(new net.minecraft.client.gui.screens.TitleScreen()));
                 }
                 case "start"->{current(c,r);SingleplayerTrialRuntime.start(c,KitClient.config());}
                 case "pause","resume","cancel"->{current(c,r);SingleplayerTrialRuntime.control(c,command);}

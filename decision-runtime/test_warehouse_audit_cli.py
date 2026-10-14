@@ -13,6 +13,64 @@ import warehouse_audit_cli as module
 from potato_farm import ENTITY_SCOPE_AT_SCAN_END
 
 
+class CanopyCorridorTest(unittest.TestCase):
+    def session(self):
+        return SimpleNamespace(world='world',report={},save=lambda:None,
+            status=lambda:{'pos':[10.5,100,10.5],'flight':True})
+
+    def test_farther_clear_column_retains_exact_reverse_before_entry(self):
+        s=self.session();calls=[]
+        def clear(session,a,b):
+            # The nearest vertical columns are occupied by the canopy.
+            return not (a[1]!=b[1] and abs(a[0]-10.5)<3 and abs(a[2]-10.5)<3)
+        with patch.object(module,'_clear_sweep',side_effect=clear), \
+                patch.object(module,'_follow_clear_points',side_effect=lambda _,p:calls.append(p)):
+            face=module._side_access(s,[10,65,10],'Block{minecraft:chest}')
+        self.assertEqual('west',face);self.assertEqual(4,s.report['storage_return']['outer_column_radius'])
+        self.assertEqual([[6.5,65.02,10.5],[6.5,100,10.5],[10.5,100,10.5]],s.return_points)
+        self.assertEqual([[6.5,100,10.5],[6.5,65.02,10.5],[9.5,65.02,10.5]],calls[0])
+
+    def test_closed_canopy_never_sends_movement(self):
+        s=self.session()
+        with patch.object(module,'_clear_sweep',return_value=False), \
+                patch.object(module,'_follow_clear_points')as move:
+            with self.assertRaises(module.StockBlocked):
+                module._side_access(s,[10,65,10],'Block{minecraft:chest}')
+            move.assert_not_called()
+
+    def test_canopy_turn_path_is_proved_before_movement_and_saved_for_return(self):
+        s=self.session();s.request=lambda *a,**kw:None
+        points=[[10.5,100,10.5],[10.5,76,10.5],[10.5,76,11.5],
+                [10.5,72,11.5],[10.5,72,9.5],[10.5,65,9.5]]
+        def planned(rows,start,target,low,high,**kw):
+            from material_jobs.protocol import JobBlocked
+            if target[0]!=10.5 or target[2]!=9.5:raise JobBlocked('occupied')
+            return points
+        checked=[]
+        def clear(_,a,b):
+            checked.append((a,b))
+            return len(checked)>8
+        with patch.object(module,'_scan',return_value={'blocks':[]}), \
+                patch.object(module,'_clear_sweep',side_effect=clear), \
+                patch('material_jobs.local_air_path.plan',side_effect=planned), \
+                patch.object(module,'_follow_clear_points')as move:
+            face=module._side_access(s,[10,65,10],'Block{minecraft:chest}')
+        self.assertEqual('north',face)
+        adjusted=[[p[0],p[1]+.2,p[2]]for p in points]
+        self.assertEqual(adjusted+[[10.5,65.02,9.5]],move.call_args.args[1])
+        self.assertEqual(.2,move.call_args.kwargs['arrival'])
+        self.assertEqual(list(reversed(adjusted))+[[10.5,100,10.5]],s.return_points)
+
+    def test_canopy_return_keeps_the_same_arrival_clearance(self):
+        s=self.session();s.owned_material_menu=None;s.in_house=False
+        s.return_points=[[10.5,71.2,9.5]]
+        s.report['storage_return']={'canopy_air_path':s.return_points}
+        with patch.object(module,'_follow_clear_points')as move:
+            module._exit_storage(s,{})
+        self.assertEqual(.2,move.call_args.kwargs['arrival'])
+        self.assertEqual([],s.return_points)
+
+
 def state(time=100):
     return {
         'time': time, 'connected': True, 'server': 'example.test:25565',
@@ -327,12 +385,29 @@ class WarehouseAuditTests(unittest.TestCase):
         from unittest.mock import Mock
         session=SimpleNamespace(world='world',rev=4,in_house=False,request=Mock(return_value=answer),checked=Mock())
         frame=state()|{'menu':chest_menu([])}
+        session.status=Mock(return_value=frame)
         with patch.object(module,'_side_access',return_value='west')as face, \
                 patch('container_access.wait_container_contents',return_value=frame)as contents, \
                 patch('container_access.open_grounded_chest')as landed:
             self.assertIs(frame,module._open_container(session,pos,block_state,{}))
         landed.assert_not_called();face.assert_called_once();contents.assert_called_once_with(session,'ChestMenu',require_nonempty=False)
-        self.assertEqual(['select_item','interact'],[call.args[0]for call in session.checked.call_args_list])
+        self.assertEqual(['interact'],[call.args[0]for call in session.checked.call_args_list])
+
+    def test_barrel_reads_with_actual_netherite_sword_without_requesting_absent_diamond_sword(self):
+        pos=[1,64,1];block_state='Block{minecraft:barrel}[facing=west,open=false]'
+        answer={'phase':'done','world_session':'world','control_revision':4,'scan_start_revision':4,
+                'scan_end_revision':4,'scan_cells_read':7,'scan_total_cells':7,
+                'blocks':[{'pos':pos,'state':block_state}]}
+        frame=state();frame['hand']={'item':'minecraft:netherite_sword','count':1}
+        frame['inventory'][0]['item']='minecraft:netherite_sword'
+        from unittest.mock import Mock
+        session=SimpleNamespace(world='world',rev=4,in_house=False,request=Mock(return_value=answer),
+                                checked=Mock(),status=Mock(return_value=frame))
+        with patch.object(module,'_side_access',return_value='west'), \
+                patch('container_access.wait_container_contents',return_value=frame):
+            self.assertIs(frame,module._open_container(session,pos,block_state,{}))
+        session.checked.assert_called_once_with('interact',pos=pos,face='west',expected_state=block_state,
+                                               expected_hand='minecraft:netherite_sword')
 
     def test_barrel_open_state_exception_does_not_relax_chest_state_checks(self):
         self.assertFalse(module._same_opened_state('Block{minecraft:barrel}[facing=west,open=false]',
@@ -431,6 +506,7 @@ class WarehouseAuditTests(unittest.TestCase):
         from unittest.mock import Mock
         session=SimpleNamespace(world='world',rev=4,in_house=False,request=Mock(return_value=answer),checked=Mock())
         frame=state()|{'menu':chest_menu([],size=5)|{'type':'HopperMenu'}}
+        session.status=Mock(return_value=frame)
         with patch.object(module,'_side_access',return_value='west')as face, \
                 patch('container_access.wait_container_contents',return_value=frame)as contents, \
                 patch('container_access.open_grounded_chest')as landed, \

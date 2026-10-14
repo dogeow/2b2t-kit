@@ -44,7 +44,7 @@ public class KitWorkspaceScreen extends KitHudScreen {
         rebuildEntries();
         addRenderableWidget(Button.builder(Component.literal("紧急停止全部"), b -> { KitClient.emergencyStop("工具箱停止全部"); showNotice("任务与独立防护已停止", 0xFFFF55); })
             .bounds(layout.footerButtonX(0, 2), layout.footer(), layout.footerButtonWidth(2), 20).build());
-        addRenderableWidget(Button.builder(Component.literal("返回游戏"), b -> minecraft.setScreen(null))
+        addRenderableWidget(Button.builder(Component.literal("返回游戏"), b -> minecraft.gui.setScreen(null))
             .bounds(layout.footerButtonX(1, 2), layout.footer(), layout.footerButtonWidth(2), 20).build());
     }
     private List<UiFeature> selected() {
@@ -101,6 +101,6 @@ public class KitWorkspaceScreen extends KitHudScreen {
         String status = !notice.isEmpty() ? notice : running.isEmpty() ? "共 "+featureCount+" 项 · "+(contentHeight>bodyHeight?"滚轮查看更多 · ":"")+"☆ 收藏到首页 · Esc 返回游戏" : "正在运行：" + running;
         KitUi.text(g, font, KitUi.fit(font, status, layout.width()), layout.left(), layout.footer() - 14, notice.isEmpty() ? 0xAABBCC : noticeColor);
     }
-    public void showDetail(KitFormScreen screen) { minecraft.setScreen(screen.bind(config)); }
-    public void switchToPages() { config.clickGui = false; config.save(); minecraft.setScreen(new KitWorkspaceScreen(config, controller, UiFeature.Category.SETTINGS)); }
+    public void showDetail(KitFormScreen screen) { minecraft.gui.setScreen(screen.bind(config)); }
+    public void switchToPages() { config.clickGui = false; config.save(); minecraft.gui.setScreen(new KitWorkspaceScreen(config, controller, UiFeature.Category.SETTINGS)); }
 }

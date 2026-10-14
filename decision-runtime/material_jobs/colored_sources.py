@@ -7,6 +7,7 @@ Unknown mining/pickup receipts remain durable and are never re-sent.
 from collections import Counter
 import json
 import math
+import time
 from pathlib import Path
 
 from drop_collection import collect_drop
@@ -104,11 +105,17 @@ def _candidate(rows, pos, item):
         return False
     x, y, z = pos
     below = by.get((x, y-1, z))
+    clay = item in ("minecraft:clay", "minecraft:clay_ball")
+    if clay:
+        from .acquisition import NATURAL, FALLING
+        ground = GROUND | NATURAL
+    else:
+        ground = GROUND
     if item == "minecraft:cocoa_beans":
         if not any(_name(by.get((x+dx,y,z+dz), {})) == "minecraft:jungle_log"
                    for dx,dz in ((1,0),(-1,0),(0,1),(0,-1))):
             return False
-    elif below is None or _name(below) not in GROUND | ({"minecraft:cactus"} if item == "minecraft:cactus" else set()) or below.get("fluid") is not False:
+    elif below is None or _name(below) not in ground | ({"minecraft:cactus"} if item == "minecraft:cactus" else set()) or below.get("fluid") is not False or clay and below.get("solid") is not True:
         return False
     if item == "minecraft:cactus" and _name(below) != "minecraft:cactus":
         return False  # Retain the growing base; only harvest a verified top.
@@ -122,10 +129,48 @@ def _candidate(rows, pos, item):
     for p, row in by.items():
         if row.get("fluid") is not False or row.get("block_entity") is not False:
             return False
-        allowed = GROUND | {"minecraft:cactus"} | ({"minecraft:jungle_log"} if item == "minecraft:cocoa_beans" else set())
+        allowed = ground | {"minecraft:cactus"} | ({"minecraft:jungle_log"} if item == "minecraft:cocoa_beans" else set())
+        if clay and _name(row) in FALLING:
+            # The one target never removes this neighboring column's support.
+            # Unsupported gravel, or gravel supported by the target, stays protected.
+            support_pos = (p[0], p[1]-1, p[2])
+            support = by.get(support_pos)
+            if (support_pos == tuple(pos) or support is None or support.get("solid") is not True
+                    or support.get("fluid") is not False or support.get("block_entity") is not False
+                    or _name(support) not in ground):
+                return False
+            continue
         if p != tuple(pos) and row.get("solid") is True and _name(row) not in allowed:
             return False
     return True
+
+
+def _ordered_rows(rows, item, player):
+    if item not in ("minecraft:clay", "minecraft:clay_ball", "minecraft:cactus"):
+        return rows
+    # Work down from exposed upper clay instead of trying buried low faces first.
+    return sorted(rows, key=lambda row: (-row['pos'][1],
+        (row['pos'][0]-player[0])**2+(row['pos'][2]-player[2])**2))
+
+
+def _stage_source(c, pos, checkpoint):
+    """Enter native 128-block work reach through a fresh collision-checked air route."""
+    checkpoint();state=c.status()
+    if math.dist(state['pos'],[p+.5 for p in pos])<=120:return
+    if not _safe(state,c.world):raise RuntimeError('Source staging requires current healthy control')
+    from .acquisition import _travel
+    from kit_runtime.journal import write_json
+    # Stay above the target instead of descending into an unobserved canopy.
+    # _travel checks the actual body corridor and never clears a roof.
+    target=[pos[0]+.5,min(315,pos[1]+64),pos[2]+.5];trace=[]
+    _travel(c,target,checkpoint,trace)
+    checkpoint();actual=c.status()
+    write_json(c.out/('source-stage-%d.json'%time.time_ns()),
+               {'world_session':c.world,'source_pos':pos,'target':target,
+                'actual':actual['pos'],'route':trace,'resource_credit':0})
+    if not _safe(actual,c.world) or math.dist(actual['pos'],[p+.5 for p in pos])>120:
+        raise RuntimeError('Current source approach reach or survival unconfirmed')
+    c.anchor=list(actual['pos'])
 
 
 def acquire(c, item, target_count, profile, out, checkpoint):
@@ -178,14 +223,15 @@ otherwise WAIT_SOURCE. Wet clay is rejected by the current native mine guard.
         rows = _fresh_scan(c, region["min"], region["max"], checkpoint)
         if rows is None:
             continue
-        for row in rows:
+        for row in _ordered_rows(rows, item, state['pos']):
             pos = row["pos"]
             if tuple(pos) in spent or _name(row) not in BLOCK_SOURCES[item]:
                 continue
             checkpoint(); state = c.status()
             if not _safe(state, c.world):
                 return _wait(item, target_count, "WAIT_SAFETY")
-            if _protected(pos, profile, state):
+            from .renewable_cactus import owned_farm_top
+            if _protected(pos, profile, state) and not (item=='minecraft:cactus' and owned_farm_top(profile,state,pos)):
                 continue
             local = _fresh_scan(c, [pos[0]-1,pos[1]-1,pos[2]-1],
                                 [pos[0]+1,pos[1]+2,pos[2]+1], checkpoint)
@@ -195,6 +241,27 @@ otherwise WAIT_SOURCE. Wet clay is rejected by the current native mine guard.
                 return _wait(item, target_count, "WAIT_CAPACITY")
             if item == "minecraft:wheat" and inventory_counts(state)["minecraft:wheat_seeds"] < 1:
                 return _wait("minecraft:wheat_seeds",1,"WAIT_SEED","Keep one real seed for immediate field restoration")
+            if item == "minecraft:cactus":
+                from .renewable_cactus import harvest_top, harvestable_top
+                if not harvestable_top(local, pos):
+                    continue
+                old_count = inventory_counts(state)[item]
+                entry = {"state":"inflight", "kind":"cactus_side", "pos":pos, "before":old_count}
+                book["receipts"].append(entry); write_json(path, book)
+                result = harvest_top(c, pos, profile,
+                                     out/("cactus-side-%d" % len(book["receipts"])), checkpoint)
+                after = inventory_counts(c.status())[item]
+                if (result.get('complete') is not True or result.get('base_retained') is not True
+                        or after != old_count+1):
+                    return _wait(item,target_count,"WAIT_RECONCILE","Cactus side gain/base retention unconfirmed")
+                entry.update(state="done",after=after,gained=1);write_json(path,book);mined+=1
+                if after >= target_count:
+                    return {"phase":"done","item":item,"before":before,"after":after}
+                if mined >= 4:
+                    return {"phase":"waiting","code":"SOURCE_BATCH","before":before,"after":after,
+                            "requirements":{item:target_count}}
+                continue
+            _stage_source(c,pos,checkpoint)
             # Native approach verifies reach/visibility; it does not excavate.
             from work_access import approach_faces
             face = approach_faces(c, pos, row["state"], ("up","north","south","west","east"), seconds=45)
@@ -218,7 +285,10 @@ otherwise WAIT_SOURCE. Wet clay is rejected by the current native mine guard.
                         or actual_hand.get("enchantments",[]) != tool.get("enchantments",[])):
                     return _wait(item,target_count,"WAIT_TOOL","Actual clay shovel hand/drop mode not verified")
             else:
-                c.checked("select_item", item="minecraft:diamond_sword")
+                from container_hand import select_container_hand
+                try:select_container_hand(c)
+                except RuntimeError:
+                    return _wait(item,target_count,"WAIT_TOOL","No confirmed carried sword for plant harvesting")
             local = _fresh_scan(c, [pos[0]-1,pos[1]-1,pos[2]-1],
                                 [pos[0]+1,pos[1]+2,pos[2]+1], checkpoint)
             if local is None or not _candidate(local, pos, item):

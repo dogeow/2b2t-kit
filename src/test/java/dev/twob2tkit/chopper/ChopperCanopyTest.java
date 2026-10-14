@@ -43,6 +43,46 @@ class ChopperCanopyTest {
 		map.put(new BlockPos(1,0,0),'P');map.put(new BlockPos(2,0,0),'P');
 		assertEquals(Set.of(BlockPos.ZERO),ChopperCanopy.collect(world(map),Set.of(BlockPos.ZERO),80).logs());
 	}
+	@Test void naturalLeafContactMustNotMergeANeighboringRootedTree(){
+		Map<BlockPos,Character> map=new HashMap<>();map.put(BlockPos.ZERO,'L');map.put(BlockPos.ZERO.below(),'S');
+		map.put(new BlockPos(3,0,0),'L');map.put(new BlockPos(3,-1,0),'S');
+		map.put(new BlockPos(1,0,0),'F');map.put(new BlockPos(2,0,0),'F');
+		var w=new ChopperCanopy.World(){
+			public boolean wood(BlockPos p){return map.getOrDefault(p,' ' )=='L';}
+			public boolean leaf(BlockPos p){return map.getOrDefault(p,' ' )=='F';}
+			public boolean stump(BlockPos p){return wood(p)&&map.getOrDefault(p.below(),' ' )=='S';}
+		};
+		var crown=ChopperCanopy.collect(w,Set.of(BlockPos.ZERO),80);
+		assertTrue(crown.complete());assertEquals(Set.of(BlockPos.ZERO),crown.logs());
+	}
+	@Test void actualForestCrownKeepsItsFortySevenLogRootComponentAndExcludesOtherTrunks()throws Exception{
+		Map<BlockPos,Character> map=new HashMap<>();
+		try(var reader=new BufferedReader(new InputStreamReader(getClass().getResourceAsStream("/forest-canopy-current.txt")))){
+			for(String row:reader.lines().toList()){String[] p=row.split(" ");map.put(new BlockPos(Integer.parseInt(p[0]),Integer.parseInt(p[1]),Integer.parseInt(p[2])),p[3].charAt(0));}
+		}
+		var seed=component(map,BlockPos.ZERO);assertEquals(47,seed.size());
+		var w=new ChopperCanopy.World(){
+			public boolean wood(BlockPos p){return map.getOrDefault(p,' ' )=='L';}
+			public boolean leaf(BlockPos p){return map.getOrDefault(p,' ' )=='F';}
+			public boolean stump(BlockPos p){return wood(p)&&map.getOrDefault(p.below(),' ' )=='S';}
+			public boolean loaded(BlockPos p){return p.getX()>=-11&&p.getX()<=11&&p.getY()>=-36&&p.getY()<=39&&p.getZ()>=-11&&p.getZ()<=11;}
+		};
+		var crown=ChopperCanopy.collect(w,seed,80);assertTrue(crown.complete());assertTrue(crown.logs().size()<=80);
+		assertTrue(crown.logs().containsAll(seed));
+		assertTrue(crown.logs().stream().filter(w::stump).allMatch(seed::contains));
+		var fixed=new ChopperFixedTreePlan(BlockPos.ZERO,new BlockPos(-11,-5,-11),new BlockPos(11,39,11));
+		assertTrue(fixed.accepts(crown.logs(),crown.logs().stream().filter(w::stump).toList(),"minecraft:dark_oak_log"));
+	}
+	@Test void anUnloadedNewWoodComponentCannotBeIgnoredAsACompletedTree(){
+		Map<BlockPos,Character> map=new HashMap<>();map.put(BlockPos.ZERO,'L');map.put(new BlockPos(3,0,0),'L');
+		map.put(new BlockPos(1,0,0),'F');map.put(new BlockPos(2,0,0),'F');
+		var w=new ChopperCanopy.World(){
+			public boolean wood(BlockPos p){return map.getOrDefault(p,' ' )=='L';}
+			public boolean leaf(BlockPos p){return map.getOrDefault(p,' ' )=='F';}
+			public boolean loaded(BlockPos p){return p.getY()>=0;}
+		};
+		assertFalse(ChopperCanopy.collect(w,Set.of(BlockPos.ZERO),80).complete());
+	}
 	@Test void capturedCrownCanBeCoveredUsingSingleFloatingWorkBlocksWithoutPillars() throws Exception {
 		var map=fixture();var crown=ChopperCanopy.collect(world(map),component(map,new BlockPos(3,8,0)),80);
 		Set<BlockPos> remaining=new HashSet<>(crown.logs());Vec3 position=new Vec3(5.23,17.2,5.75);int placements=0;

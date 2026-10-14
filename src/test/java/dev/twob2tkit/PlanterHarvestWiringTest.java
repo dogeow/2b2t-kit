@@ -73,7 +73,9 @@ class PlanterHarvestWiringTest {
             "net/minecraft/client/multiplayer/MultiPlayerGameMode.isDestroying",
             "dev/twob2tkit/runtime/engine/BorerAim.clipView","dev/twob2tkit/runtime/engine/BorerAim.hitInReach",
             "dev/twob2tkit/planter/AutoPlanter.entityInHarvestRay")));
-        assertTrue(trace("planter/AutoPlanter","tick").fields.containsAll(List.of("sessionLevel","sessionPlayer","screen")));
+        Trace tick=trace("planter/AutoPlanter","tick");
+        assertTrue(tick.fields.containsAll(List.of("sessionLevel","sessionPlayer")));
+        assertTrue(tick.calls.contains("net/minecraft/client/gui/Gui.screen"));
     }
     private static class Trace {
         final Set<String> calls=new HashSet<>(),fields=new HashSet<>(),writes=new HashSet<>();

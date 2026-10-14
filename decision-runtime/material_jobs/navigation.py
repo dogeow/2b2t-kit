@@ -103,8 +103,8 @@ def _air_scan(client, low, high):
         and row.get('fluid') is False and row.get('block_entity') is False)]
 
 
-def _air_move(client, target, seconds=20):
-    reply=client.request('navigate',target=target,arrival=.25,seconds=seconds,air_only=True)
+def _air_move(client, target, seconds=20, *, arrival=.25):
+    reply=client.request('navigate',target=target,arrival=arrival,seconds=seconds,air_only=True)
     state=settled_state(client,target,.45)
     if reply.get('phase')!='done' or math.dist(state['pos'],target)>.45:
         raise JobBlocked('出口实际位置未到达已确认空气点，停止继续上升')
@@ -322,6 +322,30 @@ def _escape_local_canopy(client):
     if not path:raise JobBlocked('树冠附近没有已核验的地面出口')
     for point in path:
         current=settled_state(client)
+        if abs(current['pos'][1]-point[1])>2:
+            # Defense can lift the player while the scanned ground route is
+            # being planned. Never send that old ground step from the sky.
+            if (current.get('world_session')!=client.world or current.get('health',0)<19
+                    or not current.get('flight') or current.get('manual_movement')
+                    or current.get('under_water') or current.get('guard_busy')
+                    or not current.get('guard_armed') or not current.get('guard_pve_only')):
+                raise JobBlocked('树冠退出前高度或控制已变化，未沿旧地面路线行走')
+            column=_park_column(client,current)
+            top=max((r['pos'][1]+1 for r in column
+                     if r.get('fluid') or not r.get('passable',True)),default=None)
+            fresh=settled_state(client)
+            if (top is None or current['pos'][1]<top or math.dist(fresh['pos'],current['pos'])>.3
+                    or fresh.get('world_session')!=client.world
+                    or fresh.get('health',0)<19 or not fresh.get('flight')
+                    or fresh.get('manual_movement') or fresh.get('under_water') or fresh.get('guard_busy')
+                    or not fresh.get('guard_armed') or not fresh.get('guard_pve_only')
+                    or any(r.get('fluid') for r in column if r['pos'][1]>=math.floor(current['pos'][1]))):
+                raise JobBlocked('当前高处身体列仍未核验畅通，未沿旧地面路线行走')
+            write_json(client.out/('canopy-exit-%d.json'%time.time_ns()),{
+                'world_session':client.world,'from':state['pos'],'waypoints':[],
+                'mode':'current_open_column_after_pose_change','actual':fresh['pos'],
+                'old_ground_walk_sent':False,'parking_confirmed':False})
+            return fresh
         if math.dist(current['pos'],point)<.25:continue
         client.checked('walk',target=point,arrival=.2,seconds=12)
         settled_state(client,point,.4)

@@ -123,13 +123,13 @@ public final class KitFormScreen extends KitHudScreen {
     public KitFormScreen action(String label, String tip, Runnable run) {
         rows.add((s, y) -> {
             place(Button.builder(Component.literal(label + " ›"), b -> {
-                capture(); run.run(); if (minecraft.screen == this) rebuildWidgets();
+                capture(); run.run(); if (minecraft.gui.screen() == this) rebuildWidgets();
             }).bounds(layout.left(), y, layout.width(), 20).tooltip(Tooltip.create(Component.literal(tip))).build(), y, false);
             return 28;
         }); return this;
     }
     public KitFormScreen danger(String label, String tip, Runnable run) {
-        return action(label, tip, () -> minecraft.setScreen(new KitConfirmScreen(this, label, tip, run)));
+        return action(label, tip, () -> minecraft.gui.setScreen(new KitConfirmScreen(this, label, tip, run)));
     }
     public KitFormScreen chips(String tip, List<Chip> chips) {
         rows.add((s, y) -> {
@@ -194,7 +194,7 @@ public final class KitFormScreen extends KitHudScreen {
             .bounds(layout.footerButtonX(index++, count), layout.footer(), layout.footerButtonWidth(count), 20).build());
         if (toggle != null) runButton = addRenderableWidget(Button.builder(Component.literal(active.getAsBoolean() ? stopText : startText), b -> {
             if (active.getAsBoolean()) { toggle.run(); showNotice("已停止；输入草稿保留", 0xFFFF55); }
-            else if (!runUsesDraft || finishEdits()) { toggle.run(); if (active.getAsBoolean()) minecraft.setScreen(null); else if (notice.isEmpty()) showNotice("未启动，请查看状态或游戏提示", 0xFF7777); }
+            else if (!runUsesDraft || finishEdits()) { toggle.run(); if (active.getAsBoolean()) minecraft.gui.setScreen(null); else if (notice.isEmpty()) showNotice("未启动，请查看状态或游戏提示", 0xFF7777); }
         }).bounds(layout.footerButtonX(index++, count), layout.footer(), layout.footerButtonWidth(count), 20).build());
         addRenderableWidget(Button.builder(Component.literal(inputs ? "返回 · 保留草稿" : "返回"), b -> onClose())
             .bounds(layout.footerButtonX(index, count), layout.footer(), layout.footerButtonWidth(count), 20).build());
@@ -224,7 +224,7 @@ public final class KitFormScreen extends KitHudScreen {
         if (config != null) config.save();
         afterApply.run();
         if (!customSubmit) showNotice("数值已应用；开关即时保存", 0x77DDCC);
-        if (minecraft.screen == this) rebuildWidgets(); return true;
+        if (minecraft.gui.screen() == this) rebuildWidgets(); return true;
     }
     @Override public void removed() { capture(); if (config != null) config.save(); super.removed(); }
     private void reveal(Input input) {

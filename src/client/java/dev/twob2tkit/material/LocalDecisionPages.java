@@ -34,12 +34,12 @@ public final class LocalDecisionPages {
                 if(mc().player==null||mc().level==null)throw new IllegalStateException("进入世界后才能测试游戏画面");
                 var state=JsonParser.parseString(Files.readString(mc().gameDirectory.toPath().resolve("config/twob2tkit/automation/status.json"))).getAsJsonObject();
                 String world=state.get("world_session").getAsString();long revision=state.get("control_revision").getAsLong();
-                mc().setScreen(null);
+                mc().gui.setScreen(null);
                 DecisionImageCapture.request(mc(),"vision-probe-"+UUID.randomUUID().toString(),world,revision,
                     ()->{try{return JsonParser.parseString(Files.readString(mc().gameDirectory.toPath().resolve("config/twob2tkit/automation/status.json"))).getAsJsonObject().get("control_revision").getAsLong();}catch(Exception e){return -1L;}},
                     image->{if(!image.has("error"))LocalDecisionRuntime.probeImage(mc(),image);});
             }catch(Exception e){page.message(e.getMessage(),0xFFFF77);}
         });
-        mc().setScreen(page);
+        mc().gui.setScreen(page);
     }
 }

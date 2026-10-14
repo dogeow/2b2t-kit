@@ -140,7 +140,7 @@ final class BorerAreaRunner {
 	}
 
 	void suspend(Minecraft client) {
-		if (stallHold != null && client.screen != null) stallHold.unsafeSinceRequest = true;
+		if (stallHold != null && client.gui.screen() != null) stallHold.unsafeSinceRequest = true;
 		cargo.pause(client);
 		if (!suspendCheckpointed) { checkpoint(); suspendCheckpointed = true; }
 		look = null;
@@ -694,7 +694,7 @@ final class BorerAreaRunner {
 		return state.isCollisionShapeFullBlock(c.level,floor) && state.getFluidState().isEmpty() && !state.is(Blocks.MAGMA_BLOCK);
 	}
 	private void advanceWhileMining(Minecraft c, LocalPlayer player) {
-		if (!engine.active || c.screen != null || cargo.active() || cargo.shouldStart(c) || look == null
+		if (!engine.active || c.gui.screen() != null || cargo.active() || cargo.shouldStart(c) || look == null
 			|| plan == null || plan.phase() != BorerAreaPlan.Phase.HORIZONTAL || player.isUsingItem()) return;
 		if (plan.continueMiningWalk(world(c),pose(player),player.tickCount,pipeline::contains))
 			torch.begin(new BlockPos(plan.column().getX(),plan.bottomY(),plan.column().getZ()));
@@ -810,7 +810,7 @@ final class BorerAreaRunner {
 
 	private boolean safeForAdvice(Minecraft client, LocalPlayer player) {
 		return engine.active && engine.mode == DefaultTunnelBorerEngine.Mode.AREA
-			&& client.screen == null && !manualMovementHeld(client)
+			&& client.gui.screen() == null && !manualMovementHeld(client)
 			&& player.getHealth() >= 18 && !player.isInWater() && !player.isInLava()
 			&& !player.isUsingItem() && !engine.host.surroundActive()
 			&& BorerThreats.combatPauseReason(player) == null
@@ -823,7 +823,7 @@ final class BorerAreaRunner {
         return physicalMovementHeld(client,client.options.keyUp,client.options.keyDown,client.options.keyLeft,client.options.keyRight);
     }
     static boolean physicalMovementHeld(Minecraft client,KeyMapping... mappings){
-		if (client.screen != null || !client.isWindowActive()) return false;
+		if (client.gui.screen() != null || !client.isWindowActive()) return false;
 		for (KeyMapping key : mappings) {
 			var bound = net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper.getBoundKeyOf(key);
 			if (bound.getType() == com.mojang.blaze3d.platform.InputConstants.Type.MOUSE
@@ -938,7 +938,7 @@ final class BorerAreaRunner {
 	}
 
 	void reapplyLook(Minecraft client) {
-		if (look == null || client.player == null || client.screen != null) return;
+		if (look == null || client.player == null || client.gui.screen() != null) return;
 		RotationAim.apply(client.player, look);
 		if (attacking) {
 			BlockHitResult hit = BorerAim.clipView(client, client.player);

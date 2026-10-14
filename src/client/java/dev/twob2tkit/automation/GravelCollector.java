@@ -3,7 +3,7 @@ package dev.twob2tkit.automation;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonArray;
 import dev.twob2tkit.*;
-import dev.twob2tkit.cruise.CruiseScreenHud;
+import dev.twob2tkit.hud.WorkHud;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -33,7 +33,7 @@ public final class GravelCollector {
     private static Vec3 origin,settlePos,dropPose;
     private static BlockPos target,mined;
     private static UUID dropId;
-    private static int beforeMine;
+    private static int beforeMine,pickupRebases;
     private static final List<BlockPos> candidates=new ArrayList<>();
     private static final Set<BlockPos> visited=new HashSet<>();
     private static final Set<BlockPos> blockedTargets=new HashSet<>();
@@ -56,7 +56,7 @@ public final class GravelCollector {
         // stopWork here first would advance the control revision while leaving
         // that parking lease at the old revision, making the safe handoff reject
         // itself before the gravel session can acquire control.
-        c.setScreen(null);
+        c.gui.setScreen(null);
         origin=c.player.position();world=c.level;
         var config=KitClient.config();radius=Math.clamp(config.gravelRadius,4,64);
         depth=Math.clamp(config.gravelDepth,6,32);limit=Math.max(0,config.gravelLimit);
@@ -88,7 +88,7 @@ public final class GravelCollector {
         restoreFootingFlight();
         KitClient.LOGGER.info("[Gravel] stop reason={} step={} pending={} before={} current={} retry={} air={}",
             reason,step,mined,beforeMine,c.player==null?-1:count(c),pickupRetries,c.player==null?-1:c.player.getAirSupply());
-        if(c.screen instanceof KitHudScreen)c.setScreen(null);
+        if(c.gui.screen() instanceof KitHudScreen)c.gui.setScreen(null);
         try{session.interrupt(c,reason);session.poll(c);next=null;step=Step.RETURN;}
         catch(Exception e){cancel(c,reason);}
     }
@@ -100,7 +100,7 @@ public final class GravelCollector {
         restoreFootingFlight();
         var own=session;session=null;
         if(own!=null)try{own.cancel(c,reason);}catch(Exception ignored){}
-        CruiseScreenHud.hide();
+        WorkHud.clearNotice();
     }
 
     public static void tick(Minecraft c){
@@ -145,7 +145,7 @@ public final class GravelCollector {
                 }else if(next!=null){step=next;next=null;phaseSince=ticks;stable=0;settlePos=null;}
             }
             if(next!=null)return;
-            if(c.screen!=null&&!stopping){status="界面打开，采集暂停";return;}
+            if(c.gui.screen()!=null&&!stopping){status="界面打开，采集暂停";return;}
             if(!stopping&&(room(c)<=0||mined==null&&GravelCollectionPolicy.complete(collected,limit,room(c)))){stop(c,room(c)<=0?"背包已满":"达到采集数量");}
             switch(step){
                 case TOOL -> {
@@ -221,8 +221,7 @@ public final class GravelCollector {
                 case DROP -> drop(c);
                 case PICKUP -> {
                     if(pickupReceived(c)){pickupComplete(c);break;}
-                    if(c.player.getAirSupply()<GravelCollectionPolicy.pickupStartFloor(
-                            number(observed,"air_pickup_floor",260))){
+                    if(c.player.getAirSupply()<pickupStartFloor()){
                         navigate(c,new Vec3(c.player.getX(),returnY,c.player.getZ()),Step.REFILL);break;
                     }
                     var p=target(dropPose);p.addProperty("arrival",.35);p.addProperty("water_descend",true);
@@ -232,8 +231,7 @@ public final class GravelCollector {
                 case VERIFY -> {
                     if(pickupReceived(c)){pickupComplete(c);}
                     else switch(GravelCollectionPolicy.pickupAction(ticks-phaseSince,pickupRetries,failures,
-                            freshDrop(c)!=null,c.player.getAirSupply()>=GravelCollectionPolicy.pickupStartFloor(
-                                number(observed,"air_pickup_floor",260)))){
+                            freshDrop(c)!=null,c.player.getAirSupply()>=pickupStartFloor())){
                         case RETRY -> {pickupRetries++;phaseSince=ticks;step=Step.DROP;status="重新靠近掉落物";}
                         case SKIP -> skipPickup(c);
                         case STOP -> stop(c,"连续三次未确认入包，请检查网络后再试");
@@ -250,11 +248,9 @@ public final class GravelCollector {
                     stopping?Step.FINISH:Step.CHOOSE);
                 case FINISH -> {
                     session.finish(c,true);session=null;running=false;status="已结束："+stopReason;
-                    CruiseScreenHud.finish("采集沙砾 · 已收集 "+collected+" 块");
+                    WorkHud.showNotice("采集沙砾","已收集 "+collected+" 块");
                 }
             }
-            if(running&&!KitClient.controller().isActive())
-                CruiseScreenHud.show("采沙砾 · "+collected+(limit>0?"/"+limit:"")+" · "+shortStatus(c));
         }catch(Exception error){
             KitClient.LOGGER.warn("[Gravel] {}",message(error));
             if(stopping){safeExit(c,"安全收尾失败："+message(error));}
@@ -337,7 +333,7 @@ public final class GravelCollector {
         minedUnderfoot=c.player.onGround()&&c.player.blockPosition().below().equals(target)
             &&GravelFootingPolicy.stableFloor(c.level,target);
         if(!minedUnderfoot)restoreFootingFlight();
-        beforeMine=count(c);mined=target;dropId=null;dropPose=null;pickupRetries=0;
+        beforeMine=count(c);mined=target;dropId=null;dropPose=null;pickupRetries=pickupRebases=0;
         beforeDrops.clear();for(var e:c.level.getEntitiesOfClass(ItemEntity.class,
             new net.minecraft.world.phys.AABB(mined).inflate(6),e->e.isAlive()&&e.getItem().is(Items.GRAVEL)))
             beforeDrops.put(e.getUUID(),e.getItem().getCount());
@@ -366,6 +362,19 @@ public final class GravelCollector {
             horizontal(c.player.position(),dropPose));
         boolean clearPickupColumn=MaterialAirRoute.clearColumn(c,dropPose.x,dropPose.z,returnY);
         if(!GravelCollectionPolicy.boundedDropApproach(distance,clearPickupColumn)){
+            double dx=dropPose.x-c.player.getX(),dz=dropPose.z-c.player.getZ();
+            double length=Math.hypot(dx,dz),scale=length>0?Math.min(1,1.20/length):0;
+            Vec3 nextColumn=new Vec3(c.player.getX()+dx*scale,c.player.getY(),c.player.getZ()+dz*scale);
+            boolean rebaseClear=AutomationBridge.gravelPickupRebaseClear(c,nextColumn);
+            if(GravelCollectionPolicy.boundedPickupRebase(distance,rebaseClear,c.player.getAirSupply(),
+                    number(observed,"air_work_floor",260),c.player.getHealth(),c.player.isUnderWater(),pickupRebases)){
+                pickupRebases++;
+                KitClient.LOGGER.info("[Gravel] verified pickup column step={} drop={} distance={} air={}",
+                    pickupRebases,dropId,distance,c.player.getAirSupply());
+                // Keep the original mined/drop identity. ARM binds the newly
+                // reached clear column before any downward pickup or new break.
+                navigate(c,nextColumn,Step.ARM,.25);return;
+            }
             KitClient.LOGGER.info("[Gravel] retain pending drop={} distance={} clear_pickup_column={} air={}",
                 dropId,distance,clearPickupColumn,c.player.getAirSupply());
             stop(c,"掉落物超出已验证的拾取列，保留记录并返回");return;
@@ -394,6 +403,14 @@ public final class GravelCollector {
         if(reachableNeighbor(c)!=null){step=Step.ARM;return;}
         diveY=floor+1.65;
         navigate(c,new Vec3(c.player.getX(),diveY,c.player.getZ()),Step.HOVER);
+    }
+    private static int pickupStartFloor(){
+        int pickup=number(observed,"air_pickup_floor",260),airReturn=number(observed,"air_return_floor",240);
+        boolean calibrated=text(observed,"air_budget_source").equals("observed")
+            &&number(observed,"air_budget_samples",0)>=3&&airReturn>=30&&pickup>=airReturn
+            &&observed.has("air_budget_valid_until")
+            &&observed.get("air_budget_valid_until").getAsLong()>=System.currentTimeMillis()+8000;
+        return GravelCollectionPolicy.pickupStartFloor(pickup,calibrated);
     }
     private static void skipPickup(Minecraft c){
         restoreFootingFlight();minedUnderfoot=false;
@@ -499,7 +516,7 @@ public final class GravelCollector {
                 try{own.snapshot(c);own.safeLogout(c,"沙砾采集安全退出重试");}
                 catch(Exception handedOff){
                     status="采集已停止，控制已交还；请注意水下氧气";
-                    if(c.player!=null&&c.player.isUnderWater())c.gui.setOverlayMessage(
+                    if(c.player!=null&&c.player.isUnderWater())c.gui.hud.setOverlayMessage(
                         net.minecraft.network.chat.Component.literal(status).withColor(0xFFAA66),false);
                 }
             }

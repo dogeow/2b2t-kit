@@ -96,7 +96,7 @@ final class MapAutomation {
 
         Creation(Minecraft c,String world,String id,JsonObject request) {
             if(c.player==null||c.level==null||c.gameMode==null||c.player.isDeadOrDying()
-                ||c.player.hasInfiniteMaterials()||c.screen!=null||c.player.containerMenu!=c.player.inventoryMenu
+                ||c.player.hasInfiniteMaterials()||c.gui.screen()!=null||c.player.containerMenu!=c.player.inventoryMenu
                 ||!c.player.containerMenu.getCarried().isEmpty()||c.player.isUsingItem()
                 ||c.player.isInWater()||c.player.isInLava()||c.player.isOnFire()
                 ||c.options.keyUse.isDown()||!c.player.getMainHandItem().is(Items.MAP))
@@ -126,7 +126,7 @@ final class MapAutomation {
         Outcome poll(Minecraft c,boolean timedOut) {
             afterEmpty=emptyCount(c);
             if(!useSent||c.player.getHealth()<health||c.player.getInventory().getSelectedSlot()!=selectedSlot
-                ||c.screen!=null||c.player.containerMenu!=c.player.inventoryMenu
+                ||c.gui.screen()!=null||c.player.containerMenu!=c.player.inventoryMenu
                 ||!c.player.containerMenu.getCarried().isEmpty())return Outcome.WAITING;
             createdId=MapCreationPolicy.confirmedId(beforeEmpty,afterEmpty,beforeFilled,filledCounts(c));
             if(createdId>=0)return Outcome.DONE;

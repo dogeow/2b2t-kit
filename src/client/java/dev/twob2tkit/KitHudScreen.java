@@ -52,7 +52,7 @@ public abstract class KitHudScreen extends Screen {
 	/** 回到 parent；无 parent 则关屏。 */
 	@Override
 	public void onClose() {
-		this.minecraft.setScreen(parent);
+		this.minecraft.gui.setScreen(parent);
 	}
 
 	/** 处理紧急停止与功能热键；输入框聚焦时不关界面。 */
@@ -60,13 +60,13 @@ public abstract class KitHudScreen extends Screen {
 	public boolean keyPressed(KeyEvent event) {
 		if (KitKeys.matches(KitKeys.EMERGENCY_STOP, event)) {
 			KitClient.emergencyStop("按下紧急停止键");
-			this.minecraft.setScreen(null);
+			this.minecraft.gui.setScreen(null);
 			return true;
 		}
 
 		boolean typing = getFocused() instanceof EditBox box && box.canConsumeInput();
 		if (!typing && KitKeys.matches(KitKeys.OPEN_GUI, event)) {
-			this.minecraft.setScreen(null);
+			this.minecraft.gui.setScreen(null);
 			return true;
 		}
 		if (!typing) {

@@ -53,13 +53,13 @@ public final class AreaSetupScreen extends KitHudScreen {
         heightField = small(left + 2 * ((panelWidth() + 4) / 3), y, "高 Y", draft.height()); y += 28;
         rowButton(left, y, "从脚下生成区域", this::generate);
         rowButton(left + half() + 6, y, "应用并预览范围", () -> {
-            if (apply()) { this.minecraft.setScreen(null); KitClient.borer().previewArea(this.minecraft); }
+            if (apply()) { this.minecraft.gui.setScreen(null); KitClient.borer().previewArea(this.minecraft); }
         }); y += 28;
         for (String line : KitUi.wrap(font, "自动：实际 1–6 层水平清挖，更深区域用竖井；两角都包含，同 Y 表示挖到世界底部。保存草稿不改变执行中的区域。", panelWidth())) {
             track(label(left, y, panelWidth(), line, 0xCCCC99), y); y += 12;
         }
         y += 8;
-        rowButton(left, y, "新建空白草稿", () -> minecraft.setScreen(new KitConfirmScreen(this, "新建区域草稿",
+        rowButton(left, y, "新建空白草稿", () -> minecraft.gui.setScreen(new KitConfirmScreen(this, "新建区域草稿",
             "清空当前未保存输入；已保存工程和挖掘进度保留。", () -> {
                 name.setValue(BorerAreaProjects.defaultName(config)); a.setValue(""); b.setValue("");
                 rememberDraft(true); showNotice("已建立空白草稿，原工程保留", 0x77DDCC);
@@ -74,7 +74,7 @@ public final class AreaSetupScreen extends KitHudScreen {
         button(actionLeft, footer, actionWidth, KitClient.borer() != null && KitClient.borer().isActive() ? "停止当前任务" : "开始 / 继续挖", () -> {
             if (KitClient.borer() == null) { showNotice("运行引擎未就绪", 0xFF7777); return; }
             if (KitClient.borer().isActive()) { KitClient.borer().stop(this.minecraft, "界面停止"); rebuildWidgets(); return; }
-            if (apply()) { KitClient.borer().start(this.minecraft, TunnelBorer.Mode.AREA); this.minecraft.setScreen(null); }
+            if (apply()) { KitClient.borer().start(this.minecraft, TunnelBorer.Mode.AREA); this.minecraft.gui.setScreen(null); }
         });
         button(actionRight, footer, actionWidth, "返回 · 保留草稿", this::onClose);
         layoutContent();
@@ -101,8 +101,8 @@ public final class AreaSetupScreen extends KitHudScreen {
         page.liveNote(() -> "已应用范围：" + BorerAreaMarks.sizeLabel(config));
         page.note("配置与工程进度保留；等待、封水、进食、存箱等阶段以实际引擎状态为准。");
         page.action("停止当前任务", "立即停止，不校验草稿，不删除工程。", () -> { if (borer != null && borer.isActive()) borer.stop(minecraft, "运行页停止"); });
-        page.action("显示 / 隐藏范围", "返回范围页使用黄框开关。", () -> minecraft.setScreen(this));
-        minecraft.setScreen(page);
+        page.action("显示 / 隐藏范围", "返回范围页使用黄框开关。", () -> minecraft.gui.setScreen(this));
+        minecraft.gui.setScreen(page);
     }
     private AreaDrafts.Draft snapshot() {
         return draft.edit(name.getValue(), a.getValue(), b.getValue(), length.getValue(), widthField.getValue(), heightField.getValue());
@@ -215,7 +215,7 @@ public final class AreaSetupScreen extends KitHudScreen {
             var proposed = AreaForm.parse(a.getValue(), b.getValue(), minecraft.level.getMinY(), minecraft.level.getMaxY());
             boolean changed = !proposed.a().equals(new BlockPos(existing.ax, existing.ay, existing.az)) || !proposed.b().equals(new BlockPos(existing.bx, existing.by, existing.bz));
             if (changed) {
-                minecraft.setScreen(new KitConfirmScreen(this, "覆盖工程「" + existing.name + "」", "将用当前 A/B 替换该工程的保存范围；不会立即挖掘。", () -> {
+                minecraft.gui.setScreen(new KitConfirmScreen(this, "覆盖工程「" + existing.name + "」", "将用当前 A/B 替换该工程的保存范围；不会立即挖掘。", () -> {
                     overwriteConfirmed = true; try { saveProject(); } finally { overwriteConfirmed = false; }
                 }));
                 return;

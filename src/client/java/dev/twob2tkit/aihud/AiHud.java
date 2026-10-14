@@ -68,7 +68,7 @@ public final class AiHud {
 	/** 在屏幕左上角画出当前 AI 面板（隐藏 GUI 时不画）。 */
 	public static void render(Minecraft client, GuiGraphicsExtractor graphics) {
 		if (client == null || graphics == null || client.player == null) return;
-		if (client.options.hideGui) return;
+		if (client.gui.hud.isHidden()) return;
 		View view;
 		synchronized (LOCK) {
 			long now = System.currentTimeMillis();

@@ -19,7 +19,7 @@ public final class SingleplayerTrialPages {
         page.action("停止试验","只结束本轮，保留真实进度和经验文件。",()->perform(page,()->SingleplayerTrialRuntime.control(c,"cancel")));
         page.action("本地决策模型","查看 Clef Flash 是否就绪与游戏画面设置。",()->dev.twob2tkit.material.LocalDecisionPages.open(page,config));
         page.liveNote(()->SingleplayerTrialRuntime.status(c));
-        c.setScreen(page);
+        c.gui.setScreen(page);
     }
     private static void perform(KitFormScreen page,Runnable action){try{action.run();}catch(Exception e){page.message(e.getMessage(),0xFFFF77);}}
 }

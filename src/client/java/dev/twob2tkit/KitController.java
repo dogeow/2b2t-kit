@@ -258,7 +258,7 @@ public final class KitController {
 			return;
 		}
 
-		if (shouldPauseForScreen(client.screen)) {
+		if (shouldPauseForScreen(client.gui.screen())) {
 			releaseKeys(client);
 			return;
 		}
@@ -384,7 +384,7 @@ public final class KitController {
 
 	/** Meteor 改朝向后再写回巡航朝向。 */
 	public void reapplyNavigationRotation(Minecraft client) {
-		if (!isActive() || client.player == null || client.level == null || shouldPauseForScreen(client.screen)) return;
+		if (!isActive() || client.player == null || client.level == null || shouldPauseForScreen(client.gui.screen())) return;
 		if (ceilingMiner.isMining()) {
 			ceilingMiner.reapplyLook(client.player);
 			return;
@@ -961,7 +961,7 @@ public final class KitController {
 			remaining, total, formatDuration(elapsedSeconds), etaLabel());
 	}
 
-	/** 顶部一行：只保留当前动作及所需的距离或高度。 */
+	/** Keep distance and ETA ahead of the phase so fitting cannot hide progress. */
 	private void publishProgressHud(double remaining, double y, String healthNote) {
 		boolean adjustingHeight = phase == Phase.ALTITUDE
 			|| Math.abs(desiredY() - y) > config.altitudeCorrectionTolerance;
@@ -971,10 +971,11 @@ public final class KitController {
 			action = String.format(Locale.ROOT, "调整高度 Y %.0f→%.0f", y, desiredY());
 		else if (phase == Phase.AVOIDING) action = "绕障";
 		else action = "前进";
-		String progress = adjustingHeight
-			? action : String.format(Locale.ROOT, "%s · 剩余 %.0f 格", action, remaining);
-		CruiseScreenHud.show("巡航 · " + (healthNote == null || healthNote.isEmpty()
-			? progress : "生命偏低 · " + progress));
+		double distance = Math.hypot(remaining, Math.abs(desiredY()-y));
+		String duration = etaDisplaySeconds < 0 ? "计算中"
+			: dev.twob2tkit.hud.WorkHudModel.durationLabel(Math.max(1, etaDisplaySeconds));
+		String progress = String.format(Locale.ROOT,"巡航 · 剩余 %.0f 格 · 预计 %s · %s",distance,duration,action);
+		CruiseScreenHud.show(progress + (healthNote == null || healthNote.isEmpty() ? "" : " · 生命偏低"));
 	}
 
 	/** 采样水平移动，超时卡住则尝试脱困。 */
@@ -1122,7 +1123,7 @@ public final class KitController {
 		DisconnectedScreen resultScreen = new DisconnectedScreen(parent, title, detail);
 		if (client.level != null) {
 			client.disconnectFromWorld(ClientLevel.DEFAULT_QUIT_MESSAGE);
-			client.setScreen(resultScreen);
+			client.gui.setScreen(resultScreen);
 		} else {
 			client.disconnect(resultScreen, false);
 		}

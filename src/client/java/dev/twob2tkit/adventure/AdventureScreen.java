@@ -22,6 +22,6 @@ public final class AdventureScreen extends KitHudScreen {
 	@Override
 	/** 关掉本屏，改开助手首页。 */
 	protected void init() {
-		this.minecraft.setScreen(new AssistHomeScreen(config, controller));
+		this.minecraft.gui.setScreen(new AssistHomeScreen(config, controller));
 	}
 }

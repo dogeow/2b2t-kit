@@ -273,15 +273,29 @@ def run(c, profile, item, target_count, out, checkpoint, *, acquire=None, craft=
         rounds = math.ceil((target-held[output])/recipe.count)
         ingredients = _ingredients(recipe,rounds)
         for raw, n in ingredients.items():
-            ensure(raw,n,ancestors+(output,))
+            # Keep real carried seeds even after a planted farm is established.
+            # The extra reserve is not part of recipe consumption or output credit.
+            reserve = 0
+            if output == 'minecraft:green_dye' and raw == 'minecraft:cactus':
+                from .renewable_cactus import SEED_RESERVE
+                reserve = SEED_RESERVE
+            ensure(raw,n+reserve,ancestors+(output,))
         if recipe.id in catalog.smelting:
             raw = next(iter(ingredients))
-            ensure("minecraft:coal", sum(math.ceil(n/8) for n in _distribution(rounds,len(profile.get("furnace_positions",[])))),ancestors+(output,))
             spec = {"recipe_id":recipe.id,"source":raw,"output":output}
             directory=out/("smelt-"+output.split(":")[-1])
             fn = (lambda:backend.smelt(spec,target)) if backend is not None else lambda:_process("smelt",client(),spec,target,profile,directory,checkpoint)
             result = action("smelt",output,target,fn,
                             ingredient_totals=_ingredients(recipe,1),output_multiple=recipe.count)
+            # Processing selects actual permitted fuels with retained counts.
+            # Only its exact pre-loading shortage may acquire more fuel; never
+            # require coal when the existing wood/charcoal plan already fits.
+            choices=result.get('fuel_choices')or{}
+            if result.get('phase')=='waiting' and choices.get('ready')is False and result.get('requirements'):
+                for fuel,amount in result['requirements'].items():
+                    ensure(fuel,amount,ancestors+(output,))
+                result=action('smelt',output,target,fn,
+                              ingredient_totals=_ingredients(recipe,1),output_multiple=recipe.count)
         else:
             actual = stock(); options = RecipeCatalog(profile["recipe_jar"]).candidates(output,actual,3)
             plan = next(p for p in options if p["recipe_id"] == recipe.id)

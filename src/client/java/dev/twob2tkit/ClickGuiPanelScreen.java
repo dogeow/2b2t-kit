@@ -64,7 +64,7 @@ final class ClickGuiPanelScreen extends KitHudScreen {
 		this.toggleActive = () -> {
 			boolean wasActive = active.getAsBoolean();
 			toggle.run();
-			if (!wasActive && active.getAsBoolean()) Minecraft.getInstance().setScreen(null);
+			if (!wasActive && active.getAsBoolean()) Minecraft.getInstance().gui.setScreen(null);
 		};
 		return this;
 	}

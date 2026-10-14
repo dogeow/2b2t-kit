@@ -248,7 +248,7 @@ public final class ProjectionScaffoldFill implements AutoCloseable {
     private boolean safe(Minecraft c){
         return !closed&&failure.isEmpty()&&owner.getAsBoolean()&&c.player!=null&&c.level!=null&&c.gameMode!=null
             &&c.level==level&&c.getConnection()==connection
-            &&c.gameMode.getPlayerMode()==GameType.SURVIVAL&&c.screen==null&&!c.player.isDeadOrDying()
+            &&c.gameMode.getPlayerMode()==GameType.SURVIVAL&&c.gui.screen()==null&&!c.player.isDeadOrDying()
             &&c.player.getHealth()>=initialHealth&&!c.player.isInWater()&&!c.player.isInLava()&&!c.player.isOnFire()
             &&KitClient.config().lastAttackTimeEpochMillis<=damageAt
             &&!c.player.isUsingItem()&&c.player.containerMenu==c.player.inventoryMenu&&c.player.containerMenu.getCarried().isEmpty()

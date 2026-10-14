@@ -123,9 +123,9 @@ public final class KitClient implements ClientModInitializer {
         dev.twob2tkit.automation.DecisionImageCapture.tick(client);
         dev.twob2tkit.material.LocalDecisionRuntime.tick(client,config);
         dev.twob2tkit.material.CaretakerJobs.tick(client);
-		boolean menuBeforeHeldKeys = client.screen instanceof KitHudScreen;
+		boolean menuBeforeHeldKeys = client.gui.screen() instanceof KitHudScreen;
 		handleHeldKeys(client);
-		if (KitKeys.suppressHotkeys || menuBeforeHeldKeys || client.screen instanceof KitHudScreen) {
+		if (KitKeys.suppressHotkeys || menuBeforeHeldKeys || client.gui.screen() instanceof KitHudScreen) {
 			while (KitKeys.EMERGENCY_STOP.consumeClick()) {
 				if (!KitKeys.suppressHotkeys) emergencyStop("菜单内紧急停止");
 			}
@@ -192,13 +192,13 @@ public final class KitClient implements ClientModInitializer {
 	/** 物理按住紧急停止（含界面内）。 */
 	private boolean handleHeldKeys(Minecraft client) {
 		boolean emergencyDown = KitKeys.isPhysicallyDown(client, KitKeys.EMERGENCY_STOP);
-		boolean typingInOtherScreen = client.screen != null
-			&& !(client.screen instanceof KitHudScreen)
-			&& client.screen.getFocused() instanceof EditBox box
+		boolean typingInOtherScreen = client.gui.screen() != null
+			&& !(client.gui.screen() instanceof KitHudScreen)
+			&& client.gui.screen().getFocused() instanceof EditBox box
 			&& box.canConsumeInput();
 		if (!KitKeys.suppressHotkeys && !typingInOtherScreen && emergencyDown && !emergencyWasDown) {
 			emergencyStop("按下紧急停止键");
-			if (client.screen instanceof KitHudScreen) client.setScreen(null);
+			if (client.gui.screen() instanceof KitHudScreen) client.gui.setScreen(null);
 		}
 		emergencyWasDown = emergencyDown;
 		return !KitKeys.suppressHotkeys && !typingInOtherScreen && emergencyDown;
@@ -387,7 +387,7 @@ public final class KitClient implements ClientModInitializer {
 			instance.machineBuilder.cancel(client, "上基岩顶");
 		}
 		instance.netherRoofAssist.start(client, thenCruise, x, z, y);
-		if (client.screen instanceof KitHudScreen) client.setScreen(null);
+		if (client.gui.screen() instanceof KitHudScreen) client.gui.setScreen(null);
 	}
 
 	/** 登录时捕获种子哈希。 */
@@ -487,7 +487,7 @@ public final class KitClient implements ClientModInitializer {
         result.put("material_task",dev.twob2tkit.material.MaterialJobs.snapshot().get("occupied").getAsBoolean());
         result.put("caretaker_task",dev.twob2tkit.material.CaretakerJobs.occupied());
         result.put("container_restock",instance.config.autoRestockFromOpenedContainers&&c.player!=null
-            &&c.screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>
+            &&c.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>
             &&(c.player.containerMenu instanceof net.minecraft.world.inventory.ChestMenu
                 ||c.player.containerMenu instanceof net.minecraft.world.inventory.ShulkerBoxMenu
                 ||c.player.containerMenu instanceof net.minecraft.world.inventory.HopperMenu)
@@ -580,12 +580,12 @@ public final class KitClient implements ClientModInitializer {
 	/** 打开或关闭主界面（模块栏或分页）。 */
 	public static void openGui(Minecraft client) {
 		if (client.player == null) return;
-		if (client.screen instanceof KitHudScreen) {
-			client.setScreen(null);
+		if (client.gui.screen() instanceof KitHudScreen) {
+			client.gui.setScreen(null);
 			return;
 		}
-		if (client.screen == null) {
-			client.setScreen(instance.config.clickGui
+		if (client.gui.screen() == null) {
+			client.gui.setScreen(instance.config.clickGui
 				? new ClickGuiScreen(instance.config, instance.controller)
 				: KitTab.home(instance.config, instance.controller));
 		}
@@ -630,7 +630,7 @@ public final class KitClient implements ClientModInitializer {
 			instance.machineBuilder.cancel(client, "回地狱门");
 		}
 		instance.tunnelBorer.goToPortal(client);
-		if (client.screen instanceof KitHudScreen) client.setScreen(null);
+		if (client.gui.screen() instanceof KitHudScreen) client.gui.setScreen(null);
 	}
 
 	/** 热键开关围箱（同 tick 去重）。 */
@@ -672,7 +672,7 @@ public final class KitClient implements ClientModInitializer {
 			instance.machineBuilder.cancel(client, "开始围箱，已停建造");
 		}
 		instance.autoSurround.start(client, mode);
-		if (client.screen instanceof KitHudScreen) client.setScreen(null);
+		if (client.gui.screen() instanceof KitHudScreen) client.gui.setScreen(null);
 	}
 
 	/** 热键开关喂养。 */
@@ -704,7 +704,7 @@ public final class KitClient implements ClientModInitializer {
 			instance.machineBuilder.cancel(client, "开始喂养，已停建造");
 		}
 		instance.autoFeeder.start(client);
-		if (client.screen instanceof KitHudScreen) client.setScreen(null);
+		if (client.gui.screen() instanceof KitHudScreen) client.gui.setScreen(null);
 	}
 
 	/** 热键开关种田。 */
@@ -736,7 +736,7 @@ public final class KitClient implements ClientModInitializer {
 			instance.machineBuilder.cancel(client, "开始种田，已停建造");
 		}
 		instance.autoPlanter.start(client);
-		if (client.screen instanceof KitHudScreen) client.setScreen(null);
+		if (client.gui.screen() instanceof KitHudScreen) client.gui.setScreen(null);
 	}
 
 	/** 热键开关挖树。 */
@@ -768,7 +768,7 @@ public final class KitClient implements ClientModInitializer {
 			instance.machineBuilder.cancel(client, "开始挖树，已停建造");
 		}
 		instance.autoChopper.start(client);
-		if (client.screen instanceof KitHudScreen) client.setScreen(null);
+		if (client.gui.screen() instanceof KitHudScreen) client.gui.setScreen(null);
 	}
 
 	/** 热键开关钓鱼。 */
@@ -801,7 +801,7 @@ public final class KitClient implements ClientModInitializer {
 			instance.machineBuilder.cancel(client, "开始钓鱼，已停建造");
 		}
 		instance.autoFisher.start(client);
-		if (client.screen instanceof KitHudScreen) client.setScreen(null);
+		if (client.gui.screen() instanceof KitHudScreen) client.gui.setScreen(null);
 	}
     /** Bridge verifies the exact idle lease before this narrow no-deposit activation. */
     public static void startIdleFisher(Minecraft client){
@@ -989,7 +989,7 @@ public final class KitClient implements ClientModInitializer {
 		instance.controller.reapplyNavigationRotation(client);
 	}
 	public static dev.twob2tkit.runtime.api.RotationAim.Look borerCombatLook(Minecraft client) {
-		if (instance == null || instance.tunnelBorer == null || client.player == null || client.player.isDeadOrDying() || client.screen != null) return null;
+		if (instance == null || instance.tunnelBorer == null || client.player == null || client.player.isDeadOrDying() || client.gui.screen() != null) return null;
 		return instance.tunnelBorer.combatLook(client);
 	}
 	public static void combatViewRendered(Minecraft client, dev.twob2tkit.runtime.api.RotationAim.Look view) {
@@ -1025,7 +1025,7 @@ public final class KitClient implements ClientModInitializer {
 	/** 消费左键把准星方块写入点 A/B。 */
 	private static void handleAreaPick(Minecraft client) {
 		if (instance == null || instance.pickingAreaCorner == 0 || client == null) return;
-		if (client.screen != null || client.player == null || client.options == null) return;
+		if (client.gui.screen() != null || client.player == null || client.options == null) return;
 		if (!client.options.keyAttack.consumeClick()) return;
 		BlockPos hit = BorerAreaMarks.lookBlock(client);
 		if (hit == null) {

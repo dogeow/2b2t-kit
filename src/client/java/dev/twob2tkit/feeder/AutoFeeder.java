@@ -113,7 +113,7 @@ public final class AutoFeeder {
 			stop(client, "离开世界");
 			return;
 		}
-		if (client.screen != null) {
+		if (client.gui.screen() != null) {
 			releaseKeys(client);
 			status = "先关掉界面再喂";
 			return;
@@ -189,7 +189,7 @@ public final class AutoFeeder {
 	/** 对准当前目标。 */
 	public void reapplyLook(Minecraft client) {
 		if (!active || target == null || !target.isAlive() || client.player == null) return;
-		if (client.screen != null) return;
+		if (client.gui.screen() != null) return;
 		lookAt(client.player, target.getBoundingBox().getCenter());
 	}
 
@@ -300,13 +300,13 @@ public final class AutoFeeder {
 	/** 实体类型转配置 id。 */
 	private static String typeId(Animal animal) {
 		EntityType<?> type = animal.getType();
-		if (type == EntityType.COW) return "cow";
-		if (type == EntityType.SHEEP) return "sheep";
-		if (type == EntityType.PIG) return "pig";
-		if (type == EntityType.CHICKEN) return "chicken";
-		if (type == EntityType.MOOSHROOM) return "mooshroom";
-		if (type == EntityType.GOAT) return "goat";
-		if (type == EntityType.RABBIT) return "rabbit";
+		if (type == net.minecraft.world.entity.EntityTypes.COW) return "cow";
+		if (type == net.minecraft.world.entity.EntityTypes.SHEEP) return "sheep";
+		if (type == net.minecraft.world.entity.EntityTypes.PIG) return "pig";
+		if (type == net.minecraft.world.entity.EntityTypes.CHICKEN) return "chicken";
+		if (type == net.minecraft.world.entity.EntityTypes.MOOSHROOM) return "mooshroom";
+		if (type == net.minecraft.world.entity.EntityTypes.GOAT) return "goat";
+		if (type == net.minecraft.world.entity.EntityTypes.RABBIT) return "rabbit";
 		return "";
 	}
 
@@ -492,7 +492,7 @@ public final class AutoFeeder {
 
 	/** 叠字幕提示。 */
 	private static void overlay(Minecraft client, String text, int color) {
-		client.gui.setOverlayMessage(Component.literal("[喂养] " + text).withColor(color), false);
+		client.gui.hud.setOverlayMessage(Component.literal("[喂养] " + text).withColor(color), false);
 	}
 
 	/** 发系统消息。 */

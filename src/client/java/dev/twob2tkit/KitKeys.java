@@ -96,12 +96,12 @@ public final class KitKeys {
 
 	/** Only physical directional movement takes over a guarded task. App switching and camera input do not. */
 	public static boolean manualMovementDown(Minecraft client) {
-		if(client==null || client.player==null || client.screen!=null || !client.isWindowActive())return false;
+		if(client==null || client.player==null || client.gui.screen()!=null || !client.isWindowActive())return false;
 		for(KeyMapping key:takeoverKeys(client))if(isPhysicallyDown(client,key))return true;
 		return ManualInputPolicy.recent(System.currentTimeMillis(),lastPhysicalInputAt,true,false);
 	}
 	public static void notePhysicalKey(Minecraft client,int key,int action){
-		if(client!=null&&client.player!=null&&client.screen==null&&client.isWindowActive()
+		if(client!=null&&client.player!=null&&client.gui.screen()==null&&client.isWindowActive()
 			&&key!=GLFW.GLFW_KEY_UNKNOWN&&(action==GLFW.GLFW_PRESS||action==GLFW.GLFW_REPEAT)){
 			for(KeyMapping movement:takeoverKeys(client)){
 				InputConstants.Key bound=KeyMappingHelper.getBoundKeyOf(movement);
@@ -123,7 +123,7 @@ public final class KitKeys {
 	public static void restorePhysicalMovement(Minecraft client){
 		if(client==null || client.options==null)return;
 		for(KeyMapping key:movementKeys(client))
-			key.setDown(client.player!=null && client.screen==null && client.isWindowActive() && isPhysicallyDown(client,key));
+			key.setDown(client.player!=null && client.gui.screen()==null && client.isWindowActive() && isPhysicallyDown(client,key));
 	}
 	/** 绑定键显示名；未绑定则「未绑定」。 */
 	public static String boundLabel(KeyMapping mapping) {

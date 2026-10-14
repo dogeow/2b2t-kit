@@ -71,7 +71,7 @@ final class ProjectionAirSeed {
             throw new IllegalStateException("Air seed expected item does not match the projection");
         if(!MeteorModules.isActive(MeteorModules.FLIGHT))
             throw new IllegalStateException("Current Meteor Flight must already be active");
-        if(c.screen!=null||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty()
+        if(c.gui.screen()!=null||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty()
             ||c.player.isUsingItem()||c.options.keyUse.isDown()||c.player.isInWater()||c.player.isInLava()||c.player.isOnFire())
             throw new IllegalStateException("Air seed requires an idle dry inventory and released use key");
         selectedSlot=c.player.getInventory().getSelectedSlot();health=c.player.getHealth();
@@ -174,7 +174,7 @@ final class ProjectionAirSeed {
 
     Outcome poll(Minecraft c,long tick,boolean timedOut) {
         validateProjection();afterCount=count(c);
-        if(!sent||!serverChunk(c)||c.player.getHealth()<health||c.screen!=null
+        if(!sent||!serverChunk(c)||c.player.getHealth()<health||c.gui.screen()!=null
             ||c.player.getInventory().getSelectedSlot()!=selectedSlot
             ||!c.player.getMainHandItem().isEmpty()&&!c.player.getMainHandItem().is(item)
             ||!MeteorModules.isActive(MeteorModules.FLIGHT))return Outcome.WAITING;

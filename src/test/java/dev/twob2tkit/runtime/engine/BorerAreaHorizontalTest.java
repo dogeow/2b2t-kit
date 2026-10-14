@@ -60,6 +60,18 @@ class BorerAreaHorizontalTest {
         sim.until(() -> sim.plan.completed() == 3);
         assertEquals(0, sim.verticalMoves()); assertEquals(6, sim.world.broken.size()); sim.finish();
     }
+    @Test void highEntranceAtCellEdgeCentersBeforeLoweringPastTheNeighborWall() {
+        var sim = new Sim(new BlockPos(0, 2, 0), new BlockPos(1, 7, 1), true,
+            new Pose(1.0016, 8.0, .9684, 0, 0, 0));
+        sim.world.clearColumn(1, 0);
+        sim.until(() -> sim.plan.phase() == Phase.HORIZONTAL);
+        var command = sim.tick();
+        assertEquals(Action.X, command.action());
+        assertEquals(1.5, command.x()); assertEquals(8.0, command.y());
+        assertTrue(sim.world.broken.isEmpty(), "Do not mine the neighboring cap to correct an off-center descent");
+        sim.finish();
+        assertEquals(18, sim.world.broken.size()); assertEquals(4, sim.plan.completed());
+    }
     @Test void clearedRowTailTurnsTowardNearbyRemainingWorkInsteadOfVisitingTheFarEnd() {
         var sim=new Sim(BlockPos.ZERO,new BlockPos(10,1,1),true,new Pose(3.5,.08,.5,0,0,0));
         for(int x=0;x<=10;x++)sim.world.clearColumn(x,0);

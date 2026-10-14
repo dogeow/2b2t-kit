@@ -106,7 +106,7 @@ public final class AutoPlanter {
 	public boolean ownsMining() {
 		Minecraft client = Minecraft.getInstance();
 		if (!active || !harvestStarted || target == null || !target.harvest() || lockedCrop == null
-			|| client.player == null || client.level == null || client.gameMode == null || client.screen != null
+			|| client.player == null || client.level == null || client.gameMode == null || client.gui.screen() != null
 			|| client.level != sessionLevel || client.player != sessionPlayer || client.player.isUsingItem()
 			|| client.player.isDeadOrDying() || !client.gameMode.isDestroying()
 			|| !target.pos.equals(harvestPos)) return false;
@@ -195,7 +195,7 @@ public final class AutoPlanter {
 
 	/** Reuse the ordinary planter loop within an explicit material-task boundary. */
 	public void startMaterialWheat(Minecraft client, List<BlockPos> soils) {
-		if (active || client.player == null || client.level == null || client.screen != null)
+		if (active || client.player == null || client.level == null || client.gui.screen() != null)
 			throw new IllegalStateException("Planter requires an idle current world");
 		var batch = new PlanterMaterialBatch(soils, inventoryCount(client.player, Items.WHEAT));
 		if (inventoryCount(client.player, Items.WHEAT_SEEDS) < soils.size() + 4)
@@ -275,7 +275,7 @@ public final class AutoPlanter {
 			stop(client, "世界或角色已变化");
 			return;
 		}
-		if (client.screen != null) {
+		if (client.gui.screen() != null) {
 			releaseKeys(client);
 			status = "先关掉界面再种";
 			return;
@@ -429,7 +429,7 @@ public final class AutoPlanter {
 
 	/** 保持对准当前格。 */
 	public void reapplyLook(Minecraft client) {
-		if (!active || target == null || client.player == null || client.screen != null) return;
+		if (!active || target == null || client.player == null || client.gui.screen() != null) return;
 		if (target.harvest()) {
 			lookAt(client.player, harvestLook(client.player, target));
 			return;
@@ -1304,7 +1304,7 @@ public final class AutoPlanter {
 
 	/** 叠字幕。 */
 	private static void overlay(Minecraft client, String text, int color) {
-		client.gui.setOverlayMessage(Component.literal("[种田] " + text).withColor(color), false);
+		client.gui.hud.setOverlayMessage(Component.literal("[种田] " + text).withColor(color), false);
 	}
 
 	/** 发系统消息。 */

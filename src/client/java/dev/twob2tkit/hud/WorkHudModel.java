@@ -1,9 +1,11 @@
 package dev.twob2tkit.hud;
 
 import com.google.gson.JsonObject;
+import java.util.Locale;
 
 /** Pure summary selection. Counts retain their task meaning; unlimited jobs have no invented total. */
 public final class WorkHudModel {
+    private static final CruiseEtaEstimate navigationEta = new CruiseEtaEstimate();
     private WorkHudModel() {}
     public record Summary(String title, String progress, String phase, boolean attention) {
         public String line() { return title + (progress.isBlank()?"":" · "+progress) + (phase.isBlank()?"":" · "+phase); }
@@ -30,17 +32,47 @@ public final class WorkHudModel {
             if(result==null && flag(state,"guide_active"))result=new Summary("目的地指引","",clean(text(state,"guide_status")),false);
             if(result==null && flag(state,"printing"))result=new Summary("自动建造","",clean(text(state,"printer_status")),false);
         }
-        String override=flag(state,"health_recovery_hold")?"恢复生命":flag(state,"guard_busy")?"防护中":flag(object(state,"guard_food"),"active")?"进食中":"";
+        return protect(state,result);
+    }
+    static Summary protect(JsonObject state,Summary result) {
+        String override=flag(state,"health_recovery_hold")?"恢复生命":flag(state,"guard_busy")?"防护中":flag(object(state,"guard_food"),"eating")?"进食中":flag(state,"inventory_interface_paused")?"查看背包，施工暂停":"";
         if(!override.isBlank())return result==null?new Summary("自动保护","",override,true):new Summary(result.title,result.progress,override,true);
         return result;
     }
-    private static Summary external(JsonObject s,JsonObject j,long now) {
+    static Summary external(JsonObject s,JsonObject j,long now) {
         if(j==null||!flag(j,"active")||text(j,"world_session").isBlank()||!text(j,"world_session").equals(text(s,"world_session")))return null;
         JsonObject lease=object(s,"supervision_lease");
         if(text(j,"task_session").isBlank()||!text(j,"task_session").equals(text(lease,"job_session"))||number(j,"control_revision")!=number(s,"control_revision"))return null;
         long age=now-number(j,"updated_at");
         if(age<0||age>5000||text(j,"title").isBlank()||number(j,"done")<0||number(j,"total")<0)return null;
         return summary(clean(text(j,"title")),number(j,"done"),number(j,"total"),text(j,"phase"));
+    }
+    public static String navigation(JsonObject state) {
+        if(!flag(state,"connected")||flag(state,"manual_movement")||flag(state,"inventory_interface_paused")||!flag(state,"navigating"))return clearNavigation();
+        JsonObject route=object(state,"material_air_navigation");
+        String phase=text(route,"phase");
+        // Terminal air-only snapshots remain available as receipts. They must
+        // never cover the distance/ETA of a later ordinary cruise.
+        if(!text(route,"outcome").isBlank()
+                || !text(route,"world_session").isBlank()&&!text(route,"world_session").equals(text(state,"world_session"))
+                || !java.util.Set.of("cruising","precise_braking","checking_restored_flight").contains(phase))return clearNavigation();
+        try {
+            double horizontal=route.get("horizontal_error").getAsDouble(),vertical=route.get("vertical_error").getAsDouble();
+            if(!Double.isFinite(horizontal)||!Double.isFinite(vertical)||horizontal<0)return clearNavigation();
+            double remaining=Math.hypot(horizontal,vertical);
+            String identity=text(state,"world_session")+":"+text(state,"last_request");
+            double eta=text(state,"last_request").isBlank()?-1:navigationEta.observe(identity,remaining,number(state,"time"));
+            String action=phase.equals("checking_restored_flight")?"停靠确认":phase.equals("precise_braking")?"精确停靠":Math.abs(vertical)>1?"调整高度":"前进";
+            String duration=eta<0?"计算中":durationLabel((long)Math.ceil(eta));
+            return String.format(Locale.ROOT,"巡航 · 剩余 %.1f 格 · 预计 %s · %s",remaining,duration,action);
+        }catch(Exception ignored){return clearNavigation();}
+    }
+    private static String clearNavigation(){navigationEta.clear();return "";}
+    public static String durationLabel(long seconds){
+        seconds=Math.max(1,seconds);
+        if(seconds<60)return seconds+"秒";
+        if(seconds<3600)return seconds/60+"分"+seconds%60+"秒";
+        return seconds/3600+"小时"+(seconds%3600)/60+"分";
     }
     private static Summary summary(String title,long done,long total,String phase) {
         // Progress is never clamped to a plausible-looking value.

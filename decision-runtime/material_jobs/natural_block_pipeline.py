@@ -63,11 +63,13 @@ def _scan(c, low, high, checkpoint):
     return reply['blocks']
 
 
-def _dry_natural(rows):
+def _dry_natural(rows, *, forest=False):
     return rows is not None and all(
         not r['fluid'] and not r['block_entity'] and _name(r) not in HAZARDS
         and (_name(r) in CONTEXT or _name(r) in ('minecraft:air', 'minecraft:cave_air', 'minecraft:void_air')
-             or _name(r) in SOFT and not r['solid'] and r['passable'])
+             or _name(r) in SOFT and not r['solid'] and r['passable']
+             or forest and _name(r).endswith(('_log','_leaves'))
+             or forest and _name(r)=='minecraft:leaf_litter' and not r['solid'] and r['passable'])
         for r in rows)
 
 
@@ -84,9 +86,11 @@ def _giant_mushroom(rows, pos):
 
 
 def _tool(state, item):
-    kind = 'axe' if item == 'minecraft:mushroom_stem' else 'pickaxe'
+    # The installed mushroom-stem loot rule matches Silk Touch, not axe type.
+    kinds = ('axe','pickaxe') if item == 'minecraft:mushroom_stem' else ('pickaxe',)
     candidates = [r for r in state.get('inventory', []) if 0 <= r.get('slot', -1) < 36
-                  and r.get('count') == 1 and r.get('item') in ('minecraft:diamond_'+kind, 'minecraft:netherite_'+kind)
+                  and r.get('count') == 1 and r.get('item') in tuple(
+                      'minecraft:'+material+'_'+kind for material in ('diamond','netherite')for kind in kinds)
                   and r.get('durability', 0) >= 33 and r.get('max_durability', 0) > 0
                   and (item != 'minecraft:mushroom_stem' or any(
                       e.get('id') == 'minecraft:silk_touch' and e.get('level', 0) >= 1
@@ -116,6 +120,7 @@ def run(c, profile, item, target_count, out, checkpoint):
     if backend is None or getattr(backend, 'client', None) is not c or backend.profile != profile:
         raise JobBlocked('Natural block pipeline requires the same existing Backend.client/profile')
     world = c.world
+    def dry(rows):return _dry_natural(rows,forest=item=='minecraft:mushroom_stem')
     def state():
         checkpoint(); s = c.status()
         if s.get('world_session') != world or c.world != world or s.get('manual_movement'):
@@ -157,11 +162,11 @@ def run(c, profile, item, target_count, out, checkpoint):
     if not regions:
         return _wait(item, target_count)
     if _tool(first, item) is None:
-        return _wait(item, target_count, 'WAIT_TOOL', 'Need actual durable Silk Touch axe' if item.endswith('mushroom_stem') else 'Need actual durable pickaxe')
+        return _wait(item, target_count, 'WAIT_TOOL', 'Need actual durable Silk Touch axe or pickaxe' if item.endswith('mushroom_stem') else 'Need actual durable pickaxe')
     mined = 0
     for region in regions:
         rows = _scan(c, region['min'], region['max'], checkpoint)
-        if not _dry_natural(rows):
+        if not dry(rows):
             continue
         candidates = sorted((r for r in rows if _name(r) == item), key=lambda r: -r['pos'][1])
         for candidate in candidates:
@@ -173,11 +178,11 @@ def run(c, profile, item, target_count, out, checkpoint):
                 continue
             current = _scan(c, region['min'], region['max'], checkpoint)
             target = next((r for r in current or [] if r['pos'] == pos and _name(r) == item), None)
-            if (not _dry_natural(current) or target is None
+            if (not dry(current) or target is None
                     or item == 'minecraft:mushroom_stem' and not _giant_mushroom(current, pos)):
                 continue
             local = _scan(c, [v-2 for v in pos], [v+2 for v in pos], checkpoint)
-            if not _dry_natural(local):
+            if not dry(local):
                 continue
             if room_for_item(s, item) < 1:
                 return _wait(item, target_count, 'WAIT_CAPACITY')
@@ -217,7 +222,7 @@ def run(c, profile, item, target_count, out, checkpoint):
                 return _wait(item, target_count, 'WAIT_RECONCILE', 'Actual selected tool metadata differs')
             local = _scan(c, [v-2 for v in pos], [v+2 for v in pos], checkpoint)
             live = next((r for r in local or [] if r['pos'] == pos), None)
-            if not _dry_natural(local) or live is None or live['state'] != target['state']:
+            if not dry(local) or live is None or live['state'] != target['state']:
                 book['pending'] = None; write_json(path, book)
                 continue
             s = state()
@@ -245,7 +250,7 @@ def run(c, profile, item, target_count, out, checkpoint):
                         or math.dist(drop['pos'], pos) > 3 or _protected(drop['pos'], profile, s)):
                     continue
                 point = [math.floor(v) for v in drop['pos']]
-                if not _dry_natural(_scan(c, [v-1 for v in point], [v+1 for v in point], checkpoint)):
+                if not dry(_scan(c, [v-1 for v in point], [v+1 for v in point], checkpoint)):
                     continue
                 book['pending'].update(kind='pickup', uuid=drop['uuid']); write_json(path, book)
                 checkpoint()

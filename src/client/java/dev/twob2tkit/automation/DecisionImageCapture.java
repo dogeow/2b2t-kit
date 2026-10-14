@@ -22,12 +22,12 @@ public final class DecisionImageCapture {
     private DecisionImageCapture() {}
     public static void request(Minecraft c,String id,String world,long revision,LongSupplier currentRevision,Consumer<JsonObject> result){
         if(pending!=null||inFlight)throw new IllegalStateException("A game image is already being captured");
-        if(!DecisionImagePolicy.validId(id)||c.player==null||c.level==null||c.screen!=null)
+        if(!DecisionImagePolicy.validId(id)||c.player==null||c.level==null||c.gui.screen()!=null)
             throw new IllegalStateException("Close the game interface before requesting a world image");
         pending=new Pending(id,world,revision,c.level,c.player.position(),currentRevision,result,2);
     }
     private static boolean valid(Minecraft c,Pending p){
-        return DecisionImagePolicy.scope(c.level==p.level,c.player!=null,c.screen==null,p.revision,
+        return DecisionImagePolicy.scope(c.level==p.level,c.player!=null,c.gui.screen()==null,p.revision,
             p.currentRevision.getAsLong(),c.player==null?Double.POSITIVE_INFINITY:c.player.position().distanceTo(p.pos));
     }
     private static JsonObject failure(String detail){var out=new JsonObject();out.addProperty("error",detail);return out;}
@@ -41,7 +41,7 @@ public final class DecisionImageCapture {
             inFlight=true;
             // Vanilla factors must divide BOTH framebuffer dimensions. Capture
             // at factor one and resize off-thread so arbitrary window sizes work.
-            Screenshot.takeScreenshot(c.getMainRenderTarget(),1,image->c.execute(()->{
+            Screenshot.takeScreenshot(c.gameRenderer.mainRenderTarget(),1,image->c.execute(()->{
                 if(!valid(c,p)){image.close();inFlight=false;p.result.accept(failure("Game image context changed during capture"));return;}
                 CompletableFuture.runAsync(()->{var size=DecisionImagePolicy.boundedSize(image.getWidth(),image.getHeight());
                   try(image;var bounded=new NativeImage(size.width(),size.height(),false)){

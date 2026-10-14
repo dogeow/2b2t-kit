@@ -53,8 +53,8 @@ public final class StructureNoteScreen extends KitHudScreen {
 		var page = new dev.twob2tkit.KitFormScreen(parent, "结构备注 · " + hit.label(), "X " + hit.x() + "  Z " + hit.z())
 			.bind(config).recordDraft().id("structure-note:" + markKind + ":" + hit.x() + ":" + hit.z());
 		page.edit("备注", "输入自动暂存，保存后更新结构标记。", () -> note[0], value -> note[0] = value.trim());
-		page.submit("保存备注", () -> { var stored = config.ensureStructureMark(markKind, hit.x(), hit.z()); stored.note = note[0]; config.saveStructureMarks(); page.clearDraft(); minecraft.setScreen(parent); });
-		minecraft.setScreen(page); return true;
+		page.submit("保存备注", () -> { var stored = config.ensureStructureMark(markKind, hit.x(), hit.z()); stored.note = note[0]; config.saveStructureMarks(); page.clearDraft(); minecraft.gui.setScreen(parent); });
+		minecraft.gui.setScreen(page); return true;
 	}
 
 	private void save() {

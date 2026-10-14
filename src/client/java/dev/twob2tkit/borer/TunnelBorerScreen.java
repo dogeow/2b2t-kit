@@ -75,9 +75,9 @@ public final class TunnelBorerScreen extends KitHudScreen {
 		if (y < limit && mode == TunnelBorer.Mode.ORE) y = buildOreIcons(left, y);
 		if (y < limit) y = buildModeLink(left, y, mode);
 		if (y < limit) y = buildSubLink(left, y, "轴向瞄准 ▸", "只沿东西南北上下挖；清空路点也在这。",
-			() -> this.minecraft.setScreen(new BorerRouteScreen(this, config, borer)));
+			() -> this.minecraft.gui.setScreen(new BorerRouteScreen(this, config, borer)));
 		if (y < limit) y = buildSubLink(left, y, "安全与回家 ▸", "封水、遇怪、挖完回家等。",
-			() -> this.minecraft.setScreen(new BorerSafetyScreen(this, config, borer)));
+			() -> this.minecraft.gui.setScreen(new BorerSafetyScreen(this, config, borer)));
 		buildFooter(left);
 
 		refreshModeButtons();
@@ -184,19 +184,19 @@ public final class TunnelBorerScreen extends KitHudScreen {
 	private int buildModeLink(int left, int y, TunnelBorer.Mode mode) {
 		if (mode == TunnelBorer.Mode.AREA) {
 			y = buildSubLink(left, y, "区域与工程 ▸  " + BorerAreaMarks.sizeLabel(config),
-				"同页设置范围、命名保存、加载工程、开始。", () -> this.minecraft.setScreen(new AreaSetupScreen(this, config)));
+				"同页设置范围、命名保存、加载工程、开始。", () -> this.minecraft.gui.setScreen(new AreaSetupScreen(this, config)));
 			addRenderableWidget(Button.builder(Component.literal("保存当前工程"), b -> {
-				if (!config.borerAreaASet || !config.borerAreaBSet) { this.minecraft.setScreen(new AreaSetupScreen(this, config)); return; }
+				if (!config.borerAreaASet || !config.borerAreaBSet) { this.minecraft.gui.setScreen(new AreaSetupScreen(this, config)); return; }
 				String name = BorerAreaProjects.activeName(config);
 				if (name.isBlank()) name = BorerAreaProjects.defaultName(config);
 				config.upsertAreaProject(name, BorerAreaProjects.currentDimension(this.minecraft));
 				showNotice("已保存：" + name, 0x77DDCC);
 			}).bounds(left, y, 166, 20).build());
-			addRenderableWidget(Button.builder(Component.literal("加载 / 管理工程"), b -> this.minecraft.setScreen(new AreaProjectsScreen(this, config))).bounds(left + 172, y, 168, 20).build());
+			addRenderableWidget(Button.builder(Component.literal("加载 / 管理工程"), b -> this.minecraft.gui.setScreen(new AreaProjectsScreen(this, config))).bounds(left + 172, y, 168, 20).build());
 			return y + 24;
 		}
 		return buildSubLink(left, y, "巷道设置 ▸  " + config.borerWidth + "×" + config.borerHeight,
-			"断面、朝向、前探与找矿半径。", () -> this.minecraft.setScreen(new TunnelSetupScreen(this, config)));
+			"断面、朝向、前探与找矿半径。", () -> this.minecraft.gui.setScreen(new TunnelSetupScreen(this, config)));
 	}
 
 	/** 子页入口按钮。 */
@@ -215,7 +215,7 @@ public final class TunnelBorerScreen extends KitHudScreen {
 			.bounds(left, footerY, 72, 20).build());
 		addRenderableWidget(Button.builder(Component.literal("沿路回家"), b -> {
 			if (borer == null) return;
-			this.minecraft.setScreen(null);
+			this.minecraft.gui.setScreen(null);
 			borer.goHome(this.minecraft);
 		}).bounds(left + 80, footerY, 80, 20).build());
 		addRenderableWidget(Button.builder(Component.literal("回地狱门"), b -> KitClient.goNetherPortal(this.minecraft))
@@ -250,7 +250,7 @@ public final class TunnelBorerScreen extends KitHudScreen {
 	private void setMode(TunnelBorer.Mode mode) {
 		config.borerLastMode = mode.name();
 		config.save();
-		if (mode == TunnelBorer.Mode.AREA) { this.minecraft.setScreen(new AreaSetupScreen(this, config)); return; }
+		if (mode == TunnelBorer.Mode.AREA) { this.minecraft.gui.setScreen(new AreaSetupScreen(this, config)); return; }
 		rebuildWidgets();
 		showNotice("已选" + mode.label + "，点开始启动", 0x55FFFF);
 	}
@@ -274,7 +274,7 @@ public final class TunnelBorerScreen extends KitHudScreen {
 		if (borer == null) return;
 		if (mode == TunnelBorer.Mode.AREA) KitClient.prepareForBorer(this.minecraft);
 		borer.start(this.minecraft, mode);
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 当前模式按钮变灰。 */

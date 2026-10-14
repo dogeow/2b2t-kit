@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class InterfacePausePolicyTest {
-    @Test void passiveUiKeepsTheCurrentTaskWhileEveryInventoryControlIsExcluded(){
+    @Test void genericPassiveUiKeepsContainerOwnershipSeparate(){
         assertTrue(InterfacePausePolicy.pauses(true,true,false,true,false));
         assertFalse(InterfacePausePolicy.pauses(true,true,true,true,false),"A user inventory screen is a container control, even with menu zero");
         assertFalse(InterfacePausePolicy.pauses(true,true,true,false,false),"Chest/crafting controls retain their ownership gate");
@@ -14,6 +14,22 @@ class InterfacePausePolicyTest {
         assertFalse(InterfacePausePolicy.pauses(false,true,false,true,false),"Death/disconnect retain cleanup priority");
         assertFalse(InterfacePausePolicy.pauses(true,false,false,true,false),"Closing the interface resumes the same operation");
         assertFalse(InterfacePausePolicy.pauses(true,true,false,true,true),"Verified underwater emergency ascent outranks the screen");
+    }
+    @Test void openingInventoryWaitsForBothCloseAndClearCursorWithoutFinishingTheTask(){
+        var state=new InterfacePausePolicy.InventoryState();
+        assertTrue(state.observe(true,true,true,true));
+        assertTrue(state.observe(true,true,true,false));
+        assertTrue(state.observe(true,false,true,false),"Closing with a carried cursor keeps task input paused");
+        assertFalse(state.observe(true,false,true,true),"Close plus clear cursor resumes the same task");
+    }
+    @Test void ordinaryBotInventoryTransfersAndOwnedWorkbenchesDoNotBecomeUserInventoryPause(){
+        var state=new InterfacePausePolicy.InventoryState();
+        assertFalse(state.observe(true,false,true,false),"A bot transfer cursor without a user screen stays usable");
+        assertFalse(state.observe(true,false,false,false),"Owned crafting/chest controls retain their existing gate");
+        assertTrue(state.observe(true,true,true,true));
+        assertFalse(state.observe(false,false,true,false),"Death and disconnect clear the old screen latch");
+        assertFalse(state.held());
+        state.observe(true,true,true,true);state.clear();assertFalse(state.held());
     }
     @Test void readOrStopNeverIncludesANewInventoryOrMovementAction(){
         for(String op:new String[]{"stop","safe_logout","material_job_pause","snapshot","scan","scan_trees"})

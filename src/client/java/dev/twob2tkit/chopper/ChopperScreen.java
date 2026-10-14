@@ -102,7 +102,7 @@ public final class ChopperScreen extends KitHudScreen {
 	private void startChopper() {
 		if (!saveFields()) return;
 		KitClient.startChopper(this.minecraft);
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 构造已勾选状态的复选框。 */

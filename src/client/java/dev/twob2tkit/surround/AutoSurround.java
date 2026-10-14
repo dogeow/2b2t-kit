@@ -127,7 +127,7 @@ public final class AutoSurround {
 			stop(client, "离开世界");
 			return;
 		}
-		if (client.screen != null) {
+		if (client.gui.screen() != null) {
 			status = "先关掉界面再围";
 			return;
 		}
@@ -136,7 +136,7 @@ public final class AutoSurround {
 		Item item = SurroundBlocks.resolve(player, config.surroundBlockIds);
 		if (!(item instanceof BlockItem) || item == Items.AIR) {
 			status = "没有可用围箱方块，请在设置里勾选";
-			client.gui.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0xFF5555), false);
+			client.gui.hud.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0xFF5555), false);
 			return;
 		}
 		Block block = ((BlockItem)item).getBlock();
@@ -168,7 +168,7 @@ public final class AutoSurround {
 			status = config.surroundKeepRepair
 				? "已围好 " + done + "/10，地形已有的不算，破了会补"
 				: "已围好 " + done + "/10，地形已有的已跳过";
-			client.gui.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0x55FF55), false);
+			client.gui.hud.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0x55FF55), false);
 			if (!config.surroundKeepRepair && completeStreak > 4) {
 				stop(client, "已经围好");
 			}
@@ -178,7 +178,7 @@ public final class AutoSurround {
 
 		if (!player.hasInfiniteMaterials() && SurroundBlocks.count(player, item) <= 0) {
 			status = "背包没有勾选的围箱方块，缺 " + missing.size() + " 格。当前优先：" + SurroundBlocks.summary(config.surroundBlockIds);
-			client.gui.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0xFF5555), false);
+			client.gui.hud.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0xFF5555), false);
 			return;
 		}
 
@@ -198,7 +198,7 @@ public final class AutoSurround {
 			InteractionHand hand = selectItem(client, item);
 			if (hand == null) {
 				status = "拿不到 " + itemLabel(item);
-				client.gui.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0xFF5555), false);
+				client.gui.hud.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0xFF5555), false);
 				return;
 			}
 			if (placeAt(client, player, pos, block, hand)) {
@@ -210,12 +210,12 @@ public final class AutoSurround {
 		if (placed > 0) {
 			status = mode.label + "  已有 " + (done + placed) + "/10，还缺 "
 				+ Math.max(0, missing.size() - placed) + "  " + itemLabel(item);
-			client.gui.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0x55FFFF), false);
+			client.gui.hud.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0x55FFFF), false);
 			return;
 		}
 
 		status = sawReach ? "这一格没放上，下下再试" : "有的格子太远，站回箱子中间";
-		client.gui.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0xFFFF55), false);
+		client.gui.hud.setOverlayMessage(Component.literal("[围箱] " + status).withColor(0xFFFF55), false);
 	}
 
 	/** 十格跟随模式下原点每拍跟脚底。 */

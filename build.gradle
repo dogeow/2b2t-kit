@@ -49,6 +49,20 @@ tasks.register('runBiomeHints',JavaExec) {
 		providers.gradleProperty('originZ').getOrElse('0'),
 		providers.gradleProperty('hintRadius').getOrElse('8192'),
 		providers.gradleProperty('hintOutput').getOrElse('build/biome-hints.json')
+	if(providers.gradleProperty('hintBiomes').isPresent()) args providers.gradleProperty('hintBiomes').get()
+	if(providers.gradleProperty('hintCoordinateLimit').isPresent()) {
+		if(!providers.gradleProperty('hintBiomes').isPresent()) args ''
+		args providers.gradleProperty('hintCoordinateLimit').get()
+	}
+}
+
+tasks.register('verifyBiomeHints',JavaExec) {
+	dependsOn tasks.named('clientClasses')
+	classpath = sourceSets.client.runtimeClasspath
+	mainClass = 'dev.twob2tkit.structure.ResourceBiomeHintCli'
+	args '--verify-live',providers.gradleProperty('seedFile').getOrElse(''),
+		providers.gradleProperty('surveyFile').getOrElse(''),
+		providers.gradleProperty('hintOutput').getOrElse('build/biome-hint-verification.json')
 }
 
 processResources {

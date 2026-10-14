@@ -17,13 +17,13 @@ public final class KitRecipePages {
             LocalRecipes::entries, e -> e.name() + " ×" + e.output().getCount(), LocalRecipes.Entry::description, LocalRecipes.Entry::name)
             .icon(LocalRecipes.Entry::output).matcher((e, q) -> q.isBlank() || e.matches(q)).key(LocalRecipes.Entry::id);
         list.filters(LABELS, (e, index) -> e.matchesCategory(IDS[index]));
-        list.onOpen(e -> Minecraft.getInstance().setScreen(new Detail(list, config, e)));
+        list.onOpen(e -> Minecraft.getInstance().gui.setScreen(new Detail(list, config, e)));
         list.add("手中物品", () -> {
             var player = Minecraft.getInstance().player;
             if (player == null || player.getMainHandItem().isEmpty()) { list.message("请先拿着要查询的物品"); return; }
             list.query(player.getMainHandItem().getHoverName().getString());
         });
-        Minecraft.getInstance().setScreen(list);
+        Minecraft.getInstance().gui.setScreen(list);
         if (!query.isBlank()) list.query(query);
     }
     private static final class Detail extends KitHudScreen {

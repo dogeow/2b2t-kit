@@ -596,6 +596,8 @@ class Backend:
                 raise JobPaused('菜单尚未关闭，保持现场，不发送停靠或退出')
             if menu.get('cursor', {}).get('count') != 0:
                 raise JobPaused('光标物品尚未归位，保持现场')
+            from material_shutdown import settle_terminal_read
+            settle_terminal_read(c, state)
             if (not state.get('navigating') and not state.get('native_material_busy')
                     and state.get('pending_scan') is None and not c.native_inflight):
                 return state
@@ -1186,6 +1188,24 @@ class Backend:
                 return {'phase':'done' if result['complete'] else 'waiting',
                         'detail':'2×2背包合成结果已核对，无需前往工作台', 'crafting_location':'inventory', **result}
             self.prepare_travel()
+            outdoor=self.profile.get('outdoor_workbench')
+            if outdoor is not None:
+                pos=outdoor.get('pos');staging=outdoor.get('staging')
+                if (outdoor.get('authorized')is not True or not isinstance(pos,list)or len(pos)!=3
+                        or any(type(n)is not int for n in pos)
+                        or not isinstance(staging,list)or len(staging)!=3
+                        or any(type(n)not in(int,float)or not math.isfinite(n)for n in staging)
+                        or server_key(outdoor.get('server'))!=server_key(current.get('server'))
+                        or outdoor.get('dimension')!=current.get('dimension')):
+                    raise JobBlocked('露天工作台登记范围无效；不改走室内路线')
+                from material_jobs.acquisition import _travel
+                if math.dist(c.status()['pos'],staging)>2:
+                    _travel(c,staging,self.checkpoint,[])
+                open_workbench(c,pos)
+                result=manufacture_at_site();self.close_owned_menu()
+                write_json(out/'result.json',result)
+                return {'phase':'done'if result['complete']else'waiting','detail':'露天工作台合成结果已核对',
+                        'crafting_location':'outdoor_workbench',**result}
             pos = self.profile.get('workbench')
             if not pos:
                 return {'phase':'blocked','detail':'需要在材料工位中登记工作台'}
@@ -1208,6 +1228,20 @@ class Backend:
 
     def make_room(self, targets, keep_items):
         """Deposit only this job's newly acquired mining byproducts, never gear."""
+        from material_jobs.mud_pipeline import ITEMS as MUD_ITEMS
+        if (targets and set(targets)<=MUD_ITEMS
+                and (self.profile.get('mud_inventory_staging')or{}).get('authorized')is True):
+            # Item admission precedes the mud pipeline's own staging. Use its
+            # explicit seed/dirt reserves before refusing a full initial bag.
+            prepared=self.prepare_mud_inventory()
+            if prepared.get('phase')!='done':return prepared
+            state=read_fresh(self.root)
+            require_unlocked(self.root,state);require_scope(state,self.request['context'])
+            from material_trip_policy import room_for_item
+            held=inventory_counts(state)
+            if all(room_for_item(state,item)>=max(0,n-held.get(item,0))for item,n in targets.items()):
+                return {'phase':'done','code':'WORKSPACE_READY','mud_inventory_staging':prepared,
+                        'actual_capacity_rechecked':True,'warehouse_inventory_credit':0}
         from material_jobs.acquisition import ROCK_SOURCES
         if (getattr(self,'request',{}).get('mode')=='projection'
                 and targets and all(i in ROCK_SOURCES for i in targets)
@@ -1552,6 +1586,11 @@ class Backend:
                     return acquire(c,item,count,self.profile,directory,self.checkpoint)
                 if receipt.get('code')!='no_safe_candidate':
                     return receipt
+            if item in LOGS:
+                from material_jobs.cached_tree_source import acquire as acquire_cached_tree
+                cached=acquire_cached_tree(self,c,item,count,out)
+                if cached is not None:
+                    return cached
             found=discover(c,item,self.profile,self.root.parent/'material-resource-ledger',self.checkpoint)
             if found is None:
                 progress=getattr(c,'material_search_progress',{})
@@ -1741,7 +1780,9 @@ class Backend:
         if before >= target:
             return {'phase':'done','detail':'沙砾数量已足够'}
         self.checkpoint()
-        if self.request.get('mode') == 'projection' and self.profile.get('depots'):
+        from material_jobs.gravel_staging import stage as stage_open_water
+        open_water = stage_open_water(self)
+        if not open_water and self.request.get('mode') == 'projection' and self.profile.get('depots'):
             # Native seafloor collection searches around its start position.
             # The map's platform can obstruct a later surface return. Reuse
             # the registered supply approach before opening the native session.
@@ -1753,6 +1794,22 @@ class Backend:
         state = read_fresh(self.root)
         require_unlocked(self.root,state)
         require_scope(state,self.request['context'])
+        if type(state.get('food')) is not int:
+            raise JobBlocked('当前饱食储备未确认，不能启动新潜水')
+        if state['food']<18:
+            from survival_recovery import ensure_work_food
+            ensure_work_food(self.ensure_client(),self.out/'gravel-preflight')
+            self.finish();self.ready=True;self.checkpoint()
+            state=read_fresh(self.root)
+            require_unlocked(self.root,state);require_scope(state,self.request['context'])
+        from material_jobs.combat_equipment import ammunition_target, prepare as prepare_ammunition
+        if ammunition_target(state):
+            ammunition = prepare_ammunition(self, self.out/'gravel-preflight', state)
+            if ammunition.get('phase') != 'done':
+                return ammunition
+            self.finish();self.ready=True;self.checkpoint()
+            state=read_fresh(self.root)
+            require_unlocked(self.root,state);require_scope(state,self.request['context'])
         if state.get('supervision_lease',{}).get('kind') not in (None,'parking'):
             raise JobPaused('前一材料任务尚未交还控制，不能启动沙砾采集')
         previous = self.busy

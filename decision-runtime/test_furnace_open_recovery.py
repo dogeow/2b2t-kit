@@ -52,6 +52,42 @@ class Client:
 
 
 class FurnaceOpenRecoveryTest(unittest.TestCase):
+    def approach_failure(self,c,change=lambda p:None):
+        c.last='owned-approach-rejection'
+        proof={'request_id':c.last,'world_session':c.world,'task_session':c.task,
+               'op':'approach_block','phase':'error','detail':'Work block state changed',
+               'revision_before':c.rev,'revision_after':c.rev,
+               'params':{'task_session':c.task,'pos':POS,'face':'up','expected_state':TRUE,'seconds':45}}
+        change(proof);c.last_terminal_evidence=proof
+        raise RuntimeError('Work block state changed')
+
+    def test_exact_unstarted_approach_lit_flip_gets_one_fresh_approach(self):
+        c=Client(rows=[TRUE,FALSE,FALSE]);calls=[]
+        def approach(*args,**kwargs):
+            calls.append(args[2])
+            if len(calls)==1:self.approach_failure(c)
+            return 'up'
+        with patch('furnace_batches.approach_faces',side_effect=approach),patch('furnace_batches.wait_container_contents',return_value={'opened':True}):
+            self.assertEqual({'opened':True},snapshot(c,POS))
+        self.assertEqual([TRUE,FALSE],calls);self.assertEqual(1,len(self.uses(c)))
+
+    def test_foreign_moved_unknown_or_non_lit_approach_is_not_repeated(self):
+        for change in (lambda p:p.update(request_id='foreign'),lambda p:p.update(phase='waiting'),
+                       lambda p:p.update(revision_after=8),lambda p:p.update(world_session='foreign')):
+            c=Client(rows=[TRUE,FALSE,FALSE])
+            with patch('furnace_batches.approach_faces',side_effect=lambda *a,**k:self.approach_failure(c,change))as approach:
+                with self.assertRaises(RuntimeError):snapshot(c,POS)
+            self.assertEqual(1,approach.call_count);self.assertEqual([],self.uses(c))
+        c=Client(rows=[TRUE,TRUE])
+        with patch('furnace_batches.approach_faces',side_effect=lambda *a,**k:self.approach_failure(c))as approach:
+            with self.assertRaises(RuntimeError):snapshot(c,POS)
+        self.assertEqual(1,approach.call_count)
+
+    def test_second_approach_rejection_stops_without_a_third_request(self):
+        c=Client(rows=[TRUE,FALSE,FALSE])
+        with patch('furnace_batches.approach_faces',side_effect=lambda *a,**k:self.approach_failure(c))as approach:
+            with self.assertRaises(RuntimeError):snapshot(c,POS)
+        self.assertEqual(2,approach.call_count);self.assertEqual([],self.uses(c))
     def opening(self,c):
         with patch('furnace_batches.approach_faces',return_value='up'), \
              patch('furnace_batches.wait_container_contents',return_value={'opened':True}) as menu:

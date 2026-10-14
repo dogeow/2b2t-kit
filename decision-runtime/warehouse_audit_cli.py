@@ -18,6 +18,7 @@ from material_client import Client, MaterialClient
 from material_jobs.profile import profile_path
 from material_jobs.protocol import server_key
 from safety_interlock import require_unlocked
+from container_hand import SWORDS, select_container_hand
 
 DEFAULT_GAME=Path('/Applications/.minecraft/versions/26.1.2')
 ALLOWED=frozenset(('scan','snapshot','navigate','walk','approach_block','select_item',
@@ -241,12 +242,19 @@ def _travel_to(client,pos,checkpoint,trace):
 
 class _RegisteredRoute:
     """Reuse existing verified door/walk implementations without another backend."""
-    def __init__(self,session,profile):self.session,self.profile=session,profile
+    def __init__(self,session,profile):self.session,self.client,self.profile=session,session,profile
     def ensure_client(self):return self.session
     def checkpoint(self):self.session.status()
     def route(self,name):
         from material_jobs_backend import Backend
-        return Backend.route(self,name)
+        # Clearing a crafting grid does not close its screen. Reuse the
+        # existing ownership-aware close before issuing any movement.
+        Backend.close_owned_menu(self)
+        result=Backend.route(self,name)
+        if name.endswith('_exit'):
+            from material_jobs.storage_exit import center
+            center(self.session)
+        return result
     def approach_route_entry(self,target):
         from material_jobs_backend import Backend
         return Backend.approach_route_entry(self,target)
@@ -289,10 +297,10 @@ def _open_container(session,pos,block_state,profile):
         session.in_house=True
         route.route('workbench_entry')
     face=_side_access(session,pos,block_state,house=bool(house),profile=profile)
-    session.checked('select_item',item='minecraft:diamond_sword')
+    hand=select_container_hand(session)
     if ground_reach is not None:
         _ground_reach_ray(session,pos,block_state,session.report['storage_return']['stance'])
-    session.checked('interact',pos=pos,face=face,expected_state=block_state,expected_hand='minecraft:diamond_sword')
+    session.checked('interact',pos=pos,face=face,expected_state=block_state,expected_hand=hand)
     return wait_container_contents(session,MENU_LAYOUTS[name][0],require_nonempty=False)
 
 
@@ -317,13 +325,21 @@ def _clear_sweep(session,start,end):
     return all(clear(row)for row in reply['blocks'])
 
 
-def _follow_clear_points(session,points):
+def _follow_clear_points(session,points,*,arrival=.25):
     from material_jobs.acquisition import _actual_route_steps
     from material_jobs.navigation import settled_state
-    for before,target in _actual_route_steps(session,points,session.status,None):
+    # Keep nearby horizontal legs within immediate native precision takeover.
+    expanded=[];start=list(session.status()['pos'])
+    for destination in points:
+        distance=math.dist(start,destination)
+        count=max(1,math.ceil(distance/2)) if abs(start[1]-destination[1])<.01 and distance<=12 else 1
+        expanded.extend([[start[i]+(destination[i]-start[i])*n/count for i in range(3)]
+                         for n in range(1,count+1)])
+        start=list(destination)
+    for before,target in _actual_route_steps(session,expanded,session.status,None):
         if not _clear_sweep(session,before['pos'],target):
             raise StockBlocked('Original storage return body corridor changed; no movement sent')
-        session.checked('navigate',target=target,arrival=.25,seconds=90,air_only=True)
+        session.checked('navigate',target=target,arrival=arrival,seconds=90,air_only=True)
         current=settled_state(session,target,.55)
         if math.dist(current['pos'],target)>.55:
             raise StockBlocked('Original storage corridor endpoint was not confirmed')
@@ -359,6 +375,59 @@ def _side_access(session,pos,block_state,*,house=False,profile=None):
         if ground_reach is not None:
             _ground_reach_ray(session,pos,block_state,stance)
         return face
+    if not house and callable(getattr(session,'request',None)):
+        from material_jobs.local_air_path import plan
+        from material_jobs.protocol import JobBlocked
+        low=[min(math.floor(origin[0]),pos[0]-2)-3,pos[1]-2,
+             min(math.floor(origin[2]),pos[2]-2)-3]
+        high=[max(math.floor(origin[0]),pos[0]+2)+3,math.floor(origin[1])+3,
+              max(math.floor(origin[2]),pos[2]+2)+3]
+        if math.prod(high[i]-low[i]+1 for i in range(3))<=30000:
+            observed=_scan(session,low,high)
+            safe={'minecraft:torch','minecraft:wall_torch','minecraft:short_grass',
+                  'minecraft:tall_grass','minecraft:fern','minecraft:large_fern'}
+            blockers=[b for b in observed['blocks']if not(
+                _state_parts(b['state'])[0]in safe and b.get('passable')is True
+                and b.get('fluid')is False and b.get('block_entity')is False)]
+            for face,stance in candidates:
+                try:points=plan(blockers,origin,stance,low,high,max_straight=2)
+                except JobBlocked:continue
+                # Native arrival is clamped to at least .2. Aim .2 above each
+                # integer air node so the actual foot remains above a lower
+                # leaf at the following turn. The 1.8-block body still fits
+                # the same two verified air cells; prove every sweep again.
+                points=[[p[0],p[1]+.2,p[2]]for p in points]+[stance]
+                start=origin;clear=True
+                for point in points:
+                    if not _clear_sweep(session,start,point):clear=False;break
+                    start=point
+                if not clear:continue
+                if math.dist(session.status()['pos'],origin)>.05:
+                    raise StockBlocked('Canopy start moved during full reversible air-path proof')
+                session.return_points=list(reversed(points[:-1]))+[origin]
+                session.report['storage_return']={'world_session':session.world,'origin':origin,
+                    'stance':stance,'points':deepcopy(session.return_points),'house':False,
+                    'state':'proved_before_entry','canopy_air_path':points}
+                session.save();_follow_clear_points(session,points,arrival=.2);return face
+    if not house:
+        # A chest under a tree can have a clear standing space while the
+        # nearest vertical columns contain leaves. Use a bounded farther
+        # column and prove both the entire entry and its exact reverse.
+        directions={'west':(-1,0),'north':(0,-1),'south':(0,1),'east':(1,0)}
+        for radius in (4,6):
+            for face,stance in candidates:
+                dx,dz=directions[face]
+                high=[pos[0]+.5+dx*radius,origin[1],pos[2]+.5+dz*radius]
+                low=[high[0],stance[1],high[2]]
+                if not (_clear_sweep(session,origin,high) and _clear_sweep(session,high,low)
+                        and _clear_sweep(session,low,stance)):continue
+                if math.dist(session.status()['pos'],origin)>.05:
+                    raise StockBlocked('Storage start moved while proving its outer return corridor')
+                session.return_points=[low,high,origin]
+                session.report['storage_return']={'world_session':session.world,'origin':origin,
+                    'stance':stance,'points':deepcopy(session.return_points),'house':False,
+                    'state':'proved_before_entry','outer_column_radius':radius}
+                session.save();_follow_clear_points(session,[high,low,stance]);return face
     raise StockBlocked('No finite reversible storage side corridor; remain outside')
 
 
@@ -372,7 +441,8 @@ def _exit_storage(session,profile):
             raise StockBlocked('Unowned or occupied storage menu prevents automatic exit')
         session.checked('close_menu')
     if session.return_points:
-        _follow_clear_points(session,session.return_points)
+        arrival=.2 if session.report.get('storage_return',{}).get('canopy_air_path') else .25
+        _follow_clear_points(session,session.return_points,arrival=arrival)
         session.return_points=[]
         session.report['storage_return']['state']='returned_to_original_verified_start';session.save()
     if session.in_house:
@@ -456,7 +526,7 @@ class _Session:
         current=self.status()
         if reply.get('phase')not in (None,'done'):
             lease=current.get('supervision_lease')or{}
-            before_use=(op=='interact'and params.get('expected_hand')=='minecraft:diamond_sword'
+            before_use=(op=='interact'and params.get('expected_hand') in SWORDS
                         and reply.get('phase')=='error'and reply.get('detail')in
                         ('Target block changed','Held item changed','Target interaction face is occluded or out of reach'))
             terminal=((op in READ_TERMINALS or before_use)and reply.get('phase')in ('error','waiting','stopped')

@@ -101,7 +101,7 @@ public final class ProjectionBuildJob {
         if(c.player!=null)c.player.sendSystemMessage(net.minecraft.network.chat.Component.literal("[投影建造] "+reason+" · "+progress()));
     }
     private boolean supplySafe(Minecraft c,String expectedSession) throws Exception {
-        boolean safe=c.player!=null && c.level==level && c.screen==null && c.player.getHealth()>=14 && !KitKeys.manualMovementDown(c)
+        boolean safe=c.player!=null && c.level==level && c.gui.screen()==null && c.player.getHealth()>=14 && !KitKeys.manualMovementDown(c)
             && !KitClient.borer().isActive() && !KitClient.planter().isActive() && !KitClient.feeder().isActive() && !KitClient.chopper().isActive() && !KitClient.controller().isActive()
             && !dev.twob2tkit.automation.AutomationBridge.guardBusy();
         return c.player!=null && selection!=null && c.player.position().distanceTo(Vec3.atCenterOf(selection.min()))<=150 && BuildSupervisionPolicy.maySupply(session.equals(expectedSession),active,outcome,safe) && selection.key().equals(LitematicaAccess.buildSelection().key());
@@ -122,7 +122,7 @@ public final class ProjectionBuildJob {
             if(!start(c))throw new IllegalStateException("Build could not resume: "+reason);
             session=oldSession;supervisionCount=oldCount+1;lastSupervision="resume_after_supply";return;
         }
-        boolean safe=c.player!=null && c.level==level && c.screen==null && c.player.getHealth()>=14 && !KitKeys.manualMovementDown(c)
+        boolean safe=c.player!=null && c.level==level && c.gui.screen()==null && c.player.getHealth()>=14 && !KitKeys.manualMovementDown(c)
             && !dev.twob2tkit.automation.AutomationBridge.guardBusy();
         if(!BuildSupervisionPolicy.mayApply(action,session.equals(expectedSession),active,loading||rescan!=null,!ProfessionalPrinter.owned()||ProfessionalPrinter.queueIdleForTravel(),safe,tick-lastSupervisionTick))
             throw new IllegalStateException("Build supervision rejected: task, input, cooldown or server queue changed");
@@ -141,7 +141,7 @@ public final class ProjectionBuildJob {
     public void pause(Minecraft c){
         if(!active)return;
         discardSearch();departure.reset();ProfessionalPrinter.pause();release(c);look=null;if(autoMove)flight.hover();
-        phase="已暂停";reason=c.screen!=null?"界面已打开，关闭后继续":"等待防御或进食结束";
+        phase="已暂停";reason=c.gui.screen()!=null?"界面已打开，关闭后继续":"等待防御或进食结束";
     }
     public void serverBlock(BlockPos pos,BlockState state){
         // Collision caches cannot survive authoritative changes inside the search volume.
@@ -155,7 +155,7 @@ public final class ProjectionBuildJob {
             matched++;lastGain=tick;lastMatched=matched;departure.reset();
         }else if(!wanted.equals(state)&&wanted.equals(previous)){matched--;departure.reset();}
     }
-    public void reapply(Minecraft c){if(active&&look!=null&&c.screen==null)RotationAim.apply(c.player,look);}
+    public void reapply(Minecraft c){if(active&&look!=null&&c.gui.screen()==null)RotationAim.apply(c.player,look);}
     public void tick(Minecraft c){
         if(!active)return;
         try{
@@ -163,7 +163,7 @@ public final class ProjectionBuildJob {
             if(ProfessionalPrinter.consumeRecheck()){discardSearch();ProfessionalPrinter.stop(c,false);recount(c);path=List.of();station=null;look=null;return;}
             if(!ProfessionalPrinter.failure().isEmpty()){finishJob(c,ProfessionalPrinter.failure(),"printer_error");return;}
             if(c.player==null||c.level!=level||c.player.isDeadOrDying()){finishJob(c,"离开原世界","world_changed");return;}
-            if(c.screen!=null){pause(c);return;}
+            if(c.gui.screen()!=null){pause(c);return;}
             if(c.player.getHealth()<14){pause(c);reason="血量不足，等待恢复";return;}
             tick++;
             if(tick%20==0&&!selection.key().equals(LitematicaAccess.buildSelection().key())){finishJob(c,"投影位置或范围已改变，请重新检查后开始","placement_changed");return;}

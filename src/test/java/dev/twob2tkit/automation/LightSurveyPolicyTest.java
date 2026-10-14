@@ -30,8 +30,8 @@ class LightSurveyPolicyTest {
     }
     private boolean zombieGeometry(Map<BlockPos,BlockState> blocks){
         var level=world(blocks);var feet=FLOOR.above();
-        if(!SpawnPlacements.isSpawnPositionOk(EntityType.ZOMBIE,level,feet))return false;
-        var body=EntityType.ZOMBIE.getDimensions().makeBoundingBox(feet.getX()+.5,feet.getY(),feet.getZ()+.5);
+        if(!SpawnPlacements.isSpawnPositionOk(net.minecraft.world.entity.EntityTypes.ZOMBIE,level,feet))return false;
+        var body=net.minecraft.world.entity.EntityTypes.ZOMBIE.getDimensions().makeBoundingBox(feet.getX()+.5,feet.getY(),feet.getZ()+.5);
         for(var row:blocks.entrySet()){
             var pos=row.getKey();var shape=row.getValue().getCollisionShape(level,pos).move(pos.getX(),pos.getY(),pos.getZ());
             if(Shapes.joinIsNotEmpty(shape,Shapes.create(body),BooleanOp.AND))return false;
@@ -78,6 +78,6 @@ class LightSurveyPolicyTest {
         assertFalse(zombieGeometry(Map.of(FLOOR,stone,FLOOR.above(2),stone)));
     }
     @Test void partialCollisionInBodySpaceDoesNotBecomeASpawnableFloor(){
-        assertFalse(zombieGeometry(Map.of(FLOOR,Blocks.STONE.defaultBlockState(),FLOOR.above(),Blocks.WHITE_CARPET.defaultBlockState())));
+        assertFalse(zombieGeometry(Map.of(FLOOR,Blocks.STONE.defaultBlockState(),FLOOR.above(),Blocks.CARPET.white().defaultBlockState())));
     }
 }

@@ -66,5 +66,8 @@ class InterfacePauseWiringTest {
         assertTrue(calls(bridge("snapshot")).contains("interfacePaused"));
         var pause=bridge("interfacePaused");
         assertTrue(Arrays.stream(pause.instructions.toArray()).anyMatch(n->n instanceof TypeInsnNode t&&t.getOpcode()==Opcodes.INSTANCEOF&&t.desc.endsWith("/AbstractContainerScreen")));
+        assertTrue(Arrays.stream(pause.instructions.toArray()).anyMatch(n->n instanceof TypeInsnNode t&&t.getOpcode()==Opcodes.INSTANCEOF&&t.desc.endsWith("/InventoryScreen")));
+        assertTrue(calls(pause).containsAll(List.of("observe","getCarried","isEmpty")));
+        assertTrue(calls(bridge("session")).contains("clear"));
     }
 }

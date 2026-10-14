@@ -87,7 +87,7 @@ final class BucketWaterAction {
         }return true;
     }
     private boolean idle(Minecraft c) {
-        return sameContext(c)&&c.screen==null&&c.player.containerMenu==c.player.inventoryMenu
+        return sameContext(c)&&c.gui.screen()==null&&c.player.containerMenu==c.player.inventoryMenu
             &&c.player.containerMenu.getCarried().isEmpty()&&!c.player.isUsingItem()&&!c.options.keyUse.isDown()
             &&c.player.getInventory().getSelectedSlot()==selected&&!c.player.hasInfiniteMaterials()
             &&!c.player.isInWater()&&!c.player.isInLava()&&!c.player.isOnFire()&&c.player.getHealth()>=health;

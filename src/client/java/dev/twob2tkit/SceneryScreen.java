@@ -49,7 +49,7 @@ final class SceneryScreen extends KitHudScreen {
 		}
 		if (KitClient.startScenery(minecraft, value, continuing)) {
 			if (!continuing) { config.sceneryRadiusBlocks = value; config.save(); }
-			minecraft.setScreen(null);
+			minecraft.gui.setScreen(null);
 		} else showNotice(KitClient.borer() == null ? "模块未就绪" : KitClient.borer().sceneryStatus(), 0xFF5555);
 	}
 	@Override protected boolean onEnterPressed() { if (KitClient.borer() != null && !KitClient.borer().isSceneryActive()) start(false); return true; }

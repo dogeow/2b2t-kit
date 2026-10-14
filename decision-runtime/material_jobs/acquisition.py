@@ -1899,6 +1899,19 @@ def _receipt(c, item, target, before, state, reply, entry, ledger, path, checkpo
     return {'phase': 'blocked', 'detail': '原生作业没有实际背包增量，已记录本区域，不会照旧重放', 'code': 'no_inventory_progress'}
 
 
+def fixed_tree_params(state,region,root):
+    if type(state.get('fixed_tree_chop_protocol'))is not int or state['fixed_tree_chop_protocol']<1:return {}
+    low,high=_bounds(region)
+    if region.get('source')=='owned_seeded_cherry_tree_farm':
+        return {'tree_root':list(root),'tree_min':low,'tree_max':high}
+    if region.get('source')!='natural_survey' or region.get('fixed_tree_chop')is not True:return {}
+    # The freshly scanned23x45x23 context constrains a single natural tree,
+    # rather than passing the much larger forest authorization to the host.
+    lo=[max(low[i],root[i]-n)for i,n in enumerate((11,5,11))]
+    hi=[min(high[i],root[i]+n)for i,n in enumerate((11,39,11))]
+    return {'tree_root':list(root),'tree_min':lo,'tree_max':hi}
+
+
 def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None):
     if target > 512:raise Unavailable('原生砍树背包目标上限为 512，请分批存放再继续')
     state = c.status(); _safe(state)
@@ -1972,11 +1985,16 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
         if not isinstance(nearby, dict):raise Unavailable('落点附近树木尚未核验', 'waiting')
         fresh = c.status()
         nearest = min(nearby.get('trees', []), key=lambda t: math.dist([n+.5 for n in t['pos']], fresh['pos']), default=None)
-        fixed_tree = (type(fresh.get('fixed_tree_chop_protocol')) is int
-                      and fresh['fixed_tree_chop_protocol'] >= 1
-                      and region.get('source') == 'owned_seeded_cherry_tree_farm')
+        fixed_params=fixed_tree_params(fresh,region,root)
+        retain_saplings=region.get('retain_saplings') is True
+        if retain_saplings:
+            if fresh.get('sapling_retention_chop_protocol')!=1:
+                raise Unavailable('当前主包不支持整树采集保留树苗，未启动砍树','waiting')
+            fixed_params={**fixed_params,'retain_saplings':True}
+        fixed_tree='tree_root' in fixed_params
         if not fixed_tree and (nearest is None or nearest['pos'] != root):
-            raise Unavailable('原生砍树的最近目标已变化，先重新核验，避免砍到区域外树木')
+            return {'phase':'blocked','code':'tree_selection_changed','native_chop_started':False,
+                    'detail':'原生砍树的最近目标已变化，先重新核验，避免砍到区域外树木'}
         _choose_tool(c, tool, checkpoint)
         before = carried(c.status(), item)
         sapling_item = item.removesuffix('_log') + '_sapling'
@@ -1990,10 +2008,6 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
         plant_cell = list(root)
         entry = {'state': 'inflight', 'root': root, 'before': before, 'route': trace}
         ledger['visited'][key] = entry; write_json(path, ledger); checkpoint()
-        fixed_params = {}
-        if fixed_tree:
-            lo, hi = _bounds(region)
-            fixed_params = {'tree_root': root, 'tree_min': lo, 'tree_max': hi}
         reply = c.request('chop', item=item, target_count=target, tree_limit=1, seconds=240, **fixed_params)
         after = c.status(); _safe(after)
         entry['native'] = {name: reply[name] for name in ('id', 'world_session', 'phase', 'detail')
@@ -2008,9 +2022,13 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
             return {'phase': 'blocked', 'detail': '整棵树或临时垫脚方块尚未收尾，保留在途记录待核验'}
         try:
             # Reuse a carried sapling; a new drop from this chop is not required.
-            regrowth = _replant_tree_with_bonemeal(c, item, root, plant_cell, old_drops,
-                                               0, carried(state, 'minecraft:bone_meal'),
-                                               out, checkpoint)
+            if retain_saplings:
+                regrowth={'stage':'saplings_retained_for_home','planted':False,
+                          'saplings_on_hand':carried(after,sapling_item),'tree_root':root}
+            else:
+                regrowth = _replant_tree_with_bonemeal(c, item, root, plant_cell, old_drops,
+                                                   0, carried(state, 'minecraft:bone_meal'),
+                                                   out, checkpoint)
         except NameError as error:
             # The optional regrowth tail must not discard already-confirmed
             # logs or force a safety logout. Keep the traceback location for repair.

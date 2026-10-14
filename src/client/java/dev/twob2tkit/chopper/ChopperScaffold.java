@@ -12,6 +12,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.ShovelItem;
+import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
 import java.nio.file.*;
@@ -149,7 +150,18 @@ final class ChopperScaffold {
             status="隔空放置一块泥土工作平台";flight.hover();
             if(!replaceable(c,cell))throw new IllegalStateException("工作位已有方块，未覆盖它");
             if(!selectDirt(c))throw new IllegalStateException("泥土用完，未继续飞行");
-            owned.add(cell.immutable());save();ChopperKeys.lookAt(p,Vec3.atCenterOf(cell));meteorPlace(c,cell);
+            var hit=ChopperPlacementPlan.choose(cell,h->{
+                if(!c.level.hasChunkAt(h.getBlockPos())||confirmation.pending(c.level,h.getBlockPos())
+                    ||c.level.getBlockEntity(h.getBlockPos())!=null||!c.level.getBlockState(h.getBlockPos()).getFluidState().isEmpty())return null;
+                var context=new BlockPlaceContext(p,InteractionHand.MAIN_HAND,p.getMainHandItem(),h);
+                return context.canPlace()?context.getClickedPos():null;
+            });
+            if(hit==null||p.getEyePosition().distanceTo(hit.getLocation())>p.blockInteractionRange()-.2
+                ||!c.level.noCollision(new net.minecraft.world.phys.AABB(cell)))
+                throw new IllegalStateException("没有精确指向工作平台的安全放置交互，未发送");
+            owned.add(cell.immutable());save();ChopperKeys.lookAt(p,hit.getLocation());
+            var result=c.gameMode.useItemOn(p,InteractionHand.MAIN_HAND,hit);
+            if(result.consumesAction())p.swing(InteractionHand.MAIN_HAND);
             phase=Phase.CONFIRM;ticks=0;return true;
         }
         if(phase==Phase.CONFIRM){
@@ -313,15 +325,6 @@ final class ChopperScaffold {
 		var inv=c.player.getInventory();for(int i=0;i<36;i++)if(inv.getItem(i).getItem() instanceof ShovelItem){
 			if(i<9)inv.setSelectedSlot(i);else c.gameMode.handleContainerInput(c.player.containerMenu.containerId,i,inv.getSelectedSlot(),ContainerInput.SWAP,c.player);return;
 		}
-	}
-	/** Meteor's normal BlockUtils placement includes its Air Place fallback when no neighbour exists. */
-	private static void meteorPlace(Minecraft c,BlockPos p){
-		try{
-			Class<?> utils=Class.forName("meteordevelopment.meteorclient.utils.world.BlockUtils");
-			Object result=utils.getMethod("place",BlockPos.class,InteractionHand.class,int.class,boolean.class,int.class,boolean.class,boolean.class,boolean.class)
-				.invoke(null,p,InteractionHand.MAIN_HAND,c.player.getInventory().getSelectedSlot(),false,0,true,true,false);
-			if(!Boolean.TRUE.equals(result))throw new IllegalStateException("Meteor 无法在这个位置放置泥土");
-		}catch(ReflectiveOperationException e){throw new IllegalStateException("Meteor 放置接口不可用，未模拟成功",e);}
 	}
 	private static void log(Minecraft c,String s){ChopperFileLog.append(c,AutoChopper.VERSION,s);}
 }

@@ -33,6 +33,22 @@ class ChopperFixedTreePlanTest {
         assertFalse(plan.outsideFutureTrunk(761032.5,797882.5,"minecraft:dark_oak_log"));
         assertTrue(plan.outsideFutureTrunk(761031.5,797882.5,"minecraft:dark_oak_log"));
     }
+    @Test void aCurrentNaturalWideTreeCanHaveOneTerrainStepAcrossItsFourStumps(){
+        var selected=new BlockPos(759383,85,796210);
+        var natural=new ChopperFixedTreePlan(selected,selected.offset(-11,-5,-11),selected.offset(11,39,11));
+        var stumps=List.of(selected,new BlockPos(759382,84,796209),
+            new BlockPos(759382,85,796210),new BlockPos(759383,84,796209));
+        assertTrue(natural.accepts(stumps,stumps,"minecraft:dark_oak_log"));
+        assertFalse(natural.accepts(stumps,stumps,"minecraft:cherry_log"));
+        assertFalse(natural.accepts(stumps,List.of(selected,selected.offset(-1,-2,-1)),"minecraft:dark_oak_log"));
+    }
+    @Test void aWideRootStillCannotSpanThreeColumnsOrOppositeHeightSteps(){
+        var local=new ChopperFixedTreePlan(root,root.offset(-11,-5,-11),root.offset(11,39,11));
+        var tooWide=List.of(root,root.offset(-1,0,0),root.offset(1,0,0));
+        assertFalse(local.accepts(tooWide,tooWide,"minecraft:dark_oak_log"));
+        var tooTall=List.of(root,root.offset(1,-1,0),root.offset(0,1,1));
+        assertFalse(local.accepts(tooTall,tooTall,"minecraft:dark_oak_log"));
+    }
     @Test void mutationAndWitnessBoundsRemainFiniteAndContainTheRequestedRoot(){
         assertTrue(plan.contains(root));assertFalse(plan.contains(root.below()));assertFalse(plan.contains(null));
         assertThrows(IllegalArgumentException.class,()->new ChopperFixedTreePlan(root,root.above(),root.above(4)));

@@ -129,6 +129,16 @@ public final class OverworldSnowLocator {
 			.map(key->key.identifier().toString()).orElse("unknown");
 	}
 
+	/** Compare a loaded surface observation with vanilla's actual block-biome lookup. */
+	static synchronized String surfaceBiomeAt(long seed,int x,int y,int z){
+		prepare(seed);
+		var manager=new net.minecraft.world.level.biome.BiomeManager(
+			(qx,qy,qz)->cachedBiomes.getNoiseBiome(qx,qy,qz,cachedSampler),
+			net.minecraft.world.level.biome.BiomeManager.obfuscateSeed(seed));
+		return manager.getBiome(new net.minecraft.core.BlockPos(x,y,z)).unwrapKey()
+			.map(key->key.identifier().toString()).orElse("unknown");
+	}
+
 	private static Candidate candidateAt(int cursor, int x, int z, int distance,Set<String> wanted) {
 		for (int y : SAMPLE_Y) {
 			Holder<Biome> holder = cachedBiomes.getNoiseBiome(

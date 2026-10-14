@@ -30,7 +30,7 @@ public abstract class MouseHandlerMixin {
 	/** 无界面时把滚轮交给全息预览调距离；成功则取消原版滚动。 */
 	@Inject(method = "onScroll", at = @At("HEAD"), cancellable = true)
 	private void kit$previewDistance(long handle, double xoffset, double yoffset, CallbackInfo info) {
-		if (this.minecraft.screen != null || this.minecraft.player == null) return;
+		if (this.minecraft.gui.screen() != null || this.minecraft.player == null) return;
 		if (KitClient.handlePreviewScroll(yoffset)) info.cancel();
 	}
 

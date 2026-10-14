@@ -51,7 +51,7 @@ public final class MaterialJobPages {
             if (projection) MaterialJobs.startProjection(mc(), config);
             else { validateItem(config.materialJobItem); MaterialJobs.startItem(mc(), config, config.materialJobItem, config.materialJobCount); }
         }));
-        mc().setScreen(page);
+        mc().gui.setScreen(page);
     }
     private record Choice(String id, String name, ItemStack icon) {
         boolean matches(String query) {
@@ -67,7 +67,7 @@ public final class MaterialJobPages {
             () -> choices, Choice::name, Choice::id, choice -> choice.name() + " " + choice.id())
             .key(Choice::id).icon(Choice::icon).matcher(Choice::matches).searchHint("搜索中文名称或 ID，例如混凝土、gravel…");
         page.onOpen(choice -> { config.materialJobItem = choice.id(); config.save(); returnToForm.run(); });
-        mc().setScreen(page);
+        mc().gui.setScreen(page);
     }
     private static String displayName(String id) {
         try { return new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(id))).getHoverName().getString() + " · " + id; }
@@ -82,7 +82,7 @@ public final class MaterialJobPages {
     private static void perform(KitFormScreen page, Runnable action) {
         try { action.run(); }
         catch (RuntimeException error) {
-            if (mc().screen == null) mc().setScreen(page);
+            if (mc().gui.screen() == null) mc().gui.setScreen(page);
             page.message(error.getMessage() == null ? "材料任务未能开始" : error.getMessage(), 0xFF7777);
         }
     }

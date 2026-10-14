@@ -23,6 +23,7 @@ class SkillManager:
         CREATE TABLE IF NOT EXISTS episodes(id TEXT PRIMARY KEY,hash TEXT UNIQUE,skill_hash TEXT,success INTEGER,reason TEXT,body TEXT,created REAL,witness INTEGER);
         CREATE TABLE IF NOT EXISTS lessons(id TEXT PRIMARY KEY,body TEXT,created REAL);
         CREATE TABLE IF NOT EXISTS cursors(name TEXT PRIMARY KEY,value TEXT);
+        CREATE INDEX IF NOT EXISTS episodes_verification_counts ON episodes(skill_hash,witness,success);
         ''')
     def close(self):self.db.close()
     def add_new_skill(self,info):

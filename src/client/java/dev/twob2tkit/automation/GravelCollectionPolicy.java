@@ -26,11 +26,23 @@ public final class GravelCollectionPolicy {
         // vertical escape. Return with the carried batch instead of redive.
         return Double.isFinite(horizontal)&&horizontal>=0&&horizontal<=1.5&&clearPickupColumn;
     }
+    static boolean boundedPickupRebase(double horizontal,boolean provedRoute,int air,int workFloor,
+                                        float health,boolean underwater,int rebases){
+        return Double.isFinite(horizontal)&&horizontal>1.5&&horizontal<=6
+            &&provedRoute&&health>=19&&underwater&&workFloor>=1
+            &&air>=workFloor+40&&rebases>=0&&rebases<4;
+    }
     static boolean sameColumn(double x,double z,int blockX,int blockZ){
         return Math.floor(x)==blockX&&Math.floor(z)==blockZ;
     }
     static int pickupStartFloor(int observedFloor){
+        return pickupStartFloor(observedFloor,false);
+    }
+    static int pickupStartFloor(int observedFloor,boolean currentObservedRoute){
         // Native descent may switch to its fallback return floor mid-action.
+        // A proved calibration that remains valid throughout the bounded
+        // descent can use its actual floor instead of the initial fallback.
+        if(currentObservedRoute&&observedFloor>0&&observedFloor<=300)return observedFloor+15;
         return Math.max(265,observedFloor+15);
     }
     static boolean recoverableDescentAirStop(String detail,float health){

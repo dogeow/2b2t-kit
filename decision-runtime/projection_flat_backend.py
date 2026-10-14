@@ -56,6 +56,17 @@ def air_seed_sent_nothing(reply,client):
                  and last['request_id']!=client.last))
 
 
+def planned_stack_in_hand(state,plan,cells):
+    """Reuse only a fully observed plain selected stack, never an item-ID hint."""
+    slot=state.get('selected_slot')
+    if type(slot)is not int or slot!=plan['slot']:return False
+    row=next((r for r in state.get('inventory',[])if r.get('slot')==slot),{})
+    hand=state.get('hand')or{}
+    return (set(row)=={'slot','item','count','max_stack'} and row.get('item')==plan['item']
+            and type(row.get('count'))is int and row['count']>=cells+2
+            and all(hand.get(k)==row.get(k)for k in ('item','count','max_stack')))
+
+
 def scene(layout, reply, low, high, world, revision):
     """Accept a complete bounded native scan, including explicit light rules."""
     volume = math.prod(b - a + 1 for a, b in zip(low, high))
@@ -261,8 +272,9 @@ class FlatMapBackend(Backend):
         here = state['pos']
         within_map=(self.request['flat_map'].get('direct_within_map_windows')is True
                     and on_map(here)and on_map(target))
+        minimum_feet=high[1]+(1.5 if within_map else 2)
         if (not (within_map or on_map(here) and at_work(target) or at_work(here) and on_map(target))
-                or min(here[1], target[1]) < high[1]+2
+                or min(here[1], target[1]) < minimum_feet
                 or math.dist(here, target) > 256):
             return False
         from material_jobs.navigation import settled_state
@@ -349,6 +361,8 @@ class FlatMapBackend(Backend):
         minimum=getattr(self,'profile',{}).get('minimum_projection_trip_stack',3)
         if type(minimum)is not int or not 3<=minimum<=64:
             raise JobBlocked('地图材料单次返图数量登记无效')
+        if self.request['flat_map'].get('build_carried_partial_batches') is True:
+            minimum=3
         excluded = policy(self.request['flat_map'])['excluded_positions']
         needed={}
         for row in audit.get('mismatches', []):
@@ -378,7 +392,7 @@ class FlatMapBackend(Backend):
         if (not isinstance(item,str)or load.get('item')!=item or load.get('usable_before')!=0
                 or type(load.get('current_eligible_stock'))is not int
                 or type(load.get('missing_cells'))is not int or type(load.get('reserve_per_stack'))is not int
-                or load['current_eligible_stock']<load['missing_cells']+load['reserve_per_stack']):return False
+                or load['current_eligible_stock']<=load['reserve_per_stack']):return False
         from material_stack_consolidation import offer,run_inventory
         minimum=1+sum(not row.get('count')for row in state.get('inventory',[])if row.get('slot',99)<36)
         candidate=offer(state,item,minimum)
@@ -480,7 +494,8 @@ class FlatMapBackend(Backend):
         mask = [position(p) for p in plan['positions']]
         if set(mask) & before.keys() or set(mask) & layout.config['excluded_positions']:
             raise JobBlocked('当前窗口包含已占用或保留坐标')
-        client.checked('select_item', item=plan['item'], slot=plan['slot'])
+        if not planned_stack_in_hand(self._safe_flat(client,layout),plan,len(mask)):
+            client.checked('select_item', item=plan['item'], slot=plan['slot'])
         state = self._safe_flat(client, layout)
         selected = next((r for r in state['inventory'] if r['slot'] == state.get('selected_slot')), {})
         if (set(selected) != {'slot', 'item', 'count', 'max_stack'}

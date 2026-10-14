@@ -48,7 +48,9 @@ class MeteorFlightWorldGuardWiringTest {
 		assertEquals(List.of("onDeactivate()V"), value(redirect, "method"));
 		assertEquals(0, value(redirect, "require"), "Optional absent Meteor/site must not prevent client startup");
 		assertEquals(false, value(redirect, "remap"));
-		var at = (AnnotationNode) value(redirect, "at");
+		var atValue = value(redirect, "at");
+		if (atValue instanceof List<?> sites) { assertEquals(1, sites.size()); atValue=sites.getFirst(); }
+		var at = (AnnotationNode) atValue;
 		assertEquals("INVOKE", value(at, "value")); assertEquals(TARGET, value(at, "target"));
 		assertFalse(hook.desc.contains("CallbackInfo"), "No whole-method cancellation");
 		String configuration = Files.readString(Path.of("src/client/resources/twob2tkit.client.mixins.json"));

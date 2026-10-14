@@ -143,7 +143,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 			.tooltip(Tooltip.create(Component.literal("打开后，标记过「已去」的结构不再出现在结果里。")))
 			.build());
 		addRenderableWidget(Button.builder(Component.literal("标记"), button ->
-			this.minecraft.setScreen(new StructureMarksScreen(this, config)))
+			this.minecraft.gui.setScreen(new StructureMarksScreen(this, config)))
 			.bounds(left + 228, y, 112, 20)
 			.tooltip(Tooltip.create(Component.literal("查看全部已标记的结构，可以逐个删除或者一次清空。")))
 			.build());
@@ -196,7 +196,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 				.tooltip(Tooltip.create(Component.literal("点一下切换去过/没去过。开了「只看没去过」时，已去的会被藏起来。")))
 				.build());
 			addRenderableWidget(Button.builder(Component.literal(note.isEmpty() ? "备注" : "备注*"), button ->
-				this.minecraft.setScreen(new StructureNoteScreen(this, config, markKind(hit), hit))
+				this.minecraft.gui.setScreen(new StructureNoteScreen(this, config, markKind(hit), hit))
 			).bounds(left + 200, rowY, 38, 20)
 				.tooltip(Tooltip.create(Component.literal(note.isEmpty() ? "给这个结构写备注" : "备注：" + note)))
 				.build());
@@ -348,7 +348,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 			showUnifiedResults(page);
 		});
 		page.action("结构标记", "查看已去过的位置和备注。", () -> dev.twob2tkit.UiFeature.STRUCTURE_MARKS.open(page));
-		minecraft.setScreen(page); return true;
+		minecraft.gui.setScreen(page); return true;
 	}
 	private void showUnifiedResults(Screen searchPage) {
 		var list = new dev.twob2tkit.KitCollectionScreen<StructureLocator.Hit>(searchPage, config, "structure-results:" + kind,
@@ -363,17 +363,17 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 			detail.note("X " + hit.x() + "  Z " + hit.z() + " · 搜索时距离 " + hit.distance() + " 格"); detail.note(hitHint(hit));
 			var savedMark = config.structureMark(markKind(hit), hit.x(), hit.z());
 			if (savedMark != null) detail.note((savedMark.visited ? "已去过" : "尚未标记去过") + "；备注：" + (savedMark.note == null ? "" : savedMark.note));
-			detail.action("编辑备注", "保存本地备注。", () -> minecraft.setScreen(new StructureNoteScreen(list, config, markKind(hit), hit)));
+			detail.action("编辑备注", "保存本地备注。", () -> minecraft.gui.setScreen(new StructureNoteScreen(list, config, markKind(hit), hit)));
 			detail.action("复制坐标", "只复制，不发送命令。", () -> { copyHit(hit); detail.message("已复制坐标", 0x77DDCC); });
-			minecraft.setScreen(detail);
+			minecraft.gui.setScreen(detail);
 		});
 		list.action("指引", "只显示方向和距离。", this::startGuide, hit -> currentDimension() == dimension);
 		list.action("前往", "按当前维度巡航高度前往。", this::cruiseTo, hit -> currentDimension() == dimension);
 		list.action("已去", "切换去过状态。", hit -> { var mark = config.ensureStructureMark(markKind(hit), hit.x(), hit.z()); mark.visited = !mark.visited; config.saveStructureMarks(); list.refresh(); }, hit -> true);
-		list.add("搜索设置", () -> minecraft.setScreen(searchPage));
+		list.add("搜索设置", () -> minecraft.gui.setScreen(searchPage));
 		list.footer("Chunkbase", this::openChunkbase);
 		list.footer("停止指引", () -> { if (KitClient.structureGuide() != null) KitClient.structureGuide().stop(); list.message("已停止指引"); });
-		minecraft.setScreen(list);
+		minecraft.gui.setScreen(list);
 	}
 
 	private static boolean matchesResultFilter(StructureLocator.Hit hit, String q, int originX, int originZ) {
@@ -459,7 +459,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 		StructureGuide guide = KitClient.structureGuide();
 		if (guide == null) return;
 		guide.start(hit.label(), hit.x(), hit.z());
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 		showNotice("已开始指引 " + hit.label() + "，字幕会显示方向和距离", 0x55FFFF);
 	}
 
@@ -468,7 +468,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 		StructureGuide guide = KitClient.structureGuide();
 		if (guide != null) guide.stop();
 		controller.start(this.minecraft, hit.x() + 0.5, hit.z() + 0.5, cruiseYForDimension());
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 巡航高度按维度。 */

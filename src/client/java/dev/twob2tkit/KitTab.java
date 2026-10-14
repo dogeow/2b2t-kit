@@ -93,13 +93,13 @@ public enum KitTab {
 
 	/** 切标签：先刷巡航草稿，写入 lastUiTab 再开对应屏。 */
 	static void open(Minecraft client, KitTab tab) {
-		if (client.screen instanceof KitScreen cruise) cruise.flushForTabSwitch();
+		if (client.gui.screen() instanceof KitScreen cruise) cruise.flushForTabSwitch();
 		KitConfig config = KitClient.config();
 		KitController controller = KitClient.controller();
 		if (config == null || controller == null) return;
 		config.lastUiTab = tab.name();
 		config.save();
-		client.setScreen(tab.create(config, controller));
+		client.gui.setScreen(tab.create(config, controller));
 	}
 
 	/** 围箱屏；模块未就绪则回首页。 */

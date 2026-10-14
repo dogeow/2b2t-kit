@@ -5,6 +5,7 @@ coordinates, retained targets and lights are job data, never module constants.
 Planning does not authorize replay or acknowledge a placement.
 """
 from collections import Counter
+import heapq
 import math
 
 from projection_completion import block_state
@@ -13,6 +14,7 @@ from projection_stock_plan import plan_stock
 from material_jobs.projection_spatial_cache import native_content_hash
 
 AIR = {'Block{minecraft:air}', 'Block{minecraft:cave_air}', 'Block{minecraft:void_air}'}
+PRINT_FEET_OFFSET=1.75
 PLAIN_BLOCKS = {
     'stone', 'cobblestone', 'granite', 'diorite', 'andesite', 'deepslate', 'tuff',
     'sandstone', 'red_sandstone', 'mud_bricks', 'dripstone_block', 'lodestone',
@@ -193,35 +195,61 @@ def next_batch(layout, actual, snapshot, *, cell_budget=None):
     for p in candidates:
         by_item.setdefault(layout.expected[p]['item'], set()).add(p)
     choices = []
+    masks = {}
     for stack in stacks:
         item = stack['item']
         targets = by_item.get(item, set())
         ready = {p for p in targets if p not in layout.single_seed_only and p not in layout.axis_targets
                  and any(n in actual for n in neighbors(p))}
         buckets = {(int((p[0] - layout.low[0]) // 4), int((p[2] - layout.low[2]) // 4)) for p in ready}
-        for bx, bz in buckets:
-            low = (layout.low[0] + bx * 4, layout.low[1], layout.low[2] + bz * 4)
+        origins={(layout.low[0]+bx*4,layout.low[2]+bz*4)for bx,bz in buckets}
+        # A hole can cross the arbitrary four-block grid. Nearby shifted
+        # windows let one central station fill both halves without two stops.
+        nearest=heapq.nsmallest(32,ready,key=lambda p:((p[0]+.5-feet[0])**2+(p[2]+.5-feet[2])**2,p))
+        for p in nearest:
+            for dx in range(4):
+                for dz in range(4):
+                    origins.add((max(layout.low[0],min(p[0]-dx,max(layout.low[0],layout.high[0]-3))),
+                                 max(layout.low[2],min(p[2]-dz,max(layout.low[2],layout.high[2]-3)))))
+        for ox,oz in origins:
+            low = (ox,layout.low[1],oz)
             high = (min(low[0] + 3, layout.high[0]), low[1], min(low[2] + 3, layout.high[2]))
-            mask = connected_mask(targets-layout.axis_targets, actual, low, high, min(16, budget, stack['count'] - 2),
-                                  excluded=layout.config['excluded_positions'])
+            limit=min(16,budget,stack['count']-2)
+            key=(item,low,high,limit)
+            if key not in masks:
+                # Only the patch and its one-cell support halo can affect this
+                # mask. The complete actual/model mapping was validated once
+                # above; do not revalidate thousands of distant cells per patch.
+                local_targets={(x,low[1],z)for x in range(low[0],high[0]+1)
+                    for z in range(low[2],high[2]+1)
+                    if (x,low[1],z)in targets and (x,low[1],z)not in layout.axis_targets}
+                local_correct={(x,low[1],z)for x in range(low[0]-1,high[0]+2)
+                    for z in range(low[2]-1,high[2]+2)if (x,low[1],z)in actual}
+                masks[key]=connected_mask(local_targets,local_correct,low,high,limit,
+                                          excluded=layout.config['excluded_positions'])
+            mask=masks[key]
             if not mask:
                 continue
-            station = [(low[0] + high[0] + 1) / 2, low[1] + 2.75, (low[2] + high[2] + 1) / 2]
-            choices.append((math.dist(feet, station), -len(mask), item, stack['slot'],
+            station = [(min(p[0]for p in mask)+max(p[0]for p in mask)+1)/2,
+                       low[1]+PRINT_FEET_OFFSET,(min(p[2]for p in mask)+max(p[2]for p in mask)+1)/2]
+            distance=math.dist(feet,station)
+            # Prefer useful coverage per stop, retaining deterministic travel
+            # and stack ties. Every mask still has the same reach and reserve.
+            choices.append(((distance+2)/len(mask),distance,-len(mask),item,stack['slot'],
                             {**base, 'phase': 'ready', 'operation': 'print', 'item': item,
                              'positions': [list(p) for p in mask], 'station': station,
                              'patch_min': list(low), 'patch_max': list(high), 'slot': stack['slot'],
                              'stack_before': stack['count'], 'retained_after': stack['count'] - len(mask)}))
     if choices:
-        return min(choices, key=lambda r: r[:4])[4]
+        return min(choices, key=lambda r: r[:5])[5]
     if type(snapshot.get('projection_air_seed_protocol')) is int and snapshot['projection_air_seed_protocol'] == 1:
-        seeds = [(math.dist(feet, [p[0] + .5, p[1] + 2.75, p[2] + .5]), p, s)
+        seeds = [(math.dist(feet, [p[0] + .5, p[1] + PRINT_FEET_OFFSET, p[2] + .5]), p, s)
                  for s in stacks for p in candidates if layout.expected[p]['item'] == s['item']
                  and (p not in layout.single_seed_only or snapshot.get('projection_mushroom_stem_seed_protocol')==1)]
         if seeds:
             _, p, stack = min(seeds, key=lambda r: (r[0], r[1], r[2]['slot']))
             return {**base, 'phase': 'ready', 'operation': 'air_seed', 'item': stack['item'],
-                    'positions': [list(p)], 'station': [p[0] + .5, p[1] + 2.75, p[2] + .5],
+                    'positions': [list(p)], 'station': [p[0] + .5, p[1] + PRINT_FEET_OFFSET, p[2] + .5],
                     'patch_min': list(p), 'patch_max': list(p), 'slot': stack['slot'],
                     'stack_before': stack['count'], 'retained_after': stack['count'] - 1}
     needs = Counter(layout.expected[p]['item'] for p in candidates)

@@ -95,6 +95,11 @@ def collect_drop(client,drop,observation=None,seconds=90):
                 return True
             same=next((e for e in latest.get('entities',[]) if e.get('uuid')==current['uuid']
                        and e.get('stack')==current.get('stack')),None)
-            if same is not None:return collect_nearby_ground(client,same)
+            if same is not None:
+                # An airborne approach can stop just outside pickup reach.
+                # Reuse the existing exactly scoped fractional air correction
+                # before the ground fallback; never send collect_item twice.
+                if collect_nearby_air(client,same,before):return True
+                return collect_nearby_ground(client,same)
         return False
     return False

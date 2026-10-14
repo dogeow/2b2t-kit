@@ -69,7 +69,7 @@ public final class AutoChopper {
 	private final Set<BlockPos> stumps = new HashSet<>();
 	private final Set<BlockPos> ignored = new HashSet<>();
 	private boolean active;
-	private boolean finishRequested,materialTargetFinished;
+	private boolean finishRequested,materialTargetFinished,materialRetainSaplings;
 	private String materialLog="";
 	private int materialTreeLimit;
 	private ChopperFixedTreePlan fixedTree;
@@ -111,6 +111,13 @@ public final class AutoChopper {
 	public void finishCurrentTree(){if(active)finishRequested=true;}
 	public boolean materialTargetFinished(){return materialTargetFinished;}
 	public void startMaterial(Minecraft client,String logId){start(client);materialLog=logId;}
+	public void retainMaterialSaplings(Minecraft client){
+		if(!active||materialLog.isEmpty())throw new IllegalStateException("树苗保留仅用于当前材料采集");
+		materialRetainSaplings=true;loot.setCollectLeaves(false);
+		fileLog(client,"retain-saplings natural-leaf-decay=true replant=false");
+	}
+	private boolean replantEnabled(){return ChopperMaterialPolicy.replant(config.chopperReplant,materialRetainSaplings);}
+	private boolean leavesEnabled(){return ChopperMaterialPolicy.harvestLeaves(config.chopperLeaves,materialRetainSaplings);}
 	public void startMaterialFixed(Minecraft client,String logId,ChopperFixedTreePlan plan){
 		if(ChopperTrees.findFixed(client,plan,logId)==null)throw new IllegalStateException("Fixed tree is absent, ambiguous, unloaded or outside its bounds");
 		BlockPos standby=scaffold.fixedStandby(client,plan,logId);
@@ -151,7 +158,7 @@ public final class AutoChopper {
 	public void start(Minecraft client) {
 		if (client.player == null || client.level == null) return;
 		active = true;
-		finishRequested=false;materialTargetFinished=false;materialLog="";materialTreeLimit=0;fixedTree=null;fixedStandby=null;
+		finishRequested=false;materialTargetFinished=false;materialRetainSaplings=false;materialLog="";materialTreeLimit=0;fixedTree=null;fixedStandby=null;
 		clearTree();
 		try { scaffold.start(client); miningModules.acquire(); } catch (IllegalStateException e) { stop(client,e.getMessage()); return; }
 		ignored.clear();
@@ -183,7 +190,7 @@ public final class AutoChopper {
 		loot.closeFlight(client);
 		scaffold.stop(client);
 		miningModules.release(); nativeTarget=null;
-		active = false;
+		active = false;materialRetainSaplings=false;
 		clearTree();
 		ignored.clear();
 		loot.resetSession();
@@ -207,7 +214,7 @@ public final class AutoChopper {
 			stop(client, "离开世界");
 			return;
 		}
-		if (client.screen != null) {
+		if (client.gui.screen() != null) {
 			loot.pauseFlight(client);
 			ChopperKeys.releaseMine(client);
 			ChopperKeys.releaseWalk(client);
@@ -234,7 +241,7 @@ public final class AutoChopper {
 
 		if (treeLogs.isEmpty() && currentTreeOpen && !verifyCrown(client)) return;
 		if (treeLogs.isEmpty()) {
-			boolean moreLeaves = config.chopperLeaves && currentTreeOpen && nearestLeaf(client, player) != null;
+			boolean moreLeaves = leavesEnabled() && currentTreeOpen && nearestLeaf(client, player) != null;
 			if (!moreLeaves) {
 				if (currentTreeOpen && scaffold.workingAboveGround()) { scaffold.beginCleanup(); return; }
 				if (currentTreeOpen) finishTree(client);
@@ -262,7 +269,7 @@ public final class AutoChopper {
 					ChopperKeys.holdStill(client);
 					return;
 				}
-				if (config.chopperReplant && !stumps.isEmpty()) {
+				if (replantEnabled() && !stumps.isEmpty()) {
 					if (tryReplant(client, player)) return;
 					stumps.clear();
 				}
@@ -343,7 +350,7 @@ public final class AutoChopper {
 
 	/** Meteor 改朝向后写回挖树/捡物瞄准。 */
 	public void reapplyLook(Minecraft client) {
-		if (!active || combatPauseTicks > 0 || client.player == null || client.screen != null) return;
+		if (!active || combatPauseTicks > 0 || client.player == null || client.gui.screen() != null) return;
 		if (scaffold.busy()) { ChopperKeys.reapplySmoothLook(client.player); return; }
 		if (mineLook != null) {
 			ChopperKeys.reapplySmoothLook(client.player);
@@ -371,7 +378,7 @@ public final class AutoChopper {
 		currentTreeOpen = false;
 		treesDone++;
 		fileLog(client,"crown-complete verified=0 witness="+crownWitness.size()+" supports="+scaffold.count());
-		replantDelay = config.chopperReplant ? 12 : 4;
+		replantDelay = replantEnabled() ? 12 : 4;
 		if (config.chopperPickup) {
 			BlockPos start = scaffold.groundOrigin()!=null ? scaffold.groundOrigin() : treeBase != null ? treeBase
 				: !stumps.isEmpty() ? stumps.iterator().next()
@@ -432,7 +439,7 @@ public final class AutoChopper {
 				best = log;
 			}
 		}
-		if (best == null && config.chopperLeaves) {
+		if (best == null && leavesEnabled()) {
 			best = nearestLeaf(client, player);
 		}
 		if (best == null) return null;
@@ -771,14 +778,14 @@ public final class AutoChopper {
 		if (ChopperTrees.isWood(state)) return ChopperTrees.canBreak(client, pos);
 		if (disposableGrass(state)) return !treeLogs.isEmpty();
 		if (!state.is(BlockTags.LEAVES) || !ChopperTrees.canBreak(client, pos)) return false;
-		return config.chopperLeaves || !treeLogs.isEmpty();
+		return leavesEnabled() || !treeLogs.isEmpty();
 	}
 
 	/** 树叶换剪刀，否则换斧。 */
 	private static boolean disposableGrass(BlockState state) { return state.is(net.minecraft.world.level.block.Blocks.SHORT_GRASS) || state.is(net.minecraft.world.level.block.Blocks.FERN); }
 	private void selectTool(Minecraft client, BlockPos pos) {
 		if (client.level != null && client.level.getBlockState(pos).is(BlockTags.LEAVES)) {
-			if(config.chopperLeaves)selectShears(client);else selectAxe(client);
+			if(leavesEnabled())selectShears(client);else selectAxe(client);
 			return;
 		}
 		selectAxe(client);

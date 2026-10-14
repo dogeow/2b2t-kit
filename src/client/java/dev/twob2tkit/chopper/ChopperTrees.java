@@ -127,6 +127,11 @@ public final class ChopperTrees {
 		String type=BuiltInRegistries.BLOCK.getKey(source).getPath().replace("stripped_","");
 		String leaves=type.contains("mangrove")?"mangrove_leaves":type.replace("_log","_leaves").replace("_wood","_leaves");
 		return new ChopperCanopy.World(){
+			public boolean loaded(BlockPos p){
+				var chunk=c.level.getChunkSource().getChunk(p.getX()>>4,p.getZ()>>4,net.minecraft.world.level.chunk.status.ChunkStatus.FULL,false);
+				return dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence.isServerChunk(c.level,chunk);
+			}
+			public boolean stump(BlockPos p){return wood(p)&&c.level.getBlockState(p.below()).is(BlockTags.DIRT);}
 			public boolean wood(BlockPos p){return c.level.hasChunkAt(p)&&c.level.getBlockState(p).is(source);}
 			public boolean leaf(BlockPos p){
 				if(!c.level.hasChunkAt(p))return false;var s=c.level.getBlockState(p);

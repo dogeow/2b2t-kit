@@ -404,7 +404,7 @@ final class BorerRangedCombat {
         return TrialCreeperHorizontalPolicy.safe(authorized,engine.standaloneGuard,missingRestored,grounded,nearbyHostile,threats);
     }
     private boolean trialCreeperFlight(Minecraft c, boolean missingRestored) {
-        if(missingRestored||c.player==null||c.level==null||c.gameMode==null||c.screen!=null)return false;
+        if(missingRestored||c.player==null||c.level==null||c.gameMode==null||c.gui.screen()!=null)return false;
         boolean authorized;
         try{authorized=engine.host.allowTrialCreeperMelee(c);}catch(LinkageError oldHost){return false;}
         if(!authorized||hasUsableBow(c)||c.player.hasEffect(net.minecraft.world.effect.MobEffects.WEAKNESS))return false;
@@ -560,7 +560,7 @@ final class BorerRangedCombat {
         return true;
     }
     private boolean trialCreeperMelee(Minecraft c, boolean missingRestored) {
-        if (missingRestored || c.player == null || c.level == null || c.gameMode == null || c.screen != null)
+        if (missingRestored || c.player == null || c.level == null || c.gameMode == null || c.gui.screen() != null)
             return false;
         boolean authorized;
         try { authorized = engine.host.allowTrialCreeperMelee(c); }
@@ -805,7 +805,7 @@ final class BorerRangedCombat {
 	}
     private boolean safetyRise(Minecraft c,boolean missingRestored){
         var p=c.player;
-        if(c.level!=combatWorld||c.screen!=null||BorerAreaRunner.physicalMovementHeld(c,c.options.keyUp,c.options.keyDown,
+        if(c.level!=combatWorld||c.gui.screen()!=null||BorerAreaRunner.physicalMovementHeld(c,c.options.keyUp,c.options.keyDown,
             c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint)){
             safetyRise.cancel();return false;
         }
@@ -1320,7 +1320,7 @@ final class BorerRangedCombat {
 		try { return engine.host.supportsVisibleBowAim(); } catch (LinkageError oldHost) { return false; }
 	}
 	RotationAim.Look visibleLook(Minecraft c) {
-		if (target == null || !target.isAlive() || look == null || c.player == null || c.screen != null) return null;
+		if (target == null || !target.isAlive() || look == null || c.player == null || c.gui.screen() != null) return null;
 		long age = (long)c.player.tickCount - lookTick;
 		return age >= 0 && age <= 1 ? look : null;
 	}
@@ -1329,13 +1329,13 @@ final class BorerRangedCombat {
 	}
 	private boolean viewReady(Minecraft c) {
 		if (c.player == null || c.getCameraEntity() != c.player || !c.options.getCameraType().isFirstPerson()) return false;
-		var camera = c.gameRenderer.getMainCamera();
+		var camera = c.gameRenderer.mainCamera();
 		return camera.isInitialized() && camera.entity() == c.player && !camera.isDetached()
 			&& viewGate.ready(look, new RotationAim.Look(camera.yRot(), camera.xRot()), c.player.tickCount);
 	}
 	private void logViewWait(Minecraft c) {
 		if (++viewWaitTicks == 1 || viewWaitTicks % 40 == 0) {
-			var camera = c.gameRenderer.getMainCamera();
+			var camera = c.gameRenderer.mainCamera();
 			engine.fileLog(c, "area-defense-wait-view id=" + target.getId() + " wanted=" + look
 				+ " camera=" + camera.yRot() + "," + camera.xRot() + " firstPerson=" + c.options.getCameraType().isFirstPerson());
 		}
@@ -1343,12 +1343,12 @@ final class BorerRangedCombat {
 	/** Called immediately before vanilla RELEASE_USE_ITEM, not when the key was merely scheduled to be released. */
 	boolean prepareRelease(Minecraft c) {
 		if (!drawing && !releasePending) return true;
-        if(c.player!=null&&c.level!=null&&c.screen==null&&shieldCycle.enabled()&&incomingProjectile(c)){
+        if(c.player!=null&&c.level!=null&&c.gui.screen()==null&&shieldCycle.enabled()&&incomingProjectile(c)){
             // Cancel this scheduled bow release. The next normal combat tick
             // raises the shield; do not let this callback release a new hand use.
             shieldCycle.shot(c.player.tickCount);cancelDraw(c);return false;
         }
-		if (c.player == null || c.level == null || c.screen != null || target == null
+		if (c.player == null || c.level == null || c.gui.screen() != null || target == null
 			|| c.level.getEntity(target.getId()) != target || !target.isAlive() || !session.canAttack(target.getUUID())
 			|| !c.player.hasLineOfSight(target) || !visibleHost()) { cancelDraw(c); return false; }
 		var p = c.player;

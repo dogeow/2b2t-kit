@@ -75,7 +75,7 @@ final class BottleWaterAction {
         c.level.getChunkSource().getChunk(target.getX()>>4,target.getZ()>>4,ChunkStatus.FULL,false));}
     private boolean source(Minecraft c){var s=c.level.getBlockState(target);return s.toString().equals(expectedState)&&s.is(Blocks.WATER)
         &&s.getFluidState().is(Fluids.WATER)&&s.getFluidState().isSource()&&s.getValue(LiquidBlock.LEVEL)==0&&c.level.getBlockEntity(target)==null;}
-    private boolean idle(Minecraft c){return same(c)&&c.screen==null&&c.player.containerMenu==c.player.inventoryMenu
+    private boolean idle(Minecraft c){return same(c)&&c.gui.screen()==null&&c.player.containerMenu==c.player.inventoryMenu
         &&c.player.containerMenu.getCarried().isEmpty()&&!c.player.isUsingItem()&&!c.options.keyUse.isDown()
         &&c.player.getInventory().getSelectedSlot()==selected&&!c.player.hasInfiniteMaterials()
         &&!c.player.isInWater()&&!c.player.isInLava()&&!c.player.isOnFire()&&c.player.getHealth()>=health;}

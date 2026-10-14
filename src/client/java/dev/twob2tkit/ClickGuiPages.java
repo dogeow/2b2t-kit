@@ -178,7 +178,7 @@ final class ClickGuiPages {
 		var p = new KitFormScreen(parent, "挖矿路线", "暂停、继续和重启保留同一行程；沿路回家返回该行程的起点。").bind(c).id("mining-routes");
 		p.liveNote(() -> b == null ? "运行引擎未就绪" : b.trailOriginLabel() + " · " + b.trailLength() + " 个路点；" + b.status());
 		p.action("显示 / 隐藏回家箭头", "只显示，不自动移动。", () -> { if (b != null) b.toggleHomeRoute(mc()); });
-		p.action("沿路回家", "按现有路点返回，不清除工程进度。", () -> { if (b != null) { KitClient.goBorerHome(mc()); if (b.isGoingHome()) mc().setScreen(null); } });
+		p.action("沿路回家", "按现有路点返回，不清除工程进度。", () -> { if (b != null) { KitClient.goBorerHome(mc()); if (b.isGoingHome()) mc().gui.setScreen(null); } });
 		p.action("回地狱门", "使用已记录的地狱门路线。", () -> KitClient.goNetherPortal(mc()));
 		p.danger("开始新的挖矿行程", "先备份完整旧路线，再把当前位置设为新起点；不会立即开始挖矿。", () -> {
 			if (b == null) return;
@@ -253,8 +253,8 @@ final class ClickGuiPages {
 		p.action("当前位置新建任务", "替换上次风景任务前需要确认；不改挖矿工程或巡航坐标。", () -> {
 			if (b != null && b.isActive()) { p.showNotice("请先停止当前任务，再新建风景任务", 0xFF7777); return; }
 			if (!p.finishEdits()) return;
-			mc().setScreen(new KitConfirmScreen(p, "新建风景任务", "使用当前位置和半径 " + c.sceneryRadiusBlocks + " 格，替换上次风景任务的进度。", () -> {
-				if (KitClient.startScenery(mc(), c.sceneryRadiusBlocks, false)) mc().setScreen(null);
+			mc().gui.setScreen(new KitConfirmScreen(p, "新建风景任务", "使用当前位置和半径 " + c.sceneryRadiusBlocks + " 格，替换上次风景任务的进度。", () -> {
+				if (KitClient.startScenery(mc(), c.sceneryRadiusBlocks, false)) mc().gui.setScreen(null);
 				else p.showNotice(b == null ? "模块未就绪" : b.sceneryStatus(), 0xFF7777);
 			}));
 		});
@@ -269,13 +269,13 @@ final class ClickGuiPages {
 			gui.showDetail(panel);
 			return;
 		}
-		mc().setScreen(panel);
+		mc().gui.setScreen(panel);
 	}
 
 	/** 盾构机密排设置页。 */
 	static void borer(Screen parent, KitConfig config) {
 		if (TunnelBorer.Mode.fromConfig(config.borerLastMode) == TunnelBorer.Mode.AREA) {
-			mc().setScreen(new dev.twob2tkit.borer.AreaSetupScreen(parent, config)); return;
+			mc().gui.setScreen(new dev.twob2tkit.borer.AreaSetupScreen(parent, config)); return;
 		}
 		TunnelBorer borer = KitClient.borer();
 		KitFormScreen panel = new KitFormScreen(parent, "盾构机", "点图标勾矿。Xray 用 Meteor 的 Z。");
@@ -357,7 +357,7 @@ final class ClickGuiPages {
 			config.save();
 		});
 		if (TunnelBorer.Mode.fromConfig(config.borerLastMode) == TunnelBorer.Mode.AREA) {
-			panel.action("区域与工程", "设置范围、保存或加载工程、开始挖掘。", () -> mc().setScreen(new dev.twob2tkit.borer.AreaSetupScreen(parent, config)));
+			panel.action("区域与工程", "设置范围、保存或加载工程、开始挖掘。", () -> mc().gui.setScreen(new dev.twob2tkit.borer.AreaSetupScreen(parent, config)));
 		} else {
 			panel.note("切到「区域挖」后可设两点矩形；同页设置范围、保存工程和启动。");
 		}
@@ -409,7 +409,7 @@ final class ClickGuiPages {
 		});
 		panel.action("沿路回家", "自动沿走过的路往回走。", () -> {
 			if (borer != null) {
-				mc().setScreen(null);
+				mc().gui.setScreen(null);
 				borer.goHome(mc());
 			}
 		});
@@ -448,7 +448,7 @@ final class ClickGuiPages {
 		});
 		panel.section("收藏与出行");
 		panel.action("地点收藏", "编辑收藏不会改变当前目标；按前往才起飞。", () -> UiFeature.PLACES.open(panel));
-		panel.action("继续上次巡航", "使用控制器保存的目标，不把本页草稿当成新目标。", () -> { if (!controller.isActive() && controller.resume(mc())) mc().setScreen(null); });
+		panel.action("继续上次巡航", "使用控制器保存的目标，不把本页草稿当成新目标。", () -> { if (!controller.isActive() && controller.resume(mc())) mc().gui.setScreen(null); });
 		panel.action("巡航选项", "绕障、到达和挂机保护。", () -> cruiseOptions(panel, config));
 		panel.action("附近结构", "查看候选位置与指引。", () -> UiFeature.STRUCTURES.open(panel));
 		panel.action("风景预加载", "独立跑图任务。", () -> UiFeature.SCENERY.open(panel));
@@ -739,7 +739,7 @@ final class ClickGuiPages {
 			config.minimumHealingItems = v;
 			config.save();
 		});
-		panel.action("多选回血物品", "打开原来的多选页。", () -> mc().setScreen(new HealingItemsScreen(panel, config)));
+		panel.action("多选回血物品", "打开原来的多选页。", () -> mc().gui.setScreen(new HealingItemsScreen(panel, config)));
 		panel.bool("下界未穿金质护甲", "猪人会攻击。", () -> config.netherGoldArmorAlert, v -> {
 			config.netherGoldArmorAlert = v;
 			config.save();
@@ -782,7 +782,7 @@ final class ClickGuiPages {
 			() -> config.recipeBookEnhancementEnabled,
 			v -> LocalRecipeBookInjector.setEnhancementEnabled(mc(), v));
 		panel.action("按键绑定", "巡航、盾构、紧急停止等热键。",
-			() -> mc().setScreen(new KitKeyBindsScreen(gui)));
+			() -> mc().gui.setScreen(new KitKeyBindsScreen(gui)));
 		panel.action("检查并加载新版", "热加载 runtime/twob2tkit-engine.jar。", () -> {
 			TunnelBorer.ReloadResult result = KitClient.reloadBorerRuntime(mc(), false);
 			gui.showNotice(result.message(), result.success() ? 0x55FF55 : 0xFF5555);
@@ -806,7 +806,7 @@ final class ClickGuiPages {
 			if (mc().level == null || !mc().level.dimension().identifier().toString().equals(config.deathDimension)) { panel.showNotice("死亡点在另一维度，请先切换维度", 0xFF7777); return; }
 			double safeY = Math.max(config.cruiseY, config.deathY + 32.0);
 			controller.startDeathRecovery(mc(), config.deathX, config.deathZ, safeY);
-			mc().setScreen(null);
+			mc().gui.setScreen(null);
 		});
 		panel.action("设为巡航目标", "返回后可开始巡航。", () -> {
 			if (!config.hasDeathPoint) return;

@@ -33,7 +33,7 @@ class InterfacePauseTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             seen = []
             samples = iter([state(screen=screen, interface_paused=True)
-                            for screen in ('ChatScreen', 'SignEditScreen', 'BookEditScreen',
+                            for screen in ('InventoryScreen', 'ChatScreen', 'SignEditScreen', 'BookEditScreen',
                                            'AdvancementsScreen', 'KitHudScreen')]
                            + [state()])
             client = self.client(Path(temp), samples)
@@ -43,9 +43,42 @@ class InterfacePauseTest(unittest.TestCase):
                 final = client.status()
             self.assertEqual(final['screen'], '')
             self.assertEqual(client.rev, 40)
-            self.assertEqual(sleep.call_count, 5)
-            self.assertEqual(len(seen), 6, 'Heartbeat-aware raw observation continues during every interface wait')
+            self.assertEqual(sleep.call_count, 6)
+            self.assertEqual(len(seen), 7, 'Heartbeat-aware raw observation continues during every interface wait')
             self.assertFalse((client.root / 'request.json').exists())
+
+    def test_inventory_close_with_carried_cursor_waits_without_issuing_or_finishing_any_action(self):
+        with tempfile.TemporaryDirectory() as temp:
+            samples=iter([state(screen='InventoryScreen',interface_paused=True),
+                state(screen='',interface_paused=True,menu={'cursor':{'count':4}}),
+                state(screen='InventoryScreen',interface_paused=True,menu={'cursor':{'count':4}}),
+                state(menu={'cursor':{'count':0}})])
+            client=self.client(Path(temp),samples)
+            with patch('material_client.time.sleep')as sleep:result=client.status()
+            self.assertEqual(result['pos'],[1,2,3]);self.assertEqual(result['control_revision'],40)
+            self.assertEqual(result['menu']['cursor']['count'],0);self.assertEqual(sleep.call_count,3)
+            self.assertFalse((client.root/'request.json').exists())
+
+    def test_long_inflight_inventory_pause_preserves_the_original_navigation_request(self):
+        with tempfile.TemporaryDirectory()as temp:
+            root=Path(temp);elapsed=[0.0]
+            class Fake(Client):
+                def __init__(self):
+                    self.root=self.out=root;self.world='world';self.rev=40
+                    self.anchor=[1,2,3];self.owned=False;self.last=None;self.polls=0;self.ids=set()
+                def raw(self):
+                    current=state();path=root/'request.json'
+                    if path.exists():
+                        request=json.loads(path.read_text());self.ids.add(request['id']);self.polls+=1;elapsed[0]+=2
+                        current.update(id=request['id'],last_request=request['id'],control_revision=41,
+                            phase='running',screen='InventoryScreen',interface_paused=True)
+                        if self.polls==41:current.update(phase='done',screen='',interface_paused=False)
+                    return current
+            with patch('material_client.time.monotonic',side_effect=lambda:elapsed[0]),patch('material_client.time.sleep'):
+                client=Fake();result=client.request('navigate',target=[4,2,3],seconds=1)
+            self.assertEqual('done',result['phase']);self.assertEqual(1,len(client.ids))
+            self.assertEqual(41,client.rev);self.assertEqual(41,client.polls)
+            event=json.loads((root/'events.jsonl').read_text());self.assertEqual(80000,event['interface_pause_ms'])
 
     def test_actual_material_raw_touches_heartbeat_and_observes_health_during_ui_wait(self):
         with tempfile.TemporaryDirectory() as temp:

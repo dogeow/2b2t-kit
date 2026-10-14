@@ -84,7 +84,7 @@ public final class SingleplayerTrialRuntime {
         try{
             write(folder(c).resolve("registry.json"),registry);control(c,"start");disabledModules.keySet().forEach(dev.twob2tkit.MeteorModules::disable);
             LocalDecisionRuntime.configure(c,"local_model","clef-flash");LocalDecisionRuntime.configure(c,"keep_loaded",true);LocalDecisionRuntime.enable(c,true);
-            c.setScreen(null);
+            c.gui.setScreen(null);
             process=new ProcessBuilder(python.toString(),script.toString(),"--game",c.gameDirectory.toString(),"--parent-pid",Long.toString(ProcessHandle.current().pid()))
                 .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(folder(c).resolve("trial-service.log").toFile())).start();
             notice="单人打龙目标已启动；先核对出生地和开局能力";
@@ -97,7 +97,7 @@ public final class SingleplayerTrialRuntime {
             if(command.equals("pause")||command.equals("cancel"))dev.twob2tkit.automation.AutomationBridge.stopTrialInputs(c,text(registry,"trial_id"),run);
             var j=new JsonObject();j.addProperty("id",UUID.randomUUID().toString());j.addProperty("command",command);
             j.addProperty("trial_id",text(registry,"trial_id"));j.addProperty("run_id",run);write(folder(c).resolve("control.json"),j);
-            if(command.equals("resume"))c.setScreen(null);notice=command.equals("pause")?"等待当前动作停止后暂停":command.equals("cancel")?"正在停止此试验，保留记录":notice;
+            if(command.equals("resume"))c.gui.setScreen(null);notice=command.equals("pause")?"等待当前动作停止后暂停":command.equals("cancel")?"正在停止此试验，保留记录":notice;
             if(command.equals("cancel")){cancelled=true;restoreModules();var child=process;if(child!=null)java.util.concurrent.CompletableFuture.delayedExecutor(2,java.util.concurrent.TimeUnit.SECONDS).execute(()->{if(child.isAlive())child.destroy();});}
         }catch(Exception e){throw new IllegalStateException("无法保存单人试验操作",e);}
     }
@@ -108,9 +108,9 @@ public final class SingleplayerTrialRuntime {
     }
     public static void respawn(Minecraft c,JsonObject request){
         require(c,request);int epoch=request.has("death_epoch")?request.get("death_epoch").getAsInt():-1;
-        if(!SingleplayerTrialPolicy.respawn(true,c.player!=null&&c.player.isDeadOrDying(),c.screen instanceof DeathScreen,deaths,epoch,lastRespawn,System.currentTimeMillis()-deadAt))
+        if(!SingleplayerTrialPolicy.respawn(true,c.player!=null&&c.player.isDeadOrDying(),c.gui.screen() instanceof DeathScreen,deaths,epoch,lastRespawn,System.currentTimeMillis()-deadAt))
             throw new IllegalStateException("Trial death is not ready or respawn was already requested");
-        lastRespawn=epoch;c.player.respawn();c.setScreen(null);
+        lastRespawn=epoch;c.player.respawn();c.gui.setScreen(null);
     }
     public static JsonObject snapshot(Minecraft c){
         load(c);var j=new JsonObject();j.addProperty("registered",registeredHere(c));j.addProperty("trial_id",text(registry,"trial_id"));

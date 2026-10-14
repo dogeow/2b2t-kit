@@ -883,6 +883,27 @@ class AcquisitionTest(unittest.TestCase):
             self.assertEqual('blocked',result['phase']);self.assertEqual([],c.actions)
             self.assertEqual(before,path.read_bytes())
 
+    def test_natural_fixed_tree_keeps_selected_wide_root_after_nearest_corner_changes(self):
+        for enabled in (False,True):
+            with self.subTest(enabled=enabled),tempfile.TemporaryDirectory()as out:
+                c=FakeClient(item='minecraft:dark_oak_log',before=2,gain=4)
+                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=1)
+                c.rows=[block((x,63,z),'grass_block')for x in range(-11,12)for z in range(-11,12)]
+                c.rows += [block((x,y,z),'dark_oak_log')for x in(0,1)for z in(0,1)for y in range(64,68)]
+                c.trees=[{'pos':[0,64,0],'top':68,'natural_leaves':8}]
+                original=c.request
+                def request(op,**params):
+                    r=original(op,**params)
+                    if op=='scan_trees'and params.get('radius')==12:r['tree_survey']['trees']=[{'pos':[1,64,0],'top':68,'natural_leaves':8}]
+                    return r
+                c.request=request;p=self.profile(c.item,[-64,0,-64],[63,191,63]);p['resource_regions'][0].update(source='natural_survey',fixed_tree_chop=enabled)
+                result=self.run_acquire(c,out,target=6,profile=p);chops=[a for op,a in c.actions if op=='chop']
+                if not enabled:
+                    self.assertEqual('tree_selection_changed',result['code']);self.assertIs(False,result['native_chop_started']);self.assertEqual([],chops)
+                else:
+                    self.assertEqual('done',result['phase']);self.assertEqual([0,64,0],chops[0]['tree_root'])
+                    self.assertEqual(([-11,59,-11],[11,103,11]),(chops[0]['tree_min'],chops[0]['tree_max']))
+
     def test_uncleared_overburden_is_not_tunneled_through(self):
         with tempfile.TemporaryDirectory() as out:
             c=FakeClient();c.rows.append(block((1,69,1),'stone'))

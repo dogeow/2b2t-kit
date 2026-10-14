@@ -66,7 +66,7 @@ public final class MaterialJobs {
         request.add("target_stack_sizes", stackSizes);
         try {
             Files.createDirectories(nextDir); write(nextDir.resolve("request.json"), request);
-            client.setScreen(null);
+            client.gui.setScreen(null);
             // Closing a screen may flush a config/draft; check ownership once more before spawning.
             JsonObject fresh = AutomationBridge.materialJobContext(client);
             if (!context.equals(fresh)) throw new IllegalStateException("启动前角色或控制状态已变化，请重新开始");
@@ -93,7 +93,7 @@ public final class MaterialJobs {
         AutomationBridge.preemptIdleForPlayer(client,"FORMAL_MATERIAL_RESUME");
         JsonObject context = AutomationBridge.materialJobContext(client);
         if(mode.equals("projection")&&!projectionKey.equals(LitematicaAccess.lockedBuildSelection().key()))throw new IllegalStateException("已暂停任务的投影已改变，请新建材料任务");
-        client.setScreen(null);
+        client.gui.setScreen(null);
         if (!context.equals(AutomationBridge.materialJobContext(client))) throw new IllegalStateException("继续前角色或控制状态已变化，请重新确认");
         control("resume", context); state = "queued"; detail = "正在重新核对任务与安全状态";
     }

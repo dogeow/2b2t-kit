@@ -338,7 +338,15 @@ final class BorerAreaPlan {
 			column = here; pending = nextUnvisited(here);
 			return horizontalFallback(p, "当前列已保留，先安全离开，不再次下降进入液体或箱子");
 		}
-		if (Math.abs(p.y - workY) > HEIGHT) return movement(world, p, p.y > workY ? Action.DOWN : Action.UP, p.x, workY, p.z);
+		if (Math.abs(p.y - workY) > HEIGHT) {
+			// A re-entered shaft may be clear only in the feet column. At its edge,
+			// lowering the full body hits the neighboring unmined column first.
+			if (containsColumn(key(here)) && BorerAreaHorizontal.bodyClear(world, here, min.getY())) {
+				Command centerBeforeHeight = align(world, p, here.getX() + 0.5, here.getZ() + 0.5);
+				if (centerBeforeHeight != null) return centerBeforeHeight;
+			}
+			return movement(world, p, p.y > workY ? Action.DOWN : Action.UP, p.x, workY, p.z);
+		}
 		if (Math.abs(p.vy) > 0.085) return Command.waitAt(p, "稳定水平作业高度");
 		if (horizontalWalking != null) {
 			if (skipped.contains(key(horizontalWalking)) && !BorerAreaHorizontal.bodyClear(world, horizontalWalking, min.getY())) {

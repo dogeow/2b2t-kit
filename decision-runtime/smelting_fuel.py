@@ -1,6 +1,6 @@
 """Verified vanilla fuel facts and a finite, reservation-aware furnace plan.
 
-Additional fuels are enabled only for the checked26.1.2 FuelValues class and
+Additional fuels are enabled only for checked26.1.2/26.2 FuelValues class and
 its actual item tags. Recipe-only fixtures/legacy catalogs retain coal behavior.
 No game client, backend, model, click, crafting or source acquisition is created.
 """
@@ -16,6 +16,7 @@ COAL='minecraft:coal'
 CHARCOAL='minecraft:charcoal'
 FUEL_CLASS='net/minecraft/world/level/block/entity/FuelValues.class'
 FUEL_CLASS_SHA256='848788c166499360d3662a643a05f977c131b670529c47a7d9cc1a852467b8c4'
+VERIFIED_FUEL_VERSIONS=frozenset(('26.1.2','26.2'))
 
 
 class FuelCatalog:
@@ -26,7 +27,9 @@ class FuelCatalog:
             if FUEL_CLASS not in z.namelist():return
             raw=z.read(FUEL_CLASS);digest=hashlib.sha256(raw).hexdigest()
             version=json.loads(z.read('version.json')).get('id')
-            if version!='26.1.2' or digest!=FUEL_CLASS_SHA256:
+            # The published 26.2 class is byte-for-byte identical to 26.1.2.
+            # Keep both the explicit version and exact semantics hash checks.
+            if version not in VERIFIED_FUEL_VERSIONS or digest!=FUEL_CLASS_SHA256:
                 raise ValueError('Unknown game FuelValues semantics; no alternative fuel inferred')
             tags={};digests={}
             def expand(name,ancestors=()):
@@ -53,7 +56,7 @@ class FuelCatalog:
             # do not change any profile/default fuel allowlist.
             self.durations['minecraft:stick']=100
             self.durations['minecraft:leaf_litter']=100
-            self.evidence={'kind':'vanilla26.1.2_FuelValues','extra_fuels_verified':True,
+            self.evidence={'kind':'vanilla'+version+'_FuelValues','extra_fuels_verified':True,
                            'fuel_class_sha256':digest,'base_unit_ticks':200,'tag_sha256':digests,
                            'explicit_fuel_constants':{
                                'minecraft:stick':{'burn_ticks':100,'class_entry':FUEL_CLASS,

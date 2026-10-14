@@ -49,7 +49,7 @@ public final class SurvivalAlertsScreen extends KitHudScreen {
 		healingAlert = checkbox(left, bodyTop(50), "回血物资不足", config.healingItemAlert);
 		minimumHealing = numberField(left + 230, bodyTop(48), 70, first(draftHealing, config.minimumHealingItems), "回血物资最低数量");
 		addRenderableWidget(Button.builder(Component.literal("多选回血物品"), button -> {
-			if (save(false)) this.minecraft.setScreen(new HealingItemsScreen(this, config));
+			if (save(false)) this.minecraft.gui.setScreen(new HealingItemsScreen(this, config));
 		}).bounds(left, bodyTop(74), 300, 20).build());
 
 		netherGoldAlert = checkbox(left, bodyTop(104), "下界未穿金质护甲", config.netherGoldArmorAlert);

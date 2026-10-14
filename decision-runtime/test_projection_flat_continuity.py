@@ -13,6 +13,17 @@ from test_projection_flat_jobs import model, layout_for, audit, state, ITEM
 
 
 class ContinuityTests(unittest.TestCase):
+    def test_lower_centered_map_windows_stay_over_the_image_without_a_high_cruise_detour(self):
+        backend,client,current,calls=self.route_fixture([5.5,65.6,15.5])
+        backend.request['flat_map']['direct_within_map_windows']=True
+        trace=[];target=[25.5,65.75,25.5]
+        with patch('material_jobs.navigation.settled_state'):
+            self.assertTrue(backend.try_direct_registered_travel(client,target,lambda:None,trace,keep_cruise=False))
+        self.assertEqual(target,current['pos'])
+        self.assertTrue(calls);self.assertTrue(all(max(start[1],end[1])<=65.75 for start,end in calls))
+        current['pos']=[5.5,65.4,15.5]
+        self.assertFalse(backend.try_direct_registered_travel(client,target,lambda:None,[],keep_cruise=False))
+
     def test_fresh_audit_before_first_build_saves_only_new_actual_counts(self):
         with tempfile.TemporaryDirectory()as tmp:
             m=model(3,1);layout=layout_for(m)

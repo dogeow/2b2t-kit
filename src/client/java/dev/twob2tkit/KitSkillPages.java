@@ -23,9 +23,9 @@ public final class KitSkillPages {
             info.note("新技能会自动出现在列表中，可以搜索和按状态筛选。候选技能需要两次独立的原生成功记录，才会标记为已验证。");
             info.note("AI 建议先保存为经验；实际背包、位置或服务器放置确认参与验收。技能修改后生成新版本，重新积累验证。");
             info.note("当前记录的是 Kit 技能。Voyager 的原生 Mineflayer 技能尚未逐项迁移。这里可以查看技能，执行仍由 Kit 的任务控制器负责。");
-            Minecraft.getInstance().setScreen(info);
+            Minecraft.getInstance().gui.setScreen(info);
         });
-        Minecraft.getInstance().setScreen(list);
+        Minecraft.getInstance().gui.setScreen(list);
     }
     private static void details(Screen parent,KitConfig config,SkillCatalog.Entry e){
         var page=new KitFormScreen(parent,e.title(),"技能详情 · 查看不会执行").bind(config).recordDraft().id("skill:"+e.name()+":"+e.version());
@@ -37,7 +37,7 @@ public final class KitSkillPages {
         for(int i=0;i<e.steps().size();i++)page.note((i+1)+". "+e.steps().get(i));
         page.section("成功条件");page.note(String.join("\n",e.checks()));
         page.note("技能标识："+e.name());
-        Minecraft.getInstance().setScreen(page);
+        Minecraft.getInstance().gui.setScreen(page);
     }
     private KitSkillPages(){}
 }

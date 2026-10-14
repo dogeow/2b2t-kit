@@ -38,6 +38,16 @@ class SkillsTest(unittest.TestCase):
         s,e=episode();q=e['actions'][0]['request']
         learn_transaction(self.m,q,e['before'],e['after']);r=learn_transaction(self.m,q,e['before'],e['after'])
         self.assertEqual(r['successful_runs'],1);self.assertEqual(r['status'],'candidate')
+    def test_verification_counts_use_a_covering_index_without_changing_witnesses(self):
+        for i in range(2):
+            s,e=episode(req('indexed-'+str(i)));learn_transaction(self.m,e['actions'][0]['request'],e['before'],e['after'])
+        before=self.m.summary()
+        query="SELECT count(*) FROM episodes WHERE skill_hash=? AND success=1 AND witness=1"
+        h=self.m.get(s['name'])['hash']
+        detail=' '.join(str(row)for row in self.m.db.execute('EXPLAIN QUERY PLAN '+query,(h,)))
+        self.assertIn('USING COVERING INDEX',detail)
+        self.assertEqual(2,self.m.db.execute(query,(h,)).fetchone()[0])
+        self.assertEqual(before,self.m.summary())
     def test_changed_skill_is_new_candidate_not_inherited_success(self):
         for i in range(2):
             s,e=episode(req(str(i)));learn_transaction(self.m,e['actions'][0]['request'],e['before'],e['after'])

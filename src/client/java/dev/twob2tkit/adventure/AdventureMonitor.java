@@ -106,7 +106,7 @@ public final class AdventureMonitor {
 	private void alert(Minecraft client, String message, int color) {
 		Component text = Component.literal("[冒险助手] " + message).withColor(color);
 		client.player.sendSystemMessage(text);
-		client.gui.setOverlayMessage(text, false);
+		client.gui.hud.setOverlayMessage(text, false);
 		client.player.playSound(SoundEvents.PLAYER_LEVELUP, 0.8F, 1.0F);
 	}
 }

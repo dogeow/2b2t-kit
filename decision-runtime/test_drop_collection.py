@@ -66,4 +66,22 @@ class Tests(unittest.TestCase):
    def status(self):return {'inventory':[{'slot':0,'item':'minecraft:cobblestone','count':1}], 'entities':[]}
    def request(self,*a,**k):raise AssertionError('No click should be needed')
   self.assertTrue(collect_drop(C(),DROP,observation={'inventory':[]}))
+ def test_reached_air_drop_uses_existing_fractional_proof_without_another_pickup(self):
+  class C:
+   calls=0
+   def status(self):return {'inventory':[],'entities':[DROP]}
+   def request(self,*a,**k):self.calls+=1;return {'phase':'waiting','detail':'Drop pickup not confirmed at the reached position'}
+  c=C()
+  with patch('drop_collection.collect_nearby_air',return_value=True)as air,patch('drop_collection.collect_nearby_ground')as ground:
+   self.assertTrue(collect_drop(c,DROP))
+  self.assertEqual(c.calls,1);air.assert_called_once_with(c,DROP,0);ground.assert_not_called()
+ def test_uncertain_fractional_motion_is_not_repeated_or_replaced_with_ground_motion(self):
+  class C:
+   calls=0
+   def status(self):return {'inventory':[],'entities':[DROP]}
+   def request(self,*a,**k):self.calls+=1;return {'phase':'waiting','detail':'Drop pickup not confirmed at the reached position'}
+  c=C()
+  with patch('drop_collection.collect_nearby_air',side_effect=RuntimeError('unknown correction'))as air,patch('drop_collection.collect_nearby_ground')as ground:
+   with self.assertRaisesRegex(RuntimeError,'unknown correction'):collect_drop(c,DROP)
+  self.assertEqual(c.calls,1);air.assert_called_once();ground.assert_not_called()
 if __name__=='__main__':unittest.main()

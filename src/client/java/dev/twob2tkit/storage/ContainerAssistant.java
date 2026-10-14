@@ -62,7 +62,7 @@ public final class ContainerAssistant {
 			resetOpenContainer();
 			return;
 		}
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) {
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) {
 			resetOpenContainer();
 			if (lastClickedAge < 1000) lastClickedAge++;
 			return;
@@ -167,10 +167,10 @@ public final class ContainerAssistant {
 		if (pendingRequirement != null) {
 			int after = ActivityRequirements.count(client.player, pendingRequirement);
 			if (after > pendingBeforeCount) {
-				client.gui.setOverlayMessage(Component.literal("[自动补货] 已取出 " + pendingItemName).withColor(0x55FFFF), false);
+				client.gui.hud.setOverlayMessage(Component.literal("[自动补货] 已取出 " + pendingItemName).withColor(0x55FFFF), false);
 				restockReported = false;
 			} else {
-				client.gui.setOverlayMessage(Component.literal("[自动补货] 未能取出 " + pendingItemName + "，背包可能已满或服务器拒绝了操作").withColor(0xFF5555), false);
+				client.gui.hud.setOverlayMessage(Component.literal("[自动补货] 未能取出 " + pendingItemName + "，背包可能已满或服务器拒绝了操作").withColor(0xFF5555), false);
 				takeCooldown = 20;
 			}
 			pendingRequirement = null;

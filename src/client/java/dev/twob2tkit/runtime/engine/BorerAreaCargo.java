@@ -101,11 +101,11 @@ final class BorerAreaCargo {
 		if (!c.level.getBlockState(depot).is(Blocks.CHEST)) return blocked(c, "本工程的卸货箱已不存在，请重新开始选择新位置");
 		if (ownedMenu == null) {
 			if (openRequested && c.player.containerMenu instanceof ChestMenu menu && menu.containerId != sentFromMenu
-				&& c.screen instanceof AbstractContainerScreen<?> screen && screen.getMenu() == menu) {
+				&& c.gui.screen() instanceof AbstractContainerScreen<?> screen && screen.getMenu() == menu) {
 				ownedMenu = menu; wait = 0;
 				if (depots.sites().stream().noneMatch(s -> s.pos().equals(depot))) depots.remember(depot, false);
 			} else {
-				if (c.screen != null) return blocked(c, "打开了非卸货界面，已停止自动存箱");
+				if (c.gui.screen() != null) return blocked(c, "打开了非卸货界面，已停止自动存箱");
 				if (++wait > 60) return blocked(c, "卸货箱无法打开（可能被保护或上方遮挡），未丢弃矿物");
 				if (wait == 1 || wait == 30) {
 					if (!clickBlock(c, depot, false)) return blocked(c, "卸货箱准星被挡，未操作其它方块");
@@ -185,7 +185,7 @@ final class BorerAreaCargo {
 		ownedMenu = null; openRequested = false; transfer = null; wait = 0;
 	}
 	boolean ownsScreen(Minecraft c) {
-		return active() && c.player != null && c.screen instanceof AbstractContainerScreen<?> s && c.player.containerMenu == s.getMenu()
+		return active() && c.player != null && c.gui.screen() instanceof AbstractContainerScreen<?> s && c.player.containerMenu == s.getMenu()
 			&& (ownedMenu != null ? s.getMenu() == ownedMenu : openRequested && s.getMenu() instanceof ChestMenu
 				&& s.getMenu().containerId != sentFromMenu);
 	}

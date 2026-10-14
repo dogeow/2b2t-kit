@@ -116,7 +116,7 @@ public final class SurvivalAlertMonitor {
 	private void alert(Minecraft client, String message) {
 		Component text = Component.literal("[生存提醒] " + message).withColor(0xFF5555);
 		client.player.sendSystemMessage(text);
-		client.gui.setOverlayMessage(text, false);
+		client.gui.hud.setOverlayMessage(text, false);
 		client.player.playSound(SoundEvents.PLAYER_LEVELUP, 0.8F, 1.0F);
 	}
 

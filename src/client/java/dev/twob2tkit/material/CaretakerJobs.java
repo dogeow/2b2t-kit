@@ -87,7 +87,7 @@ public final class CaretakerJobs {
             if(action.equals("resume")&&book==null)throw new IllegalStateException("尚无可恢复的农场周期");
             installed=installation;journal=book;
             // Closing the normal Kit page happens once. Reopening any page cancels this pending launch.
-            client.setScreen(null);
+            client.gui.setScreen(null);
             probeStarted=false;pending=new Pending(action,context,System.currentTimeMillis(),running());note="等待关屏后的新鲜状态，再核对并启动";
         }catch(IOException failure){throw new IllegalStateException("农场启动文件无法读取",failure);}
     }
@@ -98,7 +98,7 @@ public final class CaretakerJobs {
         if(pending!=null){pending=null;probe.stop();probeStarted=false;note="尚未开始的启动请求已取消";return;}
         if(!running()&&!(externalAlive&&System.currentTimeMillis()-externalObservedAt<2500))
             throw new IllegalStateException("未确认有存活的周期后台；原记录保留，请先查看状态");
-        try{CaretakerProtocol.control(installed,action);note="已提交"+(action.equals("pause")?"暂停":"停止")+"，等待当前动作安全收尾和真实记录确认";client.setScreen(null);}
+        try{CaretakerProtocol.control(installed,action);note="已提交"+(action.equals("pause")?"暂停":"停止")+"，等待当前动作安全收尾和真实记录确认";client.gui.setScreen(null);}
         catch(IOException failure){throw new IllegalStateException("农场操作未能保存，状态未改变",failure);}
     }
     /** Exact handle shutdown only. The caller's existing host emergency cleanup stops native input. */
@@ -120,7 +120,7 @@ public final class CaretakerJobs {
         if(pending!=null){
             Pending request=pending;
             try{
-                if(client.screen!=null)throw new IllegalStateException("启动前重新打开了界面，请手动再次开始");
+                if(client.gui.screen()!=null)throw new IllegalStateException("启动前重新打开了界面，请手动再次开始");
                 if(client.player==null||client.level==null||EmergencyExit.held(client)||KitKeys.manualMovementDown(client))throw new IllegalStateException("角色、输入或安全锁已改变，启动取消");
                 if(System.currentTimeMillis()-request.requestedAt()>10000)throw new IllegalStateException("关屏后未取得新鲜状态，请手动再次开始");
                 if(!request.context().get("world_session").getAsString().equals(AutomationBridge.materialJobWorldSession(client)))throw new IllegalStateException("启动前世界已改变");

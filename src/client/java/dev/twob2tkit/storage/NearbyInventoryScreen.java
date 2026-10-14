@@ -45,7 +45,7 @@ public final class NearbyInventoryScreen {
             .liveDescription(()->"当前服务器/维度 · 水平4096格内 · 背包含装备/副手 · 缓存取料时确认")
             .refreshWhen(view::revision);
         list.onOpen(item->sources(list,config,view,item.id()));
-        list.footer("刷新数量",()->{view.revision();list.refresh();});Minecraft.getInstance().setScreen(list);
+        list.footer("刷新数量",()->{view.revision();list.refresh();});Minecraft.getInstance().gui.setScreen(list);
     }
     private static void sources(Screen parent,KitConfig config,View view,String id){
         var item=view.items.stream().filter(row->row.id().equals(id)).findFirst().orElse(null);if(item==null)return;
@@ -53,7 +53,7 @@ public final class NearbyInventoryScreen {
             var detail=new KitFormScreen(parent,item.name(),"背包物品数量").bind(config);
             detail.note(item.id()+" · 打开时背包实际 "+item.carried());
             detail.note("附近缓存 0；只汇总当前服务器/维度水平4096格内已记录的内容");
-            Minecraft.getInstance().setScreen(detail);return;
+            Minecraft.getInstance().gui.setScreen(detail);return;
         }
         var list=new KitCollectionScreen<NearbyInventory.Source>(parent,config,"nearby-sources:"+id,item.name()+" · 缓存来源",
             "背包实际 "+item.carried()+" · 附近缓存 "+item.cached()+" · 预计总量 "+item.estimatedTotal()+"（含缓存）",
@@ -68,7 +68,7 @@ public final class NearbyInventoryScreen {
                 return "背包实际 "+(current==null?0:current.carried())+" · 附近缓存 "+(current==null?0:current.cached())
                     +" · 当前维度4096格内 · 末影共享只计一次";
             });
-        list.onOpen(source->Minecraft.getInstance().setScreen(new StorageDetailScreen(list,source.record())));
-        Minecraft.getInstance().setScreen(list);
+        list.onOpen(source->Minecraft.getInstance().gui.setScreen(new StorageDetailScreen(list,source.record())));
+        Minecraft.getInstance().gui.setScreen(list);
     }
 }

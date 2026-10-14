@@ -26,7 +26,7 @@ def _furnace_row(client,pos,*,same_world=False):
     return rows[0]
 
 
-def _owned_open_rejection(client,error,params,expected_detail='Target block changed'):
+def _owned_open_rejection(client,error,params,expected_detail='Target block changed',expected_op='interact'):
     proof=getattr(client,'last_terminal_evidence',{})
     task,world=getattr(client,'task',None),getattr(client,'world',None)
     sent=proof.get('params',{}) if isinstance(proof,dict) else {}
@@ -34,7 +34,7 @@ def _owned_open_rejection(client,error,params,expected_detail='Target block chan
             and isinstance(world,str) and bool(world) and isinstance(sent,dict)
             and proof.get('request_id')==getattr(client,'last',None) and bool(proof.get('request_id'))
             and proof.get('world_session')==world and proof.get('task_session')==task
-            and proof.get('op')=='interact' and proof.get('phase')=='error'
+            and proof.get('op')==expected_op and proof.get('phase')=='error'
             and proof.get('detail')==expected_detail and sent.get('task_session')==task
             and all(sent.get(key)==value for key,value in params.items()))
 
@@ -63,8 +63,27 @@ def _lit_only_transition(before,after):
 
 def snapshot(client,pos):
     row=_furnace_row(client,pos,same_world=True);identity=row['state']
-    face=approach_faces(client,list(pos),identity,('up','north','south','west','east'),seconds=45,
-                        allow_state_change=_lit_only_transition)
+    faces=('up','north','south','west','east')
+    try:
+        face=approach_faces(client,list(pos),identity,faces,seconds=45,
+                            allow_state_change=_lit_only_transition)
+    except RuntimeError as error:
+        # BuildSupplyTask rejects this exact constructor check before starting
+        # navigation. A furnace can extinguish between scan and admission.
+        proof=getattr(client,'last_terminal_evidence',{})
+        sent=proof.get('params',{}) if isinstance(proof,dict) else {}
+        old=sent.get('expected_state');rejected_face=sent.get('face')
+        params={'pos':list(pos),'face':rejected_face,'expected_state':old,'seconds':45}
+        if (rejected_face not in faces or not isinstance(old,str)
+                or old!=identity and not _lit_only_transition(identity,old)
+                or not _owned_open_rejection(client,error,params,'Work block state changed','approach_block')
+                or proof.get('revision_before')!=client.rev or proof.get('revision_after')!=client.rev
+                or not _closed_material_owner(client)):
+            raise
+        fresh=_furnace_row(client,pos,same_world=True)
+        if not _lit_only_transition(old,fresh['state']) or not _closed_material_owner(client):raise
+        face=approach_faces(client,list(pos),fresh['state'],faces,seconds=45,
+                            allow_state_change=_lit_only_transition)
     hand=select_container_hand(client)
     # Refresh after selection's acknowledgement delay, immediately before use.
     row=_furnace_row(client,pos,same_world=True)

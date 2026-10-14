@@ -267,7 +267,7 @@ final class KitSavedPlacesScreen extends KitHudScreen {
 		config.hasTarget = true;
 		config.save();
 		controller.start(this.minecraft, place.x, place.z, place.cruiseY);
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 对地点开结构指引箭头。 */
@@ -276,7 +276,7 @@ final class KitSavedPlacesScreen extends KitHudScreen {
 		StructureGuide guide = KitClient.structureGuide();
 		if (guide == null) return;
 		guide.start(place.name, (int)Math.round(place.x), (int)Math.round(place.z));
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 把收藏设为唯一的家；不改变当前巡航目标，也不立刻起飞。 */

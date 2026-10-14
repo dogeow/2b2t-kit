@@ -130,7 +130,7 @@ public final class SeedScout {
 		ticks++;
 		if(client.player==null || client.level==null) { resetScan(null);return; }
 		trySingleplayerSeed(client);
-		boolean needed=client.screen==scanScreen && scanScreen!=null
+		boolean needed=client.gui.screen()==scanScreen && scanScreen!=null
 			|| KitClient.structureGuide()!=null && KitClient.structureGuide().isActive();
 		var config=KitClient.config();
 		if(!SeedScoutScanBudget.shouldScan(config!=null && config.seedScoutEnabled,needed,hasWorldSeed())) {
@@ -432,7 +432,7 @@ public final class SeedScout {
 		if (!level.hasChunkAt(pos)) return;
 		BlockState state = readBlock(level,pos);
 		if (state.isAir()) return;
-		if (state.is(Blocks.BLUE_TERRACOTTA) && sandstoneAround(level, pos)) {
+		if (state.is(Blocks.DYED_TERRACOTTA.blue()) && sandstoneAround(level, pos)) {
 			addFinding(Kind.DESERT_PYRAMID, level.dimension(), pos, "蓝色陶瓦");
 		} else if (state.is(Blocks.GOLD_BLOCK) && prismarineAround(level, pos)) {
 			addFinding(Kind.MONUMENT, level.dimension(), pos, "海晶灯+金块");
@@ -610,7 +610,7 @@ public final class SeedScout {
 	/** 是否像雪屋。 */
 	private boolean looksLikeIgloo(ClientLevel level, BlockPos pos) {
 		return snowAround(level, pos) && (countBlock(level, pos, Blocks.SNOW_BLOCK, 4) >= 8
-			|| countBlock(level, pos, Blocks.WHITE_CARPET, 3) >= 1
+			|| countBlock(level, pos, Blocks.CARPET.white(), 3) >= 1
 			|| countBlock(level, pos, Blocks.OAK_TRAPDOOR, 3) >= 1);
 	}
 

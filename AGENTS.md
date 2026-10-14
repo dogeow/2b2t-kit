@@ -2,7 +2,7 @@
 
 ## 项目边界
 
-- 主项目是本目录 `2b2t-kit/`：Minecraft 26.1.2、Fabric、Java 25；版本以 `gradle.properties` 为准。
+- 主项目是本目录 `2b2t-kit/`：Minecraft 26.2、Fabric、Java 25；版本以 `gradle.properties` 为准。
 - 客户端源码在 `src/client/java/dev/twob2tkit/`。可热加载实现只在 `runtime/engine/`；`runtime/api/` 与宿主保持稳定。
 - 相邻 `meteor-client-source/` 默认只供参考，不修改；其版本可能不同，使用 API 前核对当前游戏。优先复用或协调 Meteor 已有功能，不重复抢按键、视角和物品栏。
 - 保留用户已有改动、区域坐标、工程进度和个人配置；不为测试覆盖真实存档或设置。
@@ -10,6 +10,7 @@
 ## 运行与交付
 
 - 实际游戏目录：`/Applications/.minecraft`，不是项目的 `run/` 或用户 Library 目录。
+- 当前隔离实例是 `/Applications/.minecraft/versions/26.2`；旧 `26.1.2` 实例保留用于回退，操作前以当前日志与原生状态确认实例。
 - 配置：`config/twob2tkit.json`；运行日志：`logs/latest.log` 与 `config/twob2tkit/*.log`，均相对于实际游戏目录。
 - 引擎产物：`build/runtime-engine/twob2tkit-engine.jar` → 游戏的 `config/twob2tkit/runtime/twob2tkit-engine.jar`。
 - 主包产物：`build/libs/twob2tkit-<version>.jar` → 游戏的 `mods/`；这里只保留一个本 Mod 主包，替换前备份旧版。

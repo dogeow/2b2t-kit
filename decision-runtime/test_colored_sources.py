@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from material_jobs.colored_sources import acquire, _candidate
+from material_jobs.colored_sources import acquire, _candidate, _ordered_rows, _stage_source
 from material_jobs.protocol import JobPaused
 
 
@@ -18,13 +18,15 @@ class Client:
     world="world"
     def __init__(self):
         self.actions=[]; self.rows=[block([100,64,100],"poppy",solid=False),block([100,63,100],"dirt")]
-        self.count=0; self.uncertain=False
+        self.count=0; self.uncertain=False;self.sword="minecraft:netherite_sword";self.hand="minecraft:air"
     def status(self):
         return {"world_session":self.world,"connected":True,"health":20,"food":20,
                 "manual_movement":False,"guard_armed":True,"guard_pve_only":True,
                 "guard_busy":False,"under_water":False,"pos":[100,66,100],"entities":[],
-                "inventory":[{"slot":0,"item":"minecraft:poppy","count":self.count,"max_stack":64}]
-                +[{"slot":i,"item":"minecraft:air","count":0,"max_stack":64} for i in range(1,36)]}
+                "hand":{"item":self.hand,"count":1},
+                "inventory":[{"slot":0,"item":"minecraft:poppy","count":self.count,"max_stack":64},
+                    {"slot":1,"item":self.sword,"count":0 if self.sword=="minecraft:air" else 1,"max_stack":1}]
+                +[{"slot":i,"item":"minecraft:air","count":0,"max_stack":64} for i in range(2,36)]}
     def request(self,op,**params):
         self.actions.append((op,params))
         if op=="scan":
@@ -38,7 +40,9 @@ class Client:
             return {"phase":"done"}
         raise AssertionError(op)
     def checked(self,op,**params):
-        self.actions.append((op,params)); return {"phase":"done"}
+        self.actions.append((op,params))
+        if op=='select_item':self.hand=params['item']
+        return {"phase":"done"}
 
 
 class ColoredSourcesTest(unittest.TestCase):
@@ -56,9 +60,42 @@ class ColoredSourcesTest(unittest.TestCase):
         self.assertEqual(1,self.c.count)
         self.assertEqual(1,sum(op=="mine_block" for op,_ in self.c.actions))
         self.assertTrue(all(p.get("details") is True for op,p in self.c.actions if op=="scan"))
+        self.assertIn(('select_item',{'item':'minecraft:netherite_sword'}),self.c.actions)
+    def test_no_carried_sword_never_guesses_a_diamond_sword_or_starts_mining(self):
+        self.c.sword='minecraft:air'
+        self.assertEqual('WAIT_TOOL',self.go()['code'])
+        self.assertFalse(any(op=='mine_block'for op,_ in self.c.actions))
     def test_absent_authorized_source_waits_without_game_actions(self):
         self.profile["colored_source_regions"]=[]
         self.assertEqual("WAIT_SOURCE",self.go()["code"]); self.assertEqual([],self.c.actions)
+    def cactus_setup(self):
+        self.c.rows=[block([100,63,100],'sand'),block([100,64,100],'cactus'),
+                     block([100,65,100],'cactus'),block([100,66,100],'cactus')]
+        original=self.c.status
+        def status():
+            s=original();s['inventory'][0]['item']='minecraft:cactus';return s
+        self.c.status=status
+        self.profile['colored_source_regions']=[{'item':'minecraft:cactus','authorized':True,
+            'min':[100,63,100],'max':[100,66,100]}]
+    def test_cactus_uses_side_kernel_and_highest_segment(self):
+        self.cactus_setup()
+        def side(c,pos,profile,out,checkpoint):
+            self.assertEqual([100,66,100],pos)
+            c.rows=[r for r in c.rows if r['pos']!=pos];c.count+=1
+            return {'complete':True,'base_retained':True,'after':c.count}
+        with patch('material_jobs.renewable_cactus.harvest_top',side), \
+             patch('material_jobs.colored_sources._stage_source',side_effect=AssertionError('generic staging forbidden')), \
+             patch('work_access.approach_faces',side_effect=AssertionError('generic cactus-top approach forbidden')):
+            result=acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
+        self.assertEqual('done',result['phase'])
+        self.assertTrue(any(r['pos']==[100,64,100]for r in self.c.rows))
+    def test_unknown_cactus_side_receipt_never_replays_the_harvest(self):
+        self.cactus_setup()
+        with patch('material_jobs.renewable_cactus.harvest_top',side_effect=RuntimeError('unknown'))as kernel:
+            with self.assertRaises(RuntimeError):
+                acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
+            result=acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
+            self.assertEqual('WAIT_RECONCILE',result['code']);self.assertEqual(1,kernel.call_count)
     def test_legacy_cache_region_is_not_authorized_source(self):
         self.profile["colored_source_regions"][0].pop("authorized")
         self.assertEqual("WAIT_SOURCE",self.go()["code"]); self.assertEqual([],self.c.actions)
@@ -97,6 +134,53 @@ class ColoredSourcesTest(unittest.TestCase):
         self.assertTrue(_candidate(rows,[100,64,100],"minecraft:cocoa_beans"))
         rows[0]["state"]="Block{minecraft:cocoa}[age=1,facing=east]"
         self.assertFalse(_candidate(rows,[100,64,100],"minecraft:cocoa_beans"))
+
+    def test_dry_clay_accepts_natural_rock_and_retained_gravel_support(self):
+        rows=[block([100,64,100],'clay'),block([100,63,100],'andesite'),
+              block([99,64,100],'granite'),block([101,65,100],'stone'),
+              block([101,66,100],'gravel')]
+        self.assertTrue(_candidate(rows,[100,64,100],'minecraft:clay_ball'))
+        self.assertFalse(_candidate(rows,[100,64,100],'minecraft:poppy'))
+        rows[-2]=block([101,65,100],'air',solid=False)
+        self.assertFalse(_candidate(rows,[100,64,100],'minecraft:clay_ball'))
+
+    def test_clay_never_removes_gravel_support_or_opens_liquid(self):
+        rows=[block([100,64,100],'clay'),block([100,63,100],'stone'),
+              block([100,65,100],'gravel')]
+        self.assertFalse(_candidate(rows,[100,64,100],'minecraft:clay_ball'))
+        rows[-1]=block([101,64,100],'water',fluid=True,solid=False)
+        self.assertFalse(_candidate(rows,[100,64,100],'minecraft:clay_ball'))
+        rows[-1]=block([101,64,100],'chest');rows[-1]['block_entity']=True
+        self.assertFalse(_candidate(rows,[100,64,100],'minecraft:clay_ball'))
+
+    def test_clay_tries_upper_nearer_faces_before_buried_lower_blocks(self):
+        rows=[block([100,63,100],'clay'),block([103,64,100],'clay'),block([100,64,100],'clay')]
+        ordered=_ordered_rows(rows,'minecraft:clay_ball',[100,66,100])
+        self.assertEqual([[100,64,100],[103,64,100],[100,63,100]],[r['pos']for r in ordered])
+        self.assertIs(rows,_ordered_rows(rows,'minecraft:poppy',[100,66,100]))
+
+    def test_high_park_stages_through_checked_route_before_native_work_reach(self):
+        state=self.c.status();state['pos']=[100.5,222,100.5];self.c.out=self.out
+        self.c.status=lambda:copy.deepcopy(state)
+        def move(c,target,checkpoint,trace):
+            self.assertEqual([100.5,128,100.5],target)
+            self.assertGreater(target[1],64+1.8)
+            state['pos']=target;trace.append({'actual_reached':target})
+        with patch('material_jobs.acquisition._travel',side_effect=move) as travel:
+            _stage_source(self.c,[100,64,100],lambda:None)
+        travel.assert_called_once();self.assertEqual(state['pos'],self.c.anchor)
+        self.assertTrue(list(self.out.glob('source-stage-*.json')))
+
+    def test_unknown_staging_or_manual_takeover_never_reaches_mining(self):
+        state=self.c.status();state['pos']=[100.5,222,100.5];self.c.out=self.out
+        self.c.status=lambda:copy.deepcopy(state)
+        with patch('material_jobs.acquisition._travel',side_effect=RuntimeError('unconfirmed')):
+            with self.assertRaisesRegex(RuntimeError,'unconfirmed'):self.go()
+        self.assertFalse(any(op=='mine_block'for op,_ in self.c.actions))
+        state['manual_movement']=True
+        with patch('material_jobs.acquisition._travel') as travel:
+            with self.assertRaises(JobPaused):_stage_source(self.c,[100,64,100],lambda:None)
+        travel.assert_not_called()
 
 
 if __name__ == "__main__":unittest.main()

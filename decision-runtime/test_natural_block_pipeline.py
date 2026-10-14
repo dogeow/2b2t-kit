@@ -137,6 +137,23 @@ class NaturalBlockTests(unittest.TestCase):
         self.assertEqual('done', self.go()['phase'])
         self.assertEqual(5, self.c.selected)
         self.assertEqual(1, self.c.count)
+    def test_verified_silk_pickaxe_also_produces_real_stem(self):
+        self.reset('minecraft:mushroom_stem')
+        self.c.tool['item']='minecraft:diamond_pickaxe'
+        self.assertEqual('done',self.go()['phase'])
+        self.assertEqual(1,self.c.count)
+        self.assertEqual(1,len(self.mines()))
+    def test_mushroom_natural_forest_context_does_not_relax_other_hazards(self):
+        from material_jobs.natural_block_pipeline import _dry_natural
+        leaves=block([101,66,100],'dark_oak_leaves')
+        litter=block([101,64,100],'leaf_litter');litter.update(solid=False,passable=True)
+        self.assertFalse(_dry_natural([leaves,litter]))
+        self.assertTrue(_dry_natural([leaves,litter],forest=True))
+        for danger in ('water','pointed_dripstone','chest','oak_planks'):
+            row=block([102,64,100],danger)
+            if danger=='water':row['fluid']=True
+            if danger=='chest':row['block_entity']=True
+            self.assertFalse(_dry_natural([leaves,litter,row],forest=True))
     def test_no_silk_axe_waits_before_scanning_or_mining(self):
         self.reset('minecraft:mushroom_stem'); self.c.tool['enchantments'] = []
         self.assertEqual('WAIT_TOOL', self.go()['code'])

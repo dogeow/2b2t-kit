@@ -19,6 +19,12 @@ class GravelCollectionPolicyTest {
         assertFalse(GravelCollectionPolicy.recoverableDescentAirStop(
             "water descent stopped for surface air or health",18));
     }
+    @Test void validObservedPickupUsesRealAirBudgetAndExpiredCalibrationKeepsFallback(){
+        assertEquals(86,GravelCollectionPolicy.pickupStartFloor(71,true));
+        assertEquals(265,GravelCollectionPolicy.pickupStartFloor(71,false));
+        assertEquals(285,GravelCollectionPolicy.pickupStartFloor(270,true));
+        assertEquals(265,GravelCollectionPolicy.pickupStartFloor(0,true));
+    }
     @Test void blockGoneInventoryGainedAndDropGoneConfirmPickupWithoutExtraDive(){
         assertTrue(GravelCollectionPolicy.confirmedPickup(true,1,false));
         assertFalse(GravelCollectionPolicy.confirmedPickup(false,1,false));
@@ -40,6 +46,17 @@ class GravelCollectionPolicyTest {
         assertTrue(GravelCollectionPolicy.allowedWorld(false,"31.25.11.102:25565"));
         assertFalse(GravelCollectionPolicy.allowedWorld(false,"simpcraft.com.example.org"));
         assertFalse(GravelCollectionPolicy.allowedWorld(false,"another-server.example"));
+    }
+    @Test void driftingPickupCanUseOnlyBoundedProvedColumnStepsWithExtraAir(){
+        assertTrue(GravelCollectionPolicy.boundedPickupRebase(3.676,true,254,86,20,true,0));
+        assertTrue(GravelCollectionPolicy.boundedPickupRebase(6,true,126,86,19,true,3));
+        assertFalse(GravelCollectionPolicy.boundedPickupRebase(6.01,true,254,86,20,true,0));
+        assertFalse(GravelCollectionPolicy.boundedPickupRebase(3.676,false,254,86,20,true,0));
+        assertFalse(GravelCollectionPolicy.boundedPickupRebase(3.676,true,125,86,20,true,0));
+        assertFalse(GravelCollectionPolicy.boundedPickupRebase(3.676,true,254,86,18,true,0));
+        assertFalse(GravelCollectionPolicy.boundedPickupRebase(3.676,true,254,86,20,false,0));
+        assertFalse(GravelCollectionPolicy.boundedPickupRebase(3.676,true,254,86,20,true,4));
+        assertFalse(GravelCollectionPolicy.boundedPickupRebase(Double.NaN,true,254,86,20,true,0));
     }
     @Test void standingOnTheNextGravelCellCanContinueButFarDropsCannot() {
         assertTrue(GravelCollectionPolicy.reachable(52,51,.2,1.7,4.15));

@@ -39,7 +39,7 @@ public abstract class CraftingRecipeDisplayMixin {
 		if (!LocalRecipeBookInjector.needsCraftingTable(display)) return;
 		Minecraft minecraft = Minecraft.getInstance();
 		if (minecraft.player != null) {
-			minecraft.gui.setOverlayMessage(Component.literal("这个配方是 3×3，请打开工作台再合成").withColor(0xFFFF55), false);
+			minecraft.gui.hud.setOverlayMessage(Component.literal("这个配方是 3×3，请打开工作台再合成").withColor(0xFFFF55), false);
 		}
 	}
 }

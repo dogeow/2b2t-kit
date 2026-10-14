@@ -157,6 +157,8 @@ class Client:
    time.sleep(.25)
   if op!='safe_logout' and s.get('health',0)<14 and not vertical_surface_escape(s,op,params):raise RuntimeError('Low health')
   if not underwater_action_allowed(s,op,params):raise RuntimeError('Low oxygen: only a near-vertical surface ascent is allowed')
+  from material_jobs.world_bounds import check as check_world_bounds
+  check_world_bounds(self.root,s,op,params)
   path=self.root/'request.json'
   if path.exists():
    pending=json.loads(path.read_text())
@@ -193,6 +195,8 @@ class Client:
     self.last=previous_last;raise
    end=time.monotonic()+params.get('seconds',20)+15
    last_poll=time.monotonic();guard_pause=0;interface_pause=0;movement_samples=[]
+   from material_jobs.navigation_watch import FlightWatch,pause_stalled
+   flight_watch=FlightWatch() if op=='navigate' and params.get('air_only')is not True and getattr(self,'heartbeat',None) else None
    while time.monotonic()<end:
     current=self.raw()
     now=time.monotonic()
@@ -232,6 +236,7 @@ class Client:
     owned_logout=op=='safe_logout' and current.get('last_request')==rid
     if current.get('manual_movement') or current['control_revision'] not in (self.rev,expected) and not native_stop and not owned_terminal and not owned_logout:raise Handoff('Control revision changed outside the owned request')
     if ui_paused and current.get('health',20)>=14 and op not in ('stop','safe_logout','material_job_pause'):
+     if flight_watch:flight_watch.reset()
      time.sleep(.15);continue
     matching_reply=reply_state=='valid' and result.get('id')==rid
     status_terminal=(reply_state=='absent' and current.get('last_request')==rid
@@ -301,6 +306,8 @@ class Client:
      if op=='guard' and result.get('phase')=='done':self.owned=True
      resolved=True
      return result
+    if flight_watch and flight_watch.poll(self,current,inflight,now):
+     pause_stalled(self,inflight)
     time.sleep(.15)
    raise RuntimeError('Native operation timed out; do not replay it')
   finally:

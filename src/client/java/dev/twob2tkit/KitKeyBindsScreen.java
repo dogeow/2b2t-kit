@@ -52,7 +52,7 @@ final class KitKeyBindsScreen extends KitHudScreen {
 				button -> reset(mapping))
 				.bounds(left + layout.width() - 64, y, 64, 20).build());
 		}
-		addRenderableWidget(Button.builder(Component.literal("全部恢复默认"), button -> minecraft.setScreen(new KitConfirmScreen(this, "重置所有快捷键", "将所有工具箱快捷键恢复默认；其它模组的按键不变。", this::resetAll)))
+		addRenderableWidget(Button.builder(Component.literal("全部恢复默认"), button -> minecraft.gui.setScreen(new KitConfirmScreen(this, "重置所有快捷键", "将所有工具箱快捷键恢复默认；其它模组的按键不变。", this::resetAll)))
 			.bounds(layout.footerButtonX(0, 2), footerButtonY(), layout.footerButtonWidth(2), 20).build());
 		addRenderableWidget(Button.builder(Component.literal("返回"), button -> onClose())
 			.bounds(layout.footerButtonX(1, 2), footerButtonY(), layout.footerButtonWidth(2), 20).build());

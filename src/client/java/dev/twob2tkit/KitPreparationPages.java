@@ -10,7 +10,7 @@ import java.util.*;
 /** Checklist selection, requirement editing and inventory picking use the same list/form workflow. */
 public final class KitPreparationPages {
     private static Minecraft mc() { return Minecraft.getInstance(); }
-    private static void confirm(Screen parent, String title, String detail, Runnable run) { mc().setScreen(new KitConfirmScreen(parent, title, detail, run)); }
+    private static void confirm(Screen parent, String title, String detail, Runnable run) { mc().gui.setScreen(new KitConfirmScreen(parent, title, detail, run)); }
     public static void checklists(Screen parent, KitConfig c) {
         ActivityRequirements.ensureLists(c);
         var list = new KitCollectionScreen<KitConfig.ActivityList>(parent, c, "checklists", "行动清单", "打开仅查看；按启用才更换补货清单",
@@ -27,10 +27,10 @@ public final class KitPreparationPages {
             p.submit("创建清单", () -> {
                 var a = new KitConfig.ActivityList(); a.id = ActivityRequirements.newListId(); a.label = name[0]; a.needs = new ArrayList<>();
                 c.activityLists.add(a); c.save(); p.clearDraft(); needs(list, c, a);
-            }); mc().setScreen(p);
+            }); mc().gui.setScreen(p);
         });
         list.footer("停用清单", () -> { c.activityProfile = "NONE"; c.save(); list.message("已停用清单，内容保留"); list.refresh(); });
-        mc().setScreen(list);
+        mc().gui.setScreen(list);
     }
     private static int count(KitConfig.ActivityNeed need) {
         var requirement = ActivityRequirements.requirement(need);
@@ -44,7 +44,7 @@ public final class KitPreparationPages {
             int[] target = {n.target}; var p = new KitFormScreen(list, n.label, "保存数量不会操作背包，只更新此清单需求。").bind(c).recordDraft().id("need:" + activity.id + ":" + n.match);
             p.slider("需要数量", "1–9999。", 1, 9999, () -> target[0], v -> target[0] = v);
             p.liveNote(() -> "目前持有：" + count(n));
-            p.submit("保存数量", () -> { n.target = target[0]; c.save(); p.clearDraft(); mc().setScreen(list); }); mc().setScreen(p);
+            p.submit("保存数量", () -> { n.target = target[0]; c.save(); p.clearDraft(); mc().gui.setScreen(list); }); mc().gui.setScreen(p);
         });
         list.action("移除", "移除此物资需求，不丢弃物品。", n -> confirm(list, "移除「" + n.label + "」", "只移除清单中的需求。", () -> { activity.needs.remove(n); c.save(); list.refresh(); }), n -> true);
         list.add("添加物品", () -> inventory(list, c, activity));
@@ -54,14 +54,14 @@ public final class KitPreparationPages {
             p.action("使用这份清单", "设为当前活动清单。", () -> { c.activityProfile = activity.id; c.save(); p.showNotice("已启用：" + activity.label, 0x77DDCC); });
             p.danger(ActivityRequirements.isBuiltin(activity) ? "恢复默认条目" : "清空条目", "将替换这份清单的物资需求，不改变背包。", () -> {
                 activity.needs = ActivityRequirements.isBuiltin(activity) ? new ArrayList<>(ActivityRequirements.defaultNeedsForId(activity.id)) : new ArrayList<>(); c.save();
-            }); mc().setScreen(p);
+            }); mc().gui.setScreen(p);
         });
         list.footer("检查背包", () -> {
             var missing = activity.needs.stream().filter(n -> count(n) < n.target).map(n -> n.label + " " + count(n) + "/" + n.target).toList();
             var p = new KitFormScreen(list, "背包检查结果", activity.label).bind(c).recordDraft().id("checklist-result:" + activity.id);
-            p.note(mc().player == null ? "当前未进入世界，无法检查" : missing.isEmpty() ? "物资已齐全" : "尚缺：" + String.join("、", missing)); mc().setScreen(p);
+            p.note(mc().player == null ? "当前未进入世界，无法检查" : missing.isEmpty() ? "物资已齐全" : "尚缺：" + String.join("、", missing)); mc().gui.setScreen(p);
         });
-        mc().setScreen(list);
+        mc().gui.setScreen(list);
     }
     private record InventoryItem(int slot, ItemStack stack) {}
     private static void inventory(Screen parent, KitConfig c, KitConfig.ActivityList activity) {
@@ -81,9 +81,9 @@ public final class KitPreparationPages {
                 if (added == null) return;
                 var existing = activity.needs.stream().filter(n -> n.match.equals(added.match)).findFirst();
                 if (existing.isPresent()) existing.get().target = target[0]; else activity.needs.add(added);
-                c.save(); p.clearDraft(); mc().setScreen(parent);
-            }); mc().setScreen(p);
-        }); mc().setScreen(list);
+                c.save(); p.clearDraft(); mc().gui.setScreen(parent);
+            }); mc().gui.setScreen(p);
+        }); mc().gui.setScreen(list);
     }
     public static void healing(Screen parent, KitConfig c) {
         c.healingItemIds = HealingItems.normalize(c.healingItemIds);
@@ -97,12 +97,12 @@ public final class KitPreparationPages {
         };
         list.onOpen(choice -> {
             var p = new KitFormScreen(list, choice.label(), "治疗物资统计项目").bind(c).recordDraft().id("healing-choice:" + choice.id());
-            p.note(choice.id()); p.action("选择 / 取消", "至少保留一种统计物资。", () -> { toggle.accept(choice); mc().setScreen(list); }); mc().setScreen(p);
+            p.note(choice.id()); p.action("选择 / 取消", "至少保留一种统计物资。", () -> { toggle.accept(choice); mc().gui.setScreen(list); }); mc().gui.setScreen(p);
         });
         list.action("选择", "选择 / 取消此物资，至少保留一种。", toggle, choice -> true);
         list.footer("常用食物", () -> { c.healingItemIds = new LinkedHashSet<>(HealingItems.defaultIds()); c.save(); list.refresh(); });
         list.footer("任意食物", () -> { c.healingItemIds = new LinkedHashSet<>(Set.of(HealingItems.ANY_FOOD, HealingItems.HEALING_POTION)); c.save(); list.refresh(); });
-        mc().setScreen(list);
+        mc().gui.setScreen(list);
     }
     private KitPreparationPages() {}
 }

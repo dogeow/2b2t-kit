@@ -98,6 +98,14 @@ class FuelPlanTest(unittest.TestCase):
 
 @unittest.skipUnless(JAR.exists(),'Current Minecraft jar not available')
 class ActualFuelFactsTest(unittest.TestCase):
+    @unittest.skipUnless(Path('/Applications/.minecraft/versions/26.2/26.2.jar').exists(),'26.2 jar not available')
+    def test_current_26_2_preserves_verified_fuel_semantics_and_tag_exclusions(self):
+        current=FuelCatalog('/Applications/.minecraft/versions/26.2/26.2.jar')
+        self.assertEqual('vanilla26.2_FuelValues',current.evidence['kind'])
+        self.assertEqual(300,current.durations['minecraft:dark_oak_planks'])
+        self.assertEqual(1600,current.durations[CHARCOAL])
+        self.assertNotIn('minecraft:warped_planks',current.durations)
+        self.assertNotIn('minecraft:crimson_planks',current.durations)
     def test_stick_and_leaf_litter_have_checked100_ticks_and_remain_explicit_only(self):
         c=FuelCatalog(JAR)
         for item,field,offset in (('minecraft:stick','Items.STICK',441),

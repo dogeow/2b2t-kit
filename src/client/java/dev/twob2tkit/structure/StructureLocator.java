@@ -475,7 +475,7 @@ public final class StructureLocator {
 	/** 地表是否有前哨证据。 */
 	private static boolean hasOutpostEvidence(ClientLevel level, int x, int z, int surface) {
 		AABB box = new AABB(x - 32, surface - 16, z - 32, x + 32, surface + 40, z + 32);
-		if (!level.getEntities(EntityType.PILLAGER, box, entity -> entity.isAlive()).isEmpty()) return true;
+		if (!level.getEntities(net.minecraft.world.entity.EntityTypes.PILLAGER, box, entity -> entity.isAlive()).isEmpty()) return true;
 		int darkOak = 0;
 		int banners = 0;
 		BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
@@ -488,8 +488,8 @@ public final class StructureLocator {
 				if (!chunkReallyLoaded(level, wx, wz)) continue;
 				for (int y = minY; y <= maxY; y += 2) {
 					BlockState state = level.getBlockState(cursor.set(wx, y, wz));
-					if (state.is(Blocks.WHITE_BANNER) || state.is(Blocks.WHITE_WALL_BANNER)
-						|| state.is(Blocks.GRAY_BANNER) || state.is(Blocks.GRAY_WALL_BANNER)) {
+					if (state.is(Blocks.BANNER.white()) || state.is(Blocks.WALL_BANNER.white())
+						|| state.is(Blocks.BANNER.gray()) || state.is(Blocks.WALL_BANNER.gray())) {
 						banners++;
 					}
 					if (state.is(Blocks.DARK_OAK_LOG) || state.is(Blocks.STRIPPED_DARK_OAK_LOG)

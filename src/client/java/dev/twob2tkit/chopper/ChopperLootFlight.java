@@ -31,7 +31,7 @@ final class ChopperLootFlight {
 
     boolean tick(Minecraft c,ItemEntity item) {
         var p=c.player;
-        if(p==null||c.level==null||c.screen!=null||!item.isAlive()){pause(c);return false;}
+        if(p==null||c.level==null||c.gui.screen()!=null||!item.isAlive()){pause(c);return false;}
         if(world!=c.level||!Objects.equals(target,item.getUUID())){
             resetRoute();world=c.level;target=item.getUUID();replans=stalled=liftAttempts=0;blocked=false;
         }

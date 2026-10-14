@@ -2,9 +2,20 @@ package dev.twob2tkit.automation;
 
 import java.util.Set;
 
-/** Screens without container controls pause task input while existing PvE modules keep running. */
+/** Passive screens and a player's inventory pause task input without taking over container controls. */
 public final class InterfacePausePolicy {
     private InterfacePausePolicy() {}
+    public static final class InventoryState {
+        private boolean held;
+        public boolean observe(boolean alive,boolean playerInventoryScreen,boolean inventoryMenu,boolean cursorEmpty) {
+            if(!alive||!inventoryMenu)held=false;
+            else if(playerInventoryScreen)held=true;
+            else if(cursorEmpty)held=false;
+            return held;
+        }
+        public boolean held(){return held;}
+        public void clear(){held=false;}
+    }
     public static boolean pauses(boolean alive,boolean screenOpen,boolean containerScreen,
                                   boolean inventoryMenu,boolean emergencyAirReturn){
         return alive&&screenOpen&&!containerScreen&&inventoryMenu&&!emergencyAirReturn;

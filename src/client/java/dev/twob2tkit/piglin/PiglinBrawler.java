@@ -142,7 +142,7 @@ public final class PiglinBrawler {
 			overlay(client, "血量太低已停手，快补血", 0xFF5555);
 			return;
 		}
-		if (client.screen != null) {
+		if (client.gui.screen() != null) {
 			releaseKeys(client, true);
 			return;
 		}
@@ -207,7 +207,7 @@ public final class PiglinBrawler {
 
 	/** 写回瞄准。 */
 	public void reapplyLook(Minecraft client) {
-		if (client.player == null || client.screen != null) return;
+		if (client.player == null || client.gui.screen() != null) return;
 		if (!active && !config.ghastGuardEnabled) return;
 		if (!hasBrawlLook) return;
 		if (client.player.getMainHandItem().is(Items.BOW) && !bowKeyHeld) return;
@@ -228,7 +228,7 @@ public final class PiglinBrawler {
 		}
 		LocalPlayer player = client.player;
 		if (player == null || client.level == null || client.gameMode == null) return false;
-		if (client.screen != null) {
+		if (client.gui.screen() != null) {
 			releaseModuleKeys(client, true);
 			aim = null;
 			return false;
@@ -785,7 +785,7 @@ public final class PiglinBrawler {
 
 	/** 悬停提醒挂在状态尾巴上，否则会被后面的攻击状态覆盖掉。 */
 	private void overlay(Minecraft client, String text, int color) {
-		client.gui.setOverlayMessage(Component.literal((active ? "[打猪人] " : "[恶魂防护] ") + text + hoverNote).withColor(color), false);
+		client.gui.hud.setOverlayMessage(Component.literal((active ? "[打猪人] " : "[恶魂防护] ") + text + hoverNote).withColor(color), false);
 	}
 
 	/** 发系统消息。 */

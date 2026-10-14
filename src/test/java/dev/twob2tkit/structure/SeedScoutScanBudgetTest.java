@@ -52,7 +52,7 @@ final class SeedScoutScanBudgetTest {
         for(int n=0;n<64;n++) assertTrue(budget.inspect());assertFalse(budget.inspect());
         String source=Files.readString(Path.of("src/client/java/dev/twob2tkit/structure/SeedScout.java"));
         assertEquals(1,source.split("level\\.getBlockState\\(",-1).length-1);
-        assertTrue(source.contains("client.screen==scanScreen"));
+        assertTrue(source.contains("client.gui.screen()==scanScreen"));
         assertTrue(source.indexOf("shouldScan(")<source.indexOf("scanNearby(client)"));
         String screen=Files.readString(Path.of("src/client/java/dev/twob2tkit/structure/NearbyStructuresScreen.java"));
         assertTrue(screen.contains("config.seedScoutEnabled=value"));assertTrue(screen.contains("scout.requestScanningFor(page)"));

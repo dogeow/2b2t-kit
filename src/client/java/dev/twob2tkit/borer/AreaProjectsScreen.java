@@ -33,7 +33,7 @@ public final class AreaProjectsScreen extends KitHudScreen {
 	/** 工程名输入与工程列表。 */
 	protected void init() {
         dev.twob2tkit.KitRecordPages.projects(parent, config);
-        if (this.minecraft.screen != this) return;
+        if (this.minecraft.gui.screen() != this) return;
 		int left = panelLeft(360);
 		if (projectName != null) draftName = projectName.getValue();
 		if (draftDimension == null) draftDimension = BorerAreaProjects.currentDimension(this.minecraft);

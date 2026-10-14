@@ -32,9 +32,14 @@ public record ChopperFixedTreePlan(BlockPos root, BlockPos min, BlockPos max) {
     boolean accepts(Collection<BlockPos> logs,Collection<BlockPos> stumps,String type){
         boolean wide=Set.of("minecraft:spruce_log","minecraft:jungle_log","minecraft:dark_oak_log","minecraft:pale_oak_log").contains(type);
         int margin=wide?1:0;
+        var xs=stumps.stream().mapToInt(BlockPos::getX).summaryStatistics();
+        var ys=stumps.stream().mapToInt(BlockPos::getY).summaryStatistics();
+        var zs=stumps.stream().mapToInt(BlockPos::getZ).summaryStatistics();
         return !logs.isEmpty()&&logs.size()<=ChopperTrees.MAX_LOGS&&logs.stream().allMatch(this::contains)
             &&stumps.contains(root)&&stumps.size()<=(wide?4:1)
-            &&stumps.stream().allMatch(p->p.getY()==root.getY()
+            &&(long)xs.getMax()-xs.getMin()<=margin&&(long)zs.getMax()-zs.getMin()<=margin
+            &&(long)ys.getMax()-ys.getMin()<=margin
+            &&stumps.stream().allMatch(p->Math.abs((long)p.getY()-root.getY())<=margin
                 &&Math.abs((long)p.getX()-root.getX())<=margin&&Math.abs((long)p.getZ()-root.getZ())<=margin);
     }
 }

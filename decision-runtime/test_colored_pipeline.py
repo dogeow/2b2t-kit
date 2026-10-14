@@ -79,6 +79,9 @@ class Backend:
     def smelt(self,recipe,target):
         self.calls.append(("smelt",recipe,target))
         n=target-self.client.stock[recipe["output"]]
+        required=math.ceil(n/8)
+        if self.client.stock['minecraft:coal']<required:
+            return {'phase':'waiting','fuel_choices':{'ready':False},'requirements':{'minecraft:coal':required}}
         self.client.stock[recipe["source"]]-=n
         self.client.stock["minecraft:coal"]-=math.ceil(n/8)
         self.client.stock[recipe["output"]]+=n
@@ -94,6 +97,40 @@ class Backend:
 
 
 class ColoredPipelineTest(unittest.TestCase):
+    def test_carried_permitted_wood_fuel_does_not_acquire_coal(self):
+        c=Client({'minecraft:clay':8,'minecraft:dark_oak_planks':40,'minecraft:red_dye':1})
+        class WoodBackend(Backend):
+            def smelt(self,recipe,target):
+                self.calls.append(('smelt',recipe,target));n=target-self.client.stock[recipe['output']]
+                needed=math.ceil(n*200/300)
+                self.client.stock['minecraft:dark_oak_planks']-=needed
+                self.client.stock[recipe['source']]-=n;self.client.stock[recipe['output']]+=n
+                return {'phase':'done'}
+        b=WoodBackend(c,self.jar);result=self.execute(c,'minecraft:red_terracotta',8)
+        self.assertEqual('done',result['phase']);self.assertEqual(8,c.stock['minecraft:red_terracotta'])
+        self.assertEqual(34,c.stock['minecraft:dark_oak_planks'])
+        self.assertNotIn(('acquire','minecraft:coal',1),b.calls)
+        self.assertNotIn(('fetch',{'minecraft:coal':1}),b.calls)
+    def test_exact_preloading_fuel_shortage_acquires_then_checks_smelt_again(self):
+        c=Client({'minecraft:clay':8,'minecraft:red_dye':1})
+        class FuelBackend(Backend):
+            def acquire(self,item,target):
+                self.calls.append(('acquire',item,target));self.client.stock[item]=target
+                return {'phase':'done'}
+        b=FuelBackend(c,self.jar);result=self.execute(c,'minecraft:red_terracotta',8)
+        self.assertEqual('done',result['phase']);self.assertEqual(2,sum(v[0]=='smelt'for v in b.calls))
+        self.assertIn(('acquire','minecraft:coal',1),b.calls)
+    def test_unknown_smelting_result_cannot_acquire_fuel_or_replay(self):
+        c=Client({'minecraft:clay':8,'minecraft:red_dye':1})
+        class UnknownBackend(Backend):
+            def smelt(self,recipe,target):
+                self.calls.append(('unknown_smelt',recipe,target))
+                return {'phase':'waiting','detail':'server receipt missing'}
+        b=UnknownBackend(c,self.jar);first=self.execute(c,'minecraft:red_terracotta',8)
+        second=self.execute(c,'minecraft:red_terracotta',8)
+        self.assertEqual('WAIT_RECONCILE',first['code']);self.assertEqual('WAIT_RECONCILE',second['code'])
+        self.assertEqual(1,sum(v[0]=='unknown_smelt'for v in b.calls))
+        self.assertFalse(any(v[0]=='acquire'for v in b.calls))
     def test_positive_ingredient_arrival_during_travel_uses_exact_craft_site_balance(self):
         c=Client({'minecraft:pink_dye':1,'minecraft:sand':4,'minecraft:gravel':4});c.task='task';c.rev=7
         class ArrivalBackend(Backend):

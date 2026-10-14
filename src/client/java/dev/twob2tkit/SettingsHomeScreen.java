@@ -35,7 +35,7 @@ public final class SettingsHomeScreen extends KitHudScreen {
 		addRenderableWidget(Button.builder(Component.literal("菜单：Minecraft 风格 → 切换模块面板"), button -> {
 			config.clickGui = true;
 			config.save();
-			this.minecraft.setScreen(new ClickGuiScreen(config, KitClient.controller()));
+			this.minecraft.gui.setScreen(new ClickGuiScreen(config, KitClient.controller()));
 		}).bounds(left, y, 320, 20).build());
 		y += 24;
 		addRenderableWidget(Checkbox.builder(Component.literal("打开容器后自动补货"), this.font)
@@ -70,7 +70,7 @@ public final class SettingsHomeScreen extends KitHudScreen {
 			.build());
 		y += 32;
 		addRenderableWidget(Button.builder(Component.literal("按键绑定"), button ->
-			this.minecraft.setScreen(new KitKeyBindsScreen(this)))
+			this.minecraft.gui.setScreen(new KitKeyBindsScreen(this)))
 			.bounds(left, y, 320, 22).build());
 		y += 26;
 		addRenderableWidget(Button.builder(Component.literal("检查并加载新版"), button -> {
@@ -91,7 +91,7 @@ public final class SettingsHomeScreen extends KitHudScreen {
 		}).bounds(left + 163, y, 157, 22).build());
 		y += 26;
 		infoY = y;
-		addRenderableWidget(Button.builder(Component.literal("关闭"), button -> this.minecraft.setScreen(null))
+		addRenderableWidget(Button.builder(Component.literal("关闭"), button -> this.minecraft.gui.setScreen(null))
 			.bounds(left, footerButtonY(), 320, 20).build());
 	}
 

@@ -134,7 +134,7 @@ public final class ConcreteMaker {
         try{
             if(c.player==null || c.level!=level || c.gameMode==null || c.player.isDeadOrDying()){stop(c,"离开原世界");return;}
             if(c.player.position().distanceTo(start)>.8){stop(c,"角色已离开固定制作位置");return;}
-            if(c.screen!=null){pause(c);stateSince=ticks;status="界面打开，暂停制作";return;}
+            if(c.gui.screen()!=null){pause(c);stateSince=ticks;status="界面打开，暂停制作";return;}
             if(c.player.getHealth()<Math.max(8,config.minHealth)){stop(c,"血量不足");return;}
             if(eating(c)){pause(c);stateSince=ticks;status="等待自动吃完成";return;}
             if(!supportUnchanged(c)){stop(c,"支撑面发生变化");return;}
@@ -168,7 +168,7 @@ public final class ConcreteMaker {
                 long token=generation;pending=true;pendingSince=ticks;var look=RotationAim.lookAt(c.player,placement.getLocation());
                 PlacementRotation.after(c,look.yaw(),look.pitch(),()->{
                     if(!active || token!=generation)return;pending=false;
-                    if(c.screen!=null || c.level!=level || dev.twob2tkit.automation.AutomationBridge.guardBusy())return;
+                    if(c.gui.screen()!=null || c.level!=level || dev.twob2tkit.automation.AutomationBridge.guardBusy())return;
                     var current=c.level.getBlockState(target);
                     if(!current.isAir() && !current.is(Blocks.WATER))return;
                     if(!c.player.getMainHandItem().is(powder))return;
@@ -271,7 +271,7 @@ public final class ConcreteMaker {
     private void log(Minecraft c,String event){
         String line=event+" target="+target+" completed="+completed;
         KitClient.LOGGER.info("[Concrete] {}",line);
-        if(event.startsWith("start"))dev.twob2tkit.cruise.CruiseScreenHud.begin("混凝土制作 · "+status());
-        else if(event.startsWith("stop"))dev.twob2tkit.cruise.CruiseScreenHud.finish("混凝土制作 · "+status());
+        if(event.startsWith("start"))dev.twob2tkit.hud.WorkHud.clearNotice();
+        else if(event.startsWith("stop"))dev.twob2tkit.hud.WorkHud.showNotice("混凝土制作",status());
     }
 }

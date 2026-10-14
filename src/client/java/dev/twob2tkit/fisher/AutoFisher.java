@@ -139,7 +139,7 @@ public final class AutoFisher {
             &&!KitKeys.isPhysicallyDown(client,client.options.keyUse))
             client.options.keyUse.setDown(false);
         chestPos=null;cooldown=openWait=caughtWait=0;sawBite=false;
-		if (!keepMenu && client.screen instanceof AbstractContainerScreen<?>) {
+		if (!keepMenu && client.gui.screen() instanceof AbstractContainerScreen<?>) {
 			client.player.closeContainer();
 		}
 		status = "已停止：" + reason;
@@ -165,7 +165,7 @@ public final class AutoFisher {
 			handleStash(client, player);
 			return;
 		}
-		if (client.screen != null) {
+		if (client.gui.screen() != null) {
 			releaseKeys(client);
 			status = "先关掉界面再钓";
 			return;
@@ -219,7 +219,7 @@ public final class AutoFisher {
 	public void reapplyLook(Minecraft client) {
 		if (!active || client.player == null) return;
 		if (phase != Phase.FISH) return;
-		if (client.screen != null) return;
+		if (client.gui.screen() != null) return;
 		applySpotLook(client.player);
 	}
 
@@ -284,7 +284,7 @@ public final class AutoFisher {
 	/** 打开箱子并把非鱼竿物品快移进去。 */
 	private void handleStash(Minecraft client, LocalPlayer player) {
 		if (phase == Phase.OPEN_CHEST) {
-			if (client.screen instanceof AbstractContainerScreen<?> screen && isChestMenu(screen.getMenu())) {
+			if (client.gui.screen() instanceof AbstractContainerScreen<?> screen && isChestMenu(screen.getMenu())) {
 				phase = Phase.DUMP;
 				dumpStreak = 0;
 				cooldown = 2;
@@ -305,7 +305,7 @@ public final class AutoFisher {
 			status = "打开箱子";
 			return;
 		}
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || !isChestMenu(screen.getMenu())) {
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || !isChestMenu(screen.getMenu())) {
 			phase = Phase.RETURN;
 			releaseKeys(client);
 			return;
@@ -506,7 +506,7 @@ public final class AutoFisher {
 
 	/** 叠字幕提示。 */
 	private static void overlay(Minecraft client, String text, int color) {
-		client.gui.setOverlayMessage(Component.literal("[钓鱼] " + text).withColor(color), false);
+		client.gui.hud.setOverlayMessage(Component.literal("[钓鱼] " + text).withColor(color), false);
 	}
 
 	/** 发系统消息。 */

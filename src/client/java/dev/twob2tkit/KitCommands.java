@@ -36,7 +36,7 @@ final class KitCommands {
 				.then(literal("help").executes(context -> help(context.getSource())))
 				.then(literal("supply").then(supplyCommand("allow",true)).then(supplyCommand("deny",false)))
 				.then(literal("scenery")
-					.executes(context -> { context.getSource().getClient().setScreen(new SceneryScreen(null, config)); return 1; })
+					.executes(context -> { context.getSource().getClient().gui.setScreen(new SceneryScreen(null, config)); return 1; })
 					.then(literal("start").then(argument("radius", IntegerArgumentType.integer(16, 4096)).executes(context -> {
 						int radius = IntegerArgumentType.getInteger(context, "radius");
 						boolean ok = KitClient.startScenery(context.getSource().getClient(), radius, false);

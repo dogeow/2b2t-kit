@@ -152,7 +152,7 @@ public final class FeederScreen extends KitHudScreen {
 	private void startFeeder() {
 		if (!saveFields()) return;
 		KitClient.startFeeder(this.minecraft);
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 调整动物优先顺序后重建控件。 */

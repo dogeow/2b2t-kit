@@ -27,7 +27,7 @@ public final class CaretakerPages {
             var directory=CaretakerJobs.directory();if(directory==null){page.message("尚无可读取的农场记录目录",0xFFFF77);return;}
             client.keyboardHandler.setClipboard(directory.toString());page.message("已复制原周期记录路径",0x77DDCC);
         });
-        client.setScreen(page);
+        client.gui.setScreen(page);
     }
     private static void openReview(Screen parent,KitConfig config){
         var client=Minecraft.getInstance();
@@ -41,12 +41,12 @@ public final class CaretakerPages {
             var directory=CaretakerJobs.directory();if(directory==null){page.message("尚无可读取的农场记录目录",0xFFFF77);return;}
             client.keyboardHandler.setClipboard(directory.toString());page.message("已复制原周期记录路径",0x77DDCC);
         });
-        client.setScreen(page);
+        client.gui.setScreen(page);
     }
     private static void openArchiveConfirmation(KitFormScreen page,Minecraft client){
         perform(page,()->{
             var preview=CaretakerJobs.previewArchive(client);
-            client.setScreen(new KitConfirmScreen(page,"归档第 "+preview.cycle()+" 轮未知结果",
+            client.gui.setScreen(new KitConfirmScreen(page,"归档第 "+preview.cycle()+" 轮未知结果",
                 "我已核对物品安全，归档旧周期并从当前状态新建。\n原周期及未确认动作完整保留，结果标为未知；归档不会取料或解除安全锁。\n归档完成后，再按“开始本地周期”才会新建第 "+(preview.cycle()+1)+" 轮。",
                 ()->perform(page,()->CaretakerJobs.archivePending(client,preview))));
         });

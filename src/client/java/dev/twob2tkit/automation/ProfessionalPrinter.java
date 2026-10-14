@@ -30,7 +30,7 @@ public final class ProfessionalPrinter {
         lastOwnedClick=System.currentTimeMillis();return false;
     }
     public static boolean recoverOwnedContainer(Minecraft c){
-        if(!owned||c.player==null||!(c.screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>)||c.player.containerMenu.containerId==0||!c.player.containerMenu.getCarried().isEmpty()||lastOwnedClick==0||System.currentTimeMillis()-lastOwnedClick>1500)return false;
+        if(!owned||c.player==null||!(c.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>)||c.player.containerMenu.containerId==0||!c.player.containerMenu.getCarried().isEmpty()||lastOwnedClick==0||System.currentTimeMillis()-lastOwnedClick>1500)return false;
         lastOwnedClick=0;c.player.closeContainer();recheck=true;
         if(++recoveredMenus>1)fail(c,"打印器反复打开容器，已停止并保留现场");
         dev.twob2tkit.KitClient.LOGGER.info("[Build] closed-owned-container and requested inventory rescan");return true;
@@ -63,7 +63,7 @@ public final class ProfessionalPrinter {
     }
     private static String lastHandMismatch="";
     public static void prepareActualTool(Object action,Minecraft c,net.minecraft.client.player.LocalPlayer player){
-        if(!owned||paused||c.screen!=null||c.player!=player||player.containerMenu!=player.inventoryMenu||!player.containerMenu.getCarried().isEmpty()||player.isUsingItem())return;
+        if(!owned||paused||c.gui.screen()!=null||c.player!=player||player.containerMenu!=player.inventoryMenu||!player.containerMenu.getCarried().isEmpty()||player.isUsingItem())return;
         try{
             Object raw=action.getClass().getField("context").get(action);
             if(!(raw instanceof net.minecraft.world.item.context.BlockPlaceContext context))return;
@@ -111,7 +111,7 @@ public final class ProfessionalPrinter {
         if(!AutomationBridge.projectionBatchCurrent(c)){fail(c,"施工批次已过期，已停止放置");return false;}
         if(c.player==null||!AutomationBridge.projectionBatchFeetAllowed(c.player.getY()))return false;
         candidateTarget=null;candidateState=null;
-        try{return pacing.acquire(elapsedTicks,paused||c.screen!=null||AutomationBridge.guardBusy()||!failure.isEmpty(),(boolean)handler(printer).getClass().getMethod("acceptsActions").invoke(handler(printer)));}
+        try{return pacing.acquire(elapsedTicks,paused||c.gui.screen()!=null||AutomationBridge.guardBusy()||!failure.isEmpty(),(boolean)handler(printer).getClass().getMethod("acceptsActions").invoke(handler(printer)));}
         catch(ReflectiveOperationException e){fail(c,"无法检查打印队列，已停止放置");return false;}
     }
     public static void nativeProposalQueued(Object printer){
@@ -227,7 +227,7 @@ public final class ProfessionalPrinter {
         if(!owned)return;
         if(!failure.isEmpty()){stop(c,true);return;}
         try{
-            boolean canWork=c.screen==null&&!paused&&!AutomationBridge.guardBusy();
+            boolean canWork=c.gui.screen()==null&&!paused&&!AutomationBridge.guardBusy();
             if(canWork&&pacing.timedOut(elapsedTicks)){fail(c,"服务器未确认上一格，已停止放置；请检查网络或权限");return;}
             set("PRINT_MODE",canWork&&failure.isEmpty());
             if(canWork)elapsedTicks++;

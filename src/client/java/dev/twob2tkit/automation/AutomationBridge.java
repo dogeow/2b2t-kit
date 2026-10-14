@@ -64,6 +64,7 @@ public final class AutomationBridge {
     private static final ProjectionBatchScope<BlockPos> projectionBatch=new ProjectionBatchScope<>();
     private static JsonObject rockQuarryProgress;
     private static JsonObject lastSlaughterAttack;
+    private static JsonObject lastInkAttack;
     private static MaterialAirNavigation materialAirNavigation;
     private static JsonObject lastMaterialAirNavigation;
     private static JsonObject idleDispatchRequest,idleYieldAck;
@@ -256,6 +257,7 @@ public final class AutomationBridge {
     private static long controlRevision;
     private static Object observedLevel;
     private static String worldSession="";
+    private static final InterfacePausePolicy.InventoryState inventoryInterfacePause=new InterfacePausePolicy.InventoryState();
     private static boolean survivalArmed, survivalBackground;
     private static int useCount, pathIndex, foodOriginalSlot=-1, foodUseSlot=-1, concretePickupDeadline;
     private static final Set<UUID> concretePreexistingDrops=new HashSet<>();
@@ -306,7 +308,7 @@ public final class AutomationBridge {
                 ||active!=null||nativeMaterialOwner!=null||KitClient.anyAfkAuto()
                 ||supervisionLease!=null&&!str(supervisionLease,"kind").equals("parking")
                 ||c.player.containerMenu!=c.player.inventoryMenu
-                ||c.screen!=null&&!c.screen.getClass().getName().startsWith("dev.twob2tkit."))
+                ||c.gui.screen()!=null&&!c.gui.screen().getClass().getName().startsWith("dev.twob2tkit."))
             throw new IllegalStateException("其他任务或物品界面仍在占用，请先结束后再开始材料作业");
         JsonObject result=new JsonObject();result.addProperty("world_session",session(c));
         result.addProperty("server",c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip);
@@ -484,7 +486,7 @@ public final class AutomationBridge {
             }
             if(KitKeys.manualMovementDown(c)){pendingSafety=null;return;}
             if(local && ticks-pendingSafetyTick<=100){
-                if(ticks%5==0)c.setScreen(new net.minecraft.client.gui.screens.PauseScreen(true));
+                if(ticks%5==0)c.gui.setScreen(new net.minecraft.client.gui.screens.PauseScreen(true));
             }else if(ticks-pendingSafetyTick>100){
                 var retry=pendingSafety;pendingSafety=null;KitClient.safeLogout(c,"托管暂停未确认，保存并退出");
                 retry.addProperty("action","LOGOUT");pendingSafety=retry;pendingSafetyTick=ticks;
@@ -637,6 +639,8 @@ public final class AutomationBridge {
         if(lastSlaughterAttack!=null&&id.equals(str(lastSlaughterAttack,"id"))
                 &&session(c).equals(str(lastSlaughterAttack,"world_session")))
             result.add("slaughter_attack",lastSlaughterAttack.deepCopy());
+        if(lastInkAttack!=null&&id.equals(str(lastInkAttack,"id"))&&session(c).equals(str(lastInkAttack,"world_session")))
+            result.add("ink_attack",lastInkAttack.deepCopy());
         attachTerminalConfirmation(c,result,id);
         result.addProperty("phase",outcome);
         result.addProperty("detail",message);result.addProperty("world_session",session(c));
@@ -646,7 +650,7 @@ public final class AutomationBridge {
         nativeMaterialCheck(owner,c);
         if(owner.pendingId!=null||active!=null)throw new IllegalStateException("Native material child is already running");
         if(!Set.of("guard","select_item","snapshot","scan","scan_snow_biomes","snow_seed_candidates","air_return_set","mine_block","rock_quarry_batch",
-                "walk","navigate","collect_item","approach_block","bucket_fill","bucket_place","bottle_fill","material_slaughter_attack","planter_wheat_batch").contains(command))
+                "walk","navigate","collect_item","approach_block","bucket_fill","bucket_place","bottle_fill","material_slaughter_attack","material_ink_attack","planter_wheat_batch").contains(command))
             throw new IllegalArgumentException("Native material command is not allowed: "+command);
         JsonObject request=params==null?new JsonObject():params.deepCopy();
         for(String protectedKey:List.of("id","op","task_session","server","dimension","site",
@@ -850,7 +854,7 @@ public final class AutomationBridge {
             if(nativeMaterialOwner!=null&&str(lease,"id").equals(nativeMaterialOwner.lease)
                     &&now-nativeMaterialOwner.lastTouch<=1000)
                 lastSupervisionHeartbeat=now;
-            if(str(lease,"kind").equals("parking")&&c.screen!=null&&!interfacePaused(c)){
+            if(str(lease,"kind").equals("parking")&&c.gui.screen()!=null&&!interfacePaused(c)){
                 var menu=c.player.containerMenu;
                 var inventory=new ArrayList<ItemStack>();for(int i=0;i<36;i++)inventory.add(c.player.getInventory().getItem(i));
                 var returning=new ArrayList<ItemStack>();returning.add(menu.getCarried());
@@ -930,7 +934,7 @@ public final class AutomationBridge {
             var receipt=new JsonObject();receipt.addProperty("lease",str(lease,"id"));receipt.addProperty("job_session",str(lease,"job_session"));receipt.addProperty("cause",lowHealth?"low_health":complete?"complete":controllerFinished?"controller_finished":"heartbeat_lost");receipt.addProperty("action",action.name());receipt.addProperty("time",now);receipt.add("snapshot",snapshot(c));
             receipt.addProperty("confirmed",false);receipt.addProperty("server_survival_verified",false);safetyReceipt(c,receipt);
             switch(action){
-                case PAUSE_LOCAL -> {KitClient.emergencyStop("托管安全暂停："+(lowHealth?"血量不足":complete?"任务完成":controllerFinished?"托管已结束":"控制器失联"));c.pauseGame(false);if(!(c.screen instanceof net.minecraft.client.gui.screens.PauseScreen))c.setScreen(new net.minecraft.client.gui.screens.PauseScreen(true));}
+                case PAUSE_LOCAL -> {KitClient.emergencyStop("托管安全暂停："+(lowHealth?"血量不足":complete?"任务完成":controllerFinished?"托管已结束":"控制器失联"));c.pauseGame(false);if(!(c.gui.screen() instanceof net.minecraft.client.gui.screens.PauseScreen))c.gui.setScreen(new net.minecraft.client.gui.screens.PauseScreen(true));}
                 case LOGOUT -> {suspendAutoReconnect();KitClient.safeLogout(c,"托管收尾退出："+(lowHealth?"血量不足":complete?"任务完成":controllerFinished?"托管已结束":"控制器失联"));}
                 case KEEP_PVE_GUARD -> {}
                 default -> {}
@@ -939,7 +943,7 @@ public final class AutomationBridge {
         }catch(Exception e){supervisionLease=null;KitClient.emergencyStop("托管安全监控读取失败");if(c.getSingleplayerServer()!=null)c.pauseGame(false);else KitClient.safeLogout(c,"托管状态异常，安全退出");}
     }
     private static String session(Minecraft c){
-        if(observedLevel!=c.level){ownedMaterialMenu=-1;observedLevel=c.level;worldSession=UUID.randomUUID().toString();survivalArmed=false;controlRevision++;}
+        if(observedLevel!=c.level){ownedMaterialMenu=-1;inventoryInterfacePause.clear();observedLevel=c.level;worldSession=UUID.randomUUID().toString();survivalArmed=false;controlRevision++;}
         return worldSession;
     }
     private static void restoreGuardAfterReconnect(Minecraft c){
@@ -948,7 +952,7 @@ public final class AutomationBridge {
         long now=System.currentTimeMillis();
         if(now-pending.savedAt()>GuardReconnectPolicy.MAX_AGE_MS
             ||dev.twob2tkit.combat.EmergencyExit.held(c)){pendingGuardReconnect=null;return;}
-        if(c.player==null||c.level==null||c.screen!=null)return;
+        if(c.player==null||c.level==null||c.gui.screen()!=null)return;
         String server=c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip;
         String dimension=c.level.dimension().identifier().toString();
         if(!GuardReconnectPolicy.restoreHere(pending,server,dimension,c.player.getX(),c.player.getZ(),
@@ -959,7 +963,7 @@ public final class AutomationBridge {
     }
     private static boolean survival(JsonObject r){return r!=null && r.has("local_survival") && r.get("local_survival").getAsBoolean();}
     private static boolean background(JsonObject r){return r!=null && r.has("background_ok") && r.get("background_ok").getAsBoolean();}
-    private static boolean survivalMenu(Minecraft c){return c.screen==null || Set.of("InventoryScreen","CraftingScreen","FurnaceScreen","BlastFurnaceScreen","SmokerScreen").contains(c.screen.getClass().getSimpleName());}
+    private static boolean survivalMenu(Minecraft c){return c.gui.screen()==null || Set.of("InventoryScreen","CraftingScreen","FurnaceScreen","BlastFurnaceScreen","SmokerScreen").contains(c.gui.screen().getClass().getSimpleName());}
     private static void survivalGuard(Minecraft c,JsonObject r){
         if(!survival(r))return;
         if(r.has("local_trial")&&r.get("local_trial").getAsBoolean()){
@@ -1015,7 +1019,7 @@ public final class AutomationBridge {
     }
     /** Only the actual live trial's exact PvE guardian may use trial combat. */
     public static boolean ownedTrialCombat(Minecraft c){
-        if(c==null||c.player==null||c.level==null||c.screen!=null||c.isPaused()
+        if(c==null||c.player==null||c.level==null||c.gui.screen()!=null||c.isPaused()
                 ||dev.twob2tkit.combat.EmergencyExit.active())return false;
         float health=c.player.getHealth();
         boolean alive=!c.player.isDeadOrDying()&&Float.isFinite(health)&&health>0;
@@ -1034,7 +1038,7 @@ public final class AutomationBridge {
             ||active.get("expected_revision").getAsLong()!=controlRevision
             ||!str(active,"world_session").equals(session(c))
             ||System.currentTimeMillis()-lastSupervisionHeartbeat>15000
-            ||c.screen!=null||KitKeys.manualMovementDown(c)||!guardArmed()||!pveOnly()||guardBusy
+            ||c.gui.screen()!=null||KitKeys.manualMovementDown(c)||!guardArmed()||!pveOnly()||guardBusy
             ||c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<8
             ||dev.twob2tkit.combat.EmergencyExit.held(c))return false;
         try{return dev.twob2tkit.builder.LitematicaAccess.lockedBuildSelection().key().equals(str(active,"placement_key"));}
@@ -1146,6 +1150,11 @@ public final class AutomationBridge {
             supervisionLease==null?"":str(supervisionLease,"job_session"),
             respirationThree(c)&&MeteorModules.isActive(MeteorModules.AUTO_LOG)
                 ?airGear(c):"unqualified",System.currentTimeMillis());
+    }
+    static boolean gravelPickupRebaseClear(Minecraft c,Vec3 target){
+        return materialAirScope(c)&&respirationThree(c)&&MeteorModules.isActive(MeteorModules.AUTO_LOG)
+            &&materialAirRoute.pickupRebaseClear(c,session(c),str(supervisionLease,"job_session"),
+                airGear(c),target,System.currentTimeMillis());
     }
     private static boolean beginNativeAirReturn(Minecraft c,MaterialAirBudget.Estimate budget,
                                                 boolean boundedDiveDue){
@@ -1465,7 +1474,7 @@ public final class AutomationBridge {
         return false;
     }
     private static boolean nativeKitMenu(Minecraft c){
-        if(c.screen==null||!c.screen.getClass().getName().startsWith("dev.twob2tkit."))return false;
+        if(c.gui.screen()==null||!c.gui.screen().getClass().getName().startsWith("dev.twob2tkit."))return false;
         if(nativeMaterialOwner!=null)return true;
         // The local Python material worker must remain pausable from its own
         // Kit page. Freeze its inputs there; do not turn UI inspection into an
@@ -1478,9 +1487,14 @@ public final class AutomationBridge {
     }
     /** Passive screens suspend the current task; they never acquire an inventory menu. */
     public static boolean interfacePaused(Minecraft c){
-        return InterfacePausePolicy.pauses(c.player!=null&&c.level!=null&&!c.player.isDeadOrDying(),
-            c.screen!=null,c.screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>,
-            c.player!=null&&c.player.containerMenu==c.player.inventoryMenu,nativeAirReturnActive);
+        boolean alive=c.player!=null&&c.level!=null&&!c.player.isDeadOrDying();
+        boolean inventoryMenu=alive&&c.player.containerMenu==c.player.inventoryMenu;
+        boolean inventoryPaused=inventoryInterfacePause.observe(alive,
+            c.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.InventoryScreen,inventoryMenu,
+            !inventoryMenu||c.player.inventoryMenu.getCarried().isEmpty());
+        return inventoryPaused&&!nativeAirReturnActive||InterfacePausePolicy.pauses(alive,
+            c.gui.screen()!=null,c.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>,
+            inventoryMenu,nativeAirReturnActive);
     }
     private static void pauseInterfaceInput(Minecraft c){
         ProfessionalPrinter.pause();
@@ -1574,7 +1588,7 @@ public final class AutomationBridge {
             double brakeY=active.get("freefall_brake_y").getAsDouble();
             int low=Math.max((int)Math.floor(brakeY)-2,c.player.blockPosition().getY()-8);
             boolean blocked=!freefallColumnClear(c,c.player.blockPosition(),low,c.player.blockPosition().getY()+2);
-            if(FreefallPolicy.brake(c.player.getY(),brakeY,c.player.getHealth(),c.screen!=null)||blocked){
+            if(FreefallPolicy.brake(c.player.getY(),brakeY,c.player.getHealth(),c.gui.screen()!=null)||blocked){
                 MeteorModules.enable(MeteorModules.FLIGHT);
                 if(!MeteorModules.isActive(MeteorModules.FLIGHT)){
                     KitClient.safeLogout(c,"快速下降刹车未确认，已安全退出");return true;
@@ -1598,7 +1612,7 @@ public final class AutomationBridge {
             return true;
         }
         if(op.equals("use_item")){c.options.keyUse.setDown(true);return true;}
-        if(c.screen!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyAttack.setDown(false);return true;}
+        if(c.gui.screen()!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyAttack.setDown(false);return true;}
         if(op.equals("mine_block")){
             try{guard(c,active);}catch(Exception e){finish(c,"stopped",e.getMessage());return true;}
             if(dryPavingRequested(active))try{dryPavingRequestGuard(c,active);}
@@ -1772,7 +1786,7 @@ public final class AutomationBridge {
         if(interfacePaused(c)){tickInterfacePause(c);return;}
         if(active!=null&&op.equals("trial_respawn")){
             try{dev.twob2tkit.trial.SingleplayerTrialRuntime.require(c,active);
-                if(c.player!=null&&!c.player.isDeadOrDying()&&c.player.getHealth()>0&&c.screen==null)finish(c,"done","normal trial respawn observed alive");
+                if(c.player!=null&&!c.player.isDeadOrDying()&&c.player.getHealth()>0&&c.gui.screen()==null)finish(c,"done","normal trial respawn observed alive");
                 else if(ticks>=deadline)finish(c,"waiting","trial respawn not observed; preserve request");
             }catch(Exception changed){finish(c,"waiting",changed.getMessage());}
             writeStatus(c);return;
@@ -1810,9 +1824,9 @@ public final class AutomationBridge {
                     }
                 }else if(op.equals("professional_print")){
                     if(!ProfessionalPrinter.failure().isEmpty()){finish(c,"error",ProfessionalPrinter.failure());return;}
-                    if(!guardBusy && c.screen==null && c.player.getHealth()>=14)ProfessionalPrinter.resume();
+                    if(!guardBusy && c.gui.screen()==null && c.player.getHealth()>=14)ProfessionalPrinter.resume();
                     if(!guardBusy && (c.player.getHealth()<14 || !MeteorModules.isActive(MeteorModules.KILL_AURA) || !MeteorModules.isActive(MeteorModules.AUTO_LOG))){finish(c,"waiting","health or defense requires attention");}
-                    else if(!guardBusy&&c.screen==null&&boundedPrinterComplete(c))
+                    else if(!guardBusy&&c.gui.screen()==null&&boundedPrinterComplete(c))
                         finish(c,"done","all bounded printer targets server-confirmed; batch finished early");
                     else if(ticks>=deadline)finish(c,"waiting","printer interval ended without complete current bounded-mask server confirmation");
                 }else if(op.equals("projection_scaffold_fill")){
@@ -2064,6 +2078,35 @@ public final class AutomationBridge {
                 "projection_model","map_audit","decision_screenshot","stop","material_job_pause","safe_logout","inventory_probe").contains(str(r,"op")))
                 preemptIdleForPlayer(c,"FORMAL_NATIVE_INPUT");
         String command=str(r,"op");
+        if(command.equals("connect_server")||command.equals("client_quit")){
+            TitleConnectionPolicy.require(c.player==null&&c.level==null,
+                c.gui.screen() instanceof net.minecraft.client.gui.screens.TitleScreen
+                    ||c.gui.screen() instanceof net.minecraft.client.gui.screens.DisconnectedScreen,
+                active==null&&nativeMaterialOwner==null&&supervisionLease==null,
+                dev.twob2tkit.combat.EmergencyExit.held(c)||healthRecoveryHold,
+                session(c),str(r,"world_session"),controlRevision,
+                r.has("expected_revision")?r.get("expected_revision").getAsLong():-1,
+                System.currentTimeMillis(),r.has("expires_at")?r.get("expires_at").getAsLong():0,
+                c.getUser().getName(),str(r,"expected_player"));
+            net.minecraft.client.multiplayer.ServerData server=null;
+            if(command.equals("connect_server")){
+                String address=str(r,"address");
+                var list=new net.minecraft.client.multiplayer.ServerList(c);list.load();
+                server=list.get(address);
+                if(server==null)throw new IllegalArgumentException("Connection target must already exist in this profile's saved server list");
+            }
+            controlRevision++;statusId=lastId;op=command;phase="done";
+            detail=command.equals("connect_server")?"normal saved-server connection requested; await actual world":"idle title client exit requested";
+            var receipt=snapshot(c);receipt.addProperty("id",lastId);receipt.addProperty("op",command);
+            receipt.addProperty("phase","done");receipt.addProperty("detail",detail);
+            receipt.addProperty("connection_requested",command.equals("connect_server"));
+            receipt.addProperty("world_connected_verified",false);
+            save(root(c).resolve("reply-"+safeId(lastId)+".json"),receipt);writeStatus(c);
+            if(server!=null)net.minecraft.client.gui.screens.ConnectScreen.startConnecting(c.gui.screen(),c,
+                net.minecraft.client.multiplayer.resolver.ServerAddress.parseString(server.ip),server,false,null);
+            else c.execute(c::stop);
+            return;
+        }
         if(command.equals("inventory_probe")){inventoryProbe(c,r);return;}
         if(command.equals("trial_respawn")||command.equals("trial_stop")){
             dev.twob2tkit.trial.SingleplayerTrialRuntime.require(c,r);
@@ -2092,7 +2135,7 @@ public final class AutomationBridge {
         }
         if(command.equals("material_job_pause")){
             externalMaterialScope(c,r);
-            if(c.screen!=null&&!interfacePaused(c)&&!c.screen.getClass().getName().startsWith("dev.twob2tkit."))
+            if(c.gui.screen()!=null&&!interfacePaused(c)&&!c.gui.screen().getClass().getName().startsWith("dev.twob2tkit."))
                 throw new IllegalStateException("Material pause cannot take over a different item interface");
             if(r.has("release")&&(!r.get("release").isJsonPrimitive()||!r.getAsJsonPrimitive("release").isBoolean()))
                 throw new IllegalArgumentException("Material release must be boolean");
@@ -2196,7 +2239,7 @@ public final class AutomationBridge {
                     supervisionLease.has("revision")?supervisionLease.get("revision").getAsLong():-1,controlRevision,
                     highGuardPark(c,supervisionLease),guardArmed()&&pveOnly(),guardBusy);
             boolean leaseAvailable=replacing?resumePark:supervisionLease==null;
-            if(expiry<0||expiry>15000||!r.has("expected_revision")||r.get("expected_revision").getAsLong()!=controlRevision||!str(r,"world_session").equals(session(c))||!leaseAvailable||KitClient.anyAfkAuto()||c.screen!=null||KitKeys.manualMovementDown(c)||c.player.getHealth()<14)throw new IllegalStateException("Material session cannot acquire control");
+            if(expiry<0||expiry>15000||!r.has("expected_revision")||r.get("expected_revision").getAsLong()!=controlRevision||!str(r,"world_session").equals(session(c))||!leaseAvailable||KitClient.anyAfkAuto()||c.gui.screen()!=null||KitKeys.manualMovementDown(c)||c.player.getHealth()<14)throw new IllegalStateException("Material session cannot acquire control");
             boolean guardFinish=str(r,"remote_finish").equals("guard");
             if(guardFinish){JsonArray park=r.getAsJsonArray("park_target");if(park==null||park.size()!=3)throw new IllegalArgumentException("High guard finish requires a park target");for(var value:park)if(!Double.isFinite(value.getAsDouble()))throw new IllegalArgumentException("Invalid park target");}
             CraftingCompatibility.requireReady();
@@ -2217,7 +2260,7 @@ public final class AutomationBridge {
             var borer=KitClient.borer();
             if(!owned||!guardArmed()||!pveOnly()||c.player.getHealth()<19
                     ||c.player.getFoodData().getFoodLevel()<8||c.player.isUnderWater()
-                    ||c.screen!=null||KitKeys.manualMovementDown(c)||hostileNearby(c)
+                    ||c.gui.screen()!=null||KitKeys.manualMovementDown(c)||hostileNearby(c)
                     ||borer==null||borer.isActive()||KitClient.controller().isActive()
                     ||KitClient.anyAfkAuto()||!KitClient.config().borerAutoDefend)
                 throw new IllegalStateException("Guarded, healthy, idle dry quarry scope required");
@@ -2278,7 +2321,7 @@ public final class AutomationBridge {
                 &&!ProfessionalPrinter.status().get("enabled").getAsBoolean();
             String rejection=BorerControlPolicy.startRejection(materialOwned,gravelOnly,
                 c.player.getHealth()>=19&&c.player.getFoodData().getFoodLevel()>=8,
-                c.player.onGround(),!guardBusy&&!hostileNearby(c)&&c.screen==null
+                c.player.onGround(),!guardBusy&&!hostileNearby(c)&&c.gui.screen()==null
                     &&!KitKeys.manualMovementDown(c),free,guardArmed()&&pveOnly());
             if(rejection!=null)throw new IllegalStateException(rejection);
             borer.start(c,TunnelBorer.Mode.ORE);
@@ -2297,7 +2340,7 @@ public final class AutomationBridge {
             op=command;phase="done";detail="owned ore miner stopped; PvE guard remains armed";
         }else if(command.equals("runtime_reload")){
             if(supervisionLease==null||!str(supervisionLease,"kind").equals("materials")||!str(supervisionLease,"job_session").equals(str(r,"task_session")))throw new IllegalStateException("Material session required for managed hot update");
-            if(c.screen!=null||supplyTask!=null&&!supplyTask.done()||KitClient.borer().isActive()||KitClient.chopper().isActive()||KitClient.controller().isActive())throw new IllegalStateException("Wait for the current movement or inventory operation to finish before hot update");
+            if(c.gui.screen()!=null||supplyTask!=null&&!supplyTask.done()||KitClient.borer().isActive()||KitClient.chopper().isActive()||KitClient.controller().isActive())throw new IllegalStateException("Wait for the current movement or inventory operation to finish before hot update");
             var result=KitClient.reloadBorerRuntime(c,false);
             if(!result.success())throw new IllegalStateException(result.message());
             active=null;phase="done";op=command;detail=result.message();
@@ -2346,7 +2389,7 @@ public final class AutomationBridge {
             save(root(c).resolve("reply-"+safeId(lastId)+".json"),reply);
         }else if(command.equals("projection_start")){
             long requestedExpiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
-            if(requestedExpiry<0 || requestedExpiry>15000 || c.screen!=null || c.player.getHealth()<14 || KitKeys.manualMovementDown(c))throw new IllegalStateException("Projection start expired or player input/state changed");
+            if(requestedExpiry<0 || requestedExpiry>15000 || c.gui.screen()!=null || c.player.getHealth()<14 || KitKeys.manualMovementDown(c))throw new IllegalStateException("Projection start expired or player input/state changed");
             if(!r.has("manual_start") || !r.get("manual_start").getAsBoolean() || KitClient.buildJob().isActive())throw new IllegalStateException("Explicit idle projection start required");
             if(!r.has("expected_revision") || r.get("expected_revision").getAsLong()!=controlRevision || !str(r,"world_session").equals(session(c)))throw new IllegalStateException("Projection start scope changed");
             if(!dev.twob2tkit.builder.LitematicaAccess.buildSelection().key().equals(str(r,"placement_key")))throw new IllegalStateException("Selected projection changed");
@@ -2383,7 +2426,7 @@ public final class AutomationBridge {
         }else if(command.equals("planter_wheat_batch")){
             externalMaterialScope(c,r);
             if(!currentMaterialRequest(c,r)||!guardArmed()||!pveOnly()||c.player.getHealth()<19
-                ||loadedHostileNearby(c)||c.screen!=null||KitClient.anyAfkAuto())
+                ||loadedHostileNearby(c)||c.gui.screen()!=null||KitClient.anyAfkAuto())
                 throw new IllegalStateException("Scoped wheat batch requires the sole protected material owner");
             JsonArray positions=r.getAsJsonArray("soils");
             if(positions==null||positions.isEmpty()||positions.size()>16)
@@ -2416,6 +2459,11 @@ public final class AutomationBridge {
 				&&currentMaterialRequest(c,r);
 			boolean materialNavigation=command.equals("navigate")&&materialHandoff;
             dev.twob2tkit.chopper.ChopperFixedTreePlan fixedTree=null;
+            if(command.equals("chop")&&r.has("retain_saplings")){
+                if(!materialHandoff||!r.get("retain_saplings").isJsonPrimitive()
+                    ||!r.getAsJsonPrimitive("retain_saplings").isBoolean())
+                    throw new IllegalArgumentException("Sapling retention requires a boolean in the current material session");
+            }
             if(command.equals("chop")&&(r.has("tree_root")||r.has("tree_min")||r.has("tree_max"))){
                 if(!materialHandoff)throw new IllegalStateException("Fixed tree requires the current material session");
                 fixedTree=new dev.twob2tkit.chopper.ChopperFixedTreePlan(fixedTreePoint(r,"tree_root"),
@@ -2492,6 +2540,7 @@ public final class AutomationBridge {
                 String logId=str(active,"item");if(!Set.of("minecraft:oak_log","minecraft:spruce_log","minecraft:birch_log","minecraft:jungle_log","minecraft:acacia_log","minecraft:dark_oak_log","minecraft:mangrove_log","minecraft:cherry_log","minecraft:pale_oak_log").contains(logId))throw new IllegalArgumentException("A natural log target is required");
                 if(fixedTree==null)KitClient.chopper().startMaterial(c,logId);
                 else KitClient.chopper().startMaterialFixed(c,logId,fixedTree);
+                if(r.has("retain_saplings")&&r.get("retain_saplings").getAsBoolean())KitClient.chopper().retainMaterialSaplings(c);
                 if(r.has("tree_limit"))KitClient.chopper().limitTrees(Math.max(1,Math.min(16,r.get("tree_limit").getAsInt())));
             }else if(!KitClient.machines().start(c))throw new IllegalStateException("Could not start printer");
         }else if(command.equals("guard")){
@@ -2501,7 +2550,7 @@ public final class AutomationBridge {
             MeteorModules.enable("meteordevelopment.meteorclient.systems.modules.player.AutoEat");
             phase="done";detail="guard modules enabled";
         }else if(command.equals("fisher_start")){
-            if(c.screen!=null||c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<18
+            if(c.gui.screen()!=null||c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<18
                 ||!guardArmed()||!MeteorModules.isActive(MeteorModules.FLIGHT)
                 ||!c.player.getMainHandItem().is(net.minecraft.world.item.Items.FISHING_ROD)
                 ||KitClient.anyAfkAuto())throw new IllegalStateException("Safe guarded fishing start requires a held rod and no other task");
@@ -2768,7 +2817,7 @@ public final class AutomationBridge {
         }else if(command.equals("use_item")){
             String item=str(r,"item");
             boolean ownedMaterials=supervisionLease!=null && str(supervisionLease,"kind").equals("materials") && r.has("task_session");
-            if(!AutomationFoodPolicy.allow(survival(r),ownedMaterials,hostileNearby(c),c.screen!=null,KitKeys.manualMovementDown(c),c.player.getHealth(),c.player.getFoodData().getFoodLevel()))
+            if(!AutomationFoodPolicy.allow(survival(r),ownedMaterials,hostileNearby(c),c.gui.screen()!=null,KitKeys.manualMovementDown(c),c.player.getHealth(),c.player.getFoodData().getFoodLevel()))
                 throw new IllegalStateException("Food use requires a safe local world or owned material session");
             int found=-1;for(int i=0;i<9;i++)if(itemId(c.player.getInventory().getItem(i)).equals(item) && c.player.getInventory().getItem(i).get(net.minecraft.core.component.DataComponents.FOOD)!=null){found=i;break;}
             if(found<0)throw new IllegalStateException("Expected edible item in hotbar");
@@ -2779,6 +2828,8 @@ public final class AutomationBridge {
             startHorseNudge(c,r);
         }else if(command.equals("material_slaughter_attack")){
             slaughterAttack(c,r);
+        }else if(command.equals("material_ink_attack")){
+            inkAttack(c,r);
         }else if(command.equals("attack_passive")){
             var entity=c.level.getEntity(r.get("entity_id").getAsInt());
             if(!survival(r) || entity==null || !entity.getUUID().toString().equals(str(r,"expected_uuid"))
@@ -3165,7 +3216,7 @@ public final class AutomationBridge {
                 request.get("expires_at").getAsLong(),request.get("observed_at").getAsLong(),now))
             throw new IllegalStateException("Horse observation, world or controller is stale");
         if(c.gameMode.getPlayerMode()!=net.minecraft.world.level.GameType.SURVIVAL
-                ||c.screen!=null||c.player.containerMenu!=c.player.inventoryMenu
+                ||c.gui.screen()!=null||c.player.containerMenu!=c.player.inventoryMenu
                 ||!c.player.containerMenu.getCarried().isEmpty()||KitKeys.manualMovementDown(c))
             throw new IllegalStateException("Horse nudge requires an idle survival inventory state");
         if(!guardArmed()||!pveOnly()||guardBusy||c.player.getHealth()<19
@@ -3283,6 +3334,77 @@ public final class AutomationBridge {
         }
         return new BlockPos(values[0],values[1],values[2]);
     }
+    private static void inkAttack(Minecraft c,JsonObject request)throws Exception{
+        boolean dispatchStarted=false;lastInkAttack=null;
+        try{
+            safeId(str(request,"id"));long now=System.currentTimeMillis();
+            if(c.player==null||c.level==null||c.gameMode==null||supervisionLease==null
+                ||!SlaughterPolicy.owned("materials".equals(str(supervisionLease,"kind")),
+                    str(request,"task_session"),str(supervisionLease,"job_session"),str(request,"world_session"),
+                    str(supervisionLease,"world_session"),session(c),
+                    request.has("expected_revision")?ProjectionLoadPolicy.integer(request,"expected_revision"):-1,
+                    supervisionLease.has("revision")?supervisionLease.get("revision").getAsLong():-1,controlRevision,
+                    request.has("expires_at")?ProjectionLoadPolicy.integer(request,"expires_at")-now:-1,now-lastSupervisionHeartbeat))
+                throw new IllegalStateException("Ink attack requires the current owned healthy material lease");
+            guard(c,request);
+            var low=slaughterPoint(request,"region_min");var high=slaughterPoint(request,"region_max");
+            var bounds=new SlaughterPolicy.Bounds(low.getX(),low.getY(),low.getZ(),high.getX(),high.getY(),high.getZ());
+            if(!bounds.valid()||low.getY()<c.level.getMinY()||high.getY()>=c.level.getMaxY())
+                throw new IllegalArgumentException("Ink attack requires a bounded loaded region");
+            checkSiteTarget(request,request.getAsJsonArray("region_min"));checkSiteTarget(request,request.getAsJsonArray("region_max"));
+            for(int x=Math.floorDiv(low.getX(),16);x<=Math.floorDiv(high.getX(),16);x++)
+                for(int z=Math.floorDiv(low.getZ(),16);z<=Math.floorDiv(high.getZ(),16);z++){
+                    var chunk=c.level.getChunkSource().getChunk(x,z,net.minecraft.world.level.chunk.status.ChunkStatus.FULL,false);
+                    if(!dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence.isServerChunk(c.level,chunk))
+                        throw new IllegalStateException("Ink attack region is not loaded from this server");
+                }
+            int id=slaughterInt(request,"entity_id",-1);UUID uuid=UUID.fromString(str(request,"expected_uuid"));
+            var observed=c.level.getEntity(id);
+            if(!(observed instanceof net.minecraft.world.entity.LivingEntity squid)||!observed.getUUID().equals(uuid)
+                ||!bounds.contains(observed.getX(),observed.getY(),observed.getZ())
+                ||!InkAttackPolicy.target(BuiltInRegistries.ENTITY_TYPE.getKey(observed.getType()).toString(),
+                    squid.isAlive(),squid.isRemoved(),squid.hasCustomName(),squid.getHealth()))
+                throw new IllegalStateException("Only the exact living unnamed ordinary squid is permitted");
+            var sweepBox=squid.getBoundingBox().inflate(1.0,.25,1.0);
+            boolean sweepClear=c.level.getEntitiesOfClass(net.minecraft.world.entity.LivingEntity.class,sweepBox).stream()
+                .noneMatch(other->other!=squid&&other!=c.player&&other.isAlive()&&!other.isRemoved());
+            ItemStack weapon=c.player.getMainHandItem();
+            boolean ordinaryWeapon=!weapon.isEmpty()&&(weapon.is(net.minecraft.tags.ItemTags.SWORDS)||weapon.is(net.minecraft.tags.ItemTags.AXES))
+                &&(!weapon.isDamageableItem()||weapon.getMaxDamage()-weapon.getDamageValue()>32);
+            boolean otherWork=active!=null||KitClient.anyAfkAuto()||KitClient.borer().isActive()||KitClient.controller().isActive()
+                ||KitClient.chopper().isActive()||ProfessionalPrinter.owned()||c.gui.screen()!=null
+                ||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty();
+            if(!SlaughterPolicy.safe(guardArmed()&&pveOnly(),guardBusy||loadedHostileNearby(c),KitKeys.manualMovementDown(c),
+                    dev.twob2tkit.combat.EmergencyExit.held(c),c.gameMode.getPlayerMode()==net.minecraft.world.level.GameType.SURVIVAL,
+                    c.player.getHealth(),c.player.getFoodData().getFoodLevel(),c.player.onGround(),c.player.isUsingItem(),
+                    c.player.hurtTime>0,c.player.isInWater()||c.player.isOnFire(),otherWork,ordinaryWeapon,sweepClear))
+                throw new IllegalStateException("Ink attack requires idle healthy dry airborne PvE guard and an isolated target");
+            Vec3 hit=squid.position().add(0,squid.getBbHeight()*.5,0);
+            if(!SlaughterPolicy.aim(observed.getId()==id&&observed.getUUID().equals(uuid),c.player.hasLineOfSight(squid),
+                    c.player.getEyePosition().distanceTo(hit),c.player.entityInteractionRange(),c.player.getAttackStrengthScale(0)))
+                throw new IllegalStateException("Squid is occluded, out of reach or attack is cooling down");
+            RotationAim.apply(c.player,RotationAim.lookAt(c.player,hit));
+            lastInkAttack=new JsonObject();lastInkAttack.addProperty("id",str(request,"id"));
+            lastInkAttack.addProperty("world_session",session(c));lastInkAttack.addProperty("expected_uuid",uuid.toString());
+            lastInkAttack.addProperty("entity_id",id);lastInkAttack.addProperty("target_health_before",squid.getHealth());
+            lastInkAttack.addProperty("result_scope","normal_attack_dispatch_only");
+            lastInkAttack.addProperty("dispatch_started",true);lastInkAttack.addProperty("automatic_retry_allowed",false);
+            dispatchStarted=true;c.gameMode.attack(c.player,squid);c.player.swing(InteractionHand.MAIN_HAND);
+            lastInkAttack.addProperty("action_sent",true);lastInkAttack.addProperty("observed_at",now);
+            lastInkAttack.addProperty("control_revision",controlRevision);
+            statusId=str(request,"id");op="material_ink_attack";phase="done";detail="normal squid attack sent; verify health and actual ink drops";
+            var reply=snapshot(c);reply.addProperty("id",statusId);reply.addProperty("phase",phase);reply.addProperty("detail",detail);
+            reply.add("ink_attack",lastInkAttack.deepCopy());save(root(c).resolve("reply-"+safeId(statusId)+".json"),reply);
+        }catch(Exception failure){
+            if(dispatchStarted||c.player==null||c.level==null)throw failure;
+            String id=safeId(str(request,"id"));lastInkAttack=new JsonObject();lastInkAttack.addProperty("id",id);
+            lastInkAttack.addProperty("world_session",session(c));lastInkAttack.addProperty("action_sent",false);
+            lastInkAttack.addProperty("pre_dispatch_rejected",true);lastInkAttack.addProperty("automatic_retry_allowed",false);
+            statusId=id;op="material_ink_attack";phase="error";detail=failure.getMessage();
+            var reply=snapshot(c);reply.addProperty("id",id);reply.addProperty("phase",phase);reply.addProperty("detail",detail);
+            reply.add("ink_attack",lastInkAttack.deepCopy());save(root(c).resolve("reply-"+id+".json"),reply);
+        }
+    }
     private static void slaughterAttack(Minecraft c,JsonObject request)throws Exception{
         boolean attackDispatchStarted=false;
         lastSlaughterAttack=null;
@@ -3341,7 +3463,7 @@ public final class AutomationBridge {
             &&(!weapon.isDamageableItem()||weapon.getMaxDamage()-weapon.getDamageValue()>32);
         boolean otherWork=active!=null||KitClient.anyAfkAuto()||KitClient.borer().isActive()
             ||KitClient.controller().isActive()||KitClient.chopper().isActive()||ProfessionalPrinter.owned()
-            ||c.screen!=null||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty();
+            ||c.gui.screen()!=null||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty();
         if(!SlaughterPolicy.safe(guardArmed()&&pveOnly(),guardBusy||loadedHostileNearby(c),KitKeys.manualMovementDown(c),
                 dev.twob2tkit.combat.EmergencyExit.held(c),c.gameMode.getPlayerMode()==net.minecraft.world.level.GameType.SURVIVAL,
                 c.player.getHealth(),c.player.getFoodData().getFoodLevel(),c.player.onGround(),c.player.isUsingItem(),
@@ -3449,7 +3571,7 @@ public final class AutomationBridge {
     }
     private static void updateMaterialPark(Minecraft c,JsonObject r){
         JsonArray target=r.getAsJsonArray("park_target");
-        if(target==null||target.size()!=3||active!=null||c.screen!=null
+        if(target==null||target.size()!=3||active!=null||c.gui.screen()!=null
                 ||c.player.containerMenu!=c.player.inventoryMenu||c.player.isUnderWater())
             throw new IllegalStateException("Local park update requires an idle dry material task");
         double x=target.get(0).getAsDouble(),y=target.get(1).getAsDouble(),z=target.get(2).getAsDouble();
@@ -3542,7 +3664,7 @@ public final class AutomationBridge {
         ProjectionLoadPolicy.scope(c.player!=null&&c.level!=null&&c.gameMode!=null&&!c.player.isDeadOrDying(),idle,
             c.player!=null&&c.player.getHealth()>=19&&c.player.getFoodData().getFoodLevel()>=8
                 &&!c.player.isInWater()&&!c.player.isInLava()&&!c.player.isOnFire(),
-            KitKeys.manualMovementDown(c),c.screen==null&&c.player!=null&&c.player.containerMenu==c.player.inventoryMenu&&c.player.containerMenu.getCarried().isEmpty(),
+            KitKeys.manualMovementDown(c),c.gui.screen()==null&&c.player!=null&&c.player.containerMenu==c.player.inventoryMenu&&c.player.containerMenu.getCarried().isEmpty(),
             !dev.twob2tkit.combat.EmergencyExit.held(c),str(request,"world_session"),session(c),
             ProjectionLoadPolicy.integer(request,"expected_revision"),controlRevision,
             ProjectionLoadPolicy.integer(request,"expires_at"),System.currentTimeMillis());
@@ -3573,7 +3695,7 @@ public final class AutomationBridge {
                 ||dev.twob2tkit.combat.EmergencyExit.held(c)||!guardArmed()||!pveOnly()
                 ||!RockQuarryPolicy.healthy(c.player.getHealth(),c.player.getFoodData().getFoodLevel(),c.player.isUnderWater())
                 ||KitKeys.manualMovementDown(c)||c.player.containerMenu!=c.player.inventoryMenu
-                ||c.screen!=null&&!nativeKitMenu(c)||!KitClient.config().borerAutoDefend
+                ||c.gui.screen()!=null&&!nativeKitMenu(c)||!KitClient.config().borerAutoDefend
                 ||!MeteorModules.isActive(MeteorModules.AUTO_LOG))
             throw new IllegalStateException("Current guarded, healthy, dry material quarry scope required");
         if(!rockFlightAllowed(c,request))throw new IllegalStateException("Rock quarry Flight is off outside its current owned AREA");
@@ -3990,8 +4112,8 @@ public final class AutomationBridge {
                 v.addProperty("fluid",!bs.getFluidState().isEmpty());v.addProperty("block_entity",c.level.getBlockEntity(p)!=null);
                 BlockPos spawn=p.above();
                 boolean zombieFloor=p.getY()>=c.level.getMinY()&&spawn.above().getY()<=c.level.getMaxY()
-                    &&net.minecraft.world.entity.SpawnPlacements.isSpawnPositionOk(net.minecraft.world.entity.EntityType.ZOMBIE,c.level,spawn)
-                    &&c.level.noBlockCollision(null,net.minecraft.world.entity.EntityType.ZOMBIE.getDimensions()
+                    &&net.minecraft.world.entity.SpawnPlacements.isSpawnPositionOk(net.minecraft.world.entity.EntityTypes.ZOMBIE,c.level,spawn)
+                    &&c.level.noBlockCollision(null,net.minecraft.world.entity.EntityTypes.ZOMBIE.getDimensions()
                         .makeBoundingBox(spawn.getX()+.5,spawn.getY(),spawn.getZ()+.5),true);
                 int lightLimit=c.level.dimensionType().monsterSpawnBlockLightLimit();
                 var light=LightSurveyPolicy.sample(
@@ -4095,6 +4217,7 @@ public final class AutomationBridge {
     }
     private static JsonObject snapshot(Minecraft c){
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
+        j.addProperty("client_connection_protocol",1);j.addProperty("account_name",c.getUser().getName());
         j.addProperty("inventory_click_protocol",InventoryDiagnostics.PROTOCOL);j.addProperty("inventory_probe_protocol",InventoryDiagnostics.PROTOCOL);
         j.add("auto_refill_guard",AutoRefillCompatibility.snapshot());
         if(inventoryClick!=null&&inventoryClick.requestId.equals(statusId)){
@@ -4114,9 +4237,10 @@ public final class AutomationBridge {
         j.addProperty("fisher_deposit_allowed",KitClient.fisher()!=null&&KitClient.fisher().depositAllowed());
         if(supervisionLease!=null)j.add("supervision_lease",supervisionLease.deepCopy());if(lastSafetyEvent!=null)j.add("supervision_safety",lastSafetyEvent.deepCopy());
         j.add("safety_hold",dev.twob2tkit.combat.EmergencyExit.snapshot(c));
-        j.addProperty("interface_pause_protocol",1);j.addProperty("interface_paused",interfacePaused(c));
-        j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("job_hud_protocol",1);j.addProperty("quarry_protocol",1);j.addProperty("raw_iron_block_quarry_protocol",1);j.addProperty("tree_survey_protocol",1);j.addProperty("snow_biome_survey_protocol",SnowBiomeSurvey.PROTOCOL);j.addProperty("snow_seed_locator_protocol",SnowSeedExpedition.PROTOCOL);j.addProperty("snow_seed_locator_available",KitClient.seedScout()!=null&&KitClient.seedScout().hasStoredWorldSeed());j.addProperty("material_protocol",2);j.addProperty("air_return_protocol",1);j.addProperty("horse_nudge_protocol",1);j.addProperty("inventory_cursor_precondition_protocol",1);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("material_mining_isolation_protocol",1);j.addProperty("material_mining_cleanup_pending",materialMiningCleanupPending);j.add("material_mining_isolation",MaterialMiningLease.snapshot(materialMiningLease,!materialMiningScope(c).isEmpty()&&materialMiningScope(c).equals(materialMiningOwner)));j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("freefall_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",4);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.screen==null?"":c.screen.getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
+        j.addProperty("interface_pause_protocol",1);j.addProperty("interface_paused",interfacePaused(c));j.addProperty("inventory_interface_pause_protocol",1);j.addProperty("inventory_interface_paused",inventoryInterfacePause.held()&&!nativeAirReturnActive);
+        j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("job_hud_protocol",1);j.addProperty("quarry_protocol",1);j.addProperty("raw_iron_block_quarry_protocol",1);j.addProperty("tree_survey_protocol",1);j.addProperty("snow_biome_survey_protocol",SnowBiomeSurvey.PROTOCOL);j.addProperty("snow_seed_locator_protocol",SnowSeedExpedition.PROTOCOL);j.addProperty("snow_seed_locator_available",KitClient.seedScout()!=null&&KitClient.seedScout().hasStoredWorldSeed());j.addProperty("material_protocol",2);j.addProperty("air_return_protocol",1);j.addProperty("horse_nudge_protocol",1);j.addProperty("inventory_cursor_precondition_protocol",1);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("material_mining_isolation_protocol",1);j.addProperty("material_mining_cleanup_pending",materialMiningCleanupPending);j.add("material_mining_isolation",MaterialMiningLease.snapshot(materialMiningLease,!materialMiningScope(c).isEmpty()&&materialMiningScope(c).equals(materialMiningOwner)));j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("freefall_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",4);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.gui.screen()==null?"":c.gui.screen().getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
         j.addProperty("fixed_tree_chop_protocol",1);
+        j.addProperty("sapling_retention_chop_protocol",1);
         var gravelState=GravelCollector.snapshot();
         if(nativeMaterialOwner!=null&&GravelCollector.isActive())gravelState.addProperty("session",nativeMaterialOwner.job);
         j.add("gravel",gravelState);
@@ -4202,6 +4326,8 @@ public final class AutomationBridge {
         if(bottleWaterTask!=null)j.add("bottle_water",bottleWaterTask.snapshot(false));
         if(lastBottleWater!=null)j.add("last_bottle_water",lastBottleWater.deepCopy());
         j.addProperty("material_slaughter_protocol",SlaughterPolicy.PROTOCOL);
+        j.addProperty("material_ink_attack_protocol",InkAttackPolicy.PROTOCOL);
+        if(lastInkAttack!=null&&session(c).equals(str(lastInkAttack,"world_session")))j.add("last_ink_attack",lastInkAttack.deepCopy());
         if(lastSlaughterAttack!=null&&session(c).equals(str(lastSlaughterAttack,"world_session")))
             j.add("last_slaughter_attack",lastSlaughterAttack.deepCopy());
         if(bucketWaterTask!=null)j.add("bucket_water",bucketWaterTask.snapshot(false));

@@ -29,11 +29,11 @@ public abstract class LocalRecipePlacementMixin {
 		if (display == null) return;
 
 		Minecraft minecraft = Minecraft.getInstance();
-		if (minecraft.screen instanceof AbstractRecipeBookScreen<?> recipeScreen) {
+		if (minecraft.gui.screen() instanceof AbstractRecipeBookScreen<?> recipeScreen) {
 			recipeScreen.fillGhostRecipe(display);
 		}
 		if (minecraft.player != null && LocalRecipeBookInjector.needsCraftingTable(display)) {
-			minecraft.gui.setOverlayMessage(Component.literal("这个配方是 3×3，请打开工作台再合成").withColor(0xFFFF55), false);
+			minecraft.gui.hud.setOverlayMessage(Component.literal("这个配方是 3×3，请打开工作台再合成").withColor(0xFFFF55), false);
 		}
 		info.cancel();
 	}

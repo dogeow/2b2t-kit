@@ -30,6 +30,8 @@ STONE_SHAPES={
  'minecraft:stone_brick_slab':('minecraft:stone_bricks',6,{3:[1,2,3]}),
  'minecraft:chiseled_stone_bricks':('minecraft:stone_brick_slab',1,{2:[1,3],3:[1,4]}),
 }
+
+
 DYE_RECIPES={
  'black_dye':('black',1,('ink_sac',)),
  'black_dye_from_wither_rose':('black',1,('wither_rose',)),
@@ -83,6 +85,11 @@ def _color_recipe(spec):
 
 def supported(spec):
     if spec.get('output')in DYE_OUTPUTS:return _dye_recipe(spec)
+    if spec.get('output')=='minecraft:clay':
+        width=spec.get('width');cells={2:[1,2,3,4],3:[1,2,4,5]}.get(width)if type(width)is int else None
+        return bool(cells and spec.get('recipe_id')=='clay'and type(spec.get('produces'))is int
+                    and spec['produces']==1 and spec.get('ingredients')=={'minecraft:clay_ball':cells}
+                    and all(type(cell)is int for cell in spec['ingredients']['minecraft:clay_ball']))
     if spec.get('output')in STONE_SHAPES:
         raw,produces,shapes=STONE_SHAPES[spec['output']];width=spec.get('width');cells=shapes.get(width)if type(width)is int else None
         ingredients=spec.get('ingredients')or{}

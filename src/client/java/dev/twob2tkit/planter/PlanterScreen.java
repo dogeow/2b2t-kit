@@ -119,7 +119,7 @@ public final class PlanterScreen extends KitHudScreen {
 	private void startPlanter() {
 		if (!saveFields()) return;
 		KitClient.startPlanter(this.minecraft);
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 创建勾选框并加入界面。 */

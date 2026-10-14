@@ -170,7 +170,7 @@ public final class BuildSupplyTask {
     }
     private BuildSupplyTask(Minecraft c,String expectedJob,String key,Map<String,Integer> materialTargets,BlockPos approach,String expected,Direction face,double standDistance,net.minecraft.world.entity.item.ItemEntity drop)throws Exception{
         var b=KitClient.buildJob().snapshot();
-        if(expectedJob!=null&&!b.get("session").getAsString().equals(expectedJob) || c.screen!=null || c.player.getHealth()<14 || !c.player.containerMenu.getCarried().isEmpty())throw new IllegalStateException("Supply start context changed");
+        if(expectedJob!=null&&!b.get("session").getAsString().equals(expectedJob) || c.gui.screen()!=null || c.player.getHealth()<14 || !c.player.containerMenu.getCarried().isEmpty())throw new IllegalStateException("Supply start context changed");
         originalMenu=c.player.containerMenu;
         this.drop=drop;dropItem=drop==null?"":id(drop.getItem());dropBefore=drop==null?0:inventory(c).getOrDefault(dropItem,0);dropCount=drop==null?0:drop.getItem().getCount();
         approachOnly=approach!=null;expectedState=expected;interactionFace=face;
@@ -252,11 +252,11 @@ public final class BuildSupplyTask {
     }
     private static void release(Minecraft c){if(c.options==null)return;c.options.keyUp.setDown(false);c.options.keyDown.setDown(false);c.options.keyLeft.setDown(false);c.options.keyRight.setDown(false);c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);}
     public void input(Minecraft c){
-        if(!phase.equals("travel") || c.player==null || c.level!=level || c.screen!=null)return;
+        if(!phase.equals("travel") || c.player==null || c.level!=level || c.gui.screen()!=null)return;
         if(drop!=null&&!drop.isAlive()){release(c);flight.hover();return;}
         try{arrived=move(c);}catch(Exception e){fail(c,e.getMessage());}
     }
-    public void reapply(Minecraft c){if(!closed && phase.equals("travel") && travelLook!=null && c.player!=null && c.screen==null)RotationAim.apply(c.player,travelLook);}
+    public void reapply(Minecraft c){if(!closed && phase.equals("travel") && travelLook!=null && c.player!=null && c.gui.screen()==null)RotationAim.apply(c.player,travelLook);}
     private void acknowledgeOpenedMenu(Minecraft c){
         if(closed || !openingPending || c.player==null || c.level!=level)return;
         var menu=c.player.containerMenu;
@@ -290,7 +290,7 @@ public final class BuildSupplyTask {
             int gained=inventory(c).getOrDefault(dropItem,0)-dropBefore;
             if(gained>=dropCount&&(!drop.isAlive()||c.level.getEntity(drop.getId())!=drop||drop.getItem().isEmpty())){taken.put(dropItem,gained);phase="done";close(c);return;}
             if(!drop.isAlive()){if(++missingDropTicks>40)throw new IllegalStateException("Drop disappeared without inventory confirmation");return;}
-            if(c.screen!=null)throw new IllegalStateException("Menu interrupted drop collection");
+            if(c.gui.screen()!=null)throw new IllegalStateException("Menu interrupted drop collection");
             if(arrived){if(openTick==0)openTick=tick;if(tick-openTick>40)throw new IllegalStateException("Drop pickup not confirmed at the reached position");}
             return;
         }
@@ -298,7 +298,7 @@ public final class BuildSupplyTask {
         if(!BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(source).getBlock()).toString().equals(blockId))throw new IllegalStateException("Depot block changed");
         if(AutomationBridge.guardBusy() || c.player.getHealth()<14)return;
         if(phase.equals("travel")){
-            if(c.screen!=null || c.player.containerMenu!=originalMenu)throw new IllegalStateException("Manual menu interrupted depot travel");
+            if(c.gui.screen()!=null || c.player.containerMenu!=originalMenu)throw new IllegalStateException("Manual menu interrupted depot travel");
             if(!arrived)return;
             if(c.player.position().distanceTo(destination)>1.6)throw new IllegalStateException("Cruise ended outside depot reach");
             var ray=BlockFaceTarget.visible(c,c.player.getEyePosition(),source,approachOnly?interactionFace:null,c.player.blockInteractionRange()-.1);

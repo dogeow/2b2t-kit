@@ -72,7 +72,7 @@ final class KitScreen extends KitHudScreen {
 			.tooltip(Tooltip.create(Component.literal("用当前脚底高度填写巡航 Y")))
 			.build());
 		addRenderableWidget(Button.builder(Component.literal("风景预加载"), button -> {
-			this.minecraft.setScreen(new SceneryScreen(this, config));
+			this.minecraft.gui.setScreen(new SceneryScreen(this, config));
 		}).bounds(left + 232, fillRow, 108, 20).tooltip(Tooltip.create(Component.literal("以自身为圆心，按服务器视距跑图并保存风景缓存，优先使用 Bobby，可中断继续。"))).build());
 
 		int cruiseRow = footerButtonY();
@@ -93,7 +93,7 @@ final class KitScreen extends KitHudScreen {
 
 		addRenderableWidget(Button.builder(Component.literal("巡航选项"), button -> {
 			applyBestEffort();
-			this.minecraft.setScreen(new CruiseOptionsScreen(this, config));
+			this.minecraft.gui.setScreen(new CruiseOptionsScreen(this, config));
 		}).bounds(left, cruiseOptionsRow, 340, 20)
 			.tooltip(Tooltip.create(Component.literal("到达半径、绕障、挖顶、到达离线。不常用，不放首页。")))
 			.build());
@@ -167,13 +167,13 @@ final class KitScreen extends KitHudScreen {
 		if (values == null) return;
 		applySettings(values);
 		controller.start(this.minecraft, values.targetX, values.targetZ, values.cruiseY);
-		this.minecraft.setScreen(null);
+		this.minecraft.gui.setScreen(null);
 	}
 
 	/** 继续上次目标。 */
 	private void resume() {
 		applyBestEffort();
-		if (controller.resume(this.minecraft)) this.minecraft.setScreen(null);
+		if (controller.resume(this.minecraft)) this.minecraft.gui.setScreen(null);
 		else showNotice("没有保存过目标", 0xFF5555);
 	}
 
@@ -224,13 +224,13 @@ final class KitScreen extends KitHudScreen {
 	/** 打开附近结构页。 */
 	private void openNearbyStructures() {
 		applyBestEffort();
-		this.minecraft.setScreen(new NearbyStructuresScreen(this, config, controller, KitClient.seedScout()));
+		this.minecraft.gui.setScreen(new NearbyStructuresScreen(this, config, controller, KitClient.seedScout()));
 	}
 
 	/** 打开地点收藏页。 */
 	private void openSavedPlaces() {
 		applyBestEffort();
-		this.minecraft.setScreen(new KitSavedPlacesScreen(this, config, controller));
+		this.minecraft.gui.setScreen(new KitSavedPlacesScreen(this, config, controller));
 	}
 
 	/** 解析三框；失败则提示并返回 null。 */

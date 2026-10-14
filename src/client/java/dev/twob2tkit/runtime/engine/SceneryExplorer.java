@@ -75,7 +75,7 @@ final class SceneryExplorer {
 			cacheBackend.check();
 			SceneryServerView.Limits latestView = serverView.read(c.getConnection(), c.options.renderDistance().get());
 			if (!latestView.equals(view)) { view = latestView; scan = 0; engine.fileLog(c, "scenery-server-view " + view); }
-			if (c.screen != null) { flight.hover(); show(c, "界面打开，已悬停；关闭界面继续"); return; }
+			if (c.gui.screen() != null) { flight.hover(); show(c, "界面打开，已悬停；关闭界面继续"); return; }
 			SceneryCoverage.Chunk target = coverage.next();
 			double x = target == null ? coverage.centreX : target.x() * 16.0 + 8;
 			double z = target == null ? coverage.centreZ : target.z() * 16.0 + 8;
@@ -177,7 +177,7 @@ final class SceneryExplorer {
 	}
 	private void show(Minecraft c, String action) {
 		status = action + " · " + (coverage.confirmed() + coverage.submitted()) + "/" + coverage.total() + " 区块 · 服务端 " + view.server();
-		if (ticks % 10 == 0) c.gui.setOverlayMessage(Component.literal("[风景] " + status).withColor(0x55FFFF), false);
+		if (ticks % 10 == 0) c.gui.hud.setOverlayMessage(Component.literal("[风景] " + status).withColor(0x55FFFF), false);
 		if (ticks % 100 == 0) {
 			engine.fileLog(c, "scenery-state backend=" + cacheBackend.name() + " view=" + view + " " + status + " y=" + c.player.getY() + " pending=" + coverage.submitted());
 			SceneryCoverage.Chunk target = coverage.next();
@@ -205,7 +205,7 @@ final class SceneryExplorer {
 	private void closeFlight(Minecraft c) {
 		if (c.player != null && c.level != null && !c.player.onGround()) flight.closeKeepingFlight(); else flight.close();
 	}
-	void reapply(Minecraft c) { if (look != null && active && c.player != null && c.screen == null) RotationAim.apply(c.player, look); }
+	void reapply(Minecraft c) { if (look != null && active && c.player != null && c.gui.screen() == null) RotationAim.apply(c.player, look); }
 	private void say(Minecraft c, String message) {
 		status = message;
 		if (c.player != null) c.player.sendSystemMessage(Component.literal("[风景预加载] " + message));
