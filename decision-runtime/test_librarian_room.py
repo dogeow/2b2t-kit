@@ -91,3 +91,14 @@ class Tests(unittest.TestCase):
                     'work_block':[1,64,2],'actual_work_block':actual})
 
 if __name__=='__main__':unittest.main()
+
+class InsetPublicAccessTests(unittest.TestCase):
+ def test_inset_quote_position_stays_low_beneath_old_cap_and_clear_of_new_workpoint(self):
+  for name,actual in [('ES03',[10,65,14]),('EN03',[10,65,12])]:
+   r=LibrarianRoom.from_slot({'id':name,'occupant_uuid':'v','work_block':[10,65,13],'actual_work_block':actual,'interior_depth':2})
+   p=r.public_pose();t=r.public_trade_pose();self.assertEqual(p[1],65.);self.assertLess(p[1]+1.8,66.8125)
+   self.assertAlmostEqual(abs(t[2]-(actual[2]+.5)),.805);self.assertGreater(abs(t[2]-(actual[2]+.5))-.3,.5)
+   self.assertAlmostEqual(abs(r.public_print_pose()[2]-(actual[2]+.5)),2.)
+ def test_original_three_cell_private_offset_keeps_its_existing_external_access(self):
+  r=LibrarianRoom.from_slot({'id':'WS01','occupant_uuid':'v','work_block':[10,64,13],'actual_work_block':[10,64,16]})
+  self.assertEqual(r.public_pose(),[10.5,64.1,12.5])

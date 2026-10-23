@@ -42,6 +42,8 @@ class LibrarianRoom:
     def public_pose(self):
         """Feet below the original half-slab trade opening, outside the resident cell."""
         x,_,z=self.public_counter or self.work;y=self.work[1]
+        if self.interior_depth==2 and (self.work[2]-z)*self.inward==1:
+            return [self.work[0]+.5,float(self.floor_y),self.work[2]+.5-self.inward]
         return [x+.5,min(y+.1,self.floor_y+1.1),z+.5-self.inward]
 
     def public_mining_face(self):
@@ -56,6 +58,7 @@ class LibrarianRoom:
     def public_print_pose(self):
         """Farther public pose verified for the server-confirmed WN02 print."""
         x, _, z = self.public_counter or self.work;y=self.work[1]
+        if self.interior_depth==2 and (self.work[2]-z)*self.inward==1:x,_,z=self.work
         return [x + .5, min(y + .3, self.floor_y + 1.1), z + .5 - 2 * self.inward]
 
     def private_center(self,height):
