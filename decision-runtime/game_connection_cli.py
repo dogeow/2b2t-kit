@@ -6,6 +6,7 @@ import time
 import uuid
 from kit_runtime.journal import write_json
 from live_snapshot import read_fresh
+from safety_interlock import require_unlocked
 
 def pending_screen(screen, seen_connecting, elapsed):
     return screen in ('ConnectScreen','ReceivingLevelScreen','ProgressScreen','LevelLoadingScreen') or (
@@ -28,6 +29,7 @@ def connect(root, address, expected_player, out, *, seconds=60):
         if time.monotonic() >= deadline:
             raise RuntimeError('Current connection-capable client did not start; no request sent')
         time.sleep(.2)
+    require_unlocked(root,state)
     if (state.get('connected') is not False or state.get('screen') not in ('TitleScreen','DisconnectedScreen')
             or state.get('account_name') != expected_player or state.get('supervision_lease')
             or state.get('safety_hold', {}).get('active') or state.get('health_recovery_hold')):
@@ -66,6 +68,31 @@ def connect(root, address, expected_player, out, *, seconds=60):
         seen_connecting=connection_screen_seen(current.get('screen'),seen_connecting)
         time.sleep(.25)
     raise RuntimeError('Connection observation expired; original request was not replayed')
+
+def stale_owner_releasable(state,world,task):
+    lease=state.get('supervision_lease')or{}
+    return (state.get('connected')is False and state.get('screen')in ('TitleScreen','DisconnectedScreen')
+            and isinstance(world,str)and bool(world)and isinstance(task,str)and bool(task)
+            and state.get('world_session')!=world and lease.get('world_session')==world
+            and lease.get('job_session')==task and lease.get('kind')=='materials'
+            and not state.get('safety_hold',{}).get('active')and not state.get('health_recovery_hold'))
+
+def release_disconnected_owner(root,out,terminal):
+    """Stop only a confirmed-terminal owner's stale disconnected scope; retain all journals."""
+    root,out=Path(root),Path(out);state=read_fresh(root);require_unlocked(root,state)
+    if (terminal.get('exec_terminal_confirmed')is not True or type(terminal.get('exit_code'))is not int
+            or not stale_owner_releasable(state,terminal.get('world_session'),terminal.get('task_session'))):
+        raise RuntimeError('No exact terminal disconnected owner to release')
+    out.mkdir(exist_ok=False);write_json(out/'before.json',state);write_json(out/'terminal.json',terminal)
+    request={'id':'stale-stop-'+uuid.uuid4().hex[:12],'op':'stop','world_session':state['world_session'],'expected_revision':state['control_revision']}
+    write_json(out/'intent.json',request);write_json(root/'request.json',request);deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        current=read_fresh(root)
+        if current.get('id')==request['id']and current.get('phase')=='stopped'and not current.get('supervision_lease'):
+            write_json(out/'after.json',current);write_json(out/'result.json',{'complete':True,'request_id':request['id'],'old_actions_replayed':False,'world_inputs':0,'safety_lock_cleared':False});return current
+        time.sleep(.1)
+    raise RuntimeError('Original stale-owner stop outcome retained; no replay')
+
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)

@@ -1,7 +1,20 @@
 import unittest
-from game_connection_cli import pending_screen,connection_screen_seen
+import tempfile,json
+from pathlib import Path
+from unittest.mock import patch
+from game_connection_cli import pending_screen,connection_screen_seen,connect
 
 class ConnectionObservationTests(unittest.TestCase):
+    def test_manual_reentry_hold_prevents_a_new_connection_even_after_native_health_ack(self):
+        with tempfile.TemporaryDirectory()as d:
+            root=Path(d)/'automation';root.mkdir()
+            (root/'assistant-control-hold.json').write_text(json.dumps({'active':True}))
+            state={'client_connection_protocol':1,'connected':False,'screen':'DisconnectedScreen',
+                   'account_name':'likunyan','world_session':'w','control_revision':1,'safety_hold':{'active':False}}
+            with patch('game_connection_cli.read_fresh',return_value=state):
+                with self.assertRaisesRegex(RuntimeError,'offline Kit work'):
+                    connect(root,'simpcraft.com','likunyan',Path(d)/'attempt')
+            self.assertFalse((root/'request.json').exists())
     def test_pre_gui_title_sample_is_not_a_connection_failure(self):
         self.assertTrue(pending_screen('TitleScreen',False,.1))
         self.assertTrue(pending_screen('ConnectScreen',False,3))
