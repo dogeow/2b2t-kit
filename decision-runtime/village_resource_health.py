@@ -89,6 +89,11 @@ def check(state, world, protected_uuids, home_min, home_max, *, owned_menu=None)
             or state.get('health_recovery_hold')
             or state.get('safety_hold', {}).get('active')):
         raise RuntimeError('Resource trip lost healthy current player control')
+    return check_residents(state,protected_uuids,home_min,home_max)
+
+
+def check_residents(state,protected_uuids,home_min,home_max):
+    """Same NPC scope during an independently owned transaction/interface."""
     if (not isinstance(protected_uuids, (set, frozenset)) or not protected_uuids
             or any(not isinstance(v, str) or not v for v in protected_uuids)
             or len(home_min) != 3 or len(home_max) != 3

@@ -21,6 +21,15 @@ class ResourceHealthTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Protected village'):
             self.checked(self.state)
 
+    def test_resident_only_guard_keeps_the_same_scope_during_owned_transaction(self):
+        from village_resource_health import check_residents
+        self.state['screen']='MerchantScreen'
+        self.assertIs(check_residents(self.state,{'founder'},[984,63,804],[1034,69,818]),self.state)
+        with self.assertRaises(RuntimeError):self.checked(self.state)
+        self.state['loaded_villagers']['villagers'][0]['uuid']='founder'
+        with self.assertRaisesRegex(RuntimeError,'Protected village'):
+            check_residents(self.state,{'founder'},[984,63,804],[1034,69,818])
+
     def test_new_unlisted_child_in_home_area_is_also_protected(self):
         self.state['loaded_villagers']['villagers'][0].update(uuid='new-child', pos=[1000., 64., 811.])
         with self.assertRaisesRegex(RuntimeError, 'Protected village'):
