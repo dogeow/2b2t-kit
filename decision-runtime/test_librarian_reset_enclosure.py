@@ -150,3 +150,17 @@ class TwoColumnEnclosureTests(unittest.TestCase):
   scene,room=self.fixture();scene['scan_entities']=[]
   self.assertEqual([99,100],require_reset_shell(scene,room)['columns'])
   with self.assertRaises(ValueError):require_enclosed_reset(scene,room)
+
+class SingleCellResetTests(unittest.TestCase):
+ def fixture(self):
+  scene,old=ResetEnclosureTests().fixture();room=LibrarianRoom('keeper',old.work,-1,interior_depth=1)
+  for y in range(65,68):scene['blocks'].append({'pos':[100,y,98],'state':'Block{minecraft:oak_planks}','solid':True,'fluid':False,'block_entity':False})
+  scene['scan_entities'][0]['bounds']={'min':[100.2,65,99.2],'max':[100.8,66.95,99.8]}
+  return scene,room
+ def test_exact_one_cell_keeps_the_full_adult_and_complete_rear_wall(self):
+  scene,room=self.fixture();self.assertEqual(1,require_enclosed_reset(scene,room)['interior_depth'])
+ def test_rear_opening_or_body_behind_the_new_wall_is_not_admitted(self):
+  scene,room=self.fixture();scene['blocks']=[v for v in scene['blocks']if v['pos']!=[100,66,98]]
+  with self.assertRaises(ValueError):require_enclosed_reset(scene,room)
+  scene,room=self.fixture();scene['scan_entities'][0]['bounds']['min'][2]=98.9
+  with self.assertRaises(ValueError):require_enclosed_reset(scene,room)

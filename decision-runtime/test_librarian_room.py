@@ -123,3 +123,11 @@ class InsetPublicAccessTests(unittest.TestCase):
  def test_original_three_cell_private_offset_keeps_its_existing_external_access(self):
   r=LibrarianRoom.from_slot({'id':'WS01','occupant_uuid':'v','work_block':[10,64,13],'actual_work_block':[10,64,16]})
   self.assertEqual(r.public_pose(),[10.5,64.1,12.5])
+
+class SingleCellRoomTests(unittest.TestCase):
+ def test_explicit_single_cell_has_only_one_private_cell_and_original_public_face(self):
+  r=LibrarianRoom.from_slot({'id':'WN10','occupant_uuid':'v','work_block':[100,64,100],'interior_depth':1})
+  self.assertEqual(([99,63,98],[101,67,100]),r.bounds());self.assertEqual([100.5,64.1,101.5],r.public_pose())
+ def test_invalid_depths_cannot_shrink_the_enclosure_to_nothing(self):
+  for depth in [0,True,-1,4]:
+   with self.assertRaises(ValueError):LibrarianRoom.from_slot({'id':'WN10','occupant_uuid':'v','work_block':[100,64,100],'interior_depth':depth})

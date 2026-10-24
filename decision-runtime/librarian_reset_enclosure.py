@@ -37,8 +37,8 @@ def require_reset_shell(scene, room):
                 or row.get('fluid') is not False or row.get('block_entity') is not False):
             raise ValueError('Reset cell shell or floor is not a witnessed full cube')
 
-    if type(room.interior_depth)is not int or room.interior_depth not in (2,3):
-        raise ValueError('Only explicit two or three cell interiors are supported')
+    if type(room.interior_depth)is not int or room.interior_depth not in (1,2,3):
+        raise ValueError('Only explicit one to three cell interiors are supported')
     interior = [z + n * room.inward for n in range(1, room.interior_depth+1)]
     columns=[x+offset for offset in room.interior_x_offsets]
     for zz in interior:

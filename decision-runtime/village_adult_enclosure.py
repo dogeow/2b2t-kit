@@ -47,7 +47,7 @@ def audit(rows, *, front, floor, inward, depth, x_offsets=(0,)):
     if (len(front) != 3 or any(type(v) is not int for v in front)
             or type(floor) is not int or front[1] != floor
             or type(inward) is not int or inward not in (-1, 1)
-            or type(depth) is not int or depth not in (2, 3, 4)
+            or type(depth) is not int or depth not in (1, 2, 3, 4)
             or not isinstance(x_offsets,tuple)or x_offsets not in ((0,),(-1,0),(0,1))
             or any(type(v)is not int for v in x_offsets)):
         raise ValueError('Explicit integer floor, front, direction and bounded depth required')

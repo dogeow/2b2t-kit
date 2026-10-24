@@ -38,7 +38,7 @@ class LibrarianRoom:
                 or counter[0]!=p[0] or not 0<=(p[2]-counter[2])*inward<=4):
             raise ValueError('Public counter must precede the private workpoint on the same column')
         depth=slot.get('interior_depth',3)
-        if type(depth)is not int or depth not in (2,3):raise ValueError('Explicit two or three cell interior required')
+        if type(depth)is not int or depth not in (1,2,3):raise ValueError('Explicit one to three cell interior required')
         offsets=slot.get('interior_x_offsets',[0])
         if not isinstance(offsets,list) or any(type(v)is not int for v in offsets):
             raise ValueError('Explicit integer interior columns required')
