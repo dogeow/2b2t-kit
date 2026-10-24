@@ -71,7 +71,7 @@ def chain_public_routes(central,district,*,reserve_departure):
 
 
 def upper_gallery_print_fallback(builder,room,base):
-    """Use the witnessed half-steps after a separately proven zero-proposal print."""
+    """Reach the witnessed print pose using the existing ground half-steps."""
     if list(room.work)!=[761016,64,797809]:return False
     project=json.loads((Path(base)/'project-state.json').read_text());config=project.get('central_library_receiver')or{}
     if config.get('occupant_uuid')!=room.uid:raise RuntimeError('Central fallback source identity changed')
@@ -82,3 +82,15 @@ def upper_gallery_print_fallback(builder,room,base):
     for pose in [[761014.5,64.,797810.5],[761014.5,64.,797811.5],[761015.5,64.5,797811.5],[761016.5,65.,797811.5]]:
         builder.n('walk',target=pose,arrival=.1,restore_flight=False,seconds=20)
     record.update(pending=False,ground_only=True,placement_pose=list(builder.check()['pos']));builder.save();return True
+
+
+def print_from_upper_gallery(builder,room,base,place):
+    """Print once from the proven pose; a failed placement never sends return input."""
+    if not upper_gallery_print_fallback(builder,room,base):
+        raise RuntimeError('Upper-gallery printing requires the witnessed central workpoint')
+    record={'pending':True,'target':list(room.work),'placement_pose':list(builder.check()['pos'])}
+    builder.book.setdefault('preferred_upper_gallery_prints',[]).append(record);builder.save()
+    result=place()
+    if not route(builder,room,base):raise RuntimeError('Confirmed print could not return through the central public route')
+    record.update(pending=False,returned_to_public=True);builder.save()
+    return result

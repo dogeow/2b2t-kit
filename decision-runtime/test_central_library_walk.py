@@ -90,3 +90,31 @@ class UpperGalleryFallbackTests(unittest.TestCase):
  def test_noncentral_workpoint_keeps_its_original_fallback(self):
   from central_library_walk import upper_gallery_print_fallback
   b=Builder([0,64,0]);self.assertFalse(upper_gallery_print_fallback(b,LibrarianRoom('other',(1,64,2),1),'/no-file-read'));self.assertEqual([],b.calls)
+
+class PreferredUpperGalleryPrintTests(unittest.TestCase):
+ config=Tests.config
+ room=Tests.room
+ def test_single_print_is_at_upper_pose_then_ground_return(self):
+  from central_library_walk import print_from_upper_gallery
+  with tempfile.TemporaryDirectory()as d:
+   b=Builder([761016.5,64.,797810.5]);root=self.config(d);calls=[]
+   def place():
+    calls.append(list(b.pos));return {'server_confirmed':True}
+   result=print_from_upper_gallery(b,self.room(),root,place)
+   self.assertTrue(result['server_confirmed']);self.assertEqual([[761016.5,65.,797811.5]],calls)
+   self.assertEqual([761016.5,64.,797810.5],b.pos);self.assertFalse(b.book['preferred_upper_gallery_prints'][0]['pending'])
+ def test_failed_original_placement_never_returns_or_retries(self):
+  from central_library_walk import print_from_upper_gallery
+  with tempfile.TemporaryDirectory()as d:
+   b=Builder([761016.5,64.,797810.5]);root=self.config(d);calls=[]
+   def place():
+    calls.append(len(b.calls));raise RuntimeError('original outcome unknown')
+   with self.assertRaisesRegex(RuntimeError,'original outcome unknown'):print_from_upper_gallery(b,self.room(),root,place)
+   self.assertEqual([len(b.calls)],calls);self.assertEqual([761016.5,65.,797811.5],b.pos)
+   self.assertTrue(b.book['preferred_upper_gallery_prints'][0]['pending'])
+ def test_invalid_world_does_not_call_placement(self):
+  from central_library_walk import print_from_upper_gallery
+  with tempfile.TemporaryDirectory()as d:
+   b=Builder([761016.5,64.,797810.5]);root=self.config(d,world_session='old');calls=[]
+   with self.assertRaises(RuntimeError):print_from_upper_gallery(b,self.room(),root,lambda:calls.append(True))
+   self.assertEqual([],calls);self.assertEqual([],b.calls)
