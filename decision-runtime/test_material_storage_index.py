@@ -69,6 +69,10 @@ class Tests(unittest.TestCase):
         bind_source(self.c,self.state,self.b,'minecraft:chest')
         self.save_native([self.native(self.b,{'minecraft:blue_shulker_box':1},lastSeenEpochMillis=300)])
         self.assertEqual([self.b],select_sources(self.c,[self.b],{'minecraft:dirt':4})['positions'])
+        loose=select_sources(self.c,[self.b],{'minecraft:dirt':4},loose_only=True)
+        self.assertEqual([],loose['positions']);self.assertEqual(32,loose['packed_candidates'][0]['items']['minecraft:dirt'])
+        self.assertTrue(loose['packed_candidates'][0]['requires_packed_access'])
+        self.assertEqual(0,loose['inventory_credit'])
     def test_unclean_or_different_menu_does_not_overwrite_a_saved_record(self):
         self.menu();bind_source(self.c,self.state,self.b,'minecraft:chest');before=index_path(self.root).read_bytes()
         self.state['menu']['cursor']['count']=1;self.assertFalse(remember_current(self.c))

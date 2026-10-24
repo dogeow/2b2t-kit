@@ -51,7 +51,12 @@ def index_path(root):return Path(root).parent/'storage-route-index.json'
 
 
 def records(client,state=None):
-    """Merge saved Kit observations with exact post-transfer menu observations."""
+    """Merge saved Kit observations with exact post-transfer menu observations.
+
+    ``counts`` includes known shulker contents; ordinary depot exchange can
+    withdraw only ``loose_counts``. Packed stock must go through the existing
+    take_packed_materials workflow, which reopens and verifies the real box.
+    """
     root=getattr(client,'root',None);state=state or client.status();scope=_scope(state)
     if root is None or scope is None:return []
     config=_read(Path(root).parent.parent/'twob2tkit.json')or{}
@@ -109,9 +114,10 @@ def select_destinations(client,positions,deposit):
             'source':'persistent_local_storage','inventory_credit':0}
 
 
-def select_sources(client,positions,targets,*,ender=False,reserve_empty=None):
+def select_sources(client,positions,targets,*,ender=False,reserve_empty=None,loose_only=False):
     """Known useful sources first; known irrelevant sources are never reopened."""
-    state=client.status();saved=records(client,state);wanted=set(targets);ranked=[];unknown=[];skipped=[]
+    if type(loose_only)is not bool:raise ValueError('Loose storage routing must be explicit boolean')
+    state=client.status();saved=records(client,state);wanted=set(targets);ranked=[];unknown=[];skipped=[];packed=[]
     bag=[r for r in state.get('inventory',[])if r.get('slot',99)<36]
     capacity_blocked=[]
     if reserve_empty is not None and len(bag)==36 and {r.get('slot')for r in bag}==set(range(36)):
@@ -131,12 +137,18 @@ def select_sources(client,positions,targets,*,ender=False,reserve_empty=None):
                     and (ender or pos in r.get('aliases',[r['pos']]))]
         record=max(candidates,key=lambda r:r.get('observed_at',0),default=None)
         if record is None:unknown.append((number,pos));continue
-        available=sum(record['counts'].get(i,0)for i in wanted)
+        quantities=record.get('loose_counts',record['counts'])if loose_only else record['counts']
+        available=sum(quantities.get(i,0)for i in wanted)
+        if loose_only:
+            inside={i:record['counts'].get(i,0)-quantities.get(i,0)for i in wanted
+                    if record['counts'].get(i,0)>quantities.get(i,0)}
+            if inside:packed.append({'pos':pos,'items':inside,'requires_packed_access':True})
         if available:ranked.append((-available,number,pos))
         elif record.get('packed_unknown'):unknown.append((number,pos))
         else:skipped.append(pos)
     return {'positions':[r[2]for r in sorted(ranked)]+[p for _,p in unknown],
             'skipped_known_empty':skipped,'capacity_blocked_items':capacity_blocked,
+            'packed_candidates':packed,'loose_only':loose_only,
             'source':'persistent_local_storage','inventory_credit':0}
 
 
