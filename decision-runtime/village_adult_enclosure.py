@@ -37,7 +37,7 @@ def maximum_gap(intervals, low, high):
     return max(longest, high - cursor)
 
 
-def audit(rows, *, front, floor, inward, depth):
+def audit(rows, *, front, floor, inward, depth, x_offsets=(0,)):
     """An entire perimeter must have no standing-adult aperture >= 1.9 blocks.
 
     Every interior floor and roof is independently checked. The highest observed
@@ -47,28 +47,32 @@ def audit(rows, *, front, floor, inward, depth):
     if (len(front) != 3 or any(type(v) is not int for v in front)
             or type(floor) is not int or front[1] != floor
             or type(inward) is not int or inward not in (-1, 1)
-            or type(depth) is not int or depth not in (2, 3, 4)):
+            or type(depth) is not int or depth not in (2, 3, 4)
+            or not isinstance(x_offsets,tuple)or x_offsets not in ((0,),(-1,0),(0,1))
+            or any(type(v)is not int for v in x_offsets)):
         raise ValueError('Explicit integer floor, front, direction and bounded depth required')
     x, _, z = front
+    columns=[x+offset for offset in x_offsets]
     interior = [z + n * inward for n in range(1, depth + 1)]
     issues = []
     ceilings = []
-    for zz in [z, *interior]:
-        if layers(rows.get((x, floor - 1, zz))) != [(0., 1.)]:
-            issues.append({'pos': [x, floor - 1, zz], 'reason': 'full_dry_floor_missing'})
-    for zz in interior:
-        pos = (x, floor + 3, zz)
-        supported = layers(rows.get(pos))
-        if not supported:
-            issues.append({'pos': list(pos), 'reason': 'continuous_dry_roof_layer_missing'})
-        else:
-            ceilings.append(floor + 3 + supported[0][0])
+    for xx in columns:
+        for zz in [z, *interior]:
+            if layers(rows.get((xx, floor - 1, zz))) != [(0., 1.)]:
+                issues.append({'pos': [xx, floor - 1, zz], 'reason': 'full_dry_floor_missing'})
+        for zz in interior:
+            pos = (xx, floor + 3, zz)
+            supported = layers(rows.get(pos))
+            if not supported:
+                issues.append({'pos': list(pos), 'reason': 'continuous_dry_roof_layer_missing'})
+            else:
+                ceilings.append(floor + 3 + supported[0][0])
     # Missing roof evidence cannot be replaced with a guessed ceiling.
-    if len(ceilings) != depth:
+    if len(ceilings) != depth*len(columns):
         return {'verified': False, 'issues': issues, 'boundary_columns': []}
     high = max(ceilings)
-    perimeter = [(x, z), (x, z + (depth + 1) * inward)]
-    perimeter += [(xx, zz) for zz in interior for xx in (x - 1, x + 1)]
+    perimeter = [(xx,zz)for xx in columns for zz in (z,z+(depth+1)*inward)]
+    perimeter += [(xx,zz)for zz in interior for xx in (min(columns)-1,max(columns)+1)]
     columns = []
     for xx, zz in perimeter:
         intervals = [(yy + lo, yy + hi)
@@ -81,5 +85,5 @@ def audit(rows, *, front, floor, inward, depth):
                            'maximum_open_height': gap})
     return {'verified': not issues, 'issues': issues, 'boundary_columns': columns,
             'ceiling_upper_bound': high, 'minimum_standing_adult_height': 1.9,
-            'interior_depth': depth, 'front': front, 'floor': floor,
+            'interior_depth': depth, 'interior_x_offsets':list(x_offsets), 'front': front, 'floor': floor,
             'scope': 'standing_adult_physical_enclosure_not_reset_authority'}

@@ -68,4 +68,27 @@ class EnclosureTests(unittest.TestCase):
         for key,value in [('depth',True),('depth',5),('floor',63),('inward',True)]:
             with self.subTest(key=key,value=value),self.assertRaises(ValueError):audit(r,**{**k,key:value})
 
+
+class TwoColumnEnclosureTests(unittest.TestCase):
+ def fixture(self):
+  rows={(x,y,z):cube()for x in range(-1,3)for y in range(63,69)for z in range(5)}
+  for x in (0,1):
+   for z in (1,2,3):
+    for y in (64,65,66):rows.pop((x,y,z))
+   rows.pop((x,64,0));rows[x,65,0]=partial('oak_trapdoor','half=top,open=false,waterlogged=false')
+  return rows,dict(front=[0,64,0],floor=64,inward=1,depth=3,x_offsets=(0,1))
+ def test_shared_interior_is_not_invented_as_an_internal_wall(self):
+  r,k=self.fixture();self.assertTrue(audit(r,**k)['verified']);self.assertFalse(audit(r,**{**k,'x_offsets':(0,)})['verified'])
+ def test_second_column_floor_roof_and_boundary_are_all_required(self):
+  for cell in [(1,63,2),(1,67,2)]:
+   r,k=self.fixture();r.pop(cell);self.assertFalse(audit(r,**k)['verified'])
+  for side in ([(1,y,4)for y in (64,65,66)],[(2,y,2)for y in (64,65,66)]):
+   r,k=self.fixture()
+   for p in side:r.pop(p)
+   self.assertFalse(audit(r,**k)['verified'])
+ def test_nonadjacent_boolean_or_unbounded_columns_are_rejected(self):
+  for offsets in ((0,2),(False,1),(0,1,2),[0,1]):
+   r,k=self.fixture()
+   with self.assertRaises(ValueError):audit(r,**{**k,'x_offsets':offsets})
+
 if __name__=='__main__':unittest.main()
