@@ -91,13 +91,12 @@ def route(builder,destination,configuration):
         for p in RESERVE_PATH[1:]:walk(p)
         cross(builder,760993,760992,[760994.5,64.,Z+.5]);walk([760996.5,64.,Z+.5]);cross(builder,760997,760996,[760998.5,64.,Z+.5])
     else:
-        # The adapter deliberately declines main-only routes, allowing the
-        # existing gallery stairs and floor normalization to reach this anchor.
+        # Keep the approach inside the witnessed public gallery.
         position=builder.check()['pos'];floor=64 if position[0]<761015 else 65
         if not(760997<=position[0]<=761034 and abs(position[1]-floor)<1.2 and 797810<=position[2]<=797813):raise RuntimeError('Player outside witnessed main gallery')
-        if floor==65 and(abs(position[2]-(Z+.5))>.3 or abs(position[1]-floor)>.25):walk([position[0],float(floor),Z+.5])
-        if floor==65:
-            walk([761015.5,64.5,Z+.5]);walk([761014.5,64.,Z+.5])
+        # The witnessed public aisle has a vanilla one-block/slab descent.
+        # One normal walk follows it continuously; native per-step obstacle,
+        # dry-floor and drop guards remain in charge of every movement tick.
         walk([760998.5,64.,Z+.5]);cross(builder,760997,760998,[760996.5,64.,Z+.5]);walk([760994.5,64.,Z+.5]);cross(builder,760993,760994,[760991.5,64.,Z+.5])
         for p in reversed(RESERVE_PATH[:-2]):walk(p)
     if inventory_counts(builder.check())!=before:raise RuntimeError('Walking airlock inventory changed')
