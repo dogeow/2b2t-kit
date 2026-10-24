@@ -104,3 +104,49 @@ class InsetCounterEnclosureTests(unittest.TestCase):
         with self.assertRaises(ValueError):require_enclosed_reset(scene,room)
         scene,room=self.fixture();scene['blocks']=[r for r in scene['blocks']if r['pos']!=[100,67,101]]
         with self.assertRaises(ValueError):require_enclosed_reset(scene,room)
+
+class PlainDeepslateEnclosureTests(unittest.TestCase):
+ def test_witnessed_full_dry_cobbled_deepslate_wall_is_supported(self):
+  scene,room=ResetEnclosureTests().fixture()
+  for row in scene['blocks']:
+   if row['pos'][0]==99:row['state']='Block{minecraft:cobbled_deepslate}'
+  self.assertTrue(require_enclosed_reset(scene,room)['complete_shell_verified'])
+ def test_known_stone_name_does_not_replace_full_shape_and_dry_evidence(self):
+  for key,value in [('solid',False),('fluid',True),('block_entity',True)]:
+   scene,room=ResetEnclosureTests().fixture();row=next(r for r in scene['blocks']if r['pos']==[99,65,99]);row['state']='Block{minecraft:cobbled_deepslate}';row[key]=value
+   with self.assertRaises(ValueError):require_enclosed_reset(scene,room)
+
+class TwoColumnEnclosureTests(unittest.TestCase):
+ def fixture(self,offsets=(-1,0),inward=-1):
+  scene,old=ResetEnclosureTests().fixture(inward)
+  room=LibrarianRoom('keeper',old.work,inward,interior_x_offsets=offsets)
+  columns=[100+n for n in offsets];blocks={}
+  def full(x,y,z):blocks[x,y,z]={'pos':[x,y,z],'state':'Block{minecraft:oak_planks}','solid':True,'fluid':False,'block_entity':False}
+  for z in [100+n*inward for n in (1,2,3)]:
+   for x in columns:full(x,64,z);full(x,68,z)
+   for y in range(65,68):full(min(columns)-1,y,z);full(max(columns)+1,y,z)
+  for x in columns:
+   full(x,64,100)
+   for y in range(65,68):
+    full(x,y,100+4*inward)
+    if x!=100:full(x,y,100)
+  for row in scene['blocks']:
+   if row['pos'][0]==100 and row['pos'][2]==100:blocks[tuple(row['pos'])]=row
+  scene['blocks']=list(blocks.values())
+  other=next(x for x in columns if x!=100)
+  actor=scene['scan_entities'][0];actor['bounds']['min'][0]=other+.2;actor['bounds']['max'][0]=other+.8
+  return scene,room
+ def test_second_column_is_contained_without_an_internal_wall(self):
+  for offsets in ((-1,0),(0,1)):
+   for inward in (-1,1):
+    scene,room=self.fixture(offsets,inward)
+    self.assertEqual(list(offsets),require_enclosed_reset(scene,room)['interior_x_offsets'])
+ def test_second_column_floor_roof_front_rear_and_outer_wall_are_required(self):
+  for pos in ([99,64,98],[99,68,98],[99,65,100],[99,66,96],[98,65,98]):
+   scene,room=self.fixture();scene['blocks']=[r for r in scene['blocks']if r['pos']!=pos]
+   with self.subTest(pos=pos),self.assertRaises(ValueError):require_enclosed_reset(scene,room)
+ def test_shell_only_proof_cannot_replace_an_actual_resident(self):
+  from librarian_reset_enclosure import require_reset_shell
+  scene,room=self.fixture();scene['scan_entities']=[]
+  self.assertEqual([99,100],require_reset_shell(scene,room)['columns'])
+  with self.assertRaises(ValueError):require_enclosed_reset(scene,room)

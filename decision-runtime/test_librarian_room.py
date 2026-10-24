@@ -93,6 +93,27 @@ class Tests(unittest.TestCase):
 if __name__=='__main__':unittest.main()
 
 class InsetPublicAccessTests(unittest.TestCase):
+ def test_scan_bounds_include_both_columns_and_their_outer_walls(self):
+  for offsets,lo,hi in [([-1,0],98,101),([0,1],99,102)]:
+   r=LibrarianRoom.from_slot({'id':'WN11','occupant_uuid':'v','work_block':[100,65,100],'interior_x_offsets':offsets})
+   self.assertEqual((lo,hi),(r.bounds()[0][0],r.bounds()[1][0]))
+ def test_invalid_columns_are_rejected_in_direct_and_slot_construction(self):
+  for offsets in [(),(1,),(-1,1),(0,0),(0,True),(-1,0,1)]:
+   with self.subTest(offsets=offsets),self.assertRaises(ValueError):
+    LibrarianRoom('v',(100,65,100),-1,interior_x_offsets=offsets)
+   with self.subTest(offsets=offsets),self.assertRaises(ValueError):
+    LibrarianRoom.from_slot({'id':'WN11','occupant_uuid':'v','work_block':[100,65,100],'interior_x_offsets':list(offsets)})
+ def test_public_route_hook_can_handle_or_decline_a_room(self):
+  from types import SimpleNamespace
+  from librarian_room import walk_public
+  r=LibrarianRoom('v',(761004,64,797809),-1)
+  calls=[];c=SimpleNamespace(walk_librarian_public=lambda room:True)
+  walk_public(c,r)
+  c.walk_librarian_public=lambda room:False
+  c.check=lambda:{'pos':[761004.5,64.,797811.5]}
+  c.n=lambda op,**params:calls.append((op,params))
+  walk_public(c,r)
+  self.assertEqual('walk',calls[-1][0]);self.assertEqual([r.public_pose()[0],64.,r.public_pose()[2]],calls[-1][1]['target'])
  def test_inset_quote_position_stays_low_beneath_old_cap_and_clear_of_new_workpoint(self):
   for name,actual in [('ES03',[10,65,14]),('EN03',[10,65,12])]:
    r=LibrarianRoom.from_slot({'id':name,'occupant_uuid':'v','work_block':[10,65,13],'actual_work_block':actual,'interior_depth':2})

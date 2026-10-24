@@ -2,12 +2,12 @@
 from projection_completion import block_state
 
 FULL_CUBES = frozenset('minecraft:' + name for name in (
-    'dark_oak_planks', 'cherry_planks', 'oak_planks', 'cobblestone',
+    'dark_oak_planks', 'cherry_planks', 'oak_planks', 'cobblestone', 'cobbled_deepslate',
     'stone', 'dirt', 'grass_block',
 ))
 
 
-def require_enclosed_reset(scene, room):
+def require_reset_shell(scene, room):
     """Geometry only: native ownership, quote and duplicate guards remain required.
 
     Standing on a bed is valid. The actual adult body, closed window, complete
@@ -15,7 +15,6 @@ def require_enclosed_reset(scene, room):
     """
     rows = {tuple(v['pos']): v for v in scene['blocks']}
     room.require_caps(rows)
-    actor = room.actor(scene)
     x, y, z = room.work
     floor = room.floor_y
     if y != floor:
@@ -41,21 +40,34 @@ def require_enclosed_reset(scene, room):
     if type(room.interior_depth)is not int or room.interior_depth not in (2,3):
         raise ValueError('Only explicit two or three cell interiors are supported')
     interior = [z + n * room.inward for n in range(1, room.interior_depth+1)]
+    columns=[x+offset for offset in room.interior_x_offsets]
     for zz in interior:
-        full((x, floor - 1, zz))
-        full((x, floor + 3, zz))
+        for xx in columns:
+            full((xx, floor - 1, zz))
+            full((xx, floor + 3, zz))
         for yy in range(floor, floor + 3):
-            full((x - 1, yy, zz))
-            full((x + 1, yy, zz))
-    for yy in range(floor, floor + 3):
-        full((x, yy, z + (room.interior_depth+1) * room.inward))
+            full((min(columns) - 1, yy, zz))
+            full((max(columns) + 1, yy, zz))
+    for xx in columns:
+        for yy in range(floor, floor + 3):
+            full((xx, yy, z + (room.interior_depth+1) * room.inward))
+            if xx!=x:full((xx,yy,z))
+        full((xx,floor-1,z))
     full((x, floor - 1, z))
     full((x, floor + 2, z))
+    return {'counter_opening':opening,'pickup_route':pickup,'columns':columns,'interior':interior}
+
+
+def require_enclosed_reset(scene, room):
+    shell=require_reset_shell(scene,room)
+    opening=shell['counter_opening'];pickup=shell['pickup_route']
+    columns=shell['columns'];interior=shell['interior']
+    actor=room.actor(scene);x,y,z=room.work;floor=room.floor_y
     box = actor['bounds']
     low, high = box['min'], box['max']
     height = high[1] - low[1]
     if (height < 1.9 or height <= opening
-            or low[0] < x - 1e-6 or high[0] > x + 1 + 1e-6
+            or low[0] < min(columns) - 1e-6 or high[0] > max(columns) + 1 + 1e-6
             or low[2] < min(interior) - 1e-6 or high[2] > max(interior) + 1 + 1e-6
             or low[1] < floor - .01 or high[1] > floor + 3 + .01):
         raise ValueError('Actual adult body is not inside the verified enclosure')
@@ -67,4 +79,5 @@ def require_enclosed_reset(scene, room):
     return {'scan_time': scene['time'], 'world_session': scene['world_session'],
             'villager_uuid': room.uid, 'adult_height': height,
             'counter_opening': opening, 'pickup_route': pickup, 'interior_depth':room.interior_depth,
+            'interior_x_offsets':list(room.interior_x_offsets),
             'standing_on_bed_allowed': True, 'complete_shell_verified': True}

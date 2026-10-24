@@ -10,6 +10,13 @@ class LibrarianRoom:
     front_bed:bool=False
     public_counter:tuple|None=None
     interior_depth:int=3
+    interior_x_offsets:tuple=(0,)
+
+    def __post_init__(self):
+        if (not isinstance(self.interior_x_offsets,tuple)
+                or any(type(v)is not int for v in self.interior_x_offsets)
+                or self.interior_x_offsets not in ((0,),(-1,0),(0,1))):
+            raise ValueError('One or two contiguous interior columns must include the workpoint')
 
     @property
     def floor_y(self):
@@ -32,12 +39,15 @@ class LibrarianRoom:
             raise ValueError('Public counter must precede the private workpoint on the same column')
         depth=slot.get('interior_depth',3)
         if type(depth)is not int or depth not in (2,3):raise ValueError('Explicit two or three cell interior required')
-        return cls(uid,tuple(p),inward,floor,front_bed,tuple(counter),depth)
+        offsets=slot.get('interior_x_offsets',[0])
+        if not isinstance(offsets,list) or any(type(v)is not int for v in offsets):
+            raise ValueError('Explicit integer interior columns required')
+        return cls(uid,tuple(p),inward,floor,front_bed,tuple(counter),depth,tuple(offsets))
 
     def bounds(self):
         x,y,z=self.work;end=z+(self.interior_depth+1)*self.inward
         counter_z=(self.public_counter or self.work)[2]
-        return [x-1,self.floor_y-1,min(z,end,counter_z)],[x+1,max(self.floor_y+3,y+2),max(z,end,counter_z)]
+        return [x+min(self.interior_x_offsets)-1,self.floor_y-1,min(z,end,counter_z)],[x+max(self.interior_x_offsets)+1,max(self.floor_y+3,y+2),max(z,end,counter_z)]
 
     def public_pose(self):
         """Feet below the original half-slab trade opening, outside the resident cell."""
@@ -103,6 +113,8 @@ class LibrarianRoom:
 
 
 def walk_public(c,destination):
+    route=getattr(c,'walk_librarian_public',None)
+    if route is not None and route(destination):return
     p=c.check()['pos'];floor=destination.floor_y
     c.n('walk',target=[p[0],64.0 if p[0]<761015 else 65.0,797811.5],arrival=.1,restore_flight=False,seconds=20)
     p=c.check()['pos']
