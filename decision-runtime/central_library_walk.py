@@ -68,3 +68,17 @@ def chain_public_routes(central,district,*,reserve_departure):
     if reserve_departure:
         return True if district()else central()
     return True if central()else district()
+
+
+def upper_gallery_print_fallback(builder,room,base):
+    """Use the witnessed half-steps after a separately proven zero-proposal print."""
+    if list(room.work)!=[761016,64,797809]:return False
+    project=json.loads((Path(base)/'project-state.json').read_text());config=project.get('central_library_receiver')or{}
+    if config.get('occupant_uuid')!=room.uid:raise RuntimeError('Central fallback source identity changed')
+    # Reuse the original same-world enclosure and public-origin validation.
+    if not route(builder,room,base):raise RuntimeError('Central public route not admitted')
+    record={'pending':True,'target':list(room.work),'source':list(builder.check()['pos'])}
+    builder.book.setdefault('upper_gallery_print_fallbacks',[]).append(record);builder.save()
+    for pose in [[761014.5,64.,797810.5],[761014.5,64.,797811.5],[761015.5,64.5,797811.5],[761016.5,65.,797811.5]]:
+        builder.n('walk',target=pose,arrival=.1,restore_flight=False,seconds=20)
+    record.update(pending=False,ground_only=True,placement_pose=list(builder.check()['pos']));builder.save();return True

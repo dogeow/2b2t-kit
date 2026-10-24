@@ -72,3 +72,21 @@ class PublicRouteChainTests(unittest.TestCase):
    def failed():raise RuntimeError('Original pending gate')
    with self.assertRaisesRegex(RuntimeError,'Original pending gate'):chain_public_routes(forbidden if reserve else failed,failed if reserve else forbidden,reserve_departure=reserve)
    self.assertEqual([],calls)
+
+class UpperGalleryFallbackTests(unittest.TestCase):
+ config=Tests.config
+ room=Tests.room
+ def test_central_fallback_uses_existing_half_steps_without_entering_solid_lower_aisle(self):
+  from central_library_walk import upper_gallery_print_fallback
+  with tempfile.TemporaryDirectory()as d:
+   b=Builder([761016.5,64.,797810.5]);root=self.config(d);self.assertTrue(upper_gallery_print_fallback(b,self.room(),root));self.assertEqual([761016.5,65.,797811.5],b.pos);self.assertTrue(all(op=='walk'for op,params in b.calls));self.assertFalse(b.book['upper_gallery_print_fallbacks'][0]['pending']);self.assertIn([761015.5,64.5,797811.5],[p['target']for op,p in b.calls])
+ def test_foreign_world_or_source_rejects_before_movement(self):
+  from central_library_walk import upper_gallery_print_fallback
+  for change in ({'world_session':'other'},{'patient_uuid':'other'}):
+   with tempfile.TemporaryDirectory()as d:
+    b=Builder([761016.5,64.,797810.5]);root=self.config(d,**change)
+    with self.assertRaises(RuntimeError):upper_gallery_print_fallback(b,self.room(),root)
+    self.assertEqual([],b.calls)
+ def test_noncentral_workpoint_keeps_its_original_fallback(self):
+  from central_library_walk import upper_gallery_print_fallback
+  b=Builder([0,64,0]);self.assertFalse(upper_gallery_print_fallback(b,LibrarianRoom('other',(1,64,2),1),'/no-file-read'));self.assertEqual([],b.calls)
