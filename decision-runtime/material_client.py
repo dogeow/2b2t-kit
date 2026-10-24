@@ -346,7 +346,8 @@ class Client:
    boundary=len(menu['slots'])-36
    pool=menu['slots'][boundary:] if deposit else menu['slots'][:boundary]
    destinations=menu['slots'][:boundary] if deposit else menu['slots'][boundary:]
-   source=next((v for v in pool if v['item']==item and v['count']),None)
+   from storage_transfer_source import choose
+   source=choose(pool,item,deposit=deposit)
    if source is None:return before
    # Item IDs alone do not prove component-compatible stacking. A fresh empty
    # receiving slot cannot turn a partial placement into a cursor exchange.
