@@ -1,5 +1,8 @@
 """Consolidate plain carried target stacks through one registered depot route."""
 import math
+import time
+from contextlib import contextmanager
+from pathlib import Path
 
 from kit_runtime.journal import write_json
 from material_plan import inventory_counts
@@ -28,16 +31,19 @@ def run_inventory(backend,item,minimum):
             stacks=[r for r in rows[9:45]if r['item']==item and r['count']>0]
             if any(set(r)!={'slot','item','count','max_stack'}for r in stacks):
                 raise JobBlocked('Plain inventory stack metadata changed; preserve pending receipt')
-            pairs=[(a,b)for a in stacks for b in stacks if a['slot']!=b['slot']
-                   and a['count']+b['count']<=b['max_stack']]
-            if not pairs:raise JobBlocked('No complete plain stack merge remains')
-            a,b=min(pairs,key=lambda pair:pair[0]['count'])
-            book['pending']={'source':a,'destination':b,'amount':a['count']};write_json(path,book)
-            returned=move_amount(session,s,a,b,a['count'])
+            pairs=[(a,b,min(a['count'],b['max_stack']-b['count']))for a in stacks for b in stacks
+                   if a['slot']!=b['slot'] and b['count']<b['max_stack']]
+            if not pairs:raise JobBlocked('No plain stack merge remains')
+            # A full bag can have enough aggregate space without any two
+            # fragments fitting together. Fill one destination partially, then
+            # merge the smaller remainder; never discard a stack for room.
+            a,b,amount=min(pairs,key=lambda pair:(pair[2]!=pair[0]['count'],pair[0]['count'],-pair[1]['count']))
+            book['pending']={'source':a,'destination':b,'amount':amount};write_json(path,book)
+            returned=move_amount(session,s,a,b,amount)
             current=session._wait(returned,menu['id'],lambda m:m['cursor']['count']==0
-                and m['slots'][a['slot']]['count']==0
+                and m['slots'][a['slot']]['count']==a['count']-amount
                 and m['slots'][b['slot']]['item']==item
-                and m['slots'][b['slot']]['count']==a['count']+b['count'],
+                and m['slots'][b['slot']]['count']==amount+b['count'],
                 'plain_merge_later_frames',confirmations=2,fresh=True)
             if dict(inventory_counts(current))!=before:raise JobBlocked('Plain stack merge conservation unproved')
             book['moves'].append(book['pending']);book['pending']=None;write_json(path,book)
@@ -58,6 +64,48 @@ def offer(state,item,minimum):
     total=sum(r['count']for r in stacks)
     freed=len(stacks)-math.ceil(total/size);empty=sum(not r.get('count',0)for r in rows)
     return {'total':total,'before_stacks':len(stacks),'freed_slots':freed}if empty<minimum<=empty+freed else None
+
+
+def prepare_fetch(client,items):
+    """Reuse the caller's lease to recover workspace before a storage trip.
+
+    This is an opportunistic lower bound, not a promise that every future
+    source fits. In particular, non-stackable or large requests may need more
+    space; the ordinary transfer still checks actual receiving capacity.
+    """
+    items=tuple(dict.fromkeys(items))
+    if not items:return None
+    initial=client.status();menu=initial.get('menu')or{}
+    if(initial.get('screen')or initial.get('manual_movement')is True
+            or menu.get('type')!='InventoryMenu'or menu.get('id')!=0
+            or len(menu.get('slots',[]))!=46 or menu.get('cursor',{}).get('count')!=0
+            or any(r['count']for r in menu['slots'][:5])):return None
+    wanted=min(36,len(items)+1);before=dict(inventory_counts(initial));moves=[]
+    class ExistingOwner:
+        def ensure_client(self):return client
+        @contextmanager
+        def action(self,name):
+            out=Path(client.out)/('fetch-inventory-merge-'+str(time.time_ns()))
+            out.mkdir(exist_ok=False);yield client,out
+    backend=ExistingOwner()
+    for _ in range(35):
+        s=client.status();rows=[r for r in s.get('inventory',[])if r.get('slot',99)<36]
+        if len(rows)!=36:break
+        free=sum(not r['count']for r in rows)
+        if free>=wanted:break
+        choices=[]
+        for item in sorted({r['item']for r in rows if r.get('count',0)}):
+            for minimum in range(wanted,free,-1):
+                if offer(s,item,minimum)is not None:
+                    choices.append((minimum-free,item,minimum));break
+        if not choices:break
+        _,item,minimum=max(choices,key=lambda p:(p[0],p[1]))
+        moves.append(run_inventory(backend,item,minimum))
+    if not moves:return None
+    final=client.status()
+    if dict(inventory_counts(final))!=before:raise JobBlocked('Fetch workspace changed carried item totals')
+    return {'phase':'done','free_slots':sum(not r['count']for r in final['inventory']if r['slot']<36),
+            'requested_minimum':wanted,'inventory_credit':0,'depot_visits':0,'merges':moves}
 
 
 def run(backend,item,minimum):
