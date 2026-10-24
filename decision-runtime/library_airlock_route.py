@@ -1,4 +1,9 @@
-"""Use the existing two-button iron airlock without mining or enlarging the village."""
+"""Travel through existing iron doors without mining or enlarging the village.
+
+Default crossings restore both doors. Opt-in held returns keep the outer door
+owned/open and the inner door closed; callers must return and require_restored
+before completing their job. Pending or unknown actions are never replayed.
+"""
 import math,time
 from material_plan import inventory_counts
 
@@ -37,11 +42,15 @@ def require_empty_relay(scene,door=None):
         if door is not None and math.dist(actor['pos'],[door+.5,64.,Z+.5])<3 and not enclosed_neighbor(scene,actor):
             raise RuntimeError('A villager is approaching this door; keep it closed')
 
-def cross(builder,door,lever,destination):
+def cross(builder,door,lever,destination,*,observation=None):
     if any(r.get('pending')for r in builder.book.get('airlock_crossings',[])):raise RuntimeError('Original airlock crossing remains pending')
     from projection_completion import block_state
     other=760997 if door==760993 else 760993
-    scene,rows=builder.scan([760987,63,797802],[761000,67,797813]);require_empty_relay(scene,door)
+    scene,rows=builder.scan([760987,63,797802],[761000,67,797813])if observation is None else observation
+    if observation is not None:
+        state=builder.check()
+        if(scene.get('world_session')!=builder.q.world or not 0<=state['time']-scene.get('time',-10000)<=1000):raise RuntimeError('Stale crossing observation')
+    require_empty_relay(scene,door)
     row=rows.get((lever,64,Z),{});before=row.get('state','Block{minecraft:air}');kind,props=block_state(before)
     if(not closed(rows,door)or not closed(rows,other)or abs(lever-door)!=1
        or kind!='minecraft:lever'or props.get('face')!='floor'or props.get('powered')!='false'
@@ -74,6 +83,16 @@ def cross(builder,door,lever,destination):
         time.sleep(.1)
     record.update(pending=False,both_doors_closed=True,lever_restored=True);builder.save()
 
+def record_walk_inventory(builder,before):
+    after=inventory_counts(builder.check())
+    if any(after[item]<count for item,count in before.items()):raise RuntimeError('Walking airlock inventory decreased')
+    gained=after-before
+    if gained:
+        builder.book.setdefault('incidental_walk_pickups',[]).append({'counts':dict(gained),'before':dict(before),'after':dict(after),'counts_are_goal_credit':False})
+        builder.save()
+    return gained
+
+
 def route(builder,destination,configuration):
     work=configuration['work_block'];source=builder.check()['pos']
     reserve=destination.uid==configuration['uuid']and list(destination.work)==work
@@ -83,13 +102,21 @@ def route(builder,destination,configuration):
     if any(r.get('pending')for r in builder.book.get('airlock_crossings',[])):raise RuntimeError('Original airlock crossing remains pending')
     def walk(p):builder.n('walk',target=p,arrival=.1,restore_flight=False,seconds=20)
     if reserve and source_reserve:
+        from held_airlock_return import require_restored
+        require_restored(builder.book)
         if math.dist(builder.check()['pos'],RESERVE_PATH[0])>.3:walk(RESERVE_PATH[0])
         return True
     before=inventory_counts(builder.check());scene,rows=builder.scan([760987,63,797802],[761000,67,797813]);require_path(rows,RESERVE_PATH);require_empty_relay(scene)
-    if not closed(rows,760993)or not closed(rows,760997):raise RuntimeError('Airlock initially open')
+    held=builder.book.get('held_return_gate')
+    use_held=configuration.get('held_return_gate_enabled')is True
+    if not(reserve and held and held.get('phase')!='closed')and(not closed(rows,760993)or not closed(rows,760997)):raise RuntimeError('Airlock initially open')
     if source_reserve:
         for p in RESERVE_PATH[1:]:walk(p)
-        cross(builder,760993,760992,[760994.5,64.,Z+.5]);walk([760996.5,64.,Z+.5]);cross(builder,760997,760996,[760998.5,64.,Z+.5])
+        cross(builder,760993,760992,[760994.5,64.,Z+.5]);walk([760996.5,64.,Z+.5])
+        if use_held:
+            from held_airlock_return import begin
+            begin(builder)
+        else:cross(builder,760997,760996,[760998.5,64.,Z+.5])
     else:
         # Keep the approach inside the witnessed public gallery.
         position=builder.check()['pos'];floor=64 if position[0]<761015 else 65
@@ -97,7 +124,11 @@ def route(builder,destination,configuration):
         # The witnessed public aisle has a vanilla one-block/slab descent.
         # One normal walk follows it continuously; native per-step obstacle,
         # dry-floor and drop guards remain in charge of every movement tick.
-        walk([760998.5,64.,Z+.5]);cross(builder,760997,760998,[760996.5,64.,Z+.5]);walk([760994.5,64.,Z+.5]);cross(builder,760993,760994,[760991.5,64.,Z+.5])
+        if held and held.get('phase')!='closed':
+            from held_airlock_return import return_through
+            fresh=return_through(builder,(scene,rows));cross(builder,760993,760994,[760991.5,64.,Z+.5],observation=fresh)
+        else:
+            walk([760998.5,64.,Z+.5]);cross(builder,760997,760998,[760996.5,64.,Z+.5]);walk([760994.5,64.,Z+.5]);cross(builder,760993,760994,[760991.5,64.,Z+.5])
         for p in reversed(RESERVE_PATH[:-2]):walk(p)
-    if inventory_counts(builder.check())!=before:raise RuntimeError('Walking airlock inventory changed')
-    builder.book.setdefault('walking_district_routes',[]).append({'target':'reserve'if reserve else'main','both_doors_closed':True,'no_mining':True});builder.save();return reserve
+    record_walk_inventory(builder,before)
+    builder.book.setdefault('walking_district_routes',[]).append({'target':'reserve'if reserve else'main','both_doors_closed':not(source_reserve and use_held),'held_outer_return_gate':bool(source_reserve and use_held),'no_mining':True});builder.save();return reserve

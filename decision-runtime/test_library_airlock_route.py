@@ -76,4 +76,21 @@ class Tests(unittest.TestCase):
    book={'airlock_crossings':[{'pending':True}]}
    def scan(self,*a):raise AssertionError('No further request')
   with self.assertRaises(RuntimeError):cross(B(),760993,760992,[760994.5,64.,797811.5])
+ def test_incidental_pickup_is_retained_without_goal_credit_but_loss_stops(self):
+  from library_airlock_route import record_walk_inventory
+  from collections import Counter
+  class B:
+   book={}
+   def check(self):return {'inventory':[{'slot':0,'item':'minecraft:emerald','count':10},{'slot':1,'item':'minecraft:poisonous_potato','count':1}]}
+   def save(self):pass
+  b=B();gained=record_walk_inventory(b,Counter({'minecraft:emerald':10}));self.assertEqual({'minecraft:poisonous_potato':1},dict(gained));self.assertFalse(b.book['incidental_walk_pickups'][0]['counts_are_goal_credit'])
+  with self.assertRaises(RuntimeError):record_walk_inventory(b,Counter({'minecraft:emerald':11}))
+ def test_stale_crossing_preflight_is_rejected_before_any_input(self):
+  from types import SimpleNamespace
+  class B:
+   book={};q=SimpleNamespace(world='world')
+   def check(self):return {'time':2000}
+   def n(self,*a,**kw):raise AssertionError('No input allowed')
+  for scene in ({'time':0,'world_session':'world'},{'time':2000,'world_session':'foreign'}):
+   with self.assertRaises(RuntimeError):cross(B(),760993,760992,[760994.5,64,797811.5],observation=(scene,{}))
 if __name__=='__main__':unittest.main()
