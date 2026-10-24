@@ -68,6 +68,9 @@ class DropIdentityTest(unittest.TestCase):
   self.assertIsNone(carried_box(s,'minecraft:shulker_box',{'minecraft:book':2}))
 
 class ReturnWorkflowTest(unittest.TestCase):
+ def test_box_collected_during_approach_is_returned_without_another_step(self):
+  self.collect_returns_false=True
+  self.test_hidden_drop_contents_are_checked_after_pickup_and_box_returns_to_same_slot()
  def test_hidden_drop_contents_are_checked_after_pickup_and_box_returns_to_same_slot(self):
   import tempfile,json,copy
   from pathlib import Path
@@ -78,20 +81,26 @@ class ReturnWorkflowTest(unittest.TestCase):
    class Client:
     def __init__(self):
      self.out=Path(d);self.resource_cleanup={};self.moves=[]
+     from types import SimpleNamespace
+     self.world='world';self.task='task';self.last='geometry';self.native_inflight=None;self.unconfirmed_native_request=None;self.heartbeat=SimpleNamespace(id='lease')
+     self.last_terminal_evidence={'op':'scan','phase':'done','request_id':'geometry','world_session':'world','task_session':'task','revision_after':7}
      self.s={'screen':'','inventory':[],'entities':[{'uuid':'fresh-box','type':'minecraft:item','pos':[1.5,64,2.5],'stack':{'item':'minecraft:shulker_box','count':1,'contains':[]}}],'menu':{'id':0,'type':'InventoryMenu','cursor':{'item':'minecraft:air','count':0}}}
+     self.s.update(control_revision=7,supervision_lease={'kind':'materials','job_session':'task','world_session':'world','revision':7,'id':'lease'})
     def status(self):return copy.deepcopy(self.s)
     def checked(self,op,**kw):
      self.moves.append((op,kw));m=self.s['menu']
      if op=='close_menu':self.s['screen']='';return
      cell=m['slots'][kw['slot']];assert cell['item']==kw['expected_item'] and cell['count']==kw['expected_count']
      value={k:v for k,v in cell.items() if k!='slot'};cell.update(m['cursor']);m['cursor']=value
-   c=Client();journal=c.out/'box.json';record={'slot':1,'item':'minecraft:shulker_box','initial_counts':{'minecraft:book':3},'remaining_counts':remaining,'temporary_position':[1,64,2],'stage':'broken','before_drop_uuids':[]}
+   c=Client();journal=c.out/'box.json';record={'slot':1,'item':'minecraft:shulker_box','initial_counts':{'minecraft:book':3},'remaining_counts':remaining,'temporary_position':[1,64,2],'stage':'broken','before_drop_uuids':[],'world_session':'world'}
    def pickup(client,drop,observation=None):
-    self.assertEqual(drop['uuid'],'fresh-box');client.s['inventory']=[dict(box,slot=9)];client.s['entities']=[];return True
+    self.assertEqual(drop['uuid'],'fresh-box');client.s['inventory']=[dict(box,slot=9)];client.s['entities']=[];return not getattr(self,'collect_returns_false',False)
    def open_ender(client,*args):
     slots=[{'slot':i,'item':'minecraft:air','count':0} for i in range(63)];slots[27]=dict(box,slot=27)
     client.s['menu']={'id':10,'type':'ChestMenu','cursor':{'item':'minecraft:air','count':0},'slots':slots};client.s['screen']='ContainerScreen';return client.status()
-   with patch('packed_supplies.collect_drop',side_effect=pickup),patch('packed_supplies.open_box',side_effect=open_ender):recover_and_return(c,record,[4,64,5],journal)
+   with patch('packed_supplies.collect_drop',side_effect=pickup),patch('packed_supplies.open_box',side_effect=open_ender),patch('drop_pickup_settle.settle')as step:
+    recover_and_return(c,record,[4,64,5],journal)
+    step.assert_not_called()
    self.assertEqual(record['stage'],'returned');self.assertEqual(record['drop_uuid'],'fresh-box')
    self.assertEqual(c.s['menu']['slots'][1]['contains'],box['contains']);self.assertEqual(c.s['menu']['cursor']['count'],0)
    self.assertEqual([kw['slot'] for op,kw in c.moves if op=='slot_click'],[27,1])

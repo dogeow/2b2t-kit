@@ -233,6 +233,10 @@ def recover_and_return(client,record,ender,journal):
                             or getattr(client,'unconfirmed_native_request',None)is not None
                             or getattr(client,'native_inflight',None)is not None):
                         raise RuntimeError('Owned portable box still needs recovery; inventory must be checked before any retry')
+                    # The approach itself may have picked up the exact owned
+                    # box. Do not use its now-absent entity as a reason to step
+                    # again or to report failed recovery.
+                    if carried_box(current,item,remaining):break
                     from drop_pickup_settle import settle
                     before=inventory_counts(client.status()).get(item,0)
                     if not settle(client,drop,before):
