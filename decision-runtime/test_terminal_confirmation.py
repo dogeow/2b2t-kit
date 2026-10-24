@@ -24,3 +24,10 @@ class TerminalTest(unittest.TestCase):
   for key,value in [('full_projection_confirmed',True),('bounded_target_count',0),('bounded_targets',[[1,2,3],[1,2,3]]),('placement_key','')]:
    v=copy.deepcopy(r);v[key]=value
    with self.subTest(key=key):self.assertFalse(verified('professional_print',v,'w','r',{}))
+ def test_controlled_water_refill_requires_both_request_opt_in_and_native_attestation(self):
+  r=self.mine();r['server_observed_state']='Block{minecraft:water}[level=0]';params={'pos':[1,2,3],'controlled_water_release':True}
+  self.assertFalse(verified('mine_block',r,'w','r',params));r['controlled_water_release']=True
+  self.assertTrue(verified('mine_block',r,'w','r',params));self.assertFalse(verified('mine_block',r,'w','r',{'pos':[1,2,3]}))
+  for key,value in [('server_ack_sequence',2),('server_confirmed',False),('outcome_pending',True),('server_observed_state','Block{minecraft:lava}[level=0]')]:
+   bad=copy.deepcopy(r);bad[key]=value
+   self.assertFalse(verified('mine_block',bad,'w','r',params))

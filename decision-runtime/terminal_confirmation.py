@@ -18,7 +18,8 @@ def verified(op,reply,world,request_id,params):
         return True
     sequence=reply.get('native_sequence');ack=reply.get('server_ack_sequence');state=reply.get('server_observed_state')
     allowed=('Block{minecraft:air}','Block{minecraft:cave_air}','Block{minecraft:void_air}')
-    removed=state in allowed or params.get('underwater_gravel') is True and isinstance(state,str) and state.startswith('Block{minecraft:water}')
+    water_allowed=params.get('underwater_gravel') is True or params.get('controlled_water_release') is True and reply.get('controlled_water_release') is True
+    removed=state in allowed or water_allowed and isinstance(state,str) and state.startswith('Block{minecraft:water}')
     return (reply.get('confirmation_scope')=='single_target_server_block_update_and_native_sequence_ack'
             and reply.get('server_update_seen') is True and type(sequence)is int and sequence>=0
             and type(ack)is int and ack>=sequence and reply.get('mining_target')==params.get('pos') and removed)
