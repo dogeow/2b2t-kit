@@ -45,21 +45,24 @@ def contents(rows):
     for row in rows:
         if row.get('count') and row['item']!='minecraft:air':result[row['item']]+=row['count']
     return dict(result)
-def matching_source(rows,material,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None):
+def matching_source(rows,material,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None,exact_stacks=None):
     required=(required_stored_enchantments or {}).get(material,{})
     ordinary=(required_enchantments or {}).get(material,{})
     minimum=(minimum_durability or {}).get(material,0)
     for row in rows:
         if row['item']!=material or not row['count']:continue
+        if (exact_stacks or {}).get(material) is not None:
+            from anvil_enchant_preview import stack_key
+            if stack_key(row)!=stack_key(exact_stacks[material]):continue
         if row.get('durability',0)<minimum:continue
         actual={v['id']:v['level'] for v in row.get('stored_enchantments',[])}
         equipped={v['id']:v['level'] for v in row.get('enchantments',[])}
         if (all(actual.get(name,0)>=level for name,level in required.items())
                 and all(equipped.get(name,0)>=level for name,level in ordinary.items())):return row
     return None
-def matching_count(rows,material,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None):
+def matching_count(rows,material,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None,exact_stacks=None):
     return sum(row['count'] for row in rows if matching_source([row],material,
-               required_stored_enchantments,minimum_durability,required_enchantments) is not None)
+               required_stored_enchantments,minimum_durability,required_enchantments,exact_stacks) is not None)
 def choose_box(slots,targets,carried):
     candidates=[]
     for row in slots:
@@ -253,17 +256,17 @@ def recover_and_return(client,record,ender,journal):
     with (client.out/'packed-transfers.jsonl').open('a') as stream:stream.write(json.dumps(record,ensure_ascii=False)+'\n')
     print('PACKED_RETURNED',slot,record.get('taken',{}),flush=True)
 
-def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None):
+def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None,exact_stacks=None):
     journal=client.out/'packed-transfer-active.json'
     if journal.exists() and json.loads(journal.read_text()).get('stage')!='returned':
         raise RuntimeError('An earlier portable box needs inspected recovery before another withdrawal')
     state=client.status()
     for material,target in targets.items():
         filtered=((required_stored_enchantments or {}).get(material)
-                  or (required_enchantments or {}).get(material) or (minimum_durability or {}).get(material))
+                  or (required_enchantments or {}).get(material) or (minimum_durability or {}).get(material) or (exact_stacks or {}).get(material))
         if (filtered and target<=inventory_counts(state)[material]
                 and matching_source(state['inventory'],material,required_stored_enchantments,
-                                    minimum_durability,required_enchantments) is None):
+                                    minimum_durability,required_enchantments,exact_stacks) is None):
             raise RuntimeError('Existing item count has no matching equipment; request current total plus the additional items')
     if any(v.get('count') and v['item'].endswith('shulker_box') for v in state['inventory']):raise RuntimeError('Keep existing carried shulker boxes outside this operation')
     space=workspace_requirement(state)
@@ -281,7 +284,7 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
                 'inventory':[{key:v.get(key) for key in ('slot','item','count')} for v in state['inventory']]},
             'source':{'position':ender,'slot':slot,'item':item,'count':source['count'],'counts':initial},
             'required_stored_enchantments':required_stored_enchantments or {},
-            'required_enchantments':required_enchantments or {},'minimum_durability':minimum_durability or {}}
+            'required_enchantments':required_enchantments or {},'minimum_durability':minimum_durability or {},'exact_stacks':exact_stacks or {}}
     def save(stage):record['stage']=stage;journal.write_text(json.dumps(record,ensure_ascii=False,indent=2))
     save('prepared')
     client.checked('slot_click',menu_id=s['menu']['id'],slot=slot,expected_item=item,expected_count=1,kind='quick_move')
@@ -301,23 +304,23 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
             live=client.status();need=target-inventory_counts(live)[material]
             if need<=0:break
             src=matching_source(live['menu']['slots'][:27],material,
-                                required_stored_enchantments,minimum_durability,required_enchantments)
+                                required_stored_enchantments,minimum_durability,required_enchantments,exact_stacks)
             if src is None:
                 if ((required_stored_enchantments or {}).get(material) or (required_enchantments or {}).get(material)
-                        or (minimum_durability or {}).get(material)):
+                        or (minimum_durability or {}).get(material) or (exact_stacks or {}).get(material)):
                     record.setdefault('deferred',{})[material]='No observed item satisfies the requested enchantments and durability'
                 break
             free=sum(v['slot']<36 and not v['count'] for v in live['inventory'])
             if free<=1:record.setdefault('deferred',{})[material]='Reserve a free slot for the intact box';break
             if (material in VALUABLE or (required_stored_enchantments or {}).get(material)
-                    or (required_enchantments or {}).get(material) or (minimum_durability or {}).get(material)):
+                    or (required_enchantments or {}).get(material) or (minimum_durability or {}).get(material) or (exact_stacks or {}).get(material)):
                 if src.get('max_stack',64)==1 and src['count']==1 and need==1:
                     # A uniquely identified unstackable item is already an
                     # exact one-item transfer; inventory_exact intentionally
                     # handles ordinary stackable ingredients only.
                     carried_before=inventory_counts(live)[material]
                     qualified_before=matching_count(live['inventory'],material,required_stored_enchantments,
-                                                    minimum_durability,required_enchantments)
+                                                    minimum_durability,required_enchantments,exact_stacks)
                     client.checked('slot_click',menu_id=live['menu']['id'],slot=src['slot'],
                                    expected_item=material,expected_count=1,kind='quick_move')
                     def received(state):
@@ -327,7 +330,7 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
                         return (not menu['cursor']['count'] and not menu['slots'][src['slot']]['count']
                                 and inventory_counts(state)[material]==carried_before+1
                                 and matching_count(state['inventory'],material,required_stored_enchantments,
-                                                   minimum_durability,required_enchantments)==qualified_before+1)
+                                                   minimum_durability,required_enchantments,exact_stacks)==qualified_before+1)
                     wait(client,received)
                 else:
                     take_exact(client,src['slot'],min(need,src['count'],16),reserve_empty=1)
