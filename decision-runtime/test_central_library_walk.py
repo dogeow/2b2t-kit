@@ -48,3 +48,27 @@ class Tests(unittest.TestCase):
   with tempfile.TemporaryDirectory()as d:
    b=Builder([761002.5,64.,797811.5]);self.assertFalse(route(b,LibrarianRoom('paid',(761028,65,797809),-1),self.config(d)));self.assertEqual([],b.calls)
 if __name__=='__main__':unittest.main()
+
+class PublicRouteChainTests(unittest.TestCase):
+ def test_reserve_departure_reaches_gallery_before_central_approach(self):
+  from central_library_walk import chain_public_routes
+  calls=[]
+  def district():calls.append('restored_exit');return False
+  def central():self.assertEqual(['restored_exit'],calls);calls.append('central');return True
+  self.assertTrue(chain_public_routes(central,district,reserve_departure=True));self.assertEqual(['restored_exit','central'],calls)
+ def test_normal_central_departure_is_normalized_before_district(self):
+  from central_library_walk import chain_public_routes
+  calls=[]
+  def central():calls.append('central_exit');return False
+  def district():self.assertEqual(['central_exit'],calls);return True
+  self.assertTrue(chain_public_routes(central,district,reserve_departure=False))
+ def test_success_or_unknown_failure_never_starts_second_route(self):
+  from central_library_walk import chain_public_routes
+  for reserve in (False,True):
+   calls=[]
+   def forbidden():calls.append('unsafe');raise AssertionError('Second route must not run')
+   first=lambda:True
+   self.assertTrue(chain_public_routes(forbidden if reserve else first,first if reserve else forbidden,reserve_departure=reserve));self.assertEqual([],calls)
+   def failed():raise RuntimeError('Original pending gate')
+   with self.assertRaisesRegex(RuntimeError,'Original pending gate'):chain_public_routes(forbidden if reserve else failed,failed if reserve else forbidden,reserve_departure=reserve)
+   self.assertEqual([],calls)

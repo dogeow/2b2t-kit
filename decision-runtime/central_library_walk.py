@@ -55,3 +55,16 @@ def route(builder,destination,base):
             walk([761014.5,64.,797811.5]);walk([761014.5,64.,797810.5]);walk(target)
     record.update(pending=False,ground_only=True,no_airlock_or_mining=True);builder.save()
     return central
+
+
+def chain_public_routes(central,district,*,reserve_departure):
+    """Exit a witnessed reserve before asking the central gallery to approach.
+
+    A district route returning False may still have completed the exit to the
+    main gallery. Only then can the central route validate and enter its step.
+    Exceptions retain their original pending action; no other route is tried.
+    """
+    if type(reserve_departure)is not bool:raise ValueError('Explicit departure classification required')
+    if reserve_departure:
+        return True if district()else central()
+    return True if central()else district()
