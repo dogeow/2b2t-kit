@@ -10,6 +10,11 @@ from test_anvil_enchant_preview import book,empty
 
 
 class PackedEquipmentTests(unittest.TestCase):
+    def test_list_request_delegates_to_one_batch_on_the_same_client(self):
+        c=Mock();requests=[book(),book('minecraft:unbreaking',3)]
+        with patch('packed_equipment_batch.take',return_value={'complete':True,'box_visits':1})as batch:
+            self.assertEqual(take(c,'profile.json',14,requests)['box_visits'],1)
+        batch.assert_called_once_with(c,'profile.json',14,requests)
     def test_exact_filter_does_not_accept_extra_curse_lower_level_or_other_affixes(self):
         wanted=book('minecraft:efficiency',5)
         wrong=book('minecraft:efficiency',4)

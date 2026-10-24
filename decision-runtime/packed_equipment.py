@@ -1,4 +1,4 @@
-"""One exact observed equipment/book stack from an explicit Ender shulker."""
+"""Exact observed equipment/books from an explicit Ender shulker."""
 import json
 from pathlib import Path
 from anvil_enchant_preview import stack_key, enchantments
@@ -8,6 +8,9 @@ from packed_supplies import open_box, take_box, matching_count, workspace_requir
 
 
 def take(client,profile_path,box_slot,expected):
+    if isinstance(expected,list):
+        from packed_equipment_batch import take as take_batch
+        return take_batch(client,profile_path,box_slot,expected)
     if (type(box_slot)is not int or not 0<=box_slot<27 or expected.get('count')!=1
             or expected.get('max_stack')!=1 or not expected.get('item','').startswith('minecraft:')
             or any(k.endswith('_curse') for k in enchantments(expected))):
