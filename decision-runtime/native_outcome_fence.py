@@ -7,6 +7,7 @@ independent of this Python controller.
 """
 from copy import deepcopy
 import json
+import time
 from material_client import MaterialClient
 
 _READ_TERMINALS = frozenset(('scan','snapshot','navigate','walk','approach_block',
@@ -34,6 +35,23 @@ def exact_idle_terminal(client, state):
                 and lease.get('kind') == 'materials' and lease.get('id') == client.heartbeat.id
                 and lease.get('job_session') == client.task and lease.get('world_session') == client.world
                 and lease.get('revision') == state.get('control_revision'))
+
+
+def wait_exact_idle_terminal(client, seconds=4, *, clock=time.monotonic, sleep=time.sleep):
+    """Observe asynchronous scan retirement without dispatching or ending the lease.
+
+    A reply file can be visible one tick before pending_scan is retired from
+    status. The exact ownership/outcome fence remains unchanged during this wait.
+    Failure leaves heartbeat ownership with the caller; it is not a shutdown.
+    """
+    deadline = clock() + seconds
+    while True:
+        state = client.status()
+        if exact_idle_terminal(client, state):
+            return state
+        if clock() >= deadline:
+            raise RuntimeError('Exact idle native outcome is still unproved; retain control without cleanup')
+        sleep(.05)
 
 
 class RetainedUnknownMaterialClient(MaterialClient):

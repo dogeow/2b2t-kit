@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
-from native_outcome_fence import RetainedUnknownMaterialClient, exact_idle_terminal
+from native_outcome_fence import RetainedUnknownMaterialClient, exact_idle_terminal, wait_exact_idle_terminal
 
 
 class NativeOutcomeFenceTests(TestCase):
@@ -32,6 +32,22 @@ class NativeOutcomeFenceTests(TestCase):
     def test_even_empty_pending_scan_is_unknown(self):
         c,s=self.setup_case();s['pending_scan']={}
         self.assertFalse(exact_idle_terminal(c,s))
+
+    def test_scan_reply_can_precede_retirement_without_dispatch_or_shutdown(self):
+        c,s=self.setup_case('scan')
+        c.status=Mock(side_effect=[{**s,'pending_scan':{'reply_write_state':'complete'}},s])
+        c.request=Mock();c.heartbeat.close=Mock()
+        settled=wait_exact_idle_terminal(c,clock=Mock(side_effect=[0,.1]),sleep=Mock())
+        self.assertIs(settled,s)
+        c.request.assert_not_called();c.heartbeat.close.assert_not_called()
+
+    def test_wait_timeout_keeps_unknown_fence_and_heartbeat_for_caller(self):
+        c,s=self.setup_case('scan');c.unconfirmed_native_request={'request_id':'original'}
+        c.status=Mock(return_value=s);c.request=Mock();c.heartbeat.close=Mock()
+        with self.assertRaisesRegex(RuntimeError,'retain control'):
+            wait_exact_idle_terminal(c,seconds=1,clock=Mock(side_effect=[0,2]),sleep=Mock())
+        self.assertEqual(c.unconfirmed_native_request,{'request_id':'original'})
+        c.request.assert_not_called();c.heartbeat.close.assert_not_called()
 
     def test_uncertain_mutating_error_cannot_cleanup(self):
         for op in ('slot_click','interact','projection_scaffold_fill','professional_print'):
