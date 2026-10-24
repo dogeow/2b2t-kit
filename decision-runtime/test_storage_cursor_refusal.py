@@ -33,3 +33,14 @@ class StorageCursorRefusalTests(unittest.TestCase):
   c,e,s,v=self.fixture()
   for r in s['menu']['slots'][27:]:r.update(item='minecraft:stone',count=64)
   self.assertIsNone(return_plan(c,e,s,v,'w','t'))
+
+ def test_positive_full_pickup_with_refilled_source_can_store_cursor_without_replaying_pickup(self):
+  c,e,s,v=self.fixture();v=v[:1];v[0]['time']=10;s['time']=16000;s['last_request']='pickup';e.update(last_request='pickup',error='Inventory acknowledgement missing at storage_pickup; no action replay')
+  self.assertEqual(27,return_plan(c,e,s,v,'w','t')['slot'])
+  for changed in ['empty_source','cursor','too_soon','unknown']:
+   ss=copy.deepcopy(s);ee=copy.deepcopy(e)
+   if changed=='empty_source':ss['menu']['slots'][0]['count']=0
+   if changed=='cursor':ss['menu']['cursor']['count']=63
+   if changed=='too_soon':ss['time']=10001
+   if changed=='unknown':ee['unconfirmed_native_request']='pending'
+   with self.subTest(changed=changed):self.assertIsNone(return_plan(c,ee,ss,v,'w','t'))
