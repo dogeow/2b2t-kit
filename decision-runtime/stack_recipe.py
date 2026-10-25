@@ -9,6 +9,7 @@ import math
 import time
 from kit_runtime.inventory import InventorySession
 from craft_grid import InventoryCapacity,count
+from storage_stack_recipes import supported as storage_recipe_supported
 
 STACKABLE_OUTPUTS={'minecraft:bone_meal','minecraft:white_dye','minecraft:white_concrete_powder',
     'minecraft:torch','minecraft:golden_apple','minecraft:gold_ingot',
@@ -84,6 +85,8 @@ def _color_recipe(spec):
             and sorted(cell for cells in ingredients.values()for cell in cells)==list(range(1,10)))
 
 def supported(spec):
+    if spec.get('output') in ('minecraft:chest','minecraft:hopper'):
+        return storage_recipe_supported(spec)
     if spec.get('output')in DYE_OUTPUTS:return _dye_recipe(spec)
     if spec.get('output')=='minecraft:clay':
         width=spec.get('width');cells={2:[1,2,3,4],3:[1,2,4,5]}.get(width)if type(width)is int else None
@@ -138,7 +141,8 @@ def grouped_batch(menu,spec,max_rounds):
     A partial 40+24 pair can produce ten rounds then six, without returning
     twenty items one at a time. Other recipes retain their ordinary cell path.
     """
-    if spec.get('output')not in COLOR_OUTPUTS or not _color_recipe(spec):return None
+    if not ((spec.get('output') in COLOR_OUTPUTS and _color_recipe(spec))
+            or storage_recipe_supported(spec)):return None
     for rounds in range(max_rounds,0,-1):
         slots=copy.deepcopy(menu['slots'][-36:]);actions=[]
         for item,cells in spec['ingredients'].items():
