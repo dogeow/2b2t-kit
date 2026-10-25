@@ -138,9 +138,12 @@ class Client:
     raise Handoff('Control or world changed; no more commands')
    paused=s.get('interface_pause_protocol')==1 and s.get('interface_paused') is True
    if paused:
+    from manual_idle_resume import maybe_release_interface
+    maybe_release_interface(self,s)
     if not wait_interface or s.get('health',20)<14:return s
     # raw() keeps the owned heartbeat and health observations alive while typing.
     time.sleep(.15);continue
+   self._manual_idle_attempt=None
    if s.get('screen') not in ('','ContainerScreen','InventoryScreen','CraftingScreen','ShulkerBoxScreen','FurnaceScreen','BlastFurnaceScreen','SmokerScreen','AnvilScreen','BrewingStandScreen'):raise Handoff('User opened a different interface')
    return s
  def request(self,op,**params):
