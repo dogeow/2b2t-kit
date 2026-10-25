@@ -54,6 +54,7 @@ import java.util.Map;
 public final class DefaultTunnelBorerEngine implements BorerEngine {
 	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final String RUNTIME_VERSION = EngineBuildVersion.VALUE;
+    private final LoadedSpawnerSurvey loadedSpawnerSurvey=new LoadedSpawnerSurvey();
     final BorerSurroundWait surroundWait = new BorerSurroundWait();
 	final BorerMiningConfirmation miningConfirmation = new BorerMiningConfirmation();
 	final BorerStepCycle stepCycle = new BorerStepCycle();
@@ -963,6 +964,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 过门后立刻找附近地狱门，下界走动时持续记路。 */
 	@Override
 	public void observeWorld(Minecraft client) {
+        loadedSpawnerSurvey.tick(client);
 		if (scenery.active()) return; // Do not let idle mining recovery rewrite the active scenery flight lease.
 		if (client.player == null || client.level == null) {
 			wasInNether = false;
