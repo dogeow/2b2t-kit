@@ -11,7 +11,11 @@ class BorerDefensePolicyTest {
         assertFalse(BorerDefensePolicy.trackedBowEligible(true,true,false,true,true,14.598142));
         assertFalse(BorerDefensePolicy.trackedBowEligible(false,true,true,true,true,14.598142));
         assertFalse(BorerDefensePolicy.trackedBowEligible(true,false,true,true,true,14.598142));
-        assertFalse(BorerDefensePolicy.trackedBowEligible(true,true,true,true,true,41));
+        assertTrue(BorerDefensePolicy.trackedBowEligible(true,true,true,true,true,40.021034));
+        assertTrue(BorerDefensePolicy.trackedBowEligible(true,true,true,true,true,48));
+        assertFalse(BorerDefensePolicy.trackedBowEligible(true,true,true,true,true,48.001));
+        assertFalse(BorerDefensePolicy.trackedBowEligible(true,true,false,true,true,40.021034));
+        assertFalse(BorerDefensePolicy.trackedBowEligible(true,true,true,false,true,40.021034));
     }
 	@Test void visibleIdleMobsDoNotInterruptMiningEvenAtCloseRange() {
 		for (double distance : new double[]{2, 8, 24, 32})

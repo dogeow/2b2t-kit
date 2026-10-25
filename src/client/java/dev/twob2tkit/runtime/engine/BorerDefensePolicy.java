@@ -43,7 +43,7 @@ final class BorerDefensePolicy {
     static boolean trackedBowEligible(boolean hostile,boolean alive,boolean visible,
                                      boolean tracked,boolean usableBow,double distance){
         return hostile&&alive&&visible&&tracked&&usableBow&&Double.isFinite(distance)
-            &&distance>=0&&distance<=40;
+            &&distance>=0&&distance<=48;
     }
 	static boolean releaseArrow(int chargeTicks, boolean sameTarget, boolean clearShot) {
         return releaseArrow(chargeTicks,sameTarget,clearShot,false);
