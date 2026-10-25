@@ -92,6 +92,22 @@ class ResourceHealthTests(unittest.TestCase):
         state['menu']['cursor']['count'] = 1
         with self.assertRaises(RuntimeError): observed(state, cert)
 
+    def test_shulker_observation_requires_exact_owned_window_and_preserves_resident_guard(self):
+        state=copy.deepcopy(self.state)
+        state.update(screen='ShulkerBoxScreen',interface_paused=False,inventory_interface_paused=False,
+                     control_revision=7,menu={'type':'ShulkerBoxMenu','id':3,'cursor':{'count':0}},
+                     supervision_lease={'kind':'materials','id':'lease','job_session':'task','world_session':'current'})
+        cert={'type':'ShulkerBoxMenu','id':3,'world_session':'current','task_session':'task',
+              'lease_id':'lease','control_revision':7}
+        def observe(s,c):return check(s,'current',{'founder'},[984,63,804],[1034,69,818],owned_menu=c)
+        self.assertIs(observe(state,cert),state)
+        for mutation in ({'id':4},{'world_session':'old'},{'task_session':'other'},
+                         {'lease_id':'other'},{'control_revision':8}):
+            with self.subTest(mutation=mutation),self.assertRaises(RuntimeError):observe(state,{**cert,**mutation})
+        with self.assertRaises(RuntimeError):observe(state,None)
+        state['loaded_villagers']['villagers'][0]['uuid']='founder'
+        with self.assertRaisesRegex(RuntimeError,'Protected village'):observe(state,cert)
+
     def test_only_exact_native_owned_known_villager_empty_merchant_can_continue(self):
         state = copy.deepcopy(self.state)
         state.update(screen='MerchantScreen', interface_paused=False,

@@ -42,7 +42,8 @@ def check(state, world, protected_uuids, home_min, home_max, *, owned_menu=None)
     menu = state.get('menu') or {}
     lease = state.get('supervision_lease') or {}
     certified_type = (owned_menu or {}).get('type')
-    screen_for_menu = {'ChestMenu': 'ContainerScreen', 'AnvilMenu': 'AnvilScreen'}
+    screen_for_menu = {'ChestMenu': 'ContainerScreen', 'ShulkerBoxMenu': 'ShulkerBoxScreen',
+                       'AnvilMenu': 'AnvilScreen'}
     anvil_intent = (certified_type != 'AnvilMenu' or
                    owned_menu.get('purpose') == 'name_tag_rename'
                    and isinstance(owned_menu.get('source_request'), str)
