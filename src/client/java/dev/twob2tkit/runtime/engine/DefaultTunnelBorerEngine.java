@@ -54,6 +54,7 @@ import java.util.Map;
 public final class DefaultTunnelBorerEngine implements BorerEngine {
 	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final String RUNTIME_VERSION = EngineBuildVersion.VALUE;
+	private final BorerHudFrameLimiter hudFrames = new BorerHudFrameLimiter();
     private final LoadedSpawnerSurvey loadedSpawnerSurvey=new LoadedSpawnerSurvey();
     final BorerSurroundWait surroundWait = new BorerSurroundWait();
 	final BorerMiningConfirmation miningConfirmation = new BorerMiningConfirmation();
@@ -402,6 +403,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 停止盾构并松开所有按键。 */
 	@Override
 	public void stop(Minecraft client, String reason) {
+		hudFrames.clear();
 		stopSafetyNote="";
 		home.reset();
 		stepCycle.reset();
@@ -3031,8 +3033,10 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 	/** 展示指定动作 HUD。 */
 	private void presentHud(Minecraft client, String action, int color, String detail) {
-		String text = action == null ? "" : action;
-		String extra = detail == null ? "" : detail;
+		var frame = hudFrames.update(action, color, detail, System.nanoTime() / 1_000_000L);
+		String text = frame.action();
+		String extra = frame.detail();
+		color = frame.color();
 		if (BorerScreenHudBridge.show(host, text, color, extra)) return;
 		if (client.player == null) return;
 		try {
