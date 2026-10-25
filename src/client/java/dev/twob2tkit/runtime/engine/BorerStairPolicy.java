@@ -17,6 +17,12 @@ public final class BorerStairPolicy {
 		return drop == 0;
 	}
 
+	/** Flight uses sneak to descend, but sneak also prevents stepping off the old ledge. */
+	public static boolean pressFlightDescent(boolean flying, boolean moving,
+		int forwardDrop, int currentDrop, boolean supportWithinStep) {
+		return flying && moving && forwardDrop > 0 && currentDrop > 0 && !supportWithinStep;
+	}
+
 	/** 前方已经是安全坑：走下去，不要再挖地板。 */
 	public static boolean shouldWalkDown(int drop) {
 		return BorerFallPolicy.shouldWalkIntoDrop(drop);

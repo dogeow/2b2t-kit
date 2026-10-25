@@ -1794,7 +1794,14 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 				boolean stepping = verticalMove == VerticalMove.UP && walkableOneBlockStepAhead(client, player);
 				boolean jumping = verticalMove == VerticalMove.UP && !stepping && vertical.pressJump(client, player);
 				client.options.keyJump.setDown(jumping);
-				client.options.keyShift.setDown(verticalMove == VerticalMove.DOWN && isFlying(player));
+				boolean descend = false;
+				if (verticalMove == VerticalMove.DOWN && isFlying(player) && moving) {
+					int currentDrop = BorerHazards.safeFallDepth(client, player.blockPosition());
+					int forwardDrop = BorerHazards.safeFallDepth(client, navigationColumn(client, player).relative(forward));
+					boolean supported = !client.level.noCollision(player, player.getBoundingBox().move(0, -.6, 0));
+					descend = BorerStairPolicy.pressFlightDescent(true, true, forwardDrop, currentDrop, supported);
+				}
+				client.options.keyShift.setDown(descend);
 				attemptedForward = moving;
 				BlockPos goal = sideOreTargetPos != null ? sideOreTargetPos : oreTargetPos;
 				status = switch (verticalMove) {

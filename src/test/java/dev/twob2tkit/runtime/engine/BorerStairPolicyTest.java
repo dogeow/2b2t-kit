@@ -98,4 +98,14 @@ final class BorerStairPolicyTest {
 		assertTrue(BorerStairPolicy.occludeWhenFrontBlocked(true, false));
 		assertFalse(BorerStairPolicy.occludeWhenFrontBlocked(false, true));
 	}
+    @Test
+    void flightMustClearTheLedgeBeforeSneakingDown() {
+        assertFalse(BorerStairPolicy.pressFlightDescent(true, true, 3, 0, true));
+        assertFalse(BorerStairPolicy.pressFlightDescent(true, true, 3, 3, true));
+        assertTrue(BorerStairPolicy.pressFlightDescent(true, true, 3, 3, false));
+        assertFalse(BorerStairPolicy.pressFlightDescent(true, true, -1, 3, false));
+        assertFalse(BorerStairPolicy.pressFlightDescent(true, true, 3, -1, false));
+        assertFalse(BorerStairPolicy.pressFlightDescent(false, true, 3, 3, false));
+        assertFalse(BorerStairPolicy.pressFlightDescent(true, false, 3, 3, false));
+    }
 }
