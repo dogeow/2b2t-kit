@@ -36,8 +36,8 @@ def require_growth_pose(state,root,pose):
     aim=next((v['aim']for v in candidates(root)if v['pose']==pose),None)
     if (state.get('health')!=20 or state.get('manual_movement') or state.get('screen') or state.get('guard_busy') or state.get('safety_hold',{}).get('active')
             or not state.get('on_ground') or state.get('flight') or len(actual)!=3
-            or math.dist(actual,pose)>.35 or not body_clear(root,actual)
-            or aim is None or math.dist([actual[0],actual[1]+1.62,actual[2]],aim)>=4.3):
+            or math.dist(actual,pose)>.75 or not body_clear(root,actual)
+            or aim is None or math.dist([actual[0],actual[1]+1.62,actual[2]],aim)>=4.4):
         raise RuntimeError('Actual grounded operator is outside the proven growth stance')
 
 
@@ -48,13 +48,16 @@ def settle_growth_pose(builder,root,pose,*,seconds=3):
         state=builder.check()
         if (state.get('health')!=20 or state.get('manual_movement')or state.get('screen')
                 or state.get('guard_busy')or state.get('safety_hold',{}).get('active')
-                or math.dist(state['pos'],pose)>.35):
+                or math.dist(state['pos'],pose)>.75):
             raise RuntimeError('Growth stance displaced or protection active; no fertilizer')
         try:require_growth_pose(state,root,pose)
         except RuntimeError:seen=[]
         else:
             if not seen or state['time']>seen[-1]:seen.append(state['time'])
-            if len(seen)>=2:return state
+            if len(seen)>=2:
+                pos=state['pos'];y=round(pos[1]);assert abs(pos[1]-y)<.1
+                _,rows=builder.scan([math.floor(pos[0]-.31),y-1,math.floor(pos[2]-.31)],[math.floor(pos[0]+.31),y+1,math.floor(pos[2]+.31)])
+                require_ground(rows,pos);require_growth_pose(builder.check(),root,pose);return state
         if time.monotonic()>=deadline:raise RuntimeError('Grounded growth pose remains unconfirmed; no fertilizer')
         time.sleep(.08)
 

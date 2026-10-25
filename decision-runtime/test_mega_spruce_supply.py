@@ -15,7 +15,9 @@ class GrowthAdmissionTest(unittest.TestCase):
    with self.subTest(key=key),self.assertRaises(RuntimeError):require_growth_pose({**s,key:value},r,pose)
  def test_small_settled_drift_is_accepted_only_with_safe_body_and_reach(self):
   r=[760963,64,797812];pose=[760967.4,64,797809.6];state={'health':20,'manual_movement':False,'screen':'','on_ground':True,'flight':False,'pos':[760967.5744468125,64,797809.4995425831]};require_growth_pose(state,r,pose)
+  require_growth_pose({**state,'pos':[760967.700240641,64,797809.4179833443]},r,pose)
   with self.assertRaises(RuntimeError):require_growth_pose({**state,'pos':[760967.12,64,797809.6]},r,pose)
+  with self.assertRaises(RuntimeError):require_growth_pose({**state,'pos':[760967.84,64,797809.3]},r,pose)
  def test_clear_floor_is_not_enough_if_body_is_obstructed(self):
   pose=[14.4,64,17.6];rows={(14,63,17):{'solid':True,'fluid':False,'block_entity':False}}
   require_ground(rows,pose);rows[(14,65,17)]={'state':'Block{minecraft:oak_leaves}'}
@@ -66,9 +68,19 @@ class GroundSettlementTest(unittest.TestCase):
    def check(self):
     calls[0]+=1
     return {'pos':pose,'health':20,'manual_movement':False,'screen':'','guard_busy':False,'flight':False,'on_ground':calls[0]>1,'time':calls[0]}
+   def scan(self,low,high):return {},{(14,63,17):{'solid':True}}
   with patch('mega_spruce_supply.time.monotonic',side_effect=lambda:clock[0]),patch('mega_spruce_supply.time.sleep',side_effect=lambda dt:clock.__setitem__(0,clock[0]+dt)):
    out=settle_growth_pose(Reader(),r,pose)
-  self.assertTrue(out['on_ground']);self.assertEqual(calls[0],3)
+  self.assertTrue(out['on_ground']);self.assertEqual(calls[0],4)
+ def test_offset_pose_rechecks_every_actual_floor_column(self):
+  from mega_spruce_supply import settle_growth_pose
+  class Reader:
+   tick=0
+   def check(self):
+    self.tick+=1
+    return {'pos':[760967.700240641,64,797809.4179833443],'health':20,'manual_movement':False,'screen':'','guard_busy':False,'flight':False,'on_ground':True,'time':self.tick}
+   def scan(self,low,high):return {},{(760967,63,797809):{'solid':True}}
+  with self.assertRaisesRegex(RuntimeError,'dry floor'):settle_growth_pose(Reader(),[760963,64,797812],[760967.4,64,797809.6])
  def test_active_defense_never_waits_into_a_fertilizer_use(self):
   from mega_spruce_supply import settle_growth_pose
   class Reader:
