@@ -1,5 +1,5 @@
 import unittest
-from game_input_idle import GameInputIdle,may_reacquire_without_ui_input
+from game_input_idle import GameInputIdle,may_reacquire_without_ui_input,may_start_food_recovery
 class GameIdleTest(unittest.TestCase):
  def state(self):return dict(connected=True,world_session='w',window_active=True,manual_movement=False,health=20,screen='',supervision_lease=None)
  def test_typing_in_codex_does_not_reset_inactive_minecraft(self):
@@ -19,5 +19,13 @@ class GameIdleTest(unittest.TestCase):
   changes=[{name:True}for name in ('borer_active','chopping','navigating','printing','native_material_busy','pending_scan','material_mining_cleanup_pending')]+[{'build_job':{'active':True}},{'professional_printer':{'enabled':True}},{'material_task':{'occupied':True}}]
   for change in changes:
    with self.subTest(change=change):self.assertFalse(may_reacquire_without_ui_input({**self.state(),**change},{'authorized':True,'idle_seconds':30},60))
+
+ def food_state(self):return {**self.state(),'dimension':'minecraft:overworld','health':18.9,'food':17,'inventory':[{'slot':8,'item':'minecraft:cooked_beef','count':46}]}
+ def test_food_deadlock_can_recover_without_relaxing_normal_work_health(self):
+  s=self.food_state();p={'authorized':True,'idle_seconds':30};self.assertTrue(may_start_food_recovery(s,p,31));self.assertFalse(may_reacquire_without_ui_input(s,p,31));s['health']=20;self.assertFalse(may_start_food_recovery(s,p,31));self.assertTrue(may_reacquire_without_ui_input(s,p,31))
+ def test_food_recovery_preserves_manual_jobs_locks_and_precious_food(self):
+  changes=[{'manual_movement':True},{'screen':'InventoryScreen'},{'health':17},{'food':18},{'guard_food':{'eating':True}},{'borer_active':True},{'supervision_lease':{'kind':'materials'}},{'safety_hold':{'active':True}},{'inventory':[{'slot':8,'item':'minecraft:golden_apple','count':1}]},{'inventory':[{'slot':10,'item':'minecraft:cooked_beef','count':46}]},{'dimension':'minecraft:the_nether'}]
+  for change in changes:
+   with self.subTest(change=change):self.assertFalse(may_start_food_recovery({**self.food_state(),**change},{'authorized':True,'idle_seconds':30},60))
 
 if __name__=='__main__':unittest.main()

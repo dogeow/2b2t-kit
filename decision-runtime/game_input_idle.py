@@ -26,11 +26,11 @@ class GameInputIdle:
         return max(0.,now-self.last_activity)
 
 
-def may_reacquire_without_ui_input(state,policy,game_idle):
+def _idle_owner_free(state,policy,game_idle):
     threshold=policy.get('idle_seconds')
     return (policy.get('authorized')is True and type(threshold)in(int,float)and 30<=threshold<=600
         and type(game_idle)in(int,float)and math.isfinite(game_idle)and game_idle>=threshold
-        and state.get('connected')is True and state.get('health')==20 and state.get('manual_movement')is False
+        and state.get('connected')is True and state.get('manual_movement')is False
         and not state.get('screen')and not state.get('supervision_lease')and not state.get('guard_busy')
         and not any(state.get(k)for k in ('borer_active','chopping','navigating','printing','native_material_busy','pending_scan','material_mining_cleanup_pending'))
         and not (state.get('build_job')or{}).get('active')
@@ -38,3 +38,20 @@ def may_reacquire_without_ui_input(state,policy,game_idle):
         and not (state.get('material_task')or{}).get('occupied')
         and not state.get('health_recovery_hold')and not state.get('safety_hold',{}).get('active')
         and not any(word in state.get('detail','')for word in ('停止全部','紧急停止')))
+
+
+def may_reacquire_without_ui_input(state,policy,game_idle):
+    return state.get('health')==20 and _idle_owner_free(state,policy,game_idle)
+
+
+def may_start_food_recovery(state,policy,game_idle):
+    """Only ordinary food recovery may precede the unchanged full-health work gate."""
+    health=state.get('health');food=state.get('food')
+    return (type(health)in(int,float)and math.isfinite(health)and 18<=health<20
+        and type(food)is int and 0<=food<18
+        and state.get('dimension')=='minecraft:overworld'
+        and not(state.get('guard_food')or{}).get('eating')
+        and any(row.get('slot',99)<9 and row.get('count',0)>0
+                and row.get('item')in ('minecraft:cooked_beef','minecraft:cooked_porkchop','minecraft:cooked_chicken','minecraft:cooked_mutton','minecraft:bread')
+                for row in state.get('inventory',[]))
+        and _idle_owner_free(state,policy,game_idle))
