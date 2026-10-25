@@ -21,9 +21,10 @@ def open_workbench(client,pos,near_depot=None):
         if r.get('phase')!='done':raise RuntimeError(r.get('detail'))
     rows=client.request('scan',min=pos,max=pos)['blocks']
     if len(rows)!=1 or rows[0]['state']!='Block{minecraft:crafting_table}':raise RuntimeError('Workbench position changed')
-    client.checked('approach_block',pos=pos,face='up',expected_state=rows[0]['state'],seconds=180)
+    from work_access import approach_faces
+    face=approach_faces(client,pos,rows[0]['state'],('up','north','south','east','west'),seconds=180)
     hand=select_container_hand(client)
-    client.checked('interact',pos=pos,face='up',expected_state=rows[0]['state'],expected_hand=hand)
+    client.checked('interact',pos=pos,face=face,expected_state=rows[0]['state'],expected_hand=hand)
     until=time.monotonic()+5
     while time.monotonic()<until:
         menu=client.status()['menu']
