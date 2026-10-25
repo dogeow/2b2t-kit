@@ -3,6 +3,7 @@ import json,time
 from build_supervisor import stocks
 from container_access import open_grounded_chest
 from kit_runtime.journal import write_json
+from storage_transfer_source import choose as choose_transfer_source
 
 def _open_depot(client,pos,*,deposit_only=False):
     from material_storage_index import records
@@ -92,7 +93,7 @@ def exchange(client,chests,deposit=None,withdraw=None):
             for _ in range(36):
                 state=client.status();held=stocks(state).get(item,0)
                 if held>=target:break
-                source=next((v for v in state['menu']['slots'][:-36] if v['item']==item and v['count']),None)
+                source=choose_transfer_source(state['menu']['slots'][:-36],item)
                 room=sum(64 if not v['count'] else max(0,64-v['count']) if v['item']==item else 0
                          for v in state['inventory'] if v.get('slot',99)<36)
                 if source is None or not room:break
