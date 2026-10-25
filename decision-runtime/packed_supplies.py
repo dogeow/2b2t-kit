@@ -100,13 +100,13 @@ def clear_player_from_pad(client,pad):
         if moved.get('phase')=='done' and not player_intersects_pad(client.status()['pos'],pad):return
     raise RuntimeError('No verified player-clear position for temporary shulker placement')
 
-def open_box(client,pos,kind):
+def open_box(client,pos,kind,*,allow_empty=False):
     state=block(client,pos)
     allowed='minecraft:ender_chest' in (state or '') if kind=='ChestMenu' else 'shulker_box' in (state or '')
     if not allowed:raise RuntimeError('Expected portable-stock container changed')
     hand=select_container_hand(client)
     use_with_margin(client,pos,state,hand,('up','north','south','west','east','down'))
-    s=wait_container_contents(client,kind)
+    s=wait_container_contents(client,kind,require_nonempty=not allow_empty)
     from material_storage_index import bind_source
     bind_source(client,s,pos,'minecraft:ender_chest'if kind=='ChestMenu'else 'minecraft:shulker_box')
     client.owned_material_menu=s['menu']['id'];return s
