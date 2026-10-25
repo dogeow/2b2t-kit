@@ -71,4 +71,12 @@ class BorerHomeRouteTest {
 		}
 		assertTrue(walk >= 0 && obstruction > walk);
 	}
+    @Test
+    void keepLiftUntilFeetReachTheNextFloor() {
+        assertFalse(BorerHome.canResumeWalking(true, .6, 0));
+        assertFalse(BorerHome.canResumeWalking(true, .264, 0));
+        assertFalse(BorerHome.canResumeWalking(true, .1, 0));
+        assertTrue(BorerHome.canResumeWalking(true, .04, 0));
+        assertTrue(BorerHome.canResumeWalking(true, -.1, 0));
+    }
 }

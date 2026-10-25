@@ -34,7 +34,7 @@ final class BorerHome {
 	}
 
 	static boolean canResumeWalking(boolean ownedFlight, double goalDeltaY, int landingDrop) {
-		return ownedFlight && goalDeltaY <= .6 && landingDrop >= 0 && landingDrop <= 1;
+		return ownedFlight && goalDeltaY <= .05 && landingDrop >= 0 && landingDrop <= 1;
 	}
 
 	/** 推进回家/回门；已接管返回 true。 */
