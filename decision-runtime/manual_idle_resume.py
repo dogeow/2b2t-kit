@@ -56,6 +56,8 @@ SCRIPT='''tell application "System Events"
  set gameProcess to first application process whose unix id is item 1 of candidates
  set frontmost of gameProcess to true
  delay 0.2
+ set idleReport to do shell script "/usr/sbin/ioreg -c IOHIDSystem -r | /usr/bin/awk '/HIDIdleTime/ {print $NF; exit}'"
+ if (idleReport as real) < 30000000000 then error "Manual input resumed before Escape"
  tell gameProcess to key code 53
 end tell'''
 
