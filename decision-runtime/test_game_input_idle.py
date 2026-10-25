@@ -15,4 +15,9 @@ class GameIdleTest(unittest.TestCase):
  def test_idle_does_not_override_user_interfaces_locks_or_another_owner(self):
   for change in [{'screen':'ChatScreen'},{'health':19},{'safety_hold':{'active':True}},{'supervision_lease':{'kind':'materials'}},{'detail':'工具箱停止全部'},{'manual_movement':True}]:
    self.assertFalse(may_reacquire_without_ui_input({**self.state(),**change},{'authorized':True,'idle_seconds':30},60))
+ def test_native_jobs_are_not_human_inactivity_to_preempt(self):
+  changes=[{name:True}for name in ('borer_active','chopping','navigating','printing','native_material_busy','pending_scan','material_mining_cleanup_pending')]+[{'build_job':{'active':True}},{'professional_printer':{'enabled':True}},{'material_task':{'occupied':True}}]
+  for change in changes:
+   with self.subTest(change=change):self.assertFalse(may_reacquire_without_ui_input({**self.state(),**change},{'authorized':True,'idle_seconds':30},60))
+
 if __name__=='__main__':unittest.main()
