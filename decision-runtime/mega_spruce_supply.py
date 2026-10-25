@@ -33,9 +33,11 @@ def growth_kind(rows,root):
 
 def require_growth_pose(state,root,pose):
     actual=state.get('pos',[])
+    aim=next((v['aim']for v in candidates(root)if v['pose']==pose),None)
     if (state.get('health')!=20 or state.get('manual_movement') or state.get('screen') or state.get('guard_busy') or state.get('safety_hold',{}).get('active')
             or not state.get('on_ground') or state.get('flight') or len(actual)!=3
-            or math.dist(actual,pose)>.18 or not body_clear(root,actual)):
+            or math.dist(actual,pose)>.35 or not body_clear(root,actual)
+            or aim is None or math.dist([actual[0],actual[1]+1.62,actual[2]],aim)>=4.3):
         raise RuntimeError('Actual grounded operator is outside the proven growth stance')
 
 
@@ -46,7 +48,7 @@ def settle_growth_pose(builder,root,pose,*,seconds=3):
         state=builder.check()
         if (state.get('health')!=20 or state.get('manual_movement')or state.get('screen')
                 or state.get('guard_busy')or state.get('safety_hold',{}).get('active')
-                or math.dist(state['pos'],pose)>.3):
+                or math.dist(state['pos'],pose)>.35):
             raise RuntimeError('Growth stance displaced or protection active; no fertilizer')
         try:require_growth_pose(state,root,pose)
         except RuntimeError:seen=[]

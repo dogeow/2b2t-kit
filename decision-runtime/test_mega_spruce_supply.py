@@ -13,6 +13,9 @@ class GrowthAdmissionTest(unittest.TestCase):
   require_growth_pose(s,r,pose)
   for key,value in [('guard_busy',True),('safety_hold',{'active':True}),('flight',True),('on_ground',False),('health',19),('manual_movement',True),('screen','InventoryScreen'),('pos',[14.1,64,17.6])]:
    with self.subTest(key=key),self.assertRaises(RuntimeError):require_growth_pose({**s,key:value},r,pose)
+ def test_small_settled_drift_is_accepted_only_with_safe_body_and_reach(self):
+  r=[760963,64,797812];pose=[760967.4,64,797809.6];state={'health':20,'manual_movement':False,'screen':'','on_ground':True,'flight':False,'pos':[760967.5744468125,64,797809.4995425831]};require_growth_pose(state,r,pose)
+  with self.assertRaises(RuntimeError):require_growth_pose({**state,'pos':[760967.12,64,797809.6]},r,pose)
  def test_clear_floor_is_not_enough_if_body_is_obstructed(self):
   pose=[14.4,64,17.6];rows={(14,63,17):{'solid':True,'fluid':False,'block_entity':False}}
   require_ground(rows,pose);rows[(14,65,17)]={'state':'Block{minecraft:oak_leaves}'}
