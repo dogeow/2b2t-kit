@@ -23,12 +23,12 @@ def choices(expected,observed,player,*,low,high,protected=(),y=72):
         elif target not in observed:
             for dx,dz,face in SIDES:
                 anchor=(target[0]-dx,y,target[2]-dz)
-                if anchor in blocked or expected.get(anchor)!=SLAB or not dry(anchor,SLAB):continue
+                if anchor in blocked or expected.get(anchor)not in (SLAB,DOUBLE)or not dry(anchor,expected[anchor]):continue
                 cases.append((anchor,face,[target[0]+.5+dx,y+2.1,target[2]+.5+dz]))
         for anchor,face,pose in cases:
             if not clear_pose(pose):continue
             stages=[]
-            if face is not None:stages.append({'support':list(anchor),'face':face,'expected_support':SLAB,'expected_before':'Block{minecraft:air}','expected_after':SLAB})
+            if face is not None:stages.append({'support':list(anchor),'face':face,'expected_support':observed[anchor]['state'],'expected_before':'Block{minecraft:air}','expected_after':SLAB})
             stages.append({'support':list(target),'face':'up','expected_support':SLAB,'expected_before':SLAB,'expected_after':DOUBLE})
             result.append({'target':list(target),'hover':pose,'stages':stages,'item_cost':len(stages),'unlock_score':unlock,'distance':math.dist(player,pose)})
     return sorted(result,key=lambda p:(-p['unlock_score'],p['distance'],p['target'],p['hover']))

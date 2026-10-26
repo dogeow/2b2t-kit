@@ -27,6 +27,10 @@ class DoubleCompletionExecutionTest(TestCase):
  def test_air_target_uses_exact_nonreserved_support_then_self(self):
   with TemporaryDirectory()as d:
    b=NativeDouble();r=self.execute(b,Path(d)/'proof');uses=[p for op,p in b.calls if op=='interact'];self.assertEqual([[-1,72,0],[0,72,0]],[x['pos']for x in uses]);self.assertEqual(['east','up'],[x['face']for x in uses]);self.assertEqual(3,b.stock);self.assertEqual(1,r['verified_repairs'])
+ def test_real_completed_double_support_stays_unchanged(self):
+  with TemporaryDirectory()as d:
+   from copy import deepcopy
+   b=NativeDouble();b.rows[(-1,72,0)]['state']=DOUBLE;self.model=deepcopy(self.model);self.model['expected'][0]['state']=DOUBLE;r=self.execute(b,Path(d)/'proof');self.assertEqual(1,r['verified_repairs']);self.assertEqual(DOUBLE,b.rows[(-1,72,0)]['state']);self.assertEqual(3,b.stock)
  def test_existing_half_only_gets_the_new_merge_use(self):
   with TemporaryDirectory()as d:
    b=NativeDouble(half=True);r=self.execute(b,Path(d)/'proof');self.assertEqual(1,len([op for op,p in b.calls if op=='interact']));self.assertEqual(4,b.stock);self.assertEqual(1,r['verified_repairs'])

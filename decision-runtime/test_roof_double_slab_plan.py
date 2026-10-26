@@ -8,6 +8,8 @@ class DoublePlanTest(unittest.TestCase):
  def test_two_ordinary_uses_add_an_empty_double_then_unlock_its_neighbor(self):
   e,o=self.fixture();p=self.plan(e,o)[0];self.assertEqual([0,72,0],p['target']);self.assertEqual(2,p['item_cost']);self.assertEqual(1,p['unlock_score'])
   self.assertEqual([[-1,72,0],[0,72,0]],[s['support']for s in p['stages']]);self.assertEqual(['east','up'],[s['face']for s in p['stages']]);self.assertEqual(DOUBLE,p['stages'][-1]['expected_after'])
+ def test_matching_double_slab_is_a_real_full_side_support(self):
+  e,o=self.fixture();e[(-1,72,0)]=DOUBLE;o[(-1,72,0)]=row(DOUBLE);p=self.plan(e,o)[0];self.assertEqual(2,p['item_cost']);self.assertEqual(DOUBLE,p['stages'][0]['expected_support']);self.assertEqual([-1,72,0],p['stages'][0]['support'])
  def test_existing_exact_bottom_needs_only_its_new_merge_use(self):
   e,o=self.fixture();o[(0,72,0)]=row(SLAB);p=self.plan(e,o)[0];self.assertEqual(1,p['item_cost']);self.assertEqual('up',p['stages'][0]['face'])
  def test_top_wrong_wet_container_and_completed_targets_are_never_overwritten(self):
