@@ -30,6 +30,15 @@ class PrinterSlabPlacementTest {
   assertThrows(IllegalArgumentException.class,()->PrinterSlabPlacement.sideHit(bottom,air,bottom,target,anchor,Direction.EAST));
   assertThrows(IllegalArgumentException.class,()->PrinterSlabPlacement.sideHit(goal,air,bottom,anchor.above(),anchor,Direction.UP));
  }
+ @Test void theSecondUseMergesTheTargetItselfRatherThanAnotherAnchor(){
+  var target=new BlockPos(4,72,8);var bottom=Blocks.COBBLESTONE_SLAB.defaultBlockState();var goal=bottom.setValue(SlabBlock.TYPE,SlabType.DOUBLE);
+  for(var half:List.of(SlabType.BOTTOM,SlabType.TOP)){
+   var hit=PrinterSlabPlacement.placementHit(goal,bottom.setValue(SlabBlock.TYPE,half),Blocks.STONE.defaultBlockState(),target,target.north(),Direction.SOUTH);
+   assertEquals(target,hit.getBlockPos());assertEquals(half==SlabType.BOTTOM?Direction.UP:Direction.DOWN,hit.getDirection());
+   assertEquals(72.5,hit.getLocation().y);
+  }
+  assertThrows(IllegalArgumentException.class,()->PrinterSlabPlacement.placementHit(goal,bottom.setValue(SlabBlock.WATERLOGGED,true),bottom,target,target.north(),Direction.SOUTH));
+ }
  public static final class Action {public final Object context;Action(Object c){context=c;}}
  @Test void prepareAndInteractShareExactlyTheSameCorrectedContext()throws Exception{
   Object before=new Object(),after=new Object();var prepare=new Action(before);var interact=new Action(before);

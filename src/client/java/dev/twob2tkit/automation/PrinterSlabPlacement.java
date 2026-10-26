@@ -31,6 +31,14 @@ public final class PrinterSlabPlacement {
         var center=Vec3.atCenterOf(anchor).relative(face,.5);
         return new BlockHitResult(new Vec3(center.x,y,center.z),face,anchor,false);
     }
+    public static BlockHitResult placementHit(BlockState goal,BlockState actual,BlockState anchorState,
+                                              BlockPos target,BlockPos anchor,Direction face){
+        if(incompleteDouble(goal,actual)){
+            var mergeFace=actual.getValue(SlabBlock.TYPE)==SlabType.BOTTOM?Direction.UP:Direction.DOWN;
+            return new BlockHitResult(Vec3.atCenterOf(target),mergeFace,target,false);
+        }
+        return sideHit(goal,actual,anchorState,target,anchor,face);
+    }
     /** Each queued action must share the same replacement, including the look action. */
     static int replaceContexts(Collection<?> actions,Object original,Object replacement)throws ReflectiveOperationException{
         int count=0;
@@ -53,7 +61,7 @@ public final class PrinterSlabPlacement {
         if(!(goal.getBlock() instanceof SlabBlock)||goal.getValue(SlabBlock.TYPE)!=SlabType.DOUBLE
                 ||context.getClickedPos().equals(target))return context;
         var oldHit=(BlockHitResult)raw.getClass().getField("hitResult").get(raw);
-        var hit=sideHit(goal,actual,anchorState,target,oldHit.getBlockPos(),oldHit.getDirection());
+        var hit=placementHit(goal,actual,anchorState,target,oldHit.getBlockPos(),oldHit.getDirection());
         Object replacement=raw.getClass().getConstructor(Player.class,BlockHitResult.class,ItemStack.class,int.class,Direction.class,boolean.class)
             .newInstance(player,hit,context.getItemInHand().copy(),raw.getClass().getField("requiredItemSlot").getInt(raw),
                 raw.getClass().getField("lookDirection").get(raw),raw.getClass().getField("shouldSneak").getBoolean(raw));
