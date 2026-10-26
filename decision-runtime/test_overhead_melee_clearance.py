@@ -24,3 +24,12 @@ class OverheadTest(unittest.TestCase):
  def test_distant_slime_is_retained_and_close_slime_blocks_low_work(self):
   self.assertTrue(separated([self.mob('slime',[20,64,0])],[[.5,64.1,.5]]))
   self.assertFalse(separated([self.mob('slime',[6,64,0])],[[.5,64.1,.5]]))
+
+ def test_zombie_villager_uses_the_same_observed_melee_separation_as_zombie(self):
+  for kind in ['zombie','zombie_villager']:
+   mob=self.mob(kind,[396,64,992]);mob['bounds']['max'][1]=65.95
+   self.assertTrue(separated([mob],[[396,74.1,992]]))
+   self.assertFalse(separated([mob],[[396,73.9,992]]))
+   self.assertTrue(separated([mob],[[416,64.1,992]]))
+  self.assertFalse(separated([self.mob('witch',[396,64,992])],[[396,74.1,992]]))
+  self.assertFalse(separated([self.mob('enderman',[396,64,992])],[[416,74.1,992]]))

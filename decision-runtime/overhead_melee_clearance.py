@@ -11,7 +11,7 @@ def separated(threats, minimum_work_poses):
     try:
         if any(not isinstance(p,list) or len(p)!=3 or any(type(v)not in(int,float) or not math.isfinite(v) for v in p) for p in minimum_work_poses):return False
         for mob in threats:
-            if mob.get('type') not in {'minecraft:creeper','minecraft:spider','minecraft:zombie','minecraft:husk','minecraft:slime'} or mob.get('alive') is not True or mob.get('hostile') is not True:return False
+            if mob.get('type') not in {'minecraft:creeper','minecraft:spider','minecraft:zombie','minecraft:zombie_villager','minecraft:husk','minecraft:slime'} or mob.get('alive') is not True or mob.get('hostile') is not True:return False
             point=mob['pos'];top=mob['bounds']['max'][1]
             if not isinstance(point,list) or len(point)!=3 or any(type(v)not in(int,float) or not math.isfinite(v) for v in point+[top]):return False
             # Native blast threat policy includes powered creepers out to 12m;
