@@ -43,3 +43,15 @@ def choices(expected, observed, player, *, grid_origin, limit=16, y=72):
         results.append({'positions':[list(p)for p in mask], 'hover':pose,
                         'count':len(mask), 'distance':math.dist(player,pose)})
     return sorted(results,key=lambda row:(row['distance'],-row['count'],row['hover']))
+
+
+def scan_bounds(expected, *, grid_origin, y=72):
+    """Include every candidate tile and its complete one-cell overhead margin."""
+    if len(grid_origin)!=2 or any(type(v)is not int for v in grid_origin):
+        raise ValueError('Exact grid origin required')
+    wanted=[p for p,state in expected.items()if p[1]==y and state==SLAB]
+    if not wanted:raise ValueError('An explicit bottom-slab roof is required')
+    ox,oz=grid_origin
+    xs=[(p[0]-ox)//4 for p in wanted];zs=[(p[2]-oz)//4 for p in wanted]
+    return ([ox+4*min(xs)-1,y-2,oz+4*min(zs)-1],
+            [ox+4*max(xs)+4,y+11,oz+4*max(zs)+4])

@@ -37,3 +37,16 @@ class RoofPlanTest(unittest.TestCase):
  def test_a_foreign_double_slab_cannot_seed_an_unsupported_model(self):
   double='Block{minecraft:cobblestone_slab}[type=double,waterlogged=false]'
   self.assertEqual([],choices({(0,72,0):SLAB},{(-1,72,0):row(double)},[2,74.1,2],grid_origin=[0,0]))
+
+ def test_scan_bounds_include_headers_outside_both_model_edges(self):
+  from roof_slab_window_plan import scan_bounds
+  e={(390,72,968):SLAB,(428,72,1002):SLAB}
+  self.assertEqual(([389,70,965],[430,83,1006]),scan_bounds(e,grid_origin=[394,990]))
+  e,o=self.fixture();lo,hi=scan_bounds(e,grid_origin=[0,0])
+  self.assertEqual(([-5,70,-1],[4,83,4]),(lo,hi))
+  # A canopy just outside the target footprint must still block its tile.
+  o[(4,75,2)]=row('Block{minecraft:oak_leaves}')
+  self.assertEqual([],choices(e,o,[2,74.1,2],grid_origin=[0,0]))
+ def test_missing_roof_cannot_supply_observation_bounds(self):
+  from roof_slab_window_plan import scan_bounds
+  with self.assertRaises(ValueError):scan_bounds({},grid_origin=[0,0])
