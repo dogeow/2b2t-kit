@@ -21,3 +21,15 @@ class DoublePlanTest(unittest.TestCase):
  def test_roof_obstruction_and_incomplete_header_bounds_block_work(self):
   e,o=self.fixture();o[(2,75,0)]=row('Block{minecraft:oak_leaves}');self.assertEqual([],self.plan(e,o))
   e,o=self.fixture();self.assertEqual([],choices(e,o,[2,74.1,0],low=[-10,70,-10],high=[10,75,10]))
+
+ def test_clear_hover_route_uses_the_whole_body_including_low_overhangs(self):
+  from roof_double_slab_plan import clear_route
+  a=[.5,74.1,.5];b=[4.5,74.1,.5];bounds={'low':[-1,70,-1],'high':[6,83,2]}
+  self.assertTrue(clear_route(a,b,{},**bounds))
+  self.assertFalse(clear_route(a,b,{(2,75,0):row('Block{minecraft:oak_leaves}')},**bounds))
+  self.assertFalse(clear_route(a,b,{(2,74,0):row('Block{minecraft:stone}')},**bounds))
+ def test_route_does_not_treat_unscanned_source_or_border_as_air(self):
+  from roof_double_slab_plan import clear_route
+  self.assertFalse(clear_route([.1,74.1,.5],[4.5,74.1,.5],{},low=[0,70,0],high=[6,83,2]))
+  self.assertFalse(clear_route([.5,100,.5],[4.5,74.1,.5],{},low=[-1,70,-1],high=[6,83,2]))
+  self.assertFalse(clear_route([float('nan'),74,.5],[4.5,74,.5],{},low=[-1,70,-1],high=[6,83,2]))
