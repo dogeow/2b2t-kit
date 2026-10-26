@@ -20,3 +20,7 @@ class OverheadTest(unittest.TestCase):
  def test_distant_creeper_is_outside_blast_range_even_on_higher_terrain(self):
   self.assertTrue(separated([self.mob('creeper',[373.46,70,996.38])],[[396,74.1,992]]))
   self.assertFalse(separated([self.mob('creeper',[390,70,992])],[[396,74.1,992]]))
+
+ def test_distant_slime_is_retained_and_close_slime_blocks_low_work(self):
+  self.assertTrue(separated([self.mob('slime',[20,64,0])],[[.5,64.1,.5]]))
+  self.assertFalse(separated([self.mob('slime',[6,64,0])],[[.5,64.1,.5]]))

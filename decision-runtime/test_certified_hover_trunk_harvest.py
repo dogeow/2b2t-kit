@@ -37,7 +37,7 @@ class CertifiedHoverTrunkHarvestTest(unittest.TestCase):
    root=Path(t);p=self.plan();threat={'type':'minecraft:creeper','alive':True,'hostile':True,'pos':[20,63,0],'bounds':{'max':[20.3,64.7,.3]}};b=Builder(root,p,[threat]);path=root/'job.json';r=run(b,p,path)
    self.assertTrue(r['complete']);self.assertEqual(8,r['logs_mined']);scans=json.loads(path.read_text())['ground_scans'];self.assertTrue(any(s['native_guarded_separation_admitted']for s in scans));self.assertTrue(all(s['threats']==[threat]for s in scans))
  def test_close_creeper_or_ranged_threat_still_stops_before_low_work(self):
-  for kind,position in [('creeper',[3,63,0]),('skeleton',[20,63,0])]:
+  for kind,position in [('creeper',[3,63,0]),('slime',[3,63,0]),('skeleton',[20,63,0])]:
    with self.subTest(kind=kind),tempfile.TemporaryDirectory()as t:
     root=Path(t);p=self.plan();threat={'type':'minecraft:'+kind,'alive':True,'hostile':True,'pos':position,'bounds':{'max':[position[0]+.3,64.7,.3]}};b=Builder(root,p,[threat]);r=run(b,p,root/'job.json');self.assertFalse(r['complete']);self.assertEqual('waiting_for_ground_threats',r['phase']);self.assertTrue(b.rows)
  def test_active_native_safety_hold_sends_no_input(self):
