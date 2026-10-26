@@ -245,6 +245,7 @@ final class BorerRangedCombat {
 				if(hidden!=null&&peek.tick(c,hidden))return true;
 			}
 			engine.mobs.raiseShield(c, p);
+            GuardEndermanGaze.apply(c); // A high hover must look away in 3D, not down at the mob.
 			String reason = session.timedOut() ? "no-confirmed-damage-30s" : "target-unavailable";
 			if (!holdReason.equals(reason)) engine.fileLog(c, "area-defense-hold reason=" + reason + " unresolved=" + session.targets().size());
             logThreatEvidence(c,"hold:"+reason,null);
@@ -1237,7 +1238,7 @@ final class BorerRangedCombat {
             if(p.getAttackStrengthScale(0)>=.95F){c.gameMode.attack(p,target);p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);}
             engine.status="末影人近身，使用剑反击；施工暂停";
         }else{
-            look=new RotationAim.Look(p.getYRot(),90);lookTick=p.tickCount;RotationAim.apply(p,look);
+            look=GuardEndermanGaze.away(c);lookTick=p.tickCount;RotationAim.apply(p,look);
             engine.mobs.raiseShield(c,p);engine.status="末影人无法用箭命中，举盾等待合法近身或恢复中立";
         }
         return true;
