@@ -10,6 +10,8 @@ class RoofCellRepairPlanTest(unittest.TestCase):
   e,r,p=self.fixture();self.assertEqual(self.choose(e,r,p)[0]['target'],[1,72,1]);r[(1,72,1)]['state']='Block{minecraft:cobblestone}';self.assertEqual(self.choose(e,r,p),[])
  def test_valid_upper_pillar_is_preserved(self):
   e,r,p=self.fixture();e[(1,73,1)]='Block{minecraft:cobblestone}';r[(1,73,1)]={'state':e[(1,73,1)]};self.assertEqual(self.choose(e,r,p),[])
+ def test_clear_working_body_does_not_hide_an_overhead_approach_block(self):
+  e,r,p=self.fixture();r[(1,75,1)]={'state':SLAB};self.assertEqual(self.choose(e,r,p),[])
  def test_reserved_target_and_possible_anchors_stay_reserved(self):
   e,r,p=self.fixture()
   for protected in [[[1,72,1]],[[2,72,1]],[[1,73,1]]]:self.assertEqual(self.choose(e,r,p,protected),[])

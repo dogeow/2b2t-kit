@@ -24,7 +24,8 @@ def options(expected,rows,player,*,low,high,protected=(),y=72):
         pose=[p[0]+.5,y+1.15,p[2]+.5]
         # An upper model pillar is preserved; a later plan can dismantle/restore
         # it explicitly rather than trying to fly or mine through it.
-        if clear_route(pose,pose,rows,low=low,high=high):
+        approach=[pose[0],min(y+9.15,high[1]-2.),pose[2]]
+        if approach[1]>=y+2.15 and clear_route(pose,approach,rows,low=low,high=high):
             result.append({'target':list(p),'hover':pose,'distance':math.dist(player,pose)})
     return sorted(result,key=lambda v:v['distance'])
 
@@ -41,7 +42,12 @@ def run(builder,model,out,*,low,high,protected,allowed_at,limit=8,y=72):
         if (r.get('world_session')!=world or r.get('scan_start_revision')!=r.get('scan_end_revision')
                 or r.get('scan_cells_read')!=math.prod(b-a+1 for a,b in zip(low,high))
                 or r.get('scan_cells_read')!=r.get('scan_total_cells')):raise RuntimeError('Complete current-world roof scan required')
-        return r,{tuple(v['pos']):v for v in r['blocks']}
+        observed={tuple(v['pos']):v for v in r['blocks']}
+        if not(out/'first-scene.json').exists():write_json(out/'first-scene.json',r)
+        write_json(out/'latest-scene.json',r)
+        book['latest_roof_counts']={'matching_bottom':sum(expected.get(p)==SLAB and v['state']==SLAB for p,v in observed.items()if p[1]==y),'matching_double':sum(expected.get(p)==DOUBLE and v['state']==DOUBLE for p,v in observed.items()if p[1]==y),'scan_id':r['id']if 'id'in r else None,'scan_time':r.get('time'),'world_session':world}
+        save()
+        return r,observed
     save()
     try:
         for index in range(limit):
