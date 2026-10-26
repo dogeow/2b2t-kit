@@ -1,13 +1,13 @@
 import unittest
-from roof_cell_repair import options
+from roof_cell_repair import options,COBBLESTONE
 from roof_slab_window_plan import SLAB
 from roof_double_slab_plan import DOUBLE
 class RoofCellRepairPlanTest(unittest.TestCase):
  def fixture(self):
   return {(1,72,1):SLAB},{(1,72,1):{'state':DOUBLE,'fluid':False,'block_entity':False}},[0.5,74.1,0.5]
  def choose(self,e,r,p,protected=()):return options(e,r,p,low=[0,70,0],high=[3,82,3],protected=protected)
- def test_exposed_wrong_double_is_the_only_authorized_material(self):
-  e,r,p=self.fixture();self.assertEqual(self.choose(e,r,p)[0]['target'],[1,72,1]);r[(1,72,1)]['state']='Block{minecraft:cobblestone}';self.assertEqual(self.choose(e,r,p),[])
+ def test_only_named_roof_material_mismatches_are_authorized(self):
+  e,r,p=self.fixture();self.assertEqual(self.choose(e,r,p)[0]['target'],[1,72,1]);r[(1,72,1)]['state']=COBBLESTONE;self.assertEqual(self.choose(e,r,p)[0]['drop_item'],'minecraft:cobblestone');r[(1,72,1)]['state']='Block{minecraft:stone}';self.assertEqual(self.choose(e,r,p),[])
  def test_valid_upper_pillar_is_preserved(self):
   e,r,p=self.fixture();e[(1,73,1)]='Block{minecraft:cobblestone}';r[(1,73,1)]={'state':e[(1,73,1)]};self.assertEqual(self.choose(e,r,p),[])
  def test_clear_working_body_does_not_hide_an_overhead_approach_block(self):
@@ -29,10 +29,14 @@ from roof_cell_repair import run
 import math,json
 
 class NativeRoofDouble:
- def __init__(self,*,ack=True,pickup=True,side_effect=False):
-  self.client=self;self.ack=ack;self.pickup=pickup;self.side_effect=side_effect;self.stock=5;self.pending_print=False;self.pos=[1.5,74.15,1.5];self.calls=[]
-  self.rows={(1,72,1):{'pos':[1,72,1],'state':DOUBLE,'fluid':False,'block_entity':False},(2,72,1):{'pos':[2,72,1],'state':SLAB,'fluid':False,'block_entity':False}}
- def check(self):return {'world_session':'world','health':20,'pos':self.pos,'inventory':[{'slot':0,'item':'minecraft:cobblestone_slab','count':self.stock}],'professional_printer':{'owned':False,'travel_pending':1 if self.pending_print else 0,'waiting_for_server':self.pending_print,'failure':''}}
+ def __init__(self,*,ack=True,pickup=True,side_effect=False,cube=False):
+  self.client=self;self.ack=ack;self.pickup=pickup;self.side_effect=side_effect;self.stock=5;self.full=False;self.cobble=2;self.cube=cube;self.pending_print=False;self.pos=[1.5,74.15,1.5];self.calls=[]
+  self.rows={(1,72,1):{'pos':[1,72,1],'state':COBBLESTONE if cube else DOUBLE,'fluid':False,'block_entity':False},(2,72,1):{'pos':[2,72,1],'state':SLAB,'fluid':False,'block_entity':False}}
+ def check(self):
+  slots=[{'slot':i,'item':'minecraft:dirt'if self.full else 'minecraft:air','count':64 if self.full else 0}for i in range(36)]
+  slots[0]={'slot':0,'item':'minecraft:cobblestone_slab'if self.stock else 'minecraft:air','count':self.stock};slots[1]={'slot':1,'item':'minecraft:cobblestone','count':self.cobble}
+  return {'world_session':'world','health':20,'pos':self.pos,'inventory':slots,'professional_printer':{'owned':False,'travel_pending':1 if self.pending_print else 0,'waiting_for_server':self.pending_print,'failure':''}}
+
  def n(self,op,**kw):
   self.calls.append(op)
   if op=='scan':
@@ -40,7 +44,9 @@ class NativeRoofDouble:
   if op=='navigate':self.pos=kw['target']
   if op=='mine_block':
    self.rows.pop((1,72,1))
-   if self.pickup:self.stock+=2
+   if self.pickup:
+    if self.cube:self.cobble+=1
+    else:self.stock+=2
    return {'id':'original-mine','server_confirmed':self.ack,'native_sequence':7,'server_ack_sequence':7 if self.ack else -1}
   return {'phase':'done'}
  def print_model(self,*args,**kw):
@@ -56,6 +62,21 @@ class RoofCellRepairExecutionTest(unittest.TestCase):
    b=NativeRoofDouble()
    with patch('roof_cell_repair.build_phase',side_effect=b.print_model):r=self.execute(b,Path(directory)/'proof')
    self.assertEqual(r['verified_repairs'],1);self.assertEqual(b.stock,6);self.assertEqual(b.calls.count('mine_block'),1);self.assertEqual(b.calls.count('native_print'),1);self.assertEqual(r['cells'][0]['mining_ack']['native_sequence'],7)
+ def test_wrong_cube_recovers_one_cobble_and_consumes_one_slab(self):
+  with TemporaryDirectory()as directory:
+   b=NativeRoofDouble(cube=True)
+   with patch('roof_cell_repair.build_phase',side_effect=b.print_model):r=self.execute(b,Path(directory)/'proof')
+   self.assertEqual(r['verified_repairs'],1);self.assertEqual(b.cobble,3);self.assertEqual(b.stock,4);self.assertEqual(r['cells'][0]['drop_item'],'minecraft:cobblestone');self.assertEqual(r['cells'][0]['verified_recovered'],1)
+ def test_cube_is_not_mined_without_the_replacement_slab(self):
+  with TemporaryDirectory()as directory:
+   b=NativeRoofDouble(cube=True);b.stock=0
+   with patch('roof_cell_repair.build_phase')as printer:r=self.execute(b,Path(directory)/'proof');printer.assert_not_called()
+   self.assertEqual(r['verified_repairs'],0);self.assertNotIn('mine_block',b.calls)
+ def test_insufficient_room_for_both_slab_drops_blocks_mining(self):
+  with TemporaryDirectory()as directory:
+   b=NativeRoofDouble();b.stock=63;b.full=True
+   with patch('roof_cell_repair.build_phase')as printer:r=self.execute(b,Path(directory)/'proof');printer.assert_not_called()
+   self.assertEqual(r['verified_repairs'],0);self.assertNotIn('mine_block',b.calls)
  def test_unacknowledged_original_mine_never_retries_or_prints(self):
   with TemporaryDirectory()as directory:
    b=NativeRoofDouble(ack=False);out=Path(directory)/'proof'
@@ -67,7 +88,7 @@ class RoofCellRepairExecutionTest(unittest.TestCase):
   with TemporaryDirectory()as directory:
    b=NativeRoofDouble(pickup=False)
    with patch('roof_cell_repair.build_phase')as printer,patch('roof_cell_repair.time.monotonic',side_effect=[0,10]):
-    with self.assertRaisesRegex(RuntimeError,'not both collected'):self.execute(b,Path(directory)/'proof')
+    with self.assertRaisesRegex(RuntimeError,'not all collected'):self.execute(b,Path(directory)/'proof')
     printer.assert_not_called()
    self.assertEqual(b.calls.count('mine_block'),1)
  def test_adjacent_change_is_detected_after_the_single_attempt(self):
