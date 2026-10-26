@@ -213,7 +213,9 @@ final class BorerRangedCombat {
         // Try only the existing collision-checked safe route before another
         // rise undoes that approach; creepers and ranged threats keep priority.
         if(engine.standaloneGuard&&next==null&&!missingRestored
-                &&nearby.stream().noneMatch(e->e.isAlive()&&(e instanceof Creeper||BorerThreats.isRangedCombatThreat(e,p)))){
+                &&nearby.stream().noneMatch(e->GuardRepositionThreatPolicy.blocks(e.isAlive(),
+                    e instanceof Creeper||BorerThreats.isRangedCombatThreat(e,p),
+                    engine.engagement.shouldReact(p,e),session.contains(e.getUUID())))){
             var reposition=session.targets().stream().filter(e->c.level.getEntity(e.getId())==e&&e.isAlive()
                 &&!(e instanceof Creeper)&&!(e instanceof EnderMan)&&!BorerThreats.isRangedCombatThreat(e,p)&&session.needsReposition(e.getUUID()))
                 .min(java.util.Comparator.comparingDouble(p::distanceTo)).orElse(null);
