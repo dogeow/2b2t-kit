@@ -18,7 +18,7 @@ class Builder:
    import time
    n=1
    for a,b in zip(p['min'],p['max']):n*=b-a+1
-   return {'id':'s','phase':'done','world_session':'w','scan_start_revision':5,'scan_end_revision':5,'scan_cells_read':n,'scan_total_cells':n,'scan_entity_scope':ENTITY_SCOPE,'scan_ended_at':int(time.time()*1000),'scan_entities':[{'alive':True,'hostile':True,'pos':[1,63,1]}]if self.threat else []}
+   return {'id':'s','phase':'done','world_session':'w','scan_start_revision':5,'scan_end_revision':5,'scan_cells_read':n,'scan_total_cells':n,'scan_entity_scope':ENTITY_SCOPE,'scan_ended_at':int(time.time()*1000),'scan_entities':self.threat if isinstance(self.threat,list)else[{'alive':True,'hostile':True,'pos':[1,63,1]}]if self.threat else []}
   if op=='mine_block':
    row=self.rows.pop(tuple(p['pos']));self.deferred+=int('oak_log'in row['state']);return {'id':'m','server_confirmed':True,'native_sequence':1,'server_ack_sequence':1}
   raise AssertionError(op)
@@ -32,6 +32,14 @@ class CertifiedHoverTrunkHarvestTest(unittest.TestCase):
  def test_ground_threat_pauses_before_low_work_and_can_resume_without_remining(self):
   with tempfile.TemporaryDirectory()as t:
    root=Path(t);p=self.plan();b=Builder(root,p,True);path=root/'job.json';r=run(b,p,path);self.assertFalse(r['complete']);prior=[a['pos']for op,a in b.calls if op=='mine_block'];b.threat=False;self.assertTrue(run(b,p,path,resume=True)['complete']);allpos=[tuple(a['pos'])for op,a in b.calls if op=='mine_block'];self.assertEqual(len(allpos),len(set(allpos)));self.assertGreater(len(prior),0)
+ def test_distant_creeper_is_retained_but_does_not_block_guarded_core_pickup(self):
+  with tempfile.TemporaryDirectory()as t:
+   root=Path(t);p=self.plan();threat={'type':'minecraft:creeper','alive':True,'hostile':True,'pos':[20,63,0],'bounds':{'max':[20.3,64.7,.3]}};b=Builder(root,p,[threat]);path=root/'job.json';r=run(b,p,path)
+   self.assertTrue(r['complete']);self.assertEqual(8,r['logs_mined']);scans=json.loads(path.read_text())['ground_scans'];self.assertTrue(any(s['native_guarded_separation_admitted']for s in scans));self.assertTrue(all(s['threats']==[threat]for s in scans))
+ def test_close_creeper_or_ranged_threat_still_stops_before_low_work(self):
+  for kind,position in [('creeper',[3,63,0]),('skeleton',[20,63,0])]:
+   with self.subTest(kind=kind),tempfile.TemporaryDirectory()as t:
+    root=Path(t);p=self.plan();threat={'type':'minecraft:'+kind,'alive':True,'hostile':True,'pos':position,'bounds':{'max':[position[0]+.3,64.7,.3]}};b=Builder(root,p,[threat]);r=run(b,p,root/'job.json');self.assertFalse(r['complete']);self.assertEqual('waiting_for_ground_threats',r['phase']);self.assertTrue(b.rows)
  def test_active_native_safety_hold_sends_no_input(self):
   with tempfile.TemporaryDirectory()as t:
    root=Path(t);(root/'safety-hold.json').write_text(json.dumps({'active':True}));p=self.plan();b=Builder(root,p)

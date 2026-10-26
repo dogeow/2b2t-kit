@@ -10,6 +10,7 @@ from material_plan import inventory_counts
 from kit_runtime.journal import write_json
 from safety_interlock import require_unlocked
 from ground_work_threat_survey import bounds,assess
+from overhead_melee_clearance import separated
 
 
 class DefensePriority(RuntimeError):pass
@@ -44,14 +45,15 @@ def run(builder,certificate,path,*,resume=False):
         s=state()
         if math.dist(s['pos'],target)<.12:return
         book['pending']={'op':'navigate','target':target};save();builder.nav(target);book['pending']=None;save()
-    def ground_ready():
+    def ground_ready(work_pose):
         before=state();low,high=bounds(certificate['root']);book['pending']={'op':'ground_threat_scan','min':low,'max':high};save()
         r=builder.n('scan',min=low,max=high,details=True)
         request={'op':'scan','min':low,'max':high,'details':True,'id':r['id'],'world_session':before['world_session'],
                  'task_session':task,'expected_revision':before['control_revision']}
         a=assess(request,r,certificate['root'],world=before['world_session'],task=task,revision=before['control_revision'],now_ms=int(time.time()*1000))
+        a['work_pose']=work_pose;a['native_guarded_separation_admitted']=not a['safe_now']and separated(a['threats'],[work_pose])
         book['pending']=None;book['ground_scans'].append(a);save()
-        if a['safe_now']:return True
+        if a['safe_now']or a['native_guarded_separation_admitted']:return True
         current=state();safe=certificate['safe_wait_hover']
         if current['pos'][1]<safe[1]:nav(safe)
         book['phase']='waiting_for_ground_threats';save();return False
@@ -64,7 +66,7 @@ def run(builder,certificate,path,*,resume=False):
                 _,old=builder.scan(step['pos'],step['pos'])
                 if tuple(step['pos'])in old:raise RuntimeError('A previously verified cleared cell changed; no repeat')
                 continue
-            if step['ground_threat_scan_required']and not ground_ready():return {'complete':False,'phase':book['phase'],'journal':str(path)}
+            if step['ground_threat_scan_required']and not ground_ready(step['hover']):return {'complete':False,'phase':book['phase'],'journal':str(path)}
             nav(step['hover']);actual=state()
             if math.dist(actual['pos'],step['hover'])>.4:
                 book['phase']='waiting_after_owned_pose_changed';save();return {'complete':False,'phase':book['phase'],'journal':str(path)}
@@ -83,14 +85,14 @@ def run(builder,certificate,path,*,resume=False):
         if core:raise RuntimeError('Pickup core is not empty; no descent')
         expected=sum(s.get('kind')=='log'and s['outcome']=='mined'for s in book['steps']);wanted=book['logs_before']+expected
         if inventory_counts(state())[certificate['log_item']]<wanted:
-            if not ground_ready():return {'complete':False,'phase':book['phase'],'journal':str(path)}
+            if not ground_ready(certificate['pickup_core']):return {'complete':False,'phase':book['phase'],'journal':str(path)}
             nav(certificate['pickup_core']);deadline=time.monotonic()+20;tried=set()
             while inventory_counts(state())[certificate['log_item']]<wanted:
                 s=state();drops=[e for e in s.get('entities',[])if e.get('type')=='minecraft:item'and e.get('stack',{}).get('item')==certificate['log_item']and e.get('uuid')not in tried
                                 and abs(e['pos'][0]-root[0]-.5)<=1.3 and abs(e['pos'][2]-root[2]-.5)<=1.3]
                 if drops:
                     e=drops[0];tried.add(e['uuid']);target=[root[0]+.5,max(root[1]+.1,min(e['pos'][1]+.1,certificate['highest_core_y']+1.1)),root[2]+.5]
-                    if target[1]-root[1]<8 and not ground_ready():return {'complete':False,'phase':book['phase'],'journal':str(path)}
+                    if target[1]-root[1]<8 and not ground_ready(target):return {'complete':False,'phase':book['phase'],'journal':str(path)}
                     nav(target)
                 if time.monotonic()>deadline:raise RuntimeError('Known removed logs not all collected; never remine; inspect observed drops')
                 time.sleep(.1)
