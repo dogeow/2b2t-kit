@@ -24,6 +24,32 @@ class NativeOutcomeFenceTests(TestCase):
             c,s=self.setup_case(op,phase)
             self.assertTrue(exact_idle_terminal(c,s))
 
+    def mining_receipt(self):
+        return {'id':'rid','world_session':'world','op':'mine_block','phase':'waiting','mining_target':[1,2,3],
+                'outcome_pending':False,'server_confirmed':False,'server_update_seen':False,'confirmation_scope':'none',
+                'native_sequence':-1,'server_ack_sequence':-1}
+
+    def test_never_sent_mining_can_finish_without_forcing_heartbeat_logout(self):
+        c,s=self.setup_case('mine_block','waiting');c.last_terminal_evidence.update(params={'pos':[1,2,3]},native_mining_admission=self.mining_receipt())
+        self.assertTrue(exact_idle_terminal(c,s))
+
+    def test_any_sent_sequence_or_unknown_mining_remains_fenced(self):
+        for key,value in [('native_sequence',0),('server_ack_sequence',0),('outcome_pending',True),('server_update_seen',True),('id','other'),('world_session','other'),('mining_target',[9,2,3]),('confirmation_scope','server'),('phase','error')]:
+            c,s=self.setup_case('mine_block','waiting');receipt=self.mining_receipt();receipt[key]=value
+            c.last_terminal_evidence.update(params={'pos':[1,2,3]},native_mining_admission=receipt)
+            self.assertFalse(exact_idle_terminal(c,s),key)
+
+    def test_missing_native_no_send_receipt_is_not_a_read_only_mine(self):
+        c,s=self.setup_case('mine_block','waiting');self.assertFalse(exact_idle_terminal(c,s))
+
+    def test_full_mining_receipt_is_retained_before_checked_reports_waiting(self):
+        c,s=self.setup_case('mine_block','waiting');client=RetainedUnknownMaterialClient.__new__(RetainedUnknownMaterialClient)
+        client.__dict__.update(c.__dict__);client.last_terminal_evidence['params']={'pos':[1,2,3]}
+        with patch('native_outcome_fence.MaterialClient.request',return_value=self.mining_receipt()):
+            result=client.request('mine_block',pos=[1,2,3])
+        self.assertEqual(client.last_terminal_evidence['native_mining_admission']['id'],result['id'])
+        self.assertTrue(exact_idle_terminal(client,s))
+
     def test_stale_outer_done_does_not_prove_a_new_scan(self):
         c,s=self.setup_case()
         c.last='new_scan';s['last_request']='new_scan';s['phase']='done'

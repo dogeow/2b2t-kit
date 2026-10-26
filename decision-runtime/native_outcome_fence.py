@@ -14,13 +14,28 @@ _READ_TERMINALS = frozenset(('scan','snapshot','navigate','walk','approach_block
                             'select_item','close_menu','material_job_park'))
 
 
+def never_dispatched_mining(receipt, request_id, world, target):
+    """The native single-block protocol explicitly certifies no sequence was sent."""
+    return bool(isinstance(receipt,dict)and receipt.get('id')==request_id
+        and receipt.get('world_session')==world and receipt.get('op')=='mine_block'
+        and receipt.get('phase')=='waiting'and receipt.get('mining_target')==target
+        and isinstance(target,list)and len(target)==3 and all(type(n)is int for n in target)
+        and receipt.get('outcome_pending')is False and receipt.get('server_confirmed')is False
+        and receipt.get('server_update_seen')is False and receipt.get('confirmation_scope')=='none'
+        and type(receipt.get('native_sequence'))is int and receipt['native_sequence']==-1
+        and type(receipt.get('server_ack_sequence'))is int and receipt['server_ack_sequence']==-1)
+
+
 def exact_idle_terminal(client, state):
     terminal = getattr(client, 'last_terminal_evidence', None) or {}
     lease = state.get('supervision_lease') or {}
     phase = terminal.get('phase')
     known = (phase == 'done'
              or terminal.get('op') == 'snapshot' and phase is None
-             or phase in ('waiting','stopped','error') and terminal.get('op') in _READ_TERMINALS)
+             or phase in ('waiting','stopped','error') and terminal.get('op') in _READ_TERMINALS
+             or terminal.get('op')=='mine_block' and phase=='waiting' and never_dispatched_mining(
+                 terminal.get('native_mining_admission'),terminal.get('request_id'),terminal.get('world_session'),
+                 (terminal.get('params')or{}).get('pos')))
     return bool(getattr(client, 'unconfirmed_native_request', None) is None
                 and isinstance(client.last, str) and client.last
                 and terminal.get('request_id') == client.last and known
@@ -62,7 +77,13 @@ class RetainedUnknownMaterialClient(MaterialClient):
             raise RuntimeError('Original native request outcome is unknown; preserve it without another operation')
         before = getattr(self, 'last', None)
         try:
-            return super().request(op, **params)
+            result=super().request(op, **params)
+            if (op=='mine_block'and never_dispatched_mining(result,self.last,self.world,params.get('pos'))
+                    and (getattr(self,'last_terminal_evidence',None)or{}).get('request_id')==self.last):
+                self.last_terminal_evidence['native_mining_admission']={key:deepcopy(result.get(key))for key in (
+                    'id','world_session','op','phase','mining_target','outcome_pending','server_confirmed',
+                    'server_update_seen','confirmation_scope','native_sequence','server_ack_sequence')}
+            return result
         except BaseException:
             last = getattr(self, 'last', None)
             terminal = getattr(self, 'last_terminal_evidence', None) or {}
