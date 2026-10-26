@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
-from native_outcome_fence import RetainedUnknownMaterialClient, exact_idle_terminal, wait_exact_idle_terminal
+from native_outcome_fence import RetainedUnknownMaterialClient, exact_idle_terminal, wait_exact_idle_terminal, unchanged_owned_release
 
 
 class NativeOutcomeFenceTests(TestCase):
@@ -23,6 +23,21 @@ class NativeOutcomeFenceTests(TestCase):
         for op,phase in [('navigate','done'),('scan','done'),('snapshot',None),('navigate','waiting')]:
             c,s=self.setup_case(op,phase)
             self.assertTrue(exact_idle_terminal(c,s))
+
+    def released_case(self):
+        event={'op':'material_job_pause','phase':'done','params':{'release':True,'task_session':'task'},'request_id':'release','world_session':'world','revision_after':5,'health_after':20,'position_after':[1.,74.15,2.],'inventory_delta':{}}
+        state={'connected':True,'health':20,'screen':'','manual_movement':False,'guard_armed':True,'guard_pve_only':True,'guard_busy':False,'last_request':'release','world_session':'world','control_revision':5,'pos':[1.,74.15,2.]}
+        return state,event
+
+    def test_own_unchanged_native_release_needs_no_second_manual_idle_delay(self):
+        s,e=self.released_case();self.assertTrue(unchanged_owned_release(s,e,'task'))
+
+    def test_manual_world_owner_or_native_request_change_requires_normal_idle(self):
+        for key,value in [('manual_movement',True),('world_session','other'),('control_revision',6),('last_request','other'),('pos',[2.,74.15,2.]),('screen','ChatScreen'),('guard_armed',False),('supervision_lease',{'id':'other'}),('pending_scan',{}),('health',19)]:
+            s,e=self.released_case();s[key]=value;self.assertFalse(unchanged_owned_release(s,e,'task'),key)
+
+    def test_foreign_or_unfinished_release_is_not_an_owned_idle_proof(self):
+        s,e=self.released_case();self.assertFalse(unchanged_owned_release(s,e,'other'));e['params']['release']=False;self.assertFalse(unchanged_owned_release(s,e,'task'))
 
     def mining_receipt(self):
         return {'id':'rid','world_session':'world','op':'mine_block','phase':'waiting','mining_target':[1,2,3],

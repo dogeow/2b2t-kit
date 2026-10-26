@@ -8,10 +8,28 @@ independent of this Python controller.
 from copy import deepcopy
 import json
 import time
+import math
 from material_client import MaterialClient
 
 _READ_TERMINALS = frozenset(('scan','snapshot','navigate','walk','approach_block',
                             'select_item','close_menu','material_job_park'))
+
+
+def unchanged_owned_release(state,event,task):
+    """A terminal owner's unchanged native release is not a new manual handoff."""
+    params=event.get('params')or{};a=event.get('position_after');b=state.get('pos')
+    return bool(isinstance(task,str)and task and event.get('op')=='material_job_pause'
+        and event.get('phase')=='done'and params.get('release')is True and params.get('task_session')==task
+        and isinstance(event.get('request_id'),str)and event['request_id']
+        and state.get('connected')is True and state.get('health')==20 and event.get('health_after')==20
+        and not state.get('screen')and state.get('manual_movement')is False and not state.get('supervision_lease')
+        and state.get('guard_armed')is True and state.get('guard_pve_only')is True and state.get('guard_busy')is False
+        and state.get('pending_scan')is None and not state.get('navigating')and not state.get('native_material_busy')
+        and state.get('last_request')==event['request_id']and event.get('world_session')==state.get('world_session')
+        and isinstance(state.get('world_session'),str)and bool(state['world_session'])
+        and type(event.get('revision_after'))is int and state.get('control_revision')==event['revision_after']
+        and event.get('inventory_delta')=={} and isinstance(a,list)and isinstance(b,list)and len(a)==len(b)==3
+        and all(type(v)in(int,float)and math.isfinite(v)for v in a+b)and math.dist(a,b)<=.12)
 
 
 def never_dispatched_mining(receipt, request_id, world, target):
