@@ -6,6 +6,20 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class PrinterStateConfirmationTest {
+ @Test void doubleSlabFirstHalfIsOnlyAnIntermediatePlacementAck(){
+  var goal=Blocks.COBBLESTONE_SLAB.defaultBlockState().setValue(SlabBlock.TYPE,net.minecraft.world.level.block.state.properties.SlabType.DOUBLE);
+  for(var half:java.util.List.of(net.minecraft.world.level.block.state.properties.SlabType.BOTTOM,net.minecraft.world.level.block.state.properties.SlabType.TOP)){
+   var predicted=goal.setValue(SlabBlock.TYPE,half);
+   assertEquals(predicted,PrinterStateConfirmation.placementExpectation(goal,predicted));
+   assertTrue(PrinterStateConfirmation.matches(predicted,predicted));
+   assertFalse(PrinterStateConfirmation.matches(goal,predicted));
+   assertEquals(goal,PrinterStateConfirmation.placementExpectation(goal,predicted.setValue(SlabBlock.WATERLOGGED,true)));
+  }
+  assertEquals(goal,PrinterStateConfirmation.placementExpectation(goal,Blocks.STONE_SLAB.defaultBlockState()));
+  var bottom=Blocks.COBBLESTONE_SLAB.defaultBlockState();
+  assertEquals(bottom,PrinterStateConfirmation.placementExpectation(bottom,bottom.setValue(SlabBlock.TYPE,net.minecraft.world.level.block.state.properties.SlabType.TOP)));
+  assertEquals(goal,PrinterStateConfirmation.placementExpectation(goal,goal));
+ }
  @BeforeAll static void bootstrap(){net.minecraft.SharedConstants.tryDetectVersion();net.minecraft.server.Bootstrap.bootStrap();}
  @Test void fenceCanBeAcknowledgedBeforeItsNextNeighborIsBuilt(){
   var expected=Blocks.OAK_FENCE.defaultBlockState().setValue(FenceBlock.EAST,true);var actual=Blocks.OAK_FENCE.defaultBlockState();

@@ -24,6 +24,16 @@ public final class PrinterStateConfirmation {
     }
     public static BlockState placementExpectation(BlockState goal,BlockState predicted){
         if(predicted==null||matches(goal,predicted))return goal;
+        // A double slab takes two normal uses. Only the predicted first half
+        // is an intermediate ACK; matches(goal, actual) remains exact.
+        if(goal.getBlock() instanceof SlabBlock&&goal.getBlock()==predicted.getBlock()
+                &&goal.getValue(SlabBlock.TYPE)==net.minecraft.world.level.block.state.properties.SlabType.DOUBLE
+                &&predicted.getValue(SlabBlock.TYPE)!=net.minecraft.world.level.block.state.properties.SlabType.DOUBLE){
+            boolean sameOtherProperties=true;
+            for(var property:goal.getProperties())if(property!=SlabBlock.TYPE
+                    &&(!predicted.hasProperty(property)||!Objects.equals(goal.getValue(property),predicted.getValue(property))))sameOtherProperties=false;
+            if(sameOtherProperties)return predicted;
+        }
         String wanted=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(goal.getBlock()).toString();
         String placed=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(predicted.getBlock()).toString();
         boolean stripping=placed.startsWith("minecraft:")&&wanted.equals("minecraft:stripped_"+placed.substring("minecraft:".length()));
