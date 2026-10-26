@@ -36,7 +36,7 @@ class NativeRoofDouble:
  def n(self,op,**kw):
   self.calls.append(op)
   if op=='scan':
-   lo,hi=kw['min'],kw['max'];return {**deepcopy(self.check()),'world_session':'world','scan_start_revision':1,'scan_end_revision':1,'scan_cells_read':math.prod(b-a+1 for a,b in zip(lo,hi)),'scan_total_cells':math.prod(b-a+1 for a,b in zip(lo,hi)),'blocks':[deepcopy(row)for p,row in self.rows.items()if all(a<=n<=b for a,n,b in zip(lo,p,hi))]}
+   lo,hi=kw['min'],kw['max'];return {**deepcopy(self.check()),'world_session':'world','scan_start_revision':1,'scan_end_revision':1,'scan_cells_read':math.prod(b-a+1 for a,b in zip(lo,hi)),'scan_total_cells':math.prod(b-a+1 for a,b in zip(lo,hi)),'blocks':[(deepcopy(row)if kw.get('details')else {'pos':row['pos'],'state':row['state']})for p,row in self.rows.items()if all(a<=n<=b for a,n,b in zip(lo,p,hi))]}
   if op=='navigate':self.pos=kw['target']
   if op=='mine_block':
    self.rows.pop((1,72,1))

@@ -37,8 +37,8 @@ def run(builder,model,out,*,low,high,protected,allowed_at,limit=8,y=72):
     def save():write_json(path,book)
     def n(op,**kw):
         book['pending']={'op':op,'params':kw};save();r=builder.n(op,**kw);book['pending']=None;save();return r
-    def scan():
-        builder.check();r=n('scan',min=low,max=high,details=True)
+    def scan(details=True):
+        builder.check();r=n('scan',min=low,max=high,details=details)
         if (r.get('world_session')!=world or r.get('scan_start_revision')!=r.get('scan_end_revision')
                 or r.get('scan_cells_read')!=math.prod(b-a+1 for a,b in zip(low,high))
                 or r.get('scan_cells_read')!=r.get('scan_total_cells')):raise RuntimeError('Complete current-world roof scan required')
@@ -74,7 +74,7 @@ def run(builder,model,out,*,low,high,protected,allowed_at,limit=8,y=72):
             cell['native_result']=build_phase(builder.client,key,seconds=45,stall_seconds=20,complete_cells=[{'pos':target,'expected':SLAB}],background=True,max_station_repositions=0,max_material_refills=0,air_seed_limit=0);save()
             frames=[]
             for _ in range(2):
-                frame,observed_rows=scan();observed={p:v['state']for p,v in observed_rows.items()};original={p:v['state']for p,v in rows.items()}
+                frame,observed_rows=scan(False);observed={p:v['state']for p,v in observed_rows.items()};original={p:v['state']for p,v in rows.items()}
                 if observed.get(tuple(target))!=SLAB or {p for p in original.keys()|observed.keys()if original.get(p)!=observed.get(p)}!={tuple(target)}:raise RuntimeError('Repair or surrounding blocks differ; retain original actions')
                 if inventory_counts(frame)['minecraft:cobblestone_slab']!=before+1:raise RuntimeError('Recovery/placement stock balance unproved')
                 frames.append(frame);time.sleep(.12)
