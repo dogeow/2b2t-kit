@@ -10,6 +10,7 @@ import time
 from kit_runtime.inventory import InventorySession
 from craft_grid import InventoryCapacity,count
 from storage_stack_recipes import supported as storage_recipe_supported
+from cobblestone_stack_recipes import supported as cobblestone_recipe_supported
 
 STACKABLE_OUTPUTS={'minecraft:bone_meal','minecraft:white_dye','minecraft:white_concrete_powder',
     'minecraft:torch','minecraft:golden_apple','minecraft:gold_ingot',
@@ -85,6 +86,7 @@ def _color_recipe(spec):
             and sorted(cell for cells in ingredients.values()for cell in cells)==list(range(1,10)))
 
 def supported(spec):
+    if cobblestone_recipe_supported(spec):return True
     if spec.get('output') in ('minecraft:chest','minecraft:hopper'):
         return storage_recipe_supported(spec)
     if spec.get('output')in DYE_OUTPUTS:return _dye_recipe(spec)
@@ -142,7 +144,7 @@ def grouped_batch(menu,spec,max_rounds):
     twenty items one at a time. Other recipes retain their ordinary cell path.
     """
     if not ((spec.get('output') in COLOR_OUTPUTS and _color_recipe(spec))
-            or storage_recipe_supported(spec)):return None
+            or storage_recipe_supported(spec) or cobblestone_recipe_supported(spec)):return None
     for rounds in range(max_rounds,0,-1):
         slots=copy.deepcopy(menu['slots'][-36:]);actions=[]
         for item,cells in spec['ingredients'].items():
