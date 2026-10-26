@@ -242,7 +242,8 @@ public final class ProjectionBuildJob {
         result.sort(Comparator.comparingDouble(p->c.player.distanceToSqr(Vec3.atCenterOf(p))));return result;
     }
     static boolean liveTargetReady(BlockState wanted,LevelReader level,BlockPos pos){
-        return level.getBlockState(pos).canBeReplaced()
+        return (level.getBlockState(pos).canBeReplaced()
+                ||dev.twob2tkit.automation.PrinterSlabPlacement.incompleteDouble(wanted,level.getBlockState(pos)))
             &&cropSoilReady(wanted,level.getBlockState(pos.below()))
             &&wanted.canSurvive(level,pos);
     }

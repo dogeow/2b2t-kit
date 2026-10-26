@@ -33,6 +33,19 @@ class ProjectionCandidateSupportTest {
         });
     }
 
+    @Test void incompleteDoubleSlabsStayAvailableUntilTheSecondUse(){
+        var bottom=Blocks.COBBLESTONE_SLAB.defaultBlockState();
+        var goal=bottom.setValue(net.minecraft.world.level.block.SlabBlock.TYPE,net.minecraft.world.level.block.state.properties.SlabType.DOUBLE);
+        for(var half:java.util.List.of(net.minecraft.world.level.block.state.properties.SlabType.BOTTOM,net.minecraft.world.level.block.state.properties.SlabType.TOP)){
+            var actual=bottom.setValue(net.minecraft.world.level.block.SlabBlock.TYPE,half);
+            assertTrue(ProjectionBuildJob.liveTargetReady(goal,world(Blocks.STONE.defaultBlockState(),actual),TARGET));
+            assertFalse(ProjectionBuildJob.liveTargetReady(goal,world(Blocks.STONE.defaultBlockState(),actual.setValue(net.minecraft.world.level.block.SlabBlock.WATERLOGGED,true)),TARGET));
+        }
+        assertFalse(ProjectionBuildJob.liveTargetReady(goal,world(Blocks.STONE.defaultBlockState(),goal),TARGET));
+        assertFalse(ProjectionBuildJob.liveTargetReady(goal,world(Blocks.STONE.defaultBlockState(),Blocks.STONE_SLAB.defaultBlockState()),TARGET));
+        assertFalse(ProjectionBuildJob.liveTargetReady(bottom,world(Blocks.STONE.defaultBlockState(),goal),TARGET));
+    }
+
     @Test void maturePotatoesNeedActualFarmlandBeforeTheyBecomeConstructionTargets(){
         var potato=Blocks.POTATOES.defaultBlockState().setValue(CropBlock.AGE,7);
         var air=Blocks.AIR.defaultBlockState();

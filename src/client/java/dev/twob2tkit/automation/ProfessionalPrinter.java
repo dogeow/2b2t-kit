@@ -131,6 +131,9 @@ public final class ProfessionalPrinter {
                     if(world!=null&&target!=null&&candidateState!=null){
                         var selection=dev.twob2tkit.builder.LitematicaAccess.buildSelection();
                         if(!selection.contains(target)||!dev.twob2tkit.builder.LitematicaAccess.inVisibleLayer(target)||!AutomationBridge.projectionBatchAllows(c,target))throw new IllegalStateException("Printer proposed a target outside the selected projection");
+                        var originalHit=(net.minecraft.world.phys.BlockHitResult)raw.getClass().getField("hitResult").get(raw);
+                        context=PrinterSlabPlacement.correct(raw,queue(printer),c.player,candidateState,c.level.getBlockState(target),c.level.getBlockState(originalHit.getBlockPos()),target);
+                        raw=context;
                         pendingFinalState=candidateState;
                         var state=candidateState;
                         boolean placement=context.getItemInHand().getItem() instanceof net.minecraft.world.item.BlockItem && context.getClickedPos().equals(target);
