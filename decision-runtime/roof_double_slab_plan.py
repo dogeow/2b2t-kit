@@ -13,9 +13,8 @@ def choices(expected,observed,player,*,low,high,protected=(),y=72):
         row=observed.get(p,{})
         return (inside(p) and row.get('state')==state and row.get('fluid')is False and row.get('block_entity')is False)
     def clear_pose(pose):
-        x,z=math.floor(pose[0]),math.floor(pose[2])
-        a=(x-1,y+1,z-1);b=(x+1,y+11,z+1)
-        return inside(a)and inside(b)and not any(x-1<=p[0]<=x+1 and y+1<=p[1]<=y+11 and z-1<=p[2]<=z+1 for p in observed)
+        top=[pose[0],min(y+9.15,high[1]-2.),pose[2]]
+        return top[1]>=pose[1]and clear_route(pose,top,observed,low=low,high=high)
     for target,state in expected.items():
         if target[1]!=y or state!=DOUBLE or target in blocked or not inside(target):continue
         unlock=sum(expected.get((target[0]+dx,y,target[2]+dz))==SLAB and (target[0]+dx,y,target[2]+dz)not in observed for dx,dz,_ in SIDES)

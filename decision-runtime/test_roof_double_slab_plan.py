@@ -19,8 +19,11 @@ class DoublePlanTest(unittest.TestCase):
  def test_unobserved_or_foreign_support_cannot_anchor_a_new_use(self):
   e,o=self.fixture();self.assertEqual([],self.plan(e,{}));e.pop((-1,72,0));self.assertEqual([],self.plan(e,o))
  def test_roof_obstruction_and_incomplete_header_bounds_block_work(self):
-  e,o=self.fixture();o[(2,75,0)]=row('Block{minecraft:oak_leaves}');self.assertEqual([],self.plan(e,o))
+  e,o=self.fixture();o[(1,75,0)]=row('Block{minecraft:oak_leaves}');self.assertEqual([],self.plan(e,o))
   e,o=self.fixture();self.assertEqual([],choices(e,o,[2,74.1,0],low=[-10,70,-10],high=[10,75,10]))
+
+ def test_adjacent_pillar_outside_the_actual_body_does_not_block_an_exposed_face(self):
+  e,o=self.fixture();o[(2,75,0)]=row('Block{minecraft:cobblestone}');self.assertEqual([0,72,0],self.plan(e,o)[0]['target'])
 
  def test_clear_hover_route_uses_the_whole_body_including_low_overhangs(self):
   from roof_double_slab_plan import clear_route
