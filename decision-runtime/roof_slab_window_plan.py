@@ -14,7 +14,11 @@ def choices(expected, observed, player, *, grid_origin, limit=16, y=72):
     if len(grid_origin)!=2 or any(type(v)is not int for v in grid_origin):
         raise ValueError('Exact grid origin required')
     wanted = {p for p, state in expected.items() if p[1] == y and state == SLAB}
-    actual = {p for p in wanted if observed.get(p, {}).get('state') == SLAB
+    # A completed double slab is also a real side face for the next bottom slab.
+    # It must match the projection exactly; a wrong half or foreign block is not a support.
+    double = 'Block{minecraft:cobblestone_slab}[type=double,waterlogged=false]'
+    actual = {p for p, state in expected.items() if p[1] == y and state in (SLAB, double)
+              and observed.get(p, {}).get('state') == state
               and observed[p].get('fluid') is False and observed[p].get('block_entity') is False}
     origin_x, origin_z = grid_origin
     tiles = {((p[0]-origin_x)//4, (p[2]-origin_z)//4) for p in wanted}

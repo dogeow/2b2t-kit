@@ -25,3 +25,15 @@ class RoofPlanTest(unittest.TestCase):
    e,o=self.fixture();o={p:bad for p in o};self.assertEqual([],choices(e,o,[2,74.1,2],grid_origin=[0,0]))
  def test_last_inventory_batch_can_be_smaller_without_duplicate_targets(self):
   e,o=self.fixture();p=choices(e,o,[2,74.1,2],grid_origin=[0,0],limit=5)[0];self.assertEqual(5,len(set(map(tuple,p['positions']))))
+
+ def test_verified_model_double_slab_seeds_a_bottom_slab_across_the_seam(self):
+  double='Block{minecraft:cobblestone_slab}[type=double,waterlogged=false]'
+  e={(-1,72,0):double,(0,72,0):SLAB,(1,72,0):SLAB}
+  o={(-1,72,0):row(double)}
+  result=choices(e,o,[2,74.1,2],grid_origin=[0,0])[0]
+  self.assertEqual([[0,72,0],[1,72,0]],result['positions'])
+  for bad in [row(),row('Block{minecraft:stone}'),{'state':double,'fluid':True,'block_entity':False},{'state':double,'fluid':False,'block_entity':True}]:
+   with self.subTest(bad=bad):self.assertEqual([],choices(e,{(-1,72,0):bad},[2,74.1,2],grid_origin=[0,0]))
+ def test_a_foreign_double_slab_cannot_seed_an_unsupported_model(self):
+  double='Block{minecraft:cobblestone_slab}[type=double,waterlogged=false]'
+  self.assertEqual([],choices({(0,72,0):SLAB},{(-1,72,0):row(double)},[2,74.1,2],grid_origin=[0,0]))
