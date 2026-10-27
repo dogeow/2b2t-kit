@@ -23,9 +23,10 @@ def enclosed(rows,target,bounds):
  return True
 
 def run(c,out,checkpoint):
- from harness_runtime import require_player,free_slots,LIVE
- out=Path(out);out.mkdir(parents=True,exist_ok=True);s=require_player(c);stage=LIVE/'native-stages'/s['world_session']/'upper-sources.json';stage.parent.mkdir(parents=True,exist_ok=True)
- if stage.exists():raise RuntimeError('Original source stage is retained; inspect its known results before any new stage')
+ from native_stage_context import require_player,free_slots,STAGES
+ out=Path(out);out.mkdir(parents=True,exist_ok=True);s=require_player(c);stage=STAGES/s['world_session']/'upper-sources.json';stage.parent.mkdir(parents=True,exist_ok=True)
+ legacy=Path(__file__).resolve().parents[1]/'work/harness2-live/native-stages'/s['world_session']/'upper-sources.json'
+ if stage.exists()or legacy.exists():raise RuntimeError('Original source stage is retained; inspect its known results before any new stage')
  b=dict(schema=1,complete=False,pending=None,world_session=c.world,task_session=c.task,lease_id=s['supervision_lease']['id'],inventory_before=dict(inventory_counts(s)),receipts=[],removed=[],water_uses=[],farm_completion_credit=0)
  def save():write_json(stage,b);write_json(out/'stage.json',b)
  def check():

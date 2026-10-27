@@ -14,11 +14,6 @@ from owned_material_menu import owned_menu_result
 
 def execute(c,command,directory,checkpoint):
     _safe(checkpoint());kind=command['action'];out=Path(directory)
-    if kind in ('harness_iron_next','harness_iron_stage','harness_prepare_space'):
-        from harness_runtime import iron_plan,run_iron_stage,prepare_space
-        if kind=='harness_iron_next':return iron_plan(c,out)
-        if kind=='harness_prepare_space':return prepare_space(c,command['reserve_slots'],out)
-        return run_iron_stage(c,command['plan'],out,checkpoint)
     if kind=='native':
         op=command['op']
         if op not in NATIVE_OPS:raise ValueError('Native operation is outside this village project')

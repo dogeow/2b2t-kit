@@ -561,7 +561,7 @@ class VillageQueue:
         try:return self.native('snapshot')
         finally:self._merchant_abort_read=None
     def observe_unstarted_harness_log_failure(self):
-        """Only snapshot a passive finder log failure with its prior scan still exact."""
+        """Legacy receipt reader only; never starts a removed strategy or repeats its action."""
         from material_plan import inventory_counts
         state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
         if not(d/'error.json').exists()or(d/'result.json').exists()or(self.out/'control/unconfirmed-native-request.json').exists():
