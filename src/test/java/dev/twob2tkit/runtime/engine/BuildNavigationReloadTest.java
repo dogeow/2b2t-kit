@@ -21,8 +21,9 @@ class BuildNavigationReloadTest {
     @Test void independentReloadsShareOnlyTheStableApiAndPreserveVerifiedMotion()throws Exception {
         try(var first=isolated();var second=isolated()){
             String name=DefaultBuildNavigation.class.getName();
-            var a=(BuildNavigation)first.loadClass(name).getConstructor().newInstance();
-            var b=(BuildNavigation)second.loadClass(name).getConstructor().newInstance();
+            java.util.function.Predicate<BlockPos> fixtureClear=p->true;
+            var a=(BuildNavigation)first.loadClass(name).getConstructor(java.util.function.Predicate.class).newInstance(fixtureClear);
+            var b=(BuildNavigation)second.loadClass(name).getConstructor(java.util.function.Predicate.class).newInstance(fixtureClear);
             assertNotSame(a.getClass(),b.getClass());assertEquals(first,a.getClass().getClassLoader());
             assertEquals(a.motion(new Vec3(.084,-.029,-.051)),b.motion(new Vec3(.084,-.029,-.051)));
             assertFalse(b.motion(new Vec3(.084,-.029,-.051)).arrived());

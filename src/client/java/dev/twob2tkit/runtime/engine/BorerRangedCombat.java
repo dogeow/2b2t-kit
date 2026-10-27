@@ -52,6 +52,7 @@ final class BorerRangedCombat {
     private String lastRiseFailure = "";
 	private RotationAim.Look look;
 	private int previousSlot = -1, cooldown, blockedTicks, passiveTicks;
+    private final BorerBlockedShotCounter blockedShotCounter=new BorerBlockedShotCounter();
 	BorerRangedCombat(DefaultTunnelBorerEngine engine) { this.engine = engine; this.peek=new BorerCombatPeek(engine); }
 	boolean tick(Minecraft c) {
         var p = c.player;
@@ -79,6 +80,11 @@ final class BorerRangedCombat {
 		int passive = 0;
 		for (var e : observed.values()) {
 			boolean present = c.level.getEntity(e.getId()) == e && e.level()==c.level;
+            if(present&&engine.captureProtection.protects(e)){
+                session.excludeProtected(e.getUUID(),true,true);
+                if(target==e){cancelDraw(c);peek.close(c);resetMiningMelee();target=null;}
+                continue;
+            }
 			boolean calmEnderman=present&&e instanceof EnderMan enderman&&enderman.isAlive()&&!enderman.isCreepy()
                 &&!engine.engagement.recentAttacker(p,e)&&!BorerThreats.currentReceivedMobHit(e,p);
             boolean eligible = present && !calmEnderman && attackEligible(c,e);
@@ -116,6 +122,13 @@ final class BorerRangedCombat {
         }
         // Retain every unresolved UUID. Only a continuously verified safe height
         // permits other work; returning into reach/LOS makes this gate false immediately.
+        if(coveredFloorHostiles(c,nearby,missingRestored)){
+            safetyRise.cancel();releaseControls(c);session.pause(p.tickCount);
+            if(!holdReason.equals("safe-deferred-covered-floor"))
+                engine.fileLog(c,"area-defense-safe-deferred-covered-floor unresolved="+session.targets().size()+" confirmed_deaths=0");
+            holdReason="safe-deferred-covered-floor";
+            engine.status="完整地板隔离敌人，保留敌人记录并继续施工";return false;
+        }
         boolean previouslyYielding=separation.yielding();
         if(!missingRestored && safeVerticalSeparation(c,nearby)){
             boolean allAbsent=session.pending()&&session.targets().stream()
@@ -182,7 +195,11 @@ final class BorerRangedCombat {
 			}else if(peek.tick(c,peek.target()))return true;
 		}
 		var threats = session.targets().stream().filter(e -> session.canAttack(e.getUUID())).toList();
-		int chosen = BorerDefensePolicy.choose(threats.stream().map(e -> new BorerDefensePolicy.Candidate(e.getId(), rank(p,e), p.distanceTo(e), engine.engagement.recentAttacker(p, e))).toList(), target == null ? -1 : target.getId());
+        var candidates=threats.stream().map(e -> new BorerDefensePolicy.Candidate(e.getId(),rank(p,e),p.distanceTo(e),
+            engine.engagement.recentAttacker(p,e)||BorerThreats.currentReceivedMobHit(e,p))).toList();
+        int currentId=target==null?-1:target.getId();
+        int counter=blockedShotCounter.choose(candidates,currentId,p.tickCount);
+		int chosen=counter>=0?counter:BorerDefensePolicy.choose(candidates,currentId);
 		LivingEntity next = threats.stream().filter(e -> e.getId() == chosen).findFirst().orElse(null);
 		if (!missingRestored && !session.pending()) {
 			if (wasPending) engine.fileLog(c, "area-defense-resume-work reason=no-unresolved-engaged-targets");
@@ -356,6 +373,7 @@ final class BorerRangedCombat {
 			engine.status = "射线被挡，举盾等待 " + target.getName().getString();
 			engine.mobs.raiseShield(c, p);
 			if (++blockedTicks % 40 == 0) engine.fileLog(c, "area-defense-blocked id=" + target.getId());
+            blockedShotCounter.blocked(target instanceof Creeper,blockedTicks,p.tickCount);
 			return true;
 		}
 		blockedTicks = 0;
@@ -674,6 +692,44 @@ final class BorerRangedCombat {
         return selected.is(net.minecraft.tags.ItemTags.SWORDS)
             &&BorerItems.remainingDurability(selected)>=TrialCreeperMeleePolicy.swordReserve(health,damage);
     }
+    private boolean coveredFloorHostiles(Minecraft c,java.util.List<LivingEntity> nearby,boolean missing){
+        var p=c.player;
+        if(!engine.standaloneGuard||missing||!session.pending()||p.getHealth()!=20||p.hurtTime!=0
+                ||BorerThreats.recentlyHurt(p)||BorerThreats.shouldYieldToCombat(p)||incomingProjectile(c)
+                ||p.isInWater()||p.isInLava()||p.isOnFire())return false;
+        if(nearby.stream().anyMatch(e->e.isAlive()&&!session.contains(e.getUUID())
+                &&(BorerThreats.currentReceivedMobHit(e,p)||attackEligible(c,e)&&engine.engagement.shouldReact(p,e))))return false;
+        // Unlike separation in open air, this branch proves a collision floor.
+        // Normal grounded gravity (-.0784/tick) cannot carry the player through it.
+        double feet=p.getBoundingBox().minY;
+        var body=p.getBoundingBox();
+        int x0=net.minecraft.util.Mth.floor(body.minX+1e-6),x1=net.minecraft.util.Mth.floor(body.maxX-1e-6);
+        int z0=net.minecraft.util.Mth.floor(body.minZ+1e-6),z1=net.minecraft.util.Mth.floor(body.maxZ-1e-6);
+        for(var e:session.targets()){
+            String type=net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString();
+            if(!GuardCoveredHostilePolicy.supported(type)||!e.isAlive()||e.level()!=c.level||c.level.getEntity(e.getId())!=e
+                    ||e instanceof Creeper creeper&&(creeper.isPowered()||swelling(creeper))
+                    ||p.hasLineOfSight(e)||BorerThreats.currentReceivedMobHit(e,p)
+                    ||!currentServerChunk(c,e.blockPosition()))return false;
+            double top=e.getBoundingBox().maxY;boolean floor=false;
+            for(int y=net.minecraft.util.Mth.floor(feet);y>=Math.max(net.minecraft.util.Mth.ceil(top),net.minecraft.util.Mth.floor(feet)-32);y--){
+                boolean full=true;double bottom=Double.POSITIVE_INFINITY,upper=Double.NEGATIVE_INFINITY;
+                for(int x=x0;x<=x1;x++)for(int z=z0;z<=z1;z++){
+                    var at=new net.minecraft.core.BlockPos(x,y,z);
+                    if(!currentServerChunk(c,at)){full=false;continue;}
+                    var state=c.level.getBlockState(at);boolean covered=false;
+                    for(var box:state.getCollisionShape(c.level,at).toAabbs()){
+                        if(!GuardCoveredHostilePolicy.fullBarrierBox(box.minX,box.minY,box.minZ,box.maxX,box.maxY,box.maxZ))continue;
+                        covered=true;bottom=Math.min(bottom,y+box.minY);upper=Math.max(upper,y+box.maxY);
+                    }
+                    if(!covered)full=false;
+                }
+                if(GuardCoveredHostilePolicy.safe(new GuardCoveredHostilePolicy.Evidence(true,true,false,true,true,false,false,false,full,top,bottom,upper,feet))){floor=true;break;}
+            }
+            if(!floor)return false;
+        }
+        return true;
+    }
     private boolean safeVerticalSeparation(Minecraft c,java.util.List<LivingEntity> nearby){
         var p=c.player;
         // Account for half a second of downward momentum before accepting the blast margin.
@@ -683,7 +739,9 @@ final class BorerRangedCombat {
         var threats=session.targets().stream().map(e->{
             boolean present=e.level()==c.level&&c.level.getEntity(e.getId())==e&&e.isAlive();
             if(!present)return separation.unloaded(c.level,e.getUUID(),p.getX(),projectedY,p.getZ());
-            boolean unarmed=ordinaryZombie(p,e)&&e.getMainHandItem().isEmpty()&&e.getOffhandItem().isEmpty()
+            boolean unarmed=ordinaryZombie(p,e)
+                &&(e.getMainHandItem().isEmpty()||harmlessCargoHand(e.getMainHandItem()))
+                &&(e.getOffhandItem().isEmpty()||harmlessCargoHand(e.getOffhandItem()))
                 &&!BorerThreats.currentReceivedMobHit(e,p);
             if(!unarmed)separation.revokeUnarmed(c.level,e.getUUID());
             if(!GuardWeaponPolicy.finiteVector(e.position())||!GuardWeaponPolicy.finiteBox(e.getBoundingBox())){
@@ -722,6 +780,16 @@ final class BorerRangedCombat {
         boolean safe=separation.observe(c.level,p.tickCount,decision);
         if(safe)separation.verifyDeferred(c.level,currentlyObserved);
         return safe;
+    }
+    private static boolean harmlessCargoHand(net.minecraft.world.item.ItemStack stack){
+        var data=net.minecraft.core.component.DataComponents.ATTRIBUTE_MODIFIERS;
+        boolean attributes=!stack.getOrDefault(data,net.minecraft.world.item.component.ItemAttributeModifiers.EMPTY)
+            .modifiers().isEmpty();
+        return GuardWeaponPolicy.harmlessCargo(
+            net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
+            stack.has(net.minecraft.core.component.DataComponents.WEAPON)
+                ||stack.has(net.minecraft.core.component.DataComponents.TOOL),
+            attributes,stack.isEnchanted(),stack.has(net.minecraft.core.component.DataComponents.CUSTOM_DATA));
     }
     private boolean harmlessSubmergedMelee(Minecraft c,LivingEntity e,double projectedY){
         var p=c.player;
@@ -1173,6 +1241,7 @@ final class BorerRangedCombat {
         return false;
     }
     private boolean attackEligible(Minecraft c,LivingEntity enemy){
+        if(engine.captureProtection.protects(enemy))return false;
         var p=c.player;boolean visible=p.hasLineOfSight(enemy);double distance=p.distanceTo(enemy);
         if(BorerDefensePolicy.eligible(true,enemy.isAlive(),visible,rank(p,enemy),distance))return true;
         return rank(p,enemy)==2&&BorerDefensePolicy.trackedBowEligible(enemy instanceof Enemy,
@@ -1269,6 +1338,7 @@ final class BorerRangedCombat {
 		drawing = false; releasePending = false; look = null; viewGate.reset(); viewWaitTicks = 0;
 	}
 	void end(Minecraft c) {
+        blockedShotCounter.clear();
 		trialCreeperMelee.reset();trialCreeperEvidence="";
 		trialCreeperFlight.reset();trialCreeperFlightEvidence="";trialCreeperRoute=java.util.List.of();trialCreeperRouteGoal=null;trialCreeperRouteTarget=null;
         safetyRise.clear();evidenceLogKey="";evidenceLogTick=Integer.MIN_VALUE;

@@ -62,7 +62,7 @@ class MaterialAirArrivalPolicyTest {
         assertTrue(MaterialAirArrivalPolicy.takeOver(new Vec3(2,0,0),Vec3.ZERO,true));
         assertTrue(MaterialAirArrivalPolicy.takeOver(new Vec3(8,0,0),new Vec3(1.3,0,0),true));
         assertTrue(MaterialAirArrivalPolicy.takeOver(new Vec3(30,0,0),Vec3.ZERO,false));
-        assertFalse(MaterialAirArrivalPolicy.takeOver(new Vec3(30,0,0),Vec3.ZERO,true));
+        assertFalse(MaterialAirArrivalPolicy.takeOver(new Vec3(30,0,0),new Vec3(.2,0,0),true));
         assertTrue(MaterialAirArrivalPolicy.motion(new Vec3(0,-20,0)).vertical());
         assertFalse(MaterialAirArrivalPolicy.motion(new Vec3(0,-20,0)).horizontal());
         assertEquals(.08,MaterialAirArrivalPolicy.motion(new Vec3(0,-20,0)).speed());
@@ -73,6 +73,25 @@ class MaterialAirArrivalPolicyTest {
         assertFalse(steep.vertical());assertTrue(steep.horizontal());assertTrue(steep.moving());
         assertTrue(MaterialAirArrivalPolicy.motion(new Vec3(.06,-20,0)).vertical());
         assertFalse(MaterialAirArrivalPolicy.motion(new Vec3(.06,-20,0)).horizontal());
+    }
+    @Test void stationaryCruiseBorrowsMotionBeforeItsFalseObstacleAndAltitudeRecovery(){
+        Vec3 observedGravity=new Vec3(0,-.0784000015258789,0);
+        assertTrue(MaterialAirArrivalPolicy.takeOver(new Vec3(0,0,16),observedGravity,true));
+        assertTrue(MaterialAirArrivalPolicy.takeOver(new Vec3(0,.04375000000003,128),observedGravity,true));
+        assertTrue(MaterialAirArrivalPolicy.takeOver(new Vec3(128,0,0),new Vec3(.0005,0,0),true));
+        assertFalse(MaterialAirArrivalPolicy.takeOver(new Vec3(128,0,0),new Vec3(.2,0,0),true));
+        // The same normal velocity/key policy used by the verified 2.5-block
+        // hop also reaches a long level waypoint without ordinary Cruise.
+        Vec3 error=new Vec3(0,.04375000000003,128);
+        var settle=new MaterialAirArrivalPolicy.Settlement(.35);
+        for(int tick=0;tick<512&&!settle.done();tick++){
+            var motion=MaterialAirArrivalPolicy.motion(error);Vec3 step=Vec3.ZERO;
+            if(motion.horizontal())step=new Vec3(0,0,motion.speed()*10);
+            else if(motion.vertical())step=new Vec3(0,Math.copySign(motion.speed()*5,error.y),0);
+            error=error.subtract(step);
+            settle.observe(error,step,motion.moving()?step:observedGravity);
+        }
+        assertTrue(settle.done());assertTrue(MaterialAirArrivalPolicy.inside(error,.35));
     }
     @Test void observedDescentStartAlignsSmallHorizontalErrorBeforeDescending(){
         Vec3 error=observedDescentStart();

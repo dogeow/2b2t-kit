@@ -4,6 +4,7 @@ package dev.twob2tkit.automation;
 final class SingleBlockRemovalPolicy {
     private SingleBlockRemovalPolicy() {}
     static boolean removed(boolean air, boolean waterBlock, boolean underwaterGravel) {
-        return air || underwaterGravel && waterBlock;
+        return removed(air,waterBlock,underwaterGravel,false);
     }
+    static boolean removed(boolean air,boolean waterBlock,boolean underwaterGravel,boolean controlledWaterRelease){return air||(underwaterGravel||controlledWaterRelease)&&waterBlock;}
 }

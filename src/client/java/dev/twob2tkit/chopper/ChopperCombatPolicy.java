@@ -3,32 +3,24 @@ package dev.twob2tkit.chopper;
 /**
  * 挖树遇战。只改这一处。
  * <p>
- * 铁傀儡不是 {@code Enemy}，只扫敌对会漏掉。Meteor KillAura 开着打傀儡时，
- * 本模块还在换剪刀砍树叶，就会拿剪刀抽傀儡、不切剑、不飞起来。
+ * 铁傀儡不是 {@code Enemy}；只在有实际交战证据时停砍，避免把和平傀儡当成敌人。
  */
 public final class ChopperCombatPolicy {
 	/** 附近威胁扫描半径（格）。 */
 	public static final double RADIUS = 8.0;
-	/** 铁傀儡实体类型 id（中立但可能被 KillAura 打）。 */
-	public static final String IRON_GOLEM = "iron_golem";
 
 	private ChopperCombatPolicy() {
 	}
 
-	/** 敌对生物，或需要特殊处理的中立傀儡，都算威胁类型。 */
-	public static boolean isThreatType(boolean enemy, String typeId) {
-		if (enemy) return true;
-		return isNeutralGolem(typeId);
+	/** 开启 KillAura 本身不算证据，必须是它当前实际选中的傀儡。 */
+	public static boolean isThreat(boolean enemy, boolean ironGolem, boolean targetingPlayer,
+		boolean recentAttacker, boolean activeAuraTarget) {
+		return enemy || ironGolem && (targetingPlayer || recentAttacker || activeAuraTarget);
 	}
 
-	/** 是否为铁傀儡（不是 Enemy，但挖树时常被误伤）。 */
-	public static boolean isNeutralGolem(String typeId) {
-		return IRON_GOLEM.equals(typeId);
-	}
-
-	/** KillAura 会打附近傀儡，或傀儡已经在打你：都要停砍切剑。 */
-	public static boolean shouldEngageNeutral(boolean killAuraOn, boolean targetingPlayer) {
-		return killAuraOn || targetingPlayer;
+	/** 只保留近期且时间有效的受击记录，不能把旧仇恨无限延长。 */
+	public static boolean recentAttacker(boolean sameAttacker, int ageTicks) {
+		return sameAttacker && ageTicks >= 0 && ageTicks <= 100;
 	}
 
 	/** 刚被打或身边有威胁：暂停挖树。 */

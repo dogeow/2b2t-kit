@@ -16,7 +16,6 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.BlockItem;
-import net.minecraft.world.item.HoeItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -312,9 +311,8 @@ public final class AutoPlanter {
 		}
 
 		boolean needsFarm = needsFarmland(lockedCrop, plant);
-		boolean hasHoe = false; // Daily maintenance never selects or uses a hoe.
 		List<Spot> spots = materialBatch == null
-			? collect(client, player, plant, needsFarm, hasSeeds, hasHoe, now)
+			? collect(client, player, plant, hasSeeds, now)
 			: collectMaterial(client, player, plant, hasSeeds, now);
 		try {
 			emitGizmos(spots);
@@ -341,14 +339,14 @@ public final class AutoPlanter {
 		}
 
 		if (PlanterPolicy.shouldStopNoHoeNoWork(
-			hasSeeds, hasPlantOrHarvest(spots), needsFarm, false, false)) {
+			hasSeeds, !spots.isEmpty(), needsFarm, false, false)) {
 			if (pickupEnabled() && loot.beginNear(client, player, lockedCrop, plant, config.planterRange)) {
 				status = loot.status().isEmpty() ? "去捡掉落物" : loot.status();
 				overlay(client, status, 0x55FFFF);
 				return;
 			}
 			releaseKeys(client);
-			stop(client, idleReason(player, plant, needsFarm, hasSeeds, hasHoe));
+			stop(client, idleReason(plant, hasSeeds));
 			return;
 		}
 
@@ -371,7 +369,7 @@ public final class AutoPlanter {
 			releaseWalk(client);
 			releaseAttack(client);
 			holdSneak(client, player, false);
-			stop(client, idleReason(player, plant, needsFarm, hasSeeds, hasHoe));
+			stop(client, idleReason(plant, hasSeeds));
 			return;
 		}
 
@@ -411,9 +409,8 @@ public final class AutoPlanter {
 			return;
 		}
 		if (act(client, player, next, plant, now)) {
-			if (next.till()) tilledCount++;
-			else plantedCount++;
-			status = (next.till() ? "已锄 " : "已种 ") + cropLabel()
+			plantedCount++;
+			status = "已种 " + cropLabel()
 				+ "  种" + plantedCount + " 锄" + tilledCount + " 收" + harvestedCount;
 			overlay(client, status, 0x55FF55);
 			cooldown = ACTION_COOLDOWN;
@@ -576,7 +573,7 @@ public final class AutoPlanter {
 
 	/** 播种前后都读当前耕地；旧锄地配置不能成为开田授权。 */
 	private boolean act(Minecraft client, LocalPlayer player, Spot spot, Block plant, int now) {
-		if (spot.till() || !field.canPlant(spot.pos, plant, client.level::getBlockState)) return false;
+		if (!field.canPlant(spot.pos, plant, client.level::getBlockState)) return false;
 		InteractionHand hand = selectItem(client, lockedCrop);
 		if (hand == null) {
 			releaseKeys(client);
@@ -633,8 +630,7 @@ public final class AutoPlanter {
 	}
 
 	/** 范围内只收集本次已登记耕地上的播种和收成点。 */
-	private List<Spot> collect(Minecraft client, LocalPlayer player, Block plant, boolean needsFarm,
-		boolean hasSeeds, boolean hasHoe, int now) {
+	private List<Spot> collect(Minecraft client, LocalPlayer player, Block plant, boolean hasSeeds, int now) {
 		List<Spot> spots = new ArrayList<>();
 		int range = Math.max(3, (int)Math.round(config.planterRange));
 		BlockPos origin = player.blockPosition();
@@ -665,17 +661,9 @@ public final class AutoPlanter {
 		return spots;
 	}
 
-	/** 列表里是否还有可种或可收。 */
-	private static boolean hasPlantOrHarvest(List<Spot> spots) {
-		for (Spot spot : spots) {
-			if (!spot.till()) return true;
-		}
-		return false;
-	}
-
 	/** 暂时没事做时的原因文案。 */
-	private String idleReason(LocalPlayer player, Block plant, boolean needsFarm, boolean hasSeeds, boolean hasHoe) {
-		return emptyStatus(player, plant, needsFarm, hasSeeds, hasHoe);
+	private String idleReason(Block plant, boolean hasSeeds) {
+		return emptyStatus(plant, hasSeeds);
 	}
 
 	/** 构造播种 Spot。 */
@@ -703,37 +691,6 @@ public final class AutoPlanter {
 		return new Spot(pos.immutable(), pos.below().immutable(), Direction.UP, Action.PLANT, false);
 	}
 
-	/** 构造锄地 Spot。 */
-	private Spot tillSpot(Minecraft client, BlockPos soil, Block plant) {
-		BlockState state = client.level.getBlockState(soil);
-		if (!isTillable(state)) return null;
-		BlockState above = client.level.getBlockState(soil.above());
-		if (!isPlantableSpace(above)) return null;
-		if (isEnclosureWallSoil(client, soil)) return null;
-		if (!patchAllows(client, soil.above(), plant)) return null;
-		if (needsWaterHydration(plant) && !farmlandHydrated(client, soil)) return null;
-		return new Spot(soil.immutable(), soil.immutable(), Direction.UP, Action.TILL, false);
-	}
-
-	/** 9×9 田边那圈土：一边耕地、两边连着土、一边空，锄了就像把围墙打掉。 */
-	private static boolean isEnclosureWallSoil(Minecraft client, BlockPos soil) {
-		int farmland = 0;
-		int dirt = 0;
-		int open = 0;
-		for (Direction dir : Direction.Plane.HORIZONTAL) {
-			BlockPos neighbor = soil.relative(dir);
-			BlockState neighborState = client.level.getBlockState(neighbor);
-			if (neighborState.is(Blocks.FARMLAND)) {
-				farmland++;
-			} else if (isTillable(neighborState) && isPlantableSpace(client.level.getBlockState(neighbor.above()))) {
-				dirt++;
-			} else if (isPlantableSpace(neighborState)) {
-				open++;
-			}
-		}
-		return PlanterPolicy.isEnclosureWallSoil(farmland, dirt, open);
-	}
-
 	/** 只收本次耕地名单中仍生长在真实耕地上的成熟作物。 */
 	private Spot harvestSpot(Minecraft client, BlockPos pos, Block plant) {
 		if (!client.level.hasChunkAt(pos) || !client.level.hasChunkAt(pos.below())
@@ -747,19 +704,6 @@ public final class AutoPlanter {
 		return client.level.hasChunkAt(spot.pos) && client.level.hasChunkAt(spot.pos.below())
 			&& field.canHarvest(spot.pos, plant, client.level::getBlockState)
 			&& patchAllows(client, spot.pos, plant);
-	}
-
-	/** 方块状态是否可收目标植株。 */
-	private static boolean isHarvestTarget(BlockState state, Block plant) {
-		if (!matchesLockedPlant(state, plant)) return false;
-		if (isStackable(plant)) return false;
-		return isMatureCrop(state);
-	}
-
-	/** 是否与锁定作物一致。 */
-	private static boolean matchesLockedPlant(BlockState state, Block plant) {
-		if (state.is(plant)) return true;
-		return plant instanceof TorchflowerCropBlock && state.is(Blocks.TORCHFLOWER);
 	}
 
 	/** 作物是否已成熟。 */
@@ -875,7 +819,7 @@ public final class AutoPlanter {
 	}
 
 	/** 日常入口不会把缺少工作解释成新开田。 */
-	private String emptyStatus(LocalPlayer player, Block plant, boolean needsFarm, boolean hasSeeds, boolean hasHoe) {
+	private String emptyStatus(Block plant, boolean hasSeeds) {
 		if (!PlanterFieldBoundary.supports(plant)) return "日常种田只维护已有耕地；其它种植需单独确认范围";
 		if (!hasSeeds) return "种子用完，原耕地内也没有成熟作物可收";
 		return "原耕地内没有可种或可收位置；不翻耕草地、泥土或覆盖装饰";
@@ -896,21 +840,6 @@ public final class AutoPlanter {
 			}
 		}
 		return PlanterFieldBoundary.capture(soils, client.level::getBlockState);
-	}
-
-	/** 附近是否已有耕地。 */
-	private boolean hasFarmlandNearby(LocalPlayer player) {
-		if (player.level() == null) return false;
-		BlockPos origin = player.blockPosition();
-		int range = Math.max(3, (int)Math.round(config.planterRange));
-		for (int dx = -range; dx <= range; dx++) {
-			for (int dz = -range; dz <= range; dz++) {
-				for (int dy = -1; dy <= 1; dy++) {
-					if (player.level().getBlockState(origin.offset(dx, dy, dz)).is(Blocks.FARMLAND)) return true;
-				}
-			}
-		}
-		return false;
 	}
 
 	/** 从手或田刷新锁定作物。 */
@@ -1066,16 +995,6 @@ public final class AutoPlanter {
 			|| plant instanceof BambooSaplingBlock;
 	}
 
-	/** 是否可锄成耕地。 */
-	private static boolean isTillable(BlockState state) {
-		return state.is(Blocks.DIRT) || state.is(Blocks.GRASS_BLOCK) || state.is(Blocks.DIRT_PATH);
-	}
-
-	/** 顶上是否可种的空间。 */
-	private static boolean isPlantableSpace(BlockState state) {
-		return state.isAir() || state.canBeReplaced();
-	}
-
 	/** 该格是否有碰撞。 */
 	private static boolean hasCollision(Minecraft client, BlockPos pos) {
 		return !client.level.getBlockState(pos).getCollisionShape(client.level, pos).isEmpty();
@@ -1102,25 +1021,6 @@ public final class AutoPlanter {
 		return null;
 	}
 
-	/** 手上换成锄。 */
-	private InteractionHand selectHoe(Minecraft client) {
-		LocalPlayer player = client.player;
-		if (player.getMainHandItem().getItem() instanceof HoeItem) return InteractionHand.MAIN_HAND;
-		Inventory inventory = player.getInventory();
-		for (int slot = 0; slot < 9; slot++) {
-			if (!(inventory.getItem(slot).getItem() instanceof HoeItem)) continue;
-			inventory.setSelectedSlot(slot);
-			return InteractionHand.MAIN_HAND;
-		}
-		for (int slot = 9; slot < 36; slot++) {
-			if (!(inventory.getItem(slot).getItem() instanceof HoeItem)) continue;
-			client.gameMode.handleContainerInput(player.containerMenu.containerId, slot, inventory.getSelectedSlot(), ContainerInput.SWAP, player);
-			if (player.getMainHandItem().getItem() instanceof HoeItem) return InteractionHand.MAIN_HAND;
-		}
-		if (player.getOffhandItem().getItem() instanceof HoeItem) return InteractionHand.OFF_HAND;
-		return null;
-	}
-
 	/** 背包是否有该物品。 */
 	private static boolean hasItem(LocalPlayer player, Item item) {
 		if (player.getMainHandItem().is(item) || player.getOffhandItem().is(item)) return true;
@@ -1142,9 +1042,6 @@ public final class AutoPlanter {
 			} else if (spot.harvest()) {
 				stroke = 0xFFFFFF55;
 				fill = 0x33FFFF00;
-			} else if (spot.till()) {
-				stroke = 0xFFFFAA00;
-				fill = 0x33FFAA00;
 			} else {
 				stroke = 0xFF55FF55;
 				fill = 0x2200FF55;
@@ -1233,7 +1130,6 @@ public final class AutoPlanter {
 	/** Spot 动作中文名。 */
 	private static String actionLabel(Spot spot) {
 		if (spot.harvest()) return "去收 ";
-		if (spot.till()) return "去锄地 ";
 		return "去种 ";
 	}
 
@@ -1313,15 +1209,11 @@ public final class AutoPlanter {
 	}
 
 	private enum Action {
-		PLANT, TILL, HARVEST
+		PLANT, HARVEST
 	}
 
 	/** 一个工作点：位置、点击面与动作。 */
 	private record Spot(BlockPos pos, BlockPos click, Direction face, Action action, boolean stackHarvest) {
-		boolean till() {
-			return action == Action.TILL;
-		}
-
 		boolean harvest() {
 			return action == Action.HARVEST;
 		}

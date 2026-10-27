@@ -49,7 +49,11 @@ final class BorerCombatPeek {
   if(p.position().distanceToSqr(feet(route.get(index)))<.025){index++;if(index>=route.size()){close(c);return false;}}
   var destination=feet(route.get(index));var input=BorerFlyPath.input(p.position(),destination,p.getYRot());
   if(!clear(c,route.get(index))||!c.level.noCollision(p,p.getBoundingBox().expandTowards(input.delta()))){close(c);nextPlan=tick+200;return false;}
-  engine.pauseGuardMovement(c);flight.speed(input.speed());look=new RotationAim.Look(input.yaw(),0);RotationAim.apply(p,look);
+  engine.pauseGuardMovement(c);
+  if(!applyFlightSpeed(flight,input.speed())){
+   close(c);nextPlan=tick+200;engine.fileLog(c,"guard-peek-flight-unavailable; owned movement released");return false;
+  }
+  look=new RotationAim.Look(input.yaw(),0);RotationAim.apply(p,look);
   p.stopUsingItem();c.options.keyUse.setDown(false);c.options.keyUp.setDown(input.forward());c.options.keyJump.setDown(input.up());c.options.keyShift.setDown(input.down());
   engine.status="绕开遮挡，重新确认敌对生物位置";return true;
  }
@@ -90,6 +94,10 @@ final class BorerCombatPeek {
   return feet.y-enemy.y<6||Math.hypot(feet.x-enemy.x,feet.z-enemy.z)>=6;
  }
  static boolean firingSolutionVerified(boolean ranged,boolean feasible){return !ranged||feasible;}
+ static boolean applyFlightSpeed(BorerAreaFlightSession session,double speed){
+  try{session.speed(speed);return true;}
+  catch(IllegalStateException unavailable){return false;}
+ }
  private static boolean bodyVisible(Minecraft c,LivingEntity enemy,Vec3 eye){
   var box=enemy.getBoundingBox();
   for(double height:new double[]{.5,.7,.3}){

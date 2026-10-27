@@ -199,7 +199,7 @@ final class ChopperScaffold {
             }
             var hit=BorerAim.firstMineable(c,p,cell,b->b.equals(cell));
             if(hit==null)throw new IllegalStateException("平台被遮挡，未挖其他方块");
-            selectShovel(c);ChopperKeys.lookAt(p,BorerAim.lookAlongRay(p.getEyePosition(),hit));c.hitResult=hit;c.crosshairPickEntity=null;c.options.keyAttack.setDown(false);
+            ChopperTools.require(c,ShovelItem.class);ChopperKeys.lookAt(p,BorerAim.lookAlongRay(p.getEyePosition(),hit));c.hitResult=hit;c.crosshairPickEntity=null;c.options.keyAttack.setDown(false);
             if(ticks==1)c.gameMode.startDestroyBlock(cell,hit.getDirection());else c.gameMode.continueDestroyBlock(cell,hit.getDirection());return true;
         }
         if(phase==Phase.RETURN_LAND){
@@ -320,11 +320,6 @@ final class ChopperScaffold {
 			if(i<9)inv.setSelectedSlot(i);else c.gameMode.handleContainerInput(c.player.containerMenu.containerId,i,inv.getSelectedSlot(),ContainerInput.SWAP,c.player);
 			return c.player.getMainHandItem().is(Items.DIRT);
 		}return false;
-	}
-	private static void selectShovel(Minecraft c){
-		var inv=c.player.getInventory();for(int i=0;i<36;i++)if(inv.getItem(i).getItem() instanceof ShovelItem){
-			if(i<9)inv.setSelectedSlot(i);else c.gameMode.handleContainerInput(c.player.containerMenu.containerId,i,inv.getSelectedSlot(),ContainerInput.SWAP,c.player);return;
-		}
 	}
 	private static void log(Minecraft c,String s){ChopperFileLog.append(c,AutoChopper.VERSION,s);}
 }

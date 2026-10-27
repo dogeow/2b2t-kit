@@ -5,9 +5,21 @@ import net.minecraft.world.phys.Vec3;
 import java.util.*;
 /** Hot-reloadable construction navigation. Never references host implementation classes. */
 public final class DefaultBuildNavigation implements BuildNavigation {
+    private final java.util.function.Predicate<BlockPos> hazardClear;
+    public DefaultBuildNavigation(){this(NavigationHazardClearance::current);}
+    /** An observation policy can be injected for isolated navigation fixtures. */
+    public DefaultBuildNavigation(java.util.function.Predicate<BlockPos> hazardClear){
+        this.hazardClear=Objects.requireNonNull(hazardClear);
+    }
     public String version(){return EngineBuildVersion.VALUE;}
     public Policy policy(){return new Policy(256,4_000_000L,50000,6,100,50);}
-    public Search search(World world,BlockPos start,Collection<BlockPos> goals){return new GoalSearch(world,start,goals);}
+    public Search search(World world,BlockPos start,Collection<BlockPos> goals){
+        var safe=new World(){
+            public boolean clear(BlockPos p){return world.clear(p)&&hazardClear.test(p);}
+            public boolean edge(BlockPos a,BlockPos b){return world.edge(a,b);}
+        };
+        return new GoalSearch(safe,start,goals);
+    }
     public List<BlockPos> stations(BlockPos target){
         var cells=new ArrayList<BlockPos>();
         for(int dx=-3;dx<=3;dx++)for(int dz=-3;dz<=3;dz++)for(int dy=-3;dy<=2;dy++){

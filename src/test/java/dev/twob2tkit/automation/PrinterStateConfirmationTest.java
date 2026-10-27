@@ -20,6 +20,20 @@ class PrinterStateConfirmationTest {
   assertEquals(bottom,PrinterStateConfirmation.placementExpectation(bottom,bottom.setValue(SlabBlock.TYPE,net.minecraft.world.level.block.state.properties.SlabType.TOP)));
   assertEquals(goal,PrinterStateConfirmation.placementExpectation(goal,goal));
  }
+ @Test void wireConnectionsCanChangeWhileItsNeighborsAreStillBeingBuilt(){
+  var expected=Blocks.REDSTONE_WIRE.defaultBlockState().setValue(RedStoneWireBlock.EAST,net.minecraft.world.level.block.state.properties.RedstoneSide.SIDE);
+  var actual=expected.setValue(RedStoneWireBlock.EAST,net.minecraft.world.level.block.state.properties.RedstoneSide.NONE);
+  assertTrue(PrinterStateConfirmation.matches(expected,actual));assertNotEquals(expected,actual);
+  assertFalse(PrinterStateConfirmation.matches(expected,actual.setValue(RedStoneWireBlock.POWER,15)));
+  assertFalse(PrinterStateConfirmation.matches(expected,Blocks.TRIPWIRE.defaultBlockState()));
+ }
+ @Test void aPotMustBeAcknowledgedBeforeItsSeparatePlantFill(){
+  var goal=Blocks.POTTED_FERN.defaultBlockState();var empty=Blocks.FLOWER_POT.defaultBlockState();
+  assertEquals(empty,PrinterStateConfirmation.placementExpectation(goal,empty));
+  assertFalse(PrinterStateConfirmation.matches(goal,empty));
+  assertEquals(goal,PrinterStateConfirmation.placementExpectation(goal,goal));
+  assertEquals(goal,PrinterStateConfirmation.placementExpectation(goal,Blocks.DIRT.defaultBlockState()));
+ }
  @BeforeAll static void bootstrap(){net.minecraft.SharedConstants.tryDetectVersion();net.minecraft.server.Bootstrap.bootStrap();}
  @Test void fenceCanBeAcknowledgedBeforeItsNextNeighborIsBuilt(){
   var expected=Blocks.OAK_FENCE.defaultBlockState().setValue(FenceBlock.EAST,true);var actual=Blocks.OAK_FENCE.defaultBlockState();

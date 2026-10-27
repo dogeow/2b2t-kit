@@ -33,11 +33,21 @@ class EmergencyExitWiringTest {
  }
 
  @Test void findRouteBeforeFlightAcquireSoEmptyAscentNeverLaunchesFlight()throws Exception{
-  var c=calls("combat/EmergencyExit","begin");
+  var c=calls("combat/EmergencyExit","start");
   int route=c.indexOf("dev/twob2tkit/combat/EmergencyExit.findRoute");
   int acquire=c.indexOf("dev/twob2tkit/runtime/engine/BorerAreaFlightSession.acquire");
   assertTrue(route>=0,"begin must plan the ascent");
   assertTrue(acquire>=0,"begin still acquires flight when a route exists");
   assertTrue(route<acquire,"safe ascent must be planned before enabling flight");
+ }
+ @Test void nativeEnvironmentWatchRunsBeforeOrdinaryGuardAndUsesLockedExit()throws Exception{
+  assertTrue(calls("combat/EmergencyExit","tick").contains("dev/twob2tkit/combat/EmergencyExit.observeHealth"));
+  var observe=calls("combat/EmergencyExit","observeHealth");
+  assertTrue(observe.contains("dev/twob2tkit/combat/EnvironmentalDamageWindow.observe"));
+  assertTrue(observe.contains("dev/twob2tkit/KitKeys.manualMovementDown"));
+  assertTrue(observe.contains("dev/twob2tkit/combat/EmergencyExit.start"));
+  var start=calls("combat/EmergencyExit","start");
+  assertTrue(start.indexOf("dev/twob2tkit/combat/SafetyHoldStore.write")<start.indexOf("dev/twob2tkit/KitClient.emergencyStop"));
+  assertTrue(start.indexOf("dev/twob2tkit/combat/EmergencyExit.finish")<start.indexOf("dev/twob2tkit/combat/EmergencyExit.findRoute"),"immediate environmental exit must not acquire a flight/escape route first");
  }
 }

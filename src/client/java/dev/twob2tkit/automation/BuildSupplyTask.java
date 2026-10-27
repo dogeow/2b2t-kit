@@ -372,8 +372,13 @@ public final class BuildSupplyTask {
     }
     private void close(Minecraft c,boolean keepMenu){
         if(closed)return;closed=true;
-        release(c);travelLook=null;flight.hover();
-        if(!keepMenu && c.player!=null && c.level==level && openedMenu!=null && c.player.containerMenu==openedMenu && openedMenu.getCarried().isEmpty())c.player.closeContainer();
-        if(c.player!=null && !c.player.onGround())flight.closeKeepingFlight();else flight.close();
+        try{
+            // Defense or manual control may already own the flight settings.
+            // Stopping must release our lease, never try to acquire another hover.
+            release(c);travelLook=null;
+            if(!keepMenu && c.player!=null && c.level==level && openedMenu!=null && c.player.containerMenu==openedMenu && openedMenu.getCarried().isEmpty())c.player.closeContainer();
+        }finally{
+            if(c.player!=null && !c.player.onGround())flight.closeKeepingFlight();else flight.close();
+        }
     }
 }

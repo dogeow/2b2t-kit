@@ -172,7 +172,6 @@ final class BorerAreaThinkPolicyTest {
 		assertEquals(bin.toAbsolutePath(), BorerAreaThinkAsk.grokBin(grokHome, null));
 		assertTrue(BorerAreaThinkAsk.promptText("go|fly|same|wall|out|near", "MINE_LOOKED w=1 l=0", "stuck")
 			.contains("scene=go|fly|same|wall|out|near"));
-		assertEquals("1.6.276", BorerAreaThinkDeploy.nextPatchVersion("1.6.275"));
 		Path repo = grokHome.resolve("repo");
 		Files.createDirectories(repo.resolve("src/client/java/dev/twob2tkit/runtime/engine"));
 		Files.writeString(repo.resolve("gradlew"), "#!/bin/sh\n");

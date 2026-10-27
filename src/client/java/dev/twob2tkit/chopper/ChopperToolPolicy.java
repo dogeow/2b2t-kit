@@ -3,8 +3,7 @@ package dev.twob2tkit.chopper;
 /**
  * 挖树选工具。
  * <p>
- * Meteor {@code auto-tool} 的 anti-break（默认 10% 耐久）会取消破坏并松开左键，
- * 快坏的剪刀拿在手上就一直挖不动。低于阈值时不要选它，叶子改空手。
+ * 保留至少 10% 耐久，避免磨损工具继续工作；没有可用工具时改用不会磨损的物品。
  */
 public final class ChopperToolPolicy {
 	/** 与 Meteor auto-tool anti-break-percentage 默认值一致。 */
@@ -27,13 +26,10 @@ public final class ChopperToolPolicy {
 		return remaining < maxDamage * ANTI_BREAK_PERCENT / 100;
 	}
 
-	/** 没有可用剪刀时，叶子改空手挖，避免快坏剪刀被 Meteor 取消。 */
-	public static boolean useFistForLeaves(boolean hasUsableShears) {
-		return !hasUsableShears;
-	}
-
-	/** 当前手持已是目标类型且未磨损则保持，不要每拍换槽。 */
-	public static boolean keepCurrentTool(boolean isDesiredType, boolean worn) {
-		return isDesiredType && !worn;
+	/** 保留可用的当前槽，否则先快捷栏后背包；没有安全选择返回 -1。 */
+	public static int chooseSlot(int selected, int slots, java.util.function.IntPredicate usable) {
+		if (selected >= 0 && selected < slots && usable.test(selected)) return selected;
+		for (int slot = 0; slot < slots; slot++) if (usable.test(slot)) return slot;
+		return -1;
 	}
 }

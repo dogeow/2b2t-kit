@@ -7,6 +7,28 @@ import static org.junit.jupiter.api.Assertions.*;
 final class BorerAreaFlightSessionTest {
 	@org.junit.jupiter.api.io.TempDir java.nio.file.Path temp;
 
+    @Test void airborneCancellationAfterAnotherWriterChangesSpeedDoesNotTryToHover(){
+        Fixture f=new Fixture();f.flight.active=true;var session=f.session();
+        assertNull(session.acquire());session.speed(.02);
+        f.flight.speed.set(.17);
+        assertDoesNotThrow(session::closeKeepingFlight);
+        assertEquals(.17,f.flight.speed.get());assertTrue(f.flight.active);
+        assertDoesNotThrow(session::closeKeepingFlight);assertEquals(.17,f.flight.speed.get());
+    }
+
+	@Test void combatPeekCanBorrowAnOwnedZeroHoverAndRestoreItInOrder() throws Exception {
+		Fixture f=new Fixture();var hover=f.session();
+		hover.prepare(temp.resolve("guard-hover-flight.bak"));assertNull(hover.acquire());
+		assertEquals(0.0,f.flight.speed.get());
+		var peekPath=temp.resolve("combat-peek-flight.bak");
+		new BorerFlightSpeedBackup(peekPath).beforeWrite(.12,.02,.03);
+		var peek=f.session();assertNull(peek.prepare(peekPath));assertNull(peek.acquire());
+		assertDoesNotThrow(()->peek.speed(.03));assertEquals(.03,f.flight.speed.get());
+		assertEquals(0.0,new BorerFlightSpeedBackup(peekPath).read().original());
+		peek.closeKeepingFlight();assertEquals(0.0,f.flight.speed.get());
+		hover.close();assertEquals(.12,f.flight.speed.get());
+	}
+
 	@Test void repairsLegacyPersistedHoverWithoutEnablingFlight() {
 		Fixture f = new Fixture();
 		f.flight.mode.set(Mode.Velocity); f.flight.noSneak.set(true); f.flight.speed.set(0.0);

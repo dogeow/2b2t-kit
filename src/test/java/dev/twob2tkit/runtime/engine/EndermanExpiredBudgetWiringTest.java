@@ -26,13 +26,13 @@ class EndermanExpiredBudgetWiringTest {
         assertTrue(safetyRise>defend,"A generic rise cannot repeatedly preempt legal enderman sword defense");
         assertTrue(defend>=0&&genericHold>defend,"Expired attack budget cannot bypass the enderman look-down/sword branch");
         var defense=node.methods.stream().filter(m->m.name.equals("defendEnderman")).findFirst().orElseThrow();
-        boolean swordAttack=false,bowSelection=false,lookDown=false;
+        boolean swordAttack=false,bowSelection=false,lookAway=false;
         for(var instruction:defense.instructions) {
             if(instruction instanceof MethodInsnNode call) {
                 swordAttack|=call.name.equals("attack");bowSelection|=call.name.equals("selectBow");
+                lookAway|=call.owner.endsWith("/GuardEndermanGaze")&&call.name.equals("away");
             }
-            if(instruction instanceof LdcInsnNode constant&&Float.valueOf(90).equals(constant.cst))lookDown=true;
         }
-        assertTrue(swordAttack);assertFalse(bowSelection);assertTrue(lookDown);
+        assertTrue(swordAttack);assertFalse(bowSelection);assertTrue(lookAway);
     }
 }

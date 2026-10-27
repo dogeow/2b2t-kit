@@ -21,16 +21,33 @@ final class BlockFaceTarget {
                 case NORTH->z=box.minZ+ez;case SOUTH->z=box.maxZ-ez;
             }
             points.add(new Vec3(x,y,z));
+            // A button or hook can cover the centre while the surrounding
+            // wall face remains visible. Sample inside the same actual shape
+            // surface; every choice still passes the normal outline ray.
+            for(double u:new double[]{.2,.5,.8})for(double v:new double[]{.2,.5,.8}){
+                if(u==.5&&v==.5)continue;
+                double a=box.minX+(box.maxX-box.minX)*u;
+                double b=box.minY+(box.maxY-box.minY)*u;
+                double d=box.minZ+(box.maxZ-box.minZ)*v;
+                points.add(switch(face){
+                    case WEST,EAST->new Vec3(x,b,d);
+                    case DOWN,UP->new Vec3(a,y,d);
+                    case NORTH,SOUTH->new Vec3(a,box.minY+(box.maxY-box.minY)*v,z);
+                });
+            }
         }
         return List.copyOf(points);
     }
     static BlockHitResult visible(Minecraft c,Vec3 eye,BlockPos pos,Direction requested,double reach){
         var shape=c.level.getBlockState(pos).getShape(c.level,pos);
-        var candidates=new ArrayList<Vec3>();
-        for(var face:requested==null?Direction.values():new Direction[]{requested})
-            for(var p:points(shape,face))candidates.add(p.add(pos.getX(),pos.getY(),pos.getZ()));
-        candidates.sort(Comparator.comparingDouble(eye::distanceToSqr));
-        for(var point:candidates){
+        var centres=new ArrayList<Vec3>();var edges=new ArrayList<Vec3>();
+        for(var face:requested==null?Direction.values():new Direction[]{requested}){
+            var sampled=points(shape,face);
+            for(int i=0;i<sampled.size();i++)(i%9==0?centres:edges).add(sampled.get(i).add(pos.getX(),pos.getY(),pos.getZ()));
+        }
+        centres.sort(Comparator.comparingDouble(eye::distanceToSqr));edges.sort(Comparator.comparingDouble(eye::distanceToSqr));
+        centres.addAll(edges);
+        for(var point:centres){
             if(eye.distanceTo(point)>reach)continue;
             var hit=c.level.clip(new ClipContext(eye,point,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,c.player));
             if(matches(hit,pos,requested))return hit;

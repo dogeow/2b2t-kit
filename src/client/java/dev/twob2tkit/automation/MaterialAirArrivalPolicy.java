@@ -38,7 +38,11 @@ final class MaterialAirArrivalPolicy {
     }
     private MaterialAirArrivalPolicy() {}
     static boolean takeOver(Vec3 error,Vec3 velocity,boolean cruising){
-        return !cruising||Math.hypot(error.x,error.z)<=Math.max(3,Math.hypot(velocity.x,velocity.z)*8+.5);
+        // A restored hover can have speed zero while Cruise is nominally active.
+        // Borrow the bounded waypoint's own Flight lease before waiting for an
+        // arrival which the ordinary cruise cannot reach in that state.
+        double speed=Math.hypot(velocity.x,velocity.z);
+        return !cruising||speed<=.001||Math.hypot(error.x,error.z)<=Math.max(3,speed*8+.5);
     }
     static Motion motion(Vec3 error){
         double horizontal=Math.hypot(error.x,error.z);double absY=Math.abs(error.y);

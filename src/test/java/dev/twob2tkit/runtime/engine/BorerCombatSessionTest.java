@@ -34,6 +34,16 @@ class BorerCombatSessionTest {
         see(21,enderman,false,false,false,34);assertTrue(session.releaseObservedCalm(enderman,true,true));
         assertTrue(session.contains(creeper));assertTrue(session.pending());
     }
+    @Test void protected_capture_target_is_excluded_without_resolving_other_threats_or_claiming_death(){
+        UUID zombie=UUID.randomUUID();see(0,zombie,true,false,true,20);
+        session.observe(creeper,"creeper",true,false,true,20);
+        assertFalse(session.excludeProtected(zombie,false,true));
+        assertTrue(session.contains(zombie));
+        assertTrue(session.excludeProtected(zombie,true,true));
+        assertFalse(session.contains(zombie));assertTrue(session.contains(creeper));
+        assertFalse(session.observe(zombie,"live captured zombie",false,false,false,20));
+    }
+
 	private final BorerCombatSession<String> session = new BorerCombatSession<>();
 	private final UUID creeper = UUID.fromString("00000000-0000-0000-0000-000000000001");
 	private final UUID archer = UUID.fromString("00000000-0000-0000-0000-000000000002");

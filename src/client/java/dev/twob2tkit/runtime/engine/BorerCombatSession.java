@@ -52,6 +52,10 @@ final class BorerCombatSession<T> {
 		return false;
 	}
 	boolean pending() { return !unresolved.isEmpty(); }
+    /** Explicit current capture ownership cancels this target; it is not a death or calm claim. */
+    boolean excludeProtected(UUID id,boolean current,boolean protectedTarget){
+        return current&&protectedTarget&&unresolved.remove(id)!=null;
+    }
     /** Current neutral-state evidence releases aggression, never confirms a kill. */
     boolean releaseObservedCalm(UUID id, boolean current, boolean calm) {
         var entry=unresolved.get(id);

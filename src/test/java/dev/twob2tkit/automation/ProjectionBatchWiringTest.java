@@ -21,9 +21,12 @@ class ProjectionBatchWiringTest {
         assertTrue(calls(method("automation/ProfessionalPrinter","allowNativeProposal")).contains("projectionBatchCurrent"));
         assertFalse(calls(method("automation/ProfessionalPrinter","allowNativeProposal")).contains("validateProjectionBatch"));
     }
-    @Test void onlyAvailabilityIsFilteredAndFullModelCountsRemainUnfiltered()throws Exception{
+    @Test void batchFiltersAvailabilityAndMaterialDemandWhileModelExportsRemainUnfiltered()throws Exception{
         assertTrue(calls(method("builder/ProjectionBuildJob","available")).contains("projectionBatchAllows"));
-        for(String name:List.of("load","recount","serverBlock"))assertFalse(calls(method("builder/ProjectionBuildJob",name)).contains("projectionBatchAllows"));
+        assertTrue(calls(method("builder/ProjectionBuildJob","load")).contains("currentPositions"));
+        assertTrue(calls(method("builder/ProjectionBuildJob","recount")).contains("projectionBatchAllows"));
+        assertFalse(calls(method("builder/ProjectionBuildJob","serverBlock")).contains("projectionBatchAllows"));
+        assertFalse(calls(method("automation/ProjectionAudit","model")).contains("projectionBatchAllows"));
         assertTrue(calls(method("builder/ProjectionBuildJob","tick")).contains("validateProjectionBatch"));
     }
     @Test void invalidationStopsAutomaticPrintingBeforeReset()throws Exception{

@@ -40,6 +40,7 @@ public enum UiFeature {
     SURVIVAL(Category.SAFETY, "生存提醒", "补给、护甲、图腾和鞘翅提醒", "血量 食物 耐久"),
     HEALING(Category.SAFETY, "治疗物资", "选择计入提醒的食物与药水", "回血 补给"),
     TRUSTED(Category.SAFETY, "玩家白名单", "可信玩家与警戒例外", "信任 好友"),
+    CHAT_TRANSLATION(Category.SETTINGS, "聊天翻译 /mct", "启动本地翻译、按需翻译与防刷屏设置", "双语 翻译 translate ignore 屏蔽 聊天 mct 按需"),
     SETTINGS(Category.SETTINGS, "通用设置", "风格、配方、兼容与运行引擎", "版本 热更新 菜单"),
     LOCAL_DECISION(Category.SETTINGS, "本地决策模型", "常驻 Ollama、阶段决策与游戏画面", "AI Clef Nimble Ollama 图片 决策"),
     SINGLEPLAYER_TRIAL(Category.SETTINGS, "单人通关试验", "独立生存世界、打龙目标、死亡复活与经验复用", "Clef 模型 单人 经验 学习 通关 打龙 目标"),
@@ -139,6 +140,7 @@ public enum UiFeature {
             case LOCAL_DECISION -> dev.twob2tkit.material.LocalDecisionPages.open(parent,c);
             case SINGLEPLAYER_TRIAL -> dev.twob2tkit.trial.SingleplayerTrialPages.open(parent,c);
             case KEYBINDS -> mc.gui.setScreen(new KitKeyBindsScreen(parent));
+            case CHAT_TRANSLATION -> ChatTranslationPage.open(parent);
             case SETTINGS -> ClickGuiPages.settings(parent, c);
             case DIAGNOSTICS -> ClickGuiPages.diagnostics(parent, c);
         }

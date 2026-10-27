@@ -18,6 +18,10 @@
     {
       "config": "twob2tkit.client.mixins.json",
       "environment": "client"
+    },
+    {
+      "config": "mcbilingual.mixins.json",
+      "environment": "client"
     }
   ],
   "depends": {

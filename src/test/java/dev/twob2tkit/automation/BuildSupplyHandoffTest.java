@@ -59,6 +59,16 @@ class BuildSupplyHandoffTest {
         assertTrue(fields(method(node,"acknowledgeOpenedMenu")).containsAll(Set.of("closed","openingPending","originalMenu","openedMenu")));
         assertTrue(calls(method(node,"ownsMenu")).contains("acknowledgeOpenedMenu"));
     }
+    @Test void cancellationAfterDefenseTakesFlightDoesNotReacquireOrWriteAHover()throws Exception {
+        var close=code().methods.stream().filter(m->m.name.equals("close")&&m.desc.contains(";Z")).findFirst().orElseThrow();
+        var names=calls(close);
+        assertFalse(names.contains("hover"),"A lost navigation lease must not prevent native pause/stop");
+        assertFalse(names.contains("acquire"));assertFalse(names.contains("speed"));
+        assertTrue(names.containsAll(List.of("release","closeKeepingFlight","close")));
+        assertTrue(close.tryCatchBlocks.stream().anyMatch(t->t.type==null),
+            "Borrowed flight must also be released when an input/menu cleanup throws");
+        assertTrue(Collections.frequency(names,"closeKeepingFlight")>=2,"Normal and exceptional cleanup both restore flight");
+    }
     private static ClassNode code()throws Exception {
         var result=new ClassNode();try(var in=BuildSupplyHandoffTest.class.getResourceAsStream("/dev/twob2tkit/automation/BuildSupplyTask.class")) {
             assertNotNull(in);new ClassReader(in).accept(result,0);

@@ -650,7 +650,7 @@ public final class AutomationBridge {
         nativeMaterialCheck(owner,c);
         if(owner.pendingId!=null||active!=null)throw new IllegalStateException("Native material child is already running");
         if(!Set.of("guard","select_item","snapshot","scan","scan_snow_biomes","snow_seed_candidates","air_return_set","mine_block","rock_quarry_batch",
-                "walk","navigate","collect_item","approach_block","bucket_fill","bucket_place","bottle_fill","material_slaughter_attack","material_ink_attack","planter_wheat_batch").contains(command))
+                "walk","navigate","collect_item","approach_block","bucket_fill","bucket_place","bottle_fill","material_slaughter_attack","material_ink_attack","planter_wheat_batch","recover_boat","villager_bread_drop").contains(command))
             throw new IllegalArgumentException("Native material command is not allowed: "+command);
         JsonObject request=params==null?new JsonObject():params.deepCopy();
         for(String protectedKey:List.of("id","op","task_session","server","dimension","site",
@@ -943,7 +943,7 @@ public final class AutomationBridge {
         }catch(Exception e){supervisionLease=null;KitClient.emergencyStop("托管安全监控读取失败");if(c.getSingleplayerServer()!=null)c.pauseGame(false);else KitClient.safeLogout(c,"托管状态异常，安全退出");}
     }
     private static String session(Minecraft c){
-        if(observedLevel!=c.level){ownedMaterialMenu=-1;inventoryInterfacePause.clear();observedLevel=c.level;worldSession=UUID.randomUUID().toString();survivalArmed=false;controlRevision++;}
+        if(observedLevel!=c.level){ownedMaterialMenu=-1;VillagerTrading.clear();inventoryInterfacePause.clear();observedLevel=c.level;worldSession=UUID.randomUUID().toString();survivalArmed=false;controlRevision++;}
         return worldSession;
     }
     private static void restoreGuardAfterReconnect(Minecraft c){
@@ -981,6 +981,7 @@ public final class AutomationBridge {
     }
     private static int ticks, deadline, desiredCount;
     private static int ownedMaterialMenu=-1;
+    private static final ProcessingMenuOpening processingMenuOpening=new ProcessingMenuOpening();
     public static void serverFurnaceContent(Object sender,int menuId,java.util.List<ItemStack> items){
         EmptyFurnaceRecovery.content(Minecraft.getInstance(),sender,menuId,items);
     }
@@ -1465,10 +1466,22 @@ public final class AutomationBridge {
     private static boolean ownsMaterialMenu(Minecraft c){
         if(active==null||!active.has("task_session")||c.player==null)return false;
         var menu=c.player.containerMenu;String command=str(active,"op");
-        if(command.equals("slot_click"))return active.has("menu_id")&&menu.containerId==active.get("menu_id").getAsInt();
+        if(command.equals("slot_click")||command.equals("processing_menu_select")||command.equals("merchant_select_trade"))return active.has("menu_id")&&menu.containerId==active.get("menu_id").getAsInt()
+            &&(!(menu instanceof net.minecraft.world.inventory.MerchantMenu)||VillagerTrading.owns(c,session(c),str(active,"task_session")));
+        if(command.equals("interact_entity")&&processingMenuOpening.pending(str(active,"id"))){
+            boolean owned=processingMenuOpening.observe(str(active,"id"),menu.getClass().getSimpleName(),menu.containerId,ticks,
+                currentMaterialRequest(c,active)&&!KitKeys.manualMovementDown(c));
+            if(owned){owned=VillagerTrading.adopt(c,session(c),str(active,"task_session"));if(owned)ownedMaterialMenu=menu.containerId;}
+            return owned;
+        }
         // An interact request is waiting for the server-opened container, so no menu id exists yet.
         if(command.equals("interact")){
-            boolean owned=menu instanceof net.minecraft.world.inventory.ChestMenu||menu instanceof net.minecraft.world.inventory.ShulkerBoxMenu||menu instanceof net.minecraft.world.inventory.CraftingMenu||menu instanceof net.minecraft.world.inventory.AbstractFurnaceMenu||menu instanceof net.minecraft.world.inventory.AnvilMenu||menu instanceof net.minecraft.world.inventory.BrewingStandMenu;
+            if(processingMenuOpening.pending(str(active,"id"))){
+                boolean owned=processingMenuOpening.observe(str(active,"id"),menu.getClass().getSimpleName(),menu.containerId,ticks,
+                    currentMaterialRequest(c,active)&&!KitKeys.manualMovementDown(c));
+                if(owned)ownedMaterialMenu=menu.containerId;return owned;
+            }
+            boolean owned=menu instanceof net.minecraft.world.inventory.ChestMenu||menu instanceof net.minecraft.world.inventory.ShulkerBoxMenu||menu instanceof net.minecraft.world.inventory.CraftingMenu||menu instanceof net.minecraft.world.inventory.AbstractFurnaceMenu||menu instanceof net.minecraft.world.inventory.AnvilMenu||menu instanceof net.minecraft.world.inventory.BrewingStandMenu||menu instanceof net.minecraft.world.inventory.LoomMenu||menu instanceof net.minecraft.world.inventory.StonecutterMenu;
             if(owned)ownedMaterialMenu=menu.containerId;return owned;
         }
         return false;
@@ -1615,6 +1628,9 @@ public final class AutomationBridge {
         if(c.gui.screen()!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyAttack.setDown(false);return true;}
         if(op.equals("mine_block")){
             try{guard(c,active);}catch(Exception e){finish(c,"stopped",e.getMessage());return true;}
+            if(ControlledWaterReleaseGuard.requested(active))try{
+                ControlledWaterReleaseGuard.require(c,active,singleBlockTarget(active),currentMaterialRequest(c,active)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),mineStarted);
+            }catch(Exception changed){finish(c,"waiting",changed.getMessage());return true;}
             if(dryPavingRequested(active))try{dryPavingRequestGuard(c,active);}
             catch(Exception e){finish(c,"waiting",e.getMessage());return true;}
             if(active.has("required_silk_shovel")&&active.get("required_silk_shovel").getAsBoolean()
@@ -1674,9 +1690,16 @@ public final class AutomationBridge {
                 try{terrainReplacementGuard(c,active);}
                 catch(Exception e){finish(c,"waiting",e.getMessage());return true;}
             }
+            if(dryRoofRequested(active)){
+                try{dryRoofMiningGuard(c,active,target);}
+                catch(Exception changed){finish(c,"waiting",changed.getMessage());return true;}
+            }
             if(!state(c,target).equals(str(active,"expected_state"))){finish(c,"error","mining target changed");return true;}
             if(active.has("recover_empty_furnace")&&active.get("recover_empty_furnace").getAsBoolean())
                 try{EmptyFurnaceRecovery.validateMining(c,active,target);}
+                catch(Exception changed){finish(c,"waiting",changed.getMessage());return true;}
+            if(active.has("reset_empty_lectern")&&active.get("reset_empty_lectern").getAsBoolean())
+                try{VillagerTrading.requireEmptyLecternReset(c,active,target,session(c),str(active,"task_session"),currentMaterialRequest(c,active)&&guardArmed()&&pveOnly()&&!guardBusy);}
                 catch(Exception changed){finish(c,"waiting",changed.getMessage());return true;}
             Vec3 aim=blockAim(target,active);if(c.player.getEyePosition().distanceTo(aim)>c.player.blockInteractionRange()-.2){finish(c,"waiting","mining target moved out of reach");return true;}RotationAim.Look look=RotationAim.lookAt(c.player,aim);RotationAim.apply(c.player,look);
             BlockHitResult hit=c.level.clip(new ClipContext(c.player.getEyePosition(),aim,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,c.player));
@@ -1990,6 +2013,11 @@ public final class AutomationBridge {
                         finish(c,"done","matching server block update acknowledged the dry paving placement");
                     else if(ticks>=deadline)
                         finish(c,"waiting","server block update missing or corrected; dry paving placement outcome unknown");
+                }else if(op.equals("settle") && processingMenuOpening.pending(str(active,"id"))){
+                    ownsMaterialMenu(c);
+                    if(processingMenuOpening.ready(str(active,"id"),ticks))finish(c,"done","owned processing menu observed after the original normal block use");
+                    else if(processingMenuOpening.cancelled(str(active,"id")))finish(c,"waiting","original processing menu or owner changed; block use is not repeated");
+                    else if(ticks>=deadline)finish(c,"waiting","original processing menu not observed; block use is not repeated");
                 }else if(op.equals("settle") && ticks>=deadline)finish(c,"done","server state available");
                 if(active!=null && ticks>=deadline && !op.equals("settle")){
                     boolean terrain=terrainReplaceRequested(active);
@@ -2066,6 +2094,10 @@ public final class AutomationBridge {
         JsonObject receipt=snapshot(c);
         receipt.addProperty("id",lastId);receipt.addProperty("phase",phase);receipt.addProperty("detail",detail);
         save(root(c).resolve("reply-"+safeId(lastId)+".json"),receipt);
+    }
+    private static boolean entityHitVisible(Minecraft c,Vec3 eye,Vec3 hit){
+        return c.level.clip(new ClipContext(eye,hit,ClipContext.Block.COLLIDER,
+            ClipContext.Fluid.NONE,c.player)).getType()==net.minecraft.world.phys.HitResult.Type.MISS;
     }
     private static void dispatch(Minecraft c,JsonObject r)throws Exception{
         var previousIdleRequest=idleDispatchRequest;idleDispatchRequest=r;
@@ -2580,6 +2612,31 @@ public final class AutomationBridge {
             phase="done";detail="guide updated; no movement";
         }else if(command.equals("look")){
             PlacementRotation.after(c,r.get("yaw").getAsFloat(),Math.max(-90,Math.min(90,r.get("pitch").getAsFloat())),null);phase="done";detail="rotation queued";
+        }else if(command.equals("processing_menu_select")){
+            ProcessingMenus.select(c,r,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&ownedMaterialMenu==c.player.containerMenu.containerId,KitKeys.manualMovementDown(c));
+            phase="done";detail="one vanilla processing-menu selection sent; verify result slot before claiming output";
+        }else if(command.equals("merchant_select_trade")){
+            VillagerTrading.select(c,r,session(c),str(r,"task_session"),
+                currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&ownedMaterialMenu==c.player.containerMenu.containerId,
+                KitKeys.manualMovementDown(c));
+            settle(r,8);
+        }else if(command.equals("attack_decoration")){
+            DecorationAttack.attack(c,r,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy,KitKeys.manualMovementDown(c));
+            phase="done";detail="one ordinary decoration attack sent; verify entity removal and item recovery";
+        }else if(command.equals("recover_boat")){
+            BoatRecovery.attack(c,r,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!loadedHostileNearby(c),KitKeys.manualMovementDown(c));
+            phase="done";detail="one ordinary boat attack sent; verify boat removal, passengers and recovered item";
+        }else if(command.equals("villager_bread_drop")){
+            var villager=VillagerFoodDrop.target(c,r,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!loadedHostileNearby(c),KitKeys.manualMovementDown(c));
+            var aim=RotationAim.lookAt(c.player,villager.position().add(0,villager.getBbHeight()*.55,0));
+            active=r.deepCopy();op="rotation";phase="running";deadline=ticks+40;
+            PlacementRotation.after(c,aim.yaw(),aim.pitch(),()->{
+                try{
+                    if(active==null||!str(active,"id").equals(str(r,"id")))return;guard(c,r);
+                    VillagerFoodDrop.drop(c,r,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!loadedHostileNearby(c),KitKeys.manualMovementDown(c));
+                    settle(r,8);
+                }catch(Exception failure){finish(c,"error",failure.getMessage());}
+            });
         }else if(command.equals("select_item")){
             if(c.player.containerMenu.containerId!=0)throw new IllegalStateException("Close the container before selecting a held item");
             String item=str(r,"item");var inventoryIds=new ArrayList<String>();
@@ -2599,6 +2656,7 @@ public final class AutomationBridge {
             c.gameMode.handleContainerInput(menu.containerId,-999,2,ContainerInput.QUICK_CRAFT,c.player);settle(r,8);
         }else if(command.equals("slot_click")){
             var menu=c.player.containerMenu;int slot=r.get("slot").getAsInt();
+            VillagerTrading.beforeClick(c,r,session(c),str(r,"task_session"),currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy);
             if(menu.containerId!=r.get("menu_id").getAsInt() || slot<0 || slot>=menu.slots.size())throw new IllegalStateException("Container changed");
             if(r.has("expected_cursor")!=r.has("expected_cursor_count"))throw new IllegalArgumentException("Expected cursor item and count must be supplied together");
             if(r.has("expected_cursor")&&(!itemId(menu.getCarried()).equals(str(r,"expected_cursor"))
@@ -2661,7 +2719,20 @@ public final class AutomationBridge {
                         dryPavingConfirmedTick=-1;
                     }
                     EmptyFurnaceRecovery.opening(c,currentMaterialRequest(c,r)?str(r,"task_session"):"",pos);
-                    c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,checkedHit);settle(r,terrainReplace||dryPaving?80:8);
+                    String expectedMenu=switch(BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(pos).getBlock()).toString()){
+                        case "minecraft:loom"->"LoomMenu";case "minecraft:stonecutter"->"StonecutterMenu";default->"";
+                    };
+                    boolean processing=!expectedMenu.isEmpty()&&currentMaterialRequest(c,r)
+                        &&c.player.containerMenu==c.player.inventoryMenu&&c.player.containerMenu.getCarried().isEmpty();
+                    if(processing)processingMenuOpening.begin(str(r,"id"),expectedMenu,c.player.containerMenu.containerId);
+                    // Boats use the ordinary item ray; BoatItem has no block-use implementation.
+                    // Send exactly one use rather than a block packet followed by a fallback.
+                    if(c.player.getMainHandItem().getItem() instanceof net.minecraft.world.item.BoatItem){
+                        if(!currentMaterialRequest(c,r)||!guardArmed()||!pveOnly()||guardBusy||loadedHostileNearby(c)||c.player.getHealth()<19)
+                            throw new IllegalStateException("Boat placement requires the healthy owned material controller");
+                        c.gameMode.useItem(c.player,InteractionHand.MAIN_HAND);
+                    }else c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,checkedHit);
+                    settle(r,processing?400:terrainReplace||dryPaving?80:8);
                 }catch(Exception e){finish(c,"error",e.getMessage());}
             });
         }else if(command.equals("mine_block") || command.equals("recover_shulker")){
@@ -2700,6 +2771,13 @@ public final class AutomationBridge {
                     ||!r.getAsJsonPrimitive("recover_empty_furnace").isBoolean()))
                 throw new IllegalArgumentException("Empty furnace retrieval flag must be boolean");
             boolean furnaceRecovery=command.equals("mine_block")&&r.has("recover_empty_furnace")&&r.get("recover_empty_furnace").getAsBoolean();
+            if(r.has("reset_empty_lectern")&&(!r.get("reset_empty_lectern").isJsonPrimitive()
+                    ||!r.getAsJsonPrimitive("reset_empty_lectern").isBoolean()))throw new IllegalArgumentException("Lectern reset flag must be boolean");
+            boolean lecternReset=command.equals("mine_block")&&r.has("reset_empty_lectern")&&r.get("reset_empty_lectern").getAsBoolean();
+            if(lecternReset){
+                if(recovery||furnaceRecovery||dryPaving||terrainReplace||dryRoofRequested(r))throw new IllegalArgumentException("Lectern reset cannot combine mining exceptions");
+                VillagerTrading.requireEmptyLecternReset(c,r,pos,session(c),str(r,"task_session"),currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&c.player.getHealth()>=19);
+            }
             boolean underwater=r.has("underwater_gravel")&&r.get("underwater_gravel").getAsBoolean();
             if(underwater){
                 if(supervisionLease==null||!str(supervisionLease,"kind").equals("materials")
@@ -2724,7 +2802,7 @@ public final class AutomationBridge {
             }
             boolean allowed=ContainerRecoveryPolicy.allowed(BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(pos).getBlock()).toString(),recovery,c.player.getInventory().getFreeSlot()>=0?1:0);
             if(recovery && !allowed)throw new IllegalStateException("Shulker retrieval requires an actual shulker box and a free inventory slot");
-            if(c.level.getBlockEntity(pos)!=null && !allowed && !furnaceRecovery)throw new IllegalStateException("Block entities and containers are protected");
+            if(c.level.getBlockEntity(pos)!=null && !allowed && !furnaceRecovery&&!lecternReset)throw new IllegalStateException("Block entities and containers are protected");
             if(c.level.getBlockState(pos).getDestroySpeed(c.level,pos)<0 || c.level.isEmptyBlock(pos))throw new IllegalStateException("Target is not mineable");
             if(c.player.onGround() && c.player.blockPosition().below().equals(pos)){
                 boolean ownedMaterial=supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")
@@ -2735,10 +2813,24 @@ public final class AutomationBridge {
                         c.player.getHealth(),c.player.getAirSupply(),airEstimate(c).workFloor()))
                     throw new IllegalStateException("Current footing is protected");
             }
-            if(!underwater)for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
+            boolean dryRoof=dryRoofRequested(r);
+            if(dryRoof){
+                if(underwater||recovery||furnaceRecovery||dryPaving||terrainReplace)
+                    throw new IllegalArgumentException("Dry roof mining cannot combine other excavation exceptions");
+                dryRoofMiningGuard(c,r,pos);
+            }
+            boolean controlledRelease=ControlledWaterReleaseGuard.requested(r);
+            if(controlledRelease){
+                if(underwater||dryRoof||recovery||furnaceRecovery||lecternReset||dryPaving||terrainReplace)
+                    throw new IllegalArgumentException("Controlled water release cannot combine excavation exceptions");
+                ControlledWaterReleaseGuard.require(c,r,pos,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),false);
+            }
+            if(!underwater&&!dryRoof&&!controlledRelease)for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
             if(c.player.getEyePosition().distanceTo(blockAim(pos,r))>c.player.blockInteractionRange()-.2)throw new IllegalStateException("Mining target out of reach");
             if(furnaceRecovery)EmptyFurnaceRecovery.prepare(c,r,pos,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy
                 &&c.player.getHealth()>=19&&c.player.getFoodData().getFoodLevel()>=18&&!KitKeys.manualMovementDown(c));
+            // A refused target must not stop work and invalidate the material lease.
+            if(!terrainReplace&&!dryPaving)ordinaryMiningConfirmation.requireAvailable(c,session(c),pos);
             KitClient.stopWork("切换到指定方块修正");
             if(terrainReplace)terrainServerConfirmation.begin(session(c),str(r,"id"),
                 str(r,"terrain_replace_stage"),terrainAckTarget(r),terrainAckExpected(r));
@@ -2747,7 +2839,7 @@ public final class AutomationBridge {
                     dryPavingAckTarget(r),dryPavingAckExpected(r));
                 dryPavingConfirmedTick=-1;dryPavingClientAirTick=-1;
             }
-            if(!terrainReplace&&!dryPaving)ordinaryMiningConfirmation.begin(c,session(c),str(r,"id"),pos,underwater);
+            if(!terrainReplace&&!dryPaving)ordinaryMiningConfirmation.begin(c,session(c),str(r,"id"),pos,underwater,controlledRelease);
             active=r.deepCopy();active.addProperty("single_block_world",session(c));op="mine_block";phase="running";detail="mining the verified target";mineStarted=false;deadline=ticks+20*Math.min(20,r.has("seconds")?r.get("seconds").getAsInt():10);
         }else if(command.equals("projection_scaffold_fill")){
             if(!r.has("task_session")||!currentMaterialRequest(c,r)||!guardArmed()||!pveOnly()||guardBusy
@@ -2842,11 +2934,21 @@ public final class AutomationBridge {
         }else if(command.equals("interact_entity")){
             var entity=c.level.getEntity(r.get("entity_id").getAsInt());
             if(entity==null || !entity.getUUID().toString().equals(str(r,"expected_uuid")))throw new IllegalStateException("Entity changed");
-            Vec3 hit=entity.position().add(0,entity.getBbHeight()*.55,0);
+            if(r.has("expected_hand")&&!itemId(c.player.getMainHandItem()).equals(str(r,"expected_hand")))throw new IllegalStateException("Held entity interaction item changed");
+            Vec3 eye=c.player.getEyePosition();
+            var target=EntityInteractionTarget.find(entity.getBoundingBox(),eye,c.player.entityInteractionRange(),
+                point->entityHitVisible(c,eye,point));
+            if(target.hit()==null)throw new IllegalStateException(target.inRange()?"Entity is occluded":"Entity out of reach");
+            Vec3 hit=target.hit();
             if(c.player.getEyePosition().distanceTo(hit)>c.player.entityInteractionRange())throw new IllegalStateException("Entity out of reach");
+            boolean merchant=entity instanceof net.minecraft.world.entity.npc.villager.Villager&&currentMaterialRequest(c,r);
+            if(merchant){
+                VillagerTrading.opening(c,entity,session(c),str(r,"task_session"),str(r,"id"));
+                processingMenuOpening.begin(str(r,"id"),"MerchantMenu",c.player.containerMenu.containerId);
+            }
             RotationAim.apply(c.player,RotationAim.lookAt(c.player,hit));
             c.gameMode.interact(c.player,entity,new EntityHitResult(entity,hit),InteractionHand.MAIN_HAND);
-            phase="done";detail="entity interaction sent; verify resulting world state";
+            if(merchant)settle(r,400);else{phase="done";detail="entity interaction sent; verify resulting world state";}
         }else if(command.equals("close_menu")){
             if(!c.player.containerMenu.getCarried().isEmpty())throw new IllegalStateException("Cursor holds an item");c.player.closeContainer();phase="done";detail="menu closed";
         }else throw new IllegalArgumentException("Unknown operation");
@@ -2922,6 +3024,47 @@ public final class AutomationBridge {
             if(active==null&&lastId.equals(id)){statusId=id;op="inventory_probe";phase=good?"done":"waiting";detail=str(out,"detail");writeStatus(c);}
         }catch(Exception failure){KitClient.LOGGER.warn("[Inventory] read-only probe receipt could not be saved",failure);}
     }
+    private static boolean dryRoofRequested(JsonObject request){
+        if(request==null||!request.has("dry_roof_water_below"))return false;
+        if(!request.get("dry_roof_water_below").isJsonPrimitive()
+                ||!request.getAsJsonPrimitive("dry_roof_water_below").isBoolean())
+            throw new IllegalArgumentException("Dry roof water-below permission must be boolean");
+        return request.get("dry_roof_water_below").getAsBoolean();
+    }
+    private static void dryRoofMiningGuard(Minecraft c,JsonObject request,BlockPos target){
+        var block=c.level.getBlockState(target);String name=BuiltInRegistries.BLOCK.getKey(block.getBlock()).toString();
+        boolean natural=Set.of("minecraft:stone","minecraft:granite","minecraft:diorite","minecraft:andesite",
+            "minecraft:deepslate","minecraft:tuff","minecraft:calcite","minecraft:dripstone_block").contains(name)
+            &&block.getFluidState().isEmpty()&&c.level.getBlockEntity(target)==null;
+        var below=c.level.getFluidState(target.below());
+        boolean source=below.is(net.minecraft.tags.FluidTags.WATER)&&below.isSource();
+        boolean otherFluid=false,unstable=false;
+        for(Direction direction:Direction.values()){
+            BlockPos neighbour=target.relative(direction);
+            if(!c.level.hasChunkAt(neighbour))throw new IllegalStateException("Dry roof neighbourhood is not loaded");
+            var adjacent=c.level.getBlockState(neighbour);
+            if(direction!=Direction.DOWN&&!adjacent.getFluidState().isEmpty())otherFluid=true;
+            String adjacentName=BuiltInRegistries.BLOCK.getKey(adjacent.getBlock()).toString();
+            if(adjacent.getBlock() instanceof net.minecraft.world.level.block.FallingBlock
+                    ||Set.of("minecraft:pointed_dripstone","minecraft:torch","minecraft:wall_torch",
+                        "minecraft:soul_torch","minecraft:soul_wall_torch","minecraft:redstone_torch",
+                        "minecraft:redstone_wall_torch","minecraft:fire","minecraft:soul_fire",
+                        "minecraft:magma_block","minecraft:cactus","minecraft:campfire","minecraft:soul_campfire").contains(adjacentName))unstable=true;
+        }
+        ItemStack held=c.player.getMainHandItem();
+        boolean pick=(held.is(net.minecraft.world.item.Items.DIAMOND_PICKAXE)
+            ||held.is(net.minecraft.world.item.Items.NETHERITE_PICKAXE))&&!silk(held)
+            &&held.getMaxDamage()-held.getDamageValue()>=96;
+        boolean safe=currentMaterialRequest(c,request)&&guardArmed()&&pveOnly()&&!guardBusy
+            &&!KitKeys.manualMovementDown(c)&&c.gui.screen()==null&&c.player.containerMenu==c.player.inventoryMenu
+            &&c.player.containerMenu.getCarried().isEmpty()&&c.player.getHealth()>=20
+            &&c.player.getFoodData().getFoodLevel()>=18&&c.player.getAirSupply()>=c.player.getMaxAirSupply()
+            &&!c.player.isInWater()&&!c.player.isUnderWater()&&!c.player.isInLava()&&!c.player.isOnFire()
+            &&MeteorModules.isActive(MeteorModules.FLIGHT);
+        String reason=DryRoofMiningPolicy.rejection(currentMaterialRequest(c,request),safe,natural,source,
+            otherFluid,unstable,c.player.blockPosition().below().equals(target),pick);
+        if(reason!=null)throw new IllegalStateException(reason);
+    }
     private static boolean ordinaryMiningRequested(JsonObject request){
         return request!=null&&Set.of("mine_block","recover_shulker").contains(str(request,"op"))
             &&!terrainReplaceRequested(request)&&!dryPavingRequested(request);
@@ -2954,6 +3097,7 @@ public final class AutomationBridge {
         proof.addProperty("confirmation_scope",confirmed?ordinaryMiningConfirmation.scope():"none");
         proof.addProperty("requested_confirmation_scope",ordinaryMiningConfirmation.scope());
         proof.addProperty("outcome_pending",sequence>=0&&!confirmed);
+        proof.addProperty("controlled_water_release",ControlledWaterReleaseGuard.requested(request));
         proof.addProperty("server_update_seen",ordinaryMiningConfirmation.serverUpdateSeen(c,world,id,target));
         String observed=ordinaryMiningConfirmation.serverState(c,world,id,target);
         if(observed!=null)proof.addProperty("server_observed_state",observed);
@@ -3375,11 +3519,14 @@ public final class AutomationBridge {
             boolean otherWork=active!=null||KitClient.anyAfkAuto()||KitClient.borer().isActive()||KitClient.controller().isActive()
                 ||KitClient.chopper().isActive()||ProfessionalPrinter.owned()||c.gui.screen()!=null
                 ||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty();
+            var inkAir=airEstimate(c);
+            boolean inkEnvironment=InkAttackPolicy.environment(c.player.isInWater(),c.player.isOnFire(),
+                c.player.getAirSupply(),inkAir.workFloor());
             if(!SlaughterPolicy.safe(guardArmed()&&pveOnly(),guardBusy||loadedHostileNearby(c),KitKeys.manualMovementDown(c),
                     dev.twob2tkit.combat.EmergencyExit.held(c),c.gameMode.getPlayerMode()==net.minecraft.world.level.GameType.SURVIVAL,
                     c.player.getHealth(),c.player.getFoodData().getFoodLevel(),c.player.onGround(),c.player.isUsingItem(),
-                    c.player.hurtTime>0,c.player.isInWater()||c.player.isOnFire(),otherWork,ordinaryWeapon,sweepClear))
-                throw new IllegalStateException("Ink attack requires idle healthy dry airborne PvE guard and an isolated target");
+                    c.player.hurtTime>0,!inkEnvironment,otherWork,ordinaryWeapon,sweepClear))
+                throw new IllegalStateException("Ink attack requires idle healthy PvE guard, an isolated target and sufficient dive oxygen");
             Vec3 hit=squid.position().add(0,squid.getBbHeight()*.5,0);
             if(!SlaughterPolicy.aim(observed.getId()==id&&observed.getUUID().equals(uuid),c.player.hasLineOfSight(squid),
                     c.player.getEyePosition().distanceTo(hit),c.player.entityInteractionRange(),c.player.getAttackStrengthScale(0)))
@@ -3388,6 +3535,9 @@ public final class AutomationBridge {
             lastInkAttack=new JsonObject();lastInkAttack.addProperty("id",str(request,"id"));
             lastInkAttack.addProperty("world_session",session(c));lastInkAttack.addProperty("expected_uuid",uuid.toString());
             lastInkAttack.addProperty("entity_id",id);lastInkAttack.addProperty("target_health_before",squid.getHealth());
+            lastInkAttack.addProperty("in_water",c.player.isInWater());
+            lastInkAttack.addProperty("air_before",c.player.getAirSupply());
+            lastInkAttack.addProperty("air_work_floor",inkAir.workFloor());
             lastInkAttack.addProperty("result_scope","normal_attack_dispatch_only");
             lastInkAttack.addProperty("dispatch_started",true);lastInkAttack.addProperty("automatic_retry_allowed",false);
             dispatchStarted=true;c.gameMode.attack(c.player,squid);c.player.swing(InteractionHand.MAIN_HAND);
@@ -4147,6 +4297,11 @@ public final class AutomationBridge {
             entityBounds.add("min",JSON.toJsonTree(new double[]{actual.minX,actual.minY,actual.minZ}));
             entityBounds.add("max",JSON.toJsonTree(new double[]{actual.maxX,actual.maxY,actual.maxZ}));row.add("bounds",entityBounds);
             if(e instanceof net.minecraft.world.entity.LivingEntity living){row.addProperty("is_baby",living.isBaby());row.addProperty("has_custom_name",living.hasCustomName());row.addProperty("health",living.getHealth());}
+            if(e instanceof net.minecraft.world.entity.npc.villager.Villager villager)row.add("villager",VillagerTrading.entity(villager));
+            if(e instanceof net.minecraft.world.entity.animal.sheep.Sheep sheep){
+                var observed=new JsonObject();observed.addProperty("color",sheep.getColor().getName());
+                observed.addProperty("sheared",sheep.isSheared());observed.addProperty("ready_for_shearing",sheep.readyForShearing());row.add("sheep",observed);
+            }
             rows.add(row);
         }
         return rows;
@@ -4180,6 +4335,7 @@ public final class AutomationBridge {
     private static void addItemDetails(JsonObject target,ItemStack item){
         target.addProperty("max_stack",item.getMaxStackSize());
         MapAutomation.addItemDetails(target,item);
+        if(itemId(item).endsWith("_banner"))target.add("banner_patterns",ProjectionDecorations.patterns(item.getOrDefault(net.minecraft.core.component.DataComponents.BANNER_PATTERNS,net.minecraft.world.level.block.entity.BannerPatternLayers.EMPTY)));
         if(item.isDamageableItem()){
             target.addProperty("durability",item.getMaxDamage()-item.getDamageValue());
             target.addProperty("max_durability",item.getMaxDamage());
@@ -4191,7 +4347,7 @@ public final class AutomationBridge {
         if(potion!=null)target.addProperty("water_breathing",
             potion.is(Potions.WATER_BREATHING)||potion.is(Potions.LONG_WATER_BREATHING));
     }
-    private static JsonObject stack(ItemStack s){
+    static JsonObject stack(ItemStack s){
         JsonObject j=new JsonObject();j.addProperty("item",itemId(s));j.addProperty("count",s.getCount());
         addItemDetails(j,s);
         var contents=s.get(net.minecraft.core.component.DataComponents.CONTAINER);
@@ -4220,6 +4376,7 @@ public final class AutomationBridge {
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
         j.addProperty("client_connection_protocol",1);j.addProperty("account_name",c.getUser().getName());
         j.addProperty("inventory_click_protocol",InventoryDiagnostics.PROTOCOL);j.addProperty("inventory_probe_protocol",InventoryDiagnostics.PROTOCOL);
+        j.addProperty("processing_menu_protocol",ProcessingMenus.PROTOCOL);j.addProperty("decoration_attack_protocol",1);
         j.add("auto_refill_guard",AutoRefillCompatibility.snapshot());
         if(inventoryClick!=null&&inventoryClick.requestId.equals(statusId)){
             j.add("inventory_click_receipt",inventoryClick.receipt(c,session(c),controlRevision,false));j.addProperty("outcome_pending",true);
@@ -4241,6 +4398,7 @@ public final class AutomationBridge {
         j.addProperty("interface_pause_protocol",1);j.addProperty("interface_paused",interfacePaused(c));j.addProperty("inventory_interface_pause_protocol",1);j.addProperty("inventory_interface_paused",inventoryInterfacePause.held()&&!nativeAirReturnActive);
         j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("job_hud_protocol",1);j.addProperty("quarry_protocol",1);j.addProperty("raw_iron_block_quarry_protocol",1);j.addProperty("tree_survey_protocol",1);j.addProperty("snow_biome_survey_protocol",SnowBiomeSurvey.PROTOCOL);j.addProperty("snow_seed_locator_protocol",SnowSeedExpedition.PROTOCOL);j.addProperty("snow_seed_locator_available",KitClient.seedScout()!=null&&KitClient.seedScout().hasStoredWorldSeed());j.addProperty("material_protocol",2);j.addProperty("air_return_protocol",1);j.addProperty("horse_nudge_protocol",1);j.addProperty("inventory_cursor_precondition_protocol",1);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("material_mining_isolation_protocol",1);j.addProperty("material_mining_cleanup_pending",materialMiningCleanupPending);j.add("material_mining_isolation",MaterialMiningLease.snapshot(materialMiningLease,!materialMiningScope(c).isEmpty()&&materialMiningScope(c).equals(materialMiningOwner)));j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("freefall_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",4);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.gui.screen()==null?"":c.gui.screen().getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
         j.addProperty("fixed_tree_chop_protocol",1);
+        j.addProperty("dry_roof_mining_protocol",1);
         j.addProperty("sapling_retention_chop_protocol",1);
         var gravelState=GravelCollector.snapshot();
         if(nativeMaterialOwner!=null&&GravelCollector.isActive())gravelState.addProperty("session",nativeMaterialOwner.job);
@@ -4268,6 +4426,9 @@ public final class AutomationBridge {
         }
         if(c.player==null || c.level==null)return j;
         j.addProperty("difficulty",c.level.getDifficulty().name().toLowerCase(Locale.ROOT));
+        j.addProperty("merchant_trade_protocol",VillagerTrading.PROTOCOL);
+        j.add("loaded_villagers",VillagerTrading.loaded(c));
+        j.addProperty("villager_trade_rebalance",c.level.enabledFeatures().contains(net.minecraft.world.flag.FeatureFlags.TRADE_REBALANCE));
         j.addProperty("player_name",c.player.getGameProfile().name());j.addProperty("player_uuid",c.player.getUUID().toString());j.addProperty("experience_level",c.player.experienceLevel);
         c.player.getLastDeathLocation().ifPresent(death->{var marker=new JsonObject();marker.addProperty("dimension",death.dimension().identifier().toString());marker.add("pos",JSON.toJsonTree(new int[]{death.pos().getX(),death.pos().getY(),death.pos().getZ()}));j.add("server_last_death",marker);});
         j.addProperty("attack_strength",c.player.getAttackStrengthScale(0));
@@ -4312,6 +4473,10 @@ public final class AutomationBridge {
         JsonObject equipment=new JsonObject();equipment.add("head",snapshotStack("equipment:head",c.player.getItemBySlot(EquipmentSlot.HEAD)));equipment.add("chest",snapshotStack("equipment:chest",c.player.getItemBySlot(EquipmentSlot.CHEST)));equipment.add("legs",snapshotStack("equipment:legs",c.player.getItemBySlot(EquipmentSlot.LEGS)));equipment.add("feet",snapshotStack("equipment:feet",c.player.getItemBySlot(EquipmentSlot.FEET)));j.add("equipment",equipment);
         JsonObject m=new JsonObject();m.addProperty("id",menu.containerId);m.addProperty("type",menu.getClass().getSimpleName());m.add("cursor",snapshotStack("cursor",menu.getCarried()));JsonArray slots=new JsonArray();
         for(int i=0;i<menu.slots.size();i++){JsonObject s=snapshotStack("menu:"+i,menu.getSlot(i).getItem());s.addProperty("slot",i);slots.add(s);}m.add("slots",slots);
+        m.addProperty("material_owned",ownedMaterialMenu==menu.containerId&&menu.containerId>0&&supervisionLease!=null&&str(supervisionLease,"kind").equals("materials")&&str(supervisionLease,"world_session").equals(session(c)));
+        var processing=ProcessingMenus.snapshot(c,menu);if(processing.has("kind"))m.add("processing",processing);
+        var merchant=VillagerTrading.snapshot(c,menu,session(c),supervisionLease==null?"":str(supervisionLease,"job_session"));
+        if(merchant.has("protocol"))m.add("merchant",merchant);
         if(menu instanceof net.minecraft.world.inventory.AnvilMenu anvil){
             m.addProperty("anvil_cost",anvil.getCost());
             m.addProperty("anvil_result_present",anvil.getSlot(net.minecraft.world.inventory.AnvilMenu.RESULT_SLOT).hasItem());
@@ -4320,7 +4485,9 @@ public final class AutomationBridge {
         }
         j.add("menu",m);j.addProperty("map_audit_protocol",1);j.addProperty("map_create_protocol",1);
         j.addProperty("empty_furnace_recovery_protocol",1);j.add("empty_furnace_recovery",EmptyFurnaceRecovery.snapshot(c));
-        j.addProperty("projection_air_seed_protocol",1);j.addProperty("projection_air_seed_axis_protocol",1);j.addProperty("air_place",MeteorModules.isActive(MeteorModules.AIR_PLACE));
+        j.addProperty("village_boat_protocol",1);j.addProperty("empty_lectern_reset_protocol",2);j.addProperty("villager_bread_drop_protocol",1);
+        j.addProperty("boat_food_animal_recovery_protocol",1);
+        j.addProperty("projection_air_seed_protocol",1);j.addProperty("projection_air_seed_axis_protocol",1);j.addProperty("air_place",MeteorModules.isActive(MeteorModules.AIR_PLACE));j.addProperty("controlled_water_release_protocol",1);
         j.addProperty("projection_scaffold_fill_protocol",1);
         j.addProperty("bucket_water_protocol",1);
         j.addProperty("bottle_water_protocol",1);

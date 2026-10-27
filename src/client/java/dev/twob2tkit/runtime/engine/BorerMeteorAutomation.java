@@ -17,6 +17,7 @@ final class BorerMeteorAutomation {
 	BorerMeteorAutomation() { this(BorerMeteorAutomation::find); }
 	BorerMeteorAutomation(Lookup lookup) { this.lookup = lookup; }
 
+
 	Meal meal() {
 		try {
 			if (gap == null) gap = handle("player.AutoGap");

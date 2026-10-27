@@ -14,6 +14,9 @@ public final class PrinterStateConfirmation {
         for(var property:expected.getProperties()){
             String name=property.getName();
             if(connections&&Set.of("north","south","east","west","up").contains(name))continue;
+            // Wire shape follows the currently built neighbors. Completing a row
+            // can change these connections after its individual placement ACK.
+            if(expected.getBlock() instanceof RedStoneWireBlock&&Set.of("north","south","east","west").contains(name))continue;
             // Leaf distance is recomputed from neighboring logs after placement;
             // it can legitimately change as the rest of the projection is built.
             if(persistentLeaves&&name.equals("distance"))continue;
@@ -34,6 +37,7 @@ public final class PrinterStateConfirmation {
                     &&(!predicted.hasProperty(property)||!Objects.equals(goal.getValue(property),predicted.getValue(property))))sameOtherProperties=false;
             if(sameOtherProperties)return predicted;
         }
+        if(goal.getBlock() instanceof FlowerPotBlock&&!goal.is(Blocks.FLOWER_POT)&&predicted.is(Blocks.FLOWER_POT))return predicted;
         String wanted=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(goal.getBlock()).toString();
         String placed=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(predicted.getBlock()).toString();
         boolean stripping=placed.startsWith("minecraft:")&&wanted.equals("minecraft:stripped_"+placed.substring("minecraft:".length()));

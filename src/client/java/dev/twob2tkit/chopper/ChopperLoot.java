@@ -11,8 +11,10 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.AxeItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.ShearsItem;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -397,6 +399,7 @@ public final class ChopperLoot {
 			ChopperKeys.holdStill(client);
 			return true;
 		}
+		ChopperTools.require(client, collectLeaves ? ShearsItem.class : AxeItem.class);
 		client.hitResult = freshHit;
 		client.crosshairPickEntity = null;
 		if (fresh || leafObstacleTicks > 0 && leafObstacleTicks % LEAF_RETRY_TICKS == 0) {

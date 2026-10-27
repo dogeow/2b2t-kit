@@ -216,6 +216,7 @@ final class BorerMobs {
 		BorerThreats.Loadout loadout = BorerThreats.loadout(player);
 		for (Entity entity : client.level.getEntities(player, box)) {
 			if (!(entity instanceof Enemy) || !entity.isAlive()) continue;
+			if (engine.captureProtection.protects(entity)) continue;
 			if (!engine.engagement.shouldReact(player, entity)) continue;
 			if (player.distanceTo(entity) > radius) continue;
 			if (anyHostile) {

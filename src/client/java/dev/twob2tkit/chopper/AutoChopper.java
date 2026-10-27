@@ -20,6 +20,8 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ShearsItem;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.animal.golem.IronGolem;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
@@ -45,8 +47,6 @@ import dev.twob2tkit.KitKeys;
 public final class AutoChopper {
 	/** 挖树主机逻辑版本（打进诊断日志）。 */
 	public static final String VERSION = "1.9.54";
-	/** 无进度时多久再点一次攻击（tick）。 */
-	private static final int RETRY_TICKS = 40;
 	/** 挖不动多久跳过这块（tick）。 */
 	private static final int STALL_TICKS = 200;
 	/** 走近卡住多久换树（tick）。 */
@@ -94,9 +94,6 @@ public final class AutoChopper {
 	private boolean currentTreeOpen;
 	private int logTicks;
 	private String lastFileLog = "";
-	private double flightHorizBest = Double.MAX_VALUE;
-	private int flightHorizTicks;
-	private BlockPos flightDest;
 
 	public AutoChopper(KitConfig config) {
 		this.config = config;
@@ -490,7 +487,6 @@ public final class AutoChopper {
 			if (mineTarget != null && mineTarget.equals(pos)) mineTarget = null;
 			return false;
 		}
-		boolean fresh = !pos.equals(mineTarget) || mineTicks == 0;
 		if (!pos.equals(mineTarget)) {
 			mineTarget = pos.immutable();
 			mineTicks = 0;
@@ -532,7 +528,10 @@ public final class AutoChopper {
 			ChopperKeys.releaseMine(client);
 			return false;
 		}
-		selectTool(client, aimed.getBlockPos());
+		if (!selectTool(client, aimed.getBlockPos())) {
+			stop(client,"没有可安全使用的工具或空手槽位，已停止以保留工具耐久");
+			return false;
+		}
 		client.hitResult = aimed;
 		client.crosshairPickEntity = null;
 		client.options.keyAttack.setDown(false);
@@ -546,13 +545,14 @@ public final class AutoChopper {
 		return true;
 	}
 
-	/** Returning beside the sapling is part of completion, before and after replant. */
+	/** Stable arrival beside the sapling is required before and after replant. */
 	private boolean ensureFixedStandby(Minecraft client,LocalPlayer player){
 		if(fixedTree==null)return false;
 		try{
 			if(!scaffold.safeStandby(client,fixedStandby))throw new IllegalStateException("固定树旁侧站位已变化，未计为完成");
 			Vec3 center=Vec3.atBottomCenterOf(fixedStandby);
-			if(player.onGround()&&player.position().distanceToSqr(center)<.04
+			var velocity=player.getDeltaMovement();
+			if(ChopperStandbyPolicy.arrived(true,player.position().distanceToSqr(center),Math.hypot(velocity.x,velocity.z),velocity.y)
 				&&fixedTree.outsideFutureTrunk(player.getX(),player.getZ(),materialLog))return false;
 			scaffold.returnToStandby(client,fixedStandby);
 			fileLog(client,"fixed-tree-return standby="+format(fixedStandby));
@@ -618,9 +618,9 @@ public final class AutoChopper {
 	}
 
 	/**
-	 * 走近目标格：卡住则整棵忽略；可选飞行。
+	 * 经已验证的工作位路线接近；无法到达时停止或推迟补种。
 	 *
-	 * @return false 卡住已放弃；true 本拍已写入移动
+	 * @return false 已交给工作位流程、停止或推迟；true 正在返回补种站位
 	 */
 	private boolean approach(Minecraft client, LocalPlayer player, BlockPos dest) {
 		if (player.isPassenger()) {
@@ -732,9 +732,6 @@ public final class AutoChopper {
 		lastDestroyStage = -1;
 		approach.reset();
 		mineLook = null;
-		flightDest = null;
-		flightHorizBest = Double.MAX_VALUE;
-		flightHorizTicks = 0;
 		ChopperKeys.resetSmoothLook();
 		combatPauseTicks = 0;
 		currentTreeOpen = false;
@@ -745,7 +742,7 @@ public final class AutoChopper {
 	private boolean updateCombatPause(Minecraft client, LocalPlayer player) {
 		String combat = BorerThreats.combatPauseReason(player);
 		String nearby = nearbyHostile(client, player);
-		if (combat != null || nearby != null) combatPauseTicks = 40;
+		if (ChopperCombatPolicy.shouldPause(combat != null, nearby != null)) combatPauseTicks = 40;
 		if (combatPauseTicks <= 0) return false;
 		combatPauseTicks--;
 		mineLook = null;
@@ -758,17 +755,36 @@ public final class AutoChopper {
 		return true;
 	}
 
-	/** 半径内最近敌对生物显示名；没有则 null。 */
+	/** 半径内敌对生物或已交战傀儡的显示名；没有则 null。 */
 	private static String nearbyHostile(Minecraft client, LocalPlayer player) {
 		if (client.level == null) return null;
-		double radius = 8.0;
+		double radius = ChopperCombatPolicy.RADIUS;
 		AABB box = player.getBoundingBox().inflate(radius);
+		Entity auraTarget = activeAuraTarget();
 		for (Entity entity : client.level.getEntities(player, box)) {
-			if (!(entity instanceof Enemy) || !entity.isAlive()) continue;
+			if (!entity.isAlive()) continue;
 			if (player.distanceTo(entity) > radius) continue;
+			boolean recentAttacker = ChopperCombatPolicy.recentAttacker(entity == player.getLastHurtByMob(),
+				player.tickCount - player.getLastHurtByMobTimestamp());
+			if (!ChopperCombatPolicy.isThreat(entity instanceof Enemy, entity instanceof IronGolem,
+				entity instanceof Mob mob && mob.getTarget() == player, recentAttacker, entity == auraTarget)) continue;
 			return entity.getName().getString();
 		}
 		return null;
+	}
+
+	/** 可选 Meteor 集成只读当前目标，不修改模块开关或用户的目标设置。 */
+	private static Entity activeAuraTarget() {
+		try {
+			Class<?> registry = Class.forName("meteordevelopment.meteorclient.systems.modules.Modules");
+			Class<?> type = Class.forName(dev.twob2tkit.MeteorModules.KILL_AURA);
+			Object module = registry.getMethod("get", Class.class).invoke(registry.getMethod("get").invoke(null), type);
+			if (module == null || !Boolean.TRUE.equals(type.getMethod("isActive").invoke(module))) return null;
+			Object target = type.getMethod("getTarget").invoke(module);
+			return target instanceof Entity entity ? entity : null;
+		} catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+			return null;
+		}
 	}
 
 	/** 目标仍是可砍原木，或（勾选/还在砍树时）可砍树叶。 */
@@ -783,48 +799,11 @@ public final class AutoChopper {
 
 	/** 树叶换剪刀，否则换斧。 */
 	private static boolean disposableGrass(BlockState state) { return state.is(net.minecraft.world.level.block.Blocks.SHORT_GRASS) || state.is(net.minecraft.world.level.block.Blocks.FERN); }
-	private void selectTool(Minecraft client, BlockPos pos) {
+	private boolean selectTool(Minecraft client, BlockPos pos) {
 		if (client.level != null && client.level.getBlockState(pos).is(BlockTags.LEAVES)) {
-			if(leavesEnabled())selectShears(client);else selectAxe(client);
-			return;
+			return ChopperTools.select(client, leavesEnabled() ? ShearsItem.class : AxeItem.class);
 		}
-		selectAxe(client);
-	}
-
-	/** 快捷栏或背包换出斧子。 */
-	private void selectAxe(Minecraft client) {
-		LocalPlayer player = client.player;
-		if (player.getMainHandItem().getItem() instanceof AxeItem) return;
-		Inventory inventory = player.getInventory();
-		for (int slot = 0; slot < 9; slot++) {
-			if (inventory.getItem(slot).getItem() instanceof AxeItem) {
-				inventory.setSelectedSlot(slot);
-				return;
-			}
-		}
-		for (int slot = 9; slot < 36; slot++) {
-			if (!(inventory.getItem(slot).getItem() instanceof AxeItem)) continue;
-			client.gameMode.handleContainerInput(player.containerMenu.containerId, slot, inventory.getSelectedSlot(), ContainerInput.SWAP, player);
-			return;
-		}
-	}
-
-	/** 快捷栏或背包换出剪刀。 */
-	private void selectShears(Minecraft client) {
-		LocalPlayer player = client.player;
-		if (player.getMainHandItem().getItem() instanceof ShearsItem) return;
-		Inventory inventory = player.getInventory();
-		for (int slot = 0; slot < 9; slot++) {
-			if (inventory.getItem(slot).getItem() instanceof ShearsItem) {
-				inventory.setSelectedSlot(slot);
-				return;
-			}
-		}
-		for (int slot = 9; slot < 36; slot++) {
-			if (!(inventory.getItem(slot).getItem() instanceof ShearsItem)) continue;
-			client.gameMode.handleContainerInput(player.containerMenu.containerId, slot, inventory.getSelectedSlot(), ContainerInput.SWAP, player);
-			return;
-		}
+		return ChopperTools.select(client, AxeItem.class);
 	}
 
 	/** 把指定物品握到主手（或副手已有则用副手）；找不到返回 null。 */

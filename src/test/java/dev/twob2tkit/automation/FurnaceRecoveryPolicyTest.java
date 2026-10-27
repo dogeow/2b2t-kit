@@ -40,6 +40,7 @@ class FurnaceRecoveryPolicyTest {
         assertTrue(bridge.contains("EmptyFurnaceRecovery.opening(c,currentMaterialRequest(c,r)"));
         assertTrue(bridge.contains("EmptyFurnaceRecovery.prepare(c,r,pos,currentMaterialRequest(c,r)"));
         assertTrue(bridge.contains("EmptyFurnaceRecovery.validateMining(c,active,target)"));
-        assertTrue(bridge.contains("ordinaryMiningConfirmation.begin(c,session(c),str(r,\"id\"),pos,underwater)"));
+        assertTrue(bridge.contains("ordinaryMiningConfirmation.begin(c,session(c),str(r,\"id\"),pos,underwater,controlledRelease)"));
+        assertTrue(bridge.contains("underwater||dryRoof||recovery||furnaceRecovery||lecternReset||dryPaving||terrainReplace"));
     }
 }

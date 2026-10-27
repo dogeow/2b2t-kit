@@ -99,6 +99,8 @@ public final class KitClient implements ClientModInitializer {
 		LocalRecipeBookInjector.initialize(config);
 		LocalAdvancementManager.initialize(config);
 		KitKeys.register();
+		new dev.twob2tkit.chat.BilingualClient().onInitializeClient();
+		dev.twob2tkit.chat.BilingualClient.setSettingsOpener(ChatTranslationPage::open);
 		ClientTickEvents.END_CLIENT_TICK.register(this::onEndTick);
 		net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> dev.twob2tkit.automation.AutomationBridge.joined());
 		net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {

@@ -11,7 +11,9 @@ final class BorerFlightSpeedBackup {
 	BorerFlightSpeedBackup(Path path) { this.path = path; }
 	record Entry(double original, double previous, double requested) {
 		Entry {
-			if (!Double.isFinite(original) || original <= 0 || !Double.isFinite(previous) || previous < 0
+			// A higher-priority guard can borrow another owned zero-speed hover.
+			// Zero must round-trip so closing it resumes that outer hover.
+			if (!Double.isFinite(original) || original < 0 || !Double.isFinite(previous) || previous < 0
 				|| !Double.isFinite(requested) || requested < 0) throw new IllegalArgumentException("Invalid flight backup");
 		}
 		double restore(double current) { return current == previous || current == requested ? original : current; }

@@ -12,10 +12,11 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.*;
 import java.util.*;
 
-/** Native low-health escape, independent of the remote script and its heartbeat. */
+/** Native health-safety exit, independent of the remote script and its heartbeat. */
 public final class EmergencyExit {
     public static final String AUTO_RECONNECT="meteordevelopment.meteorclient.systems.modules.misc.AutoReconnect";
     private static final BorerAreaFlightSession flight=new BorerAreaFlightSession();
+    private static final EnvironmentalDamageWindow environmentalDamage=new EnvironmentalDamageWindow();
     private static boolean escaping,memoryHold,restoreAutoLog;
     private static Object level,connection;
     private static long started,lastMoved;
@@ -46,6 +47,9 @@ public final class EmergencyExit {
         catch(Exception e){memoryHold=true;}
     }
     public static void begin(Minecraft c,String why){
+        start(c,why,false);
+    }
+    private static void start(Minecraft c,String why,boolean immediate){
         if(escaping||c.player==null||c.level==null)return;
         memoryHold=true;reason=why;
         var j=new JsonObject();j.addProperty("active",true);j.addProperty("reason",why);j.addProperty("time",System.currentTimeMillis());j.addProperty("health",c.player.getHealth());
@@ -59,12 +63,14 @@ public final class EmergencyExit {
         }
         j.add("inventory_checkpoint",inventory);
         try{store(c).write(j);}catch(Exception e){KitClient.LOGGER.error("Cannot persist low-health lock",e);}
-        KitClient.emergencyStop("血量不足，停止工作并撤离");
+        KitClient.emergencyStop("保护退出，停止工作");
         if(c.player.containerMenu!=c.player.inventoryMenu)c.player.closeContainer();
         else if(c.gui.screen()!=null)c.gui.setScreen(null);
         level=c.level;connection=c.getConnection();startY=c.player.getY();started=lastMoved=System.currentTimeMillis();lastPosition=c.player.position();index=0;escaping=true;
         try{
-            MeteorModules.disable(AUTO_RECONNECT);restoreAutoLog=MeteorModules.disable(MeteorModules.AUTO_LOG);
+            MeteorModules.disable(AUTO_RECONNECT);
+            if(immediate){finish(c,"原地持续环境伤害，立即退出");return;}
+            restoreAutoLog=MeteorModules.disable(MeteorModules.AUTO_LOG);
             GuardFoodLease.acquire(c);MeteorModules.enablePveAura();MeteorModules.enable("meteordevelopment.meteorclient.systems.modules.player.AutoEat");
             if(c.player.getHealth()<=6){finish(c,"血量危急，不等待起飞");return;}
             // Plan a fluid-free ascent before enabling flight. Acquiring flight first
@@ -78,9 +84,21 @@ public final class EmergencyExit {
         }catch(Exception e){finish(c,"飞行不可用");}
     }
     public static void observeHealth(Minecraft c){
-        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))return;
-        if(!nativeHeld(c)&&!escaping&&c.player!=null&&c.level!=null&&c.player.getHealth()<14
-            &&(AutomationBridge.guardArmed()||KitClient.anyAfkAuto()))begin(c,"低血量紧急撤离");
+        // The normal client tick also observes health; a network callback must
+        // not mutate controls, inventory or the disconnect screen off-thread.
+        if(!c.isSameThread())return;
+        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c)||nativeHeld(c)||escaping
+                ||c.player==null||c.level==null||c.player.isDeadOrDying()){
+            environmentalDamage.reset();return;
+        }
+        boolean automated=AutomationBridge.guardArmed()||KitClient.anyAfkAuto();
+        if(automated&&c.player.getHealth()<14){begin(c,"低血量紧急撤离");return;}
+        boolean watching=automated&&c.gui.screen()==null&&!KitKeys.manualMovementDown(c);
+        if(environmentalDamage.observe(c.level,c.player,c.getConnection(),System.currentTimeMillis(),
+                c.player.getHealth(),c.player.position(),watching,
+                dev.twob2tkit.runtime.engine.BorerThreats.isEnvironmental(c.player.getLastDamageSource()))){
+            start(c,"原地反复受到环境伤害，停止工作并锁定自动重连",true);
+        }
     }
     public static boolean tick(Minecraft c){
         if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))return false;
@@ -143,6 +161,7 @@ public final class EmergencyExit {
     }
     public static boolean reapply(Minecraft c){if(!escaping)return false;if(escapeLook!=null&&c.player!=null)RotationAim.apply(c.player,escapeLook);return true;}
     public static void cancel(Minecraft c){
+        environmentalDamage.reset();
         if(!escaping)return;escaping=false;escapeLook=null;GuardFoodLease.release();release(c);flight.closeKeepingFlight();route=List.of();
         if(restoreAutoLog)MeteorModules.enable(MeteorModules.AUTO_LOG);restoreAutoLog=false;
     }

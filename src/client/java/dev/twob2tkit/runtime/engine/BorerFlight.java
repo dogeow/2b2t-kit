@@ -26,6 +26,11 @@ public final class BorerFlight {
 		return meteorModuleActive("meteordevelopment.meteorclient.systems.modules.movement.Flight");
 	}
 
+	/** Read-only: an unknown reflection result must not imply an unmodified sky. */
+	public static Boolean meteorTimeChangerActive() {
+		return meteorModuleActive("meteordevelopment.meteorclient.systems.modules.render.TimeChanger");
+	}
+
 	/** Meteor NoFall 是否开着。 */
 	public static boolean meteorNoFallActive() {
 		return Boolean.TRUE.equals(meteorModuleActive("meteordevelopment.meteorclient.systems.modules.movement.NoFall"));

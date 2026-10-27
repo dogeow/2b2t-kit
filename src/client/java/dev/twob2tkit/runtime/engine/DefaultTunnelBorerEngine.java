@@ -55,7 +55,12 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final String RUNTIME_VERSION = EngineBuildVersion.VALUE;
 	private final BorerHudFrameLimiter hudFrames = new BorerHudFrameLimiter();
+    private final LoadedSquidSurvey loadedSquidSurvey=new LoadedSquidSurvey();
+    private final LoadedVehicleSurvey loadedVehicleSurvey=new LoadedVehicleSurvey();
+    private final LoadedHostileSurvey loadedHostileSurvey=new LoadedHostileSurvey();
     private final LoadedSpawnerSurvey loadedSpawnerSurvey=new LoadedSpawnerSurvey();
+    private final LoadedVillagerEvents loadedVillagerEvents=new LoadedVillagerEvents();
+    private final ResidentPotionTreatment residentPotionTreatment=new ResidentPotionTreatment();
     final BorerSurroundWait surroundWait = new BorerSurroundWait();
 	final BorerMiningConfirmation miningConfirmation = new BorerMiningConfirmation();
 	final BorerStepCycle stepCycle = new BorerStepCycle();
@@ -108,6 +113,9 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	}
 
 	final BorerHost host;
+	final CaptureTargetProtection captureProtection = new CaptureTargetProtection();
+    final EmptyBoatRecovery emptyBoatRecovery=new EmptyBoatRecovery();
+    final ChannelWaterPlacement channelWaterPlacement=new ChannelWaterPlacement();
 	private final SceneryExplorer scenery = new SceneryExplorer(this);
 	final BorerLoot loot = new BorerLoot(this);
 	final BorerWalkRoute walkRoute = new BorerWalkRoute(this);
@@ -404,6 +412,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	@Override
 	public void stop(Minecraft client, String reason) {
 		hudFrames.clear();
+		captureProtection.close();
+		loadedVillagerEvents.workStopped(reason);
 		stopSafetyNote="";
 		home.reset();
 		stepCycle.reset();
@@ -898,6 +908,9 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
         // The host explicitly sends false when emergency/manual control disarms
         // the guard. Do this before the active-miner early return, without reason-text heuristics.
         if(standaloneGuardEnabled&&!enabled)rangedCombat.end(c);
+        emptyBoatRecovery.tick(c,enabled&&!active);
+        channelWaterPlacement.tick(c,enabled&&!active);
+        captureProtection.tick(c,enabled&&!active);
         standaloneGuardEnabled=enabled;
         if(!active && !enabled && recoveryAscent.tick(c))return true;
 		if (active) return false; // The running mining engine already owns this same combat object.
@@ -966,7 +979,12 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 过门后立刻找附近地狱门，下界走动时持续记路。 */
 	@Override
 	public void observeWorld(Minecraft client) {
-        loadedSpawnerSurvey.tick(client);
+		loadedSquidSurvey.tick(client);
+		loadedVehicleSurvey.tick(client);
+		loadedHostileSurvey.tick(client);
+		loadedSpawnerSurvey.tick(client);
+		loadedVillagerEvents.tick(client);
+        residentPotionTreatment.tick(client);
 		if (scenery.active()) return; // Do not let idle mining recovery rewrite the active scenery flight lease.
 		if (client.player == null || client.level == null) {
 			wasInNether = false;

@@ -149,6 +149,7 @@ final class ClickGuiPages {
 
 	static void settings(Screen parent, KitConfig c) {
 		var p = new KitFormScreen(parent, "通用设置", "原生与简洁外观共用同一套页面；所有功能入口一致。").bind(c).id("settings");
+		p.action("聊天翻译 /mct", "启动本地翻译、检测连接、按需翻译与防刷屏设置。", () -> UiFeature.CHAT_TRANSLATION.open(p));
 		p.bool("简洁面板配色", "关闭为默认 Minecraft 风格。保留原有风格选择，不改变功能或快捷键。", () -> c.clickGui, v -> { c.clickGui = v; c.save(); });
 		p.bool("打开容器后自动补货", "根据现有清单与补货规则处理。", () -> c.autoRestockFromOpenedContainers, v -> { c.autoRestockFromOpenedContainers = v; c.save(); });
 		p.bool("首次材料配方提示", "首次得到关键材料时提示。", () -> c.localRecipeHints, v -> { c.localRecipeHints = v; c.save(); });
@@ -770,6 +771,8 @@ final class ClickGuiPages {
 	/** 模块栏「设置」页：勾选开关，不是再开一层设置。 */
 	static KitFormScreen general(ClickGuiScreen gui, KitConfig config) {
 		KitFormScreen panel = new KitFormScreen(gui, "设置", "");
+		panel.action("聊天翻译 /mct", "启动本地翻译、检测连接、按需翻译与防刷屏设置。",
+			() -> UiFeature.CHAT_TRANSLATION.open(gui));
 		panel.action("切换为 Minecraft 风格菜单", "使用原版按钮与分页；保存后，下次打开仍使用这个风格。", gui::switchToPages);
 		panel.note("统一操作：名称打开配置；右侧开始或停止；编辑后回车应用，Esc 返回。");
 		panel.bool("打开容器后自动补货", "开箱时按仓库记录补背包。",
@@ -837,18 +840,6 @@ final class ClickGuiPages {
         return String.format(Locale.ROOT,"%s · %s · X %.0f Y %.0f Z %.0f · %s",origin,dimension,config.deathX,config.deathY,config.deathZ,time);
     }
 
-	/** 区域断面快捷 chip。 */
-	private static KitFormScreen.Chip chipAreaSize(KitConfig config, String label, int w, int h) {
-		return new KitFormScreen.Chip(label,
-			() -> config.borerWidth == w && config.borerAreaSliceHeight == h,
-			() -> {
-				config.borerWidth = w;
-				config.borerHeight = h;
-				config.borerAreaSliceHeight = h;
-				config.save();
-			});
-	}
-
 	/** 巷道断面快捷 chip。 */
 	private static KitFormScreen.Chip chipSize(KitConfig config, String label, int w, int h) {
 		return new KitFormScreen.Chip(label,
@@ -884,44 +875,6 @@ final class ClickGuiPages {
 		config.surroundBlockIds = SurroundBlocks.normalize(ids);
 		config.surroundBlockId = config.surroundBlockIds.getFirst();
 		config.save();
-	}
-
-	/** 写巡航坐标；支持粘贴传送文本。 */
-	private static void setCoord(KitConfig config, String raw, char axis) {
-		KitUi.TeleportCoords parsed = KitUi.parseTeleport(raw);
-		if (parsed != null) {
-			config.targetX = parsed.x();
-			config.targetZ = parsed.z();
-			if (parsed.y() != null) config.cruiseY = parsed.y();
-			config.hasTarget = true;
-			config.save();
-			return;
-		}
-		try {
-			double value = Double.parseDouble(raw.trim());
-			if (!Double.isFinite(value)) return;
-			if (axis == 'x') {
-				config.targetX = value;
-				config.hasTarget = true;
-			} else if (axis == 'z') {
-				config.targetZ = value;
-				config.hasTarget = true;
-			} else {
-				config.cruiseY = value;
-			}
-			config.save();
-		} catch (NumberFormatException ignored) {
-		}
-	}
-
-	/** 玩家当前 X。 */
-	private static double currentX() {
-		return mc().player == null ? 0 : mc().player.getX();
-	}
-
-	/** 玩家当前 Z。 */
-	private static double currentZ() {
-		return mc().player == null ? 0 : mc().player.getZ();
 	}
 
 	/** 当前客户端实例。 */

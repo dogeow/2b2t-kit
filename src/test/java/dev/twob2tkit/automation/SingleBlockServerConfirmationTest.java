@@ -50,6 +50,16 @@ class SingleBlockServerConfirmationTest {
         assertThrows(IllegalStateException.class,()->p.begin("world","retry","target",s->s.equals("air")));
         p.begin("world","different","other",s->s.equals("air"));
     }
+    @Test void admissionCheckRetainsUnknownClaimWithoutStartingAnotherExcavation() {
+        var p=begin(false);sent(p);p.close("request",false);
+        assertThrows(IllegalStateException.class,()->p.requireAvailable("world","target"));
+        p.requireAvailable("world","other");
+        p.begin("world","different","other",s->s.equals("air"));
+        assertThrows(IllegalStateException.class,()->p.requireAvailable("world","third"));
+        p.close("different",false);
+        assertThrows(IllegalStateException.class,()->p.requireAvailable("world","target"));
+        p.requireAvailable("world","third");
+    }
     @Test void confirmedCompletionAndUnsentPreflightReleaseTheirClaims() {
         var p=begin(false);sent(p);packet(p,"air");ack(p,7);
         p.close("request",done(p,"air",false));p.begin("world","next","target",s->s.equals("air"));

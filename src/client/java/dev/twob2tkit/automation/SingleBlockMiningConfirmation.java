@@ -21,12 +21,22 @@ public final class SingleBlockMiningConfirmation {
 
     private SingleBlockMiningConfirmation() {}
 
+    public void requireAvailable(Minecraft client,String world,BlockPos target) {
+        if(client.level==null||client.getConnection()==null)
+            throw new IllegalStateException("Single-block confirmation requires a live connection");
+        prediction(client.level);
+        proof.requireAvailable(world,target);
+    }
+
     public void begin(Minecraft client,String world,String request,BlockPos target,boolean underwaterGravel) {
+        begin(client,world,request,target,underwaterGravel,false);
+    }
+    public void begin(Minecraft client,String world,String request,BlockPos target,boolean underwaterGravel,boolean controlledWaterRelease) {
         if(client.level==null||client.getConnection()==null)
             throw new IllegalStateException("Single-block confirmation requires a live connection");
         prediction(client.level); // Fail before any native interaction if this game API changed.
         proof.begin(world,request,target.immutable(),state->SingleBlockRemovalPolicy.removed(
-            state.isAir(),state.is(Blocks.WATER),underwaterGravel));
+            state.isAir(),state.is(Blocks.WATER),underwaterGravel,controlledWaterRelease));
         this.level=client.level;this.connection=client.getConnection();
         this.world=world;this.request=request;this.target=target.immutable();
     }

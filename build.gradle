@@ -65,6 +65,18 @@ tasks.register('verifyBiomeHints',JavaExec) {
 		providers.gradleProperty('hintOutput').getOrElse('build/biome-hint-verification.json')
 }
 
+tasks.register('runVillageHints',JavaExec) {
+	dependsOn tasks.named('clientClasses')
+	classpath = sourceSets.client.runtimeClasspath
+	mainClass = 'dev.twob2tkit.structure.VillageHintCli'
+	args providers.gradleProperty('seedFile').getOrElse(''),
+		providers.gradleProperty('originX').getOrElse('0'),
+		providers.gradleProperty('originZ').getOrElse('0'),
+		providers.gradleProperty('hintRadius').getOrElse('4096'),
+		providers.gradleProperty('hintOutput').getOrElse('build/village-hints.json'),
+		providers.gradleProperty('hintCoordinateLimit').getOrElse('800000')
+}
+
 processResources {
 	def version = project.version
 	inputs.property "version", version

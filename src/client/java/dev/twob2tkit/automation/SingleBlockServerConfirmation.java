@@ -23,13 +23,19 @@ final class SingleBlockServerConfirmation<K,V> {
         }
     }
 
-    void begin(String world,String request,K target,Predicate<V> removed) {
-        if(world==null||world.isBlank()||request==null||request.isBlank()||target==null||removed==null)
-            throw new IllegalArgumentException("Single-block confirmation requires current world, request and target");
+    void requireAvailable(String world,K target) {
+        if(world==null||world.isBlank()||target==null)
+            throw new IllegalArgumentException("Single-block confirmation requires current world and target");
         if(current!=null && current.world.equals(world))
             throw new IllegalStateException("Another single-block excavation is still active");
         if(uncertain.contains(new Claim<>(world,target)))
             throw new IllegalStateException("An earlier excavation at this target is unconfirmed; no retry sent");
+    }
+
+    void begin(String world,String request,K target,Predicate<V> removed) {
+        if(world==null||world.isBlank()||request==null||request.isBlank()||target==null||removed==null)
+            throw new IllegalArgumentException("Single-block confirmation requires current world, request and target");
+        requireAvailable(world,target);
         current=new Intent<>(world,request,target,removed);
     }
 

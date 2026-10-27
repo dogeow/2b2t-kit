@@ -53,7 +53,7 @@ public final class AutoFisher {
 	private int caughtWait;
 	private boolean sawBite;
 	private int dumpStreak;
-	private int caughtCount;
+	private final FisherCatchPolicy catchPolicy = new FisherCatchPolicy();
 	private long sessionStartMs;
     private long activityGeneration;
     private boolean idleNoDeposit;
@@ -102,7 +102,7 @@ public final class AutoFisher {
 		caughtWait = 0;
 		sawBite = false;
 		dumpStreak = 0;
-		caughtCount = 0;
+		catchPolicy.reset();
 		sessionStartMs = System.currentTimeMillis();
 		spotX = player.getX();
 		spotY = player.getY();
@@ -143,7 +143,7 @@ public final class AutoFisher {
 			client.player.closeContainer();
 		}
 		status = "已停止：" + reason;
-		message(client, "自动钓鱼已停止：" + reason + (caughtCount > 0 ? "（本次收了 " + caughtCount + " 次）" : ""));
+		message(client, "自动钓鱼已停止：" + reason + (catchPolicy.catches() > 0 ? "（本次收了 " + catchPolicy.catches() + " 次）" : ""));
 	}
 
 	/** 主循环：满包存箱、抛收钩或交给 Meteor。 */
@@ -235,7 +235,6 @@ public final class AutoFisher {
 		}
 		if (hook.getHookedIn() != null) {
 			useRod(client, player);
-			caughtCount++;
 			return;
 		}
 		boolean biting = hook instanceof FishingHookBiteAccess access && access.kit$biting();
@@ -250,14 +249,13 @@ public final class AutoFisher {
 				return;
 			}
 			useRod(client, player);
-			caughtCount++;
 		}
 	}
 
 	/** 用统计策略刷新字幕。 */
 	private void showStats(Minecraft client) {
 		long elapsed = sessionStartMs <= 0L ? 0L : System.currentTimeMillis() - sessionStartMs;
-		status = FisherStatsPolicy.hud(caughtCount, elapsed);
+		status = FisherStatsPolicy.hud(catchPolicy.catches(), elapsed);
 		overlay(client, status, 0x55FFFF);
 	}
 
@@ -403,8 +401,13 @@ public final class AutoFisher {
 
 	/** 右键抛/收竿并进入冷却。 */
 	private void useRod(Minecraft client, LocalPlayer player) {
-		if (cooldown > 0) return;
-		client.gameMode.useItem(player, InteractionHand.MAIN_HAND);
+		FishingHook hook = player.fishing;
+		var hookId = hook == null ? null : hook.getUUID();
+		if (!catchPolicy.mayUse(hookId, cooldown)) return;
+		boolean hookedEntity = hook != null && hook.getHookedIn() != null;
+		boolean biting = hook instanceof FishingHookBiteAccess access && access.kit$biting();
+		boolean accepted = client.gameMode.useItem(player, InteractionHand.MAIN_HAND).consumesAction();
+		catchPolicy.recordUse(hookId, cooldown, accepted, biting, hookedEntity);
 		sawBite = false;
 		caughtWait = 0;
 		cooldown = CAST_COOLDOWN;

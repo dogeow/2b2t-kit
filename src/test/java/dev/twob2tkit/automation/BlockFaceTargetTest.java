@@ -43,4 +43,14 @@ class BlockFaceTargetTest {
   assertFalse(BlockFaceTarget.matches(hit,BlockPos.ZERO,Direction.DOWN));
   assertFalse(BlockFaceTarget.matches(null,BlockPos.ZERO,Direction.UP));
  }
+ @Test void coveredWallCentreKeepsOtherVisiblePointsOnTheSameRequestedFace(){
+  var wall=Shapes.block();var button=Shapes.box(.3125,.375,1,.6875,.625,1.125);
+  var eye=new Vec3(.5,1.62,3);var points=BlockFaceTarget.points(wall,Direction.SOUTH);
+  assertEquals(9,points.size());assertNotNull(button.clip(eye,points.getFirst(),BlockPos.ZERO));
+  assertTrue(points.stream().anyMatch(p->button.clip(eye,p,BlockPos.ZERO)==null));
+  for(var point:points){
+   assertTrue(wall.toAabbs().getFirst().contains(point));
+   assertTrue(BlockFaceTarget.matches(wall.clip(eye,point,BlockPos.ZERO),BlockPos.ZERO,Direction.SOUTH));
+  }
+ }
 }

@@ -22,6 +22,13 @@
 
 Python 使用 `decision-runtime/check_offline.py` 的固定离线测试集。新测试覆盖真实失败边界，外部服务使用模拟响应；不把实现细节复制成断言。
 
+木板与闪长岩批次回归使用自含配方 JAR，默认不依赖旧游戏安装。可选的真实配方集成检查通过 `MINECRAFT_TEST_CLIENT_JAR` 显式选择客户端版本；在 `decision-runtime/` 中使用项目 Python 环境运行：
+
+```bash
+MINECRAFT_TEST_CLIENT_JAR=/Applications/.minecraft/versions/26.2/26.2.jar \
+  python -m unittest test_material_bulk_diorite test_material_bulk_planks
+```
+
 Java 使用 `AGENTS.md` 中的 Java 25 构建命令。高风险控制流可使用仓库现有的字节码连线测试，核对真实引擎是否仍调用安全分支。
 
 保留原始游戏操作记录和检查点。诊断输出脱敏、有界，不能泄露密钥或用巨量快照代替问题摘要。交付时明确区分代码完成、测试通过、产物已构建、已安装和联机验证。

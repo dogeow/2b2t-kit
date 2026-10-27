@@ -68,6 +68,13 @@ final class MaterialAirNavigation {
             precision(c);
         }
         Vec3 now=c.player.position(),error=target.subtract(now);
+        if(c.player.tickCount%10==0){
+            double horizontal=Math.hypot(error.x,error.z);
+            long estimate=Math.max(1,(long)Math.ceil(horizontal/12+Math.abs(error.y)/8+1));
+            dev.twob2tkit.cruise.CruiseScreenHud.show(String.format(java.util.Locale.ROOT,
+                "巡航 · 剩余 %.0f 格 · 预计约 %s · %s",error.length(),
+                dev.twob2tkit.hud.WorkHudModel.durationLabel(estimate),horizontal>3?"前往工作点":"精确停靠"));
+        }
         if(previous==null){previous=now;return;}
         displacement=now.subtract(previous);previous=now;
         switch(settlement.observe(error,displacement,c.player.getDeltaMovement())){
@@ -102,7 +109,7 @@ final class MaterialAirNavigation {
     }
     void close(Minecraft c){
         if(closed)return;closed=true;release(c);look=null;
-        flight.closeKeepingFlight();
+        try{flight.closeKeepingFlight();}finally{dev.twob2tkit.cruise.CruiseScreenHud.hide();}
     }
     private static void release(Minecraft c){
         if(c.options==null)return;

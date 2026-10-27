@@ -22,6 +22,16 @@ final class GuardWeaponPolicy {
         return !rangedWeapon && ("minecraft:zombie".equals(type) || "minecraft:husk".equals(type)
             || "minecraft:drowned".equals(type));
     }
+    /** Picked-up ordinary cargo is not a weapon; combat/custom components still fail closed. */
+    static boolean harmlessCargo(String item,boolean weaponOrTool,boolean attributes,
+                                 boolean enchanted,boolean customData){
+        if(item==null||!item.startsWith("minecraft:")||weaponOrTool||attributes||enchanted||customData)return false;
+        String name=item.substring("minecraft:".length());
+        return !name.isEmpty()&&!name.endsWith("_sword")&&!name.endsWith("_axe")
+            &&!name.endsWith("_pickaxe")&&!name.endsWith("_shovel")&&!name.endsWith("_hoe")
+            &&!name.endsWith("_spear")&&!java.util.Set.of("bow","crossbow","trident","mace","spear",
+                "fire_charge","wind_charge","firework_rocket","flint_and_steel","lava_bucket").contains(name);
+    }
     /** Never descend below the melee safety margin, even with residual downward momentum. */
     static double hoverVerticalStep(double feet, double projectedFeet, double highestMobFeet) {
         double desired = highestMobFeet + 3.1;

@@ -74,5 +74,10 @@ class BorerCombatSeparationWiringTest {
         assertFalse(body.contains("attack"));assertFalse(body.contains("setPos"));
         assertFalse(c.contains("clear"));assertFalse(c.contains("end"));
     }
+    @Test void carriedCargoClassificationReadsRealHandCombatAndCustomComponents()throws Exception{
+        assertTrue(calls("BorerRangedCombat","safeVerticalSeparation").contains("harmlessCargoHand"));
+        assertTrue(calls("BorerRangedCombat","harmlessCargoHand").containsAll(List.of(
+            "getOrDefault","modifiers","isEmpty","has","isEnchanted","getKey","harmlessCargo")));
+    }
 
 }
