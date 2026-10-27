@@ -38,7 +38,8 @@
     "InventoryEncodedClickObservationMixin",
     "KeyboardHandlerMixin",
     "PrinterCandidateMixin",
-    "PrinterToolPreparationMixin"
+    "PrinterToolPreparationMixin",
+    "PrinterGuideHopperStateMixin"
   ],
   "injectors": {
     "defaultRequire": 1
