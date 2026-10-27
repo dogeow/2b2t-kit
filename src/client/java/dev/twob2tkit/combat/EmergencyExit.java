@@ -47,10 +47,19 @@ public final class EmergencyExit {
         catch(Exception e){memoryHold=true;}
     }
     public static long recoveryIncident(Minecraft c){
+        return recoveryIncident(c,c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip,
+            c.level.dimension().identifier().toString(),c.player.getUUID().toString());
+    }
+    public static long recoveryConnectionIncident(Minecraft c,String address){
+        if(c.player!=null||c.level!=null||escaping)throw new IllegalStateException("Recovery connection requires a disconnected client");
+        return recoveryIncident(c,address,null,null);
+    }
+    private static long recoveryIncident(Minecraft c,String server,String dimension,String player){
         var nativeRecord=store(c).read();long latest=0;
         if(store(c).active()||memoryHold){
-            RecoveryConfirmationPolicy.requireOrigin(nativeRecord,c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip,
-                c.level.dimension().identifier().toString(),c.player.getUUID().toString());
+            RecoveryConfirmationPolicy.requireOrigin(nativeRecord,server,
+                dimension==null?nativeRecord.has("dimension")?nativeRecord.get("dimension").getAsString():"":dimension,
+                player==null?nativeRecord.has("player")?nativeRecord.get("player").getAsString():"":player);
             var stamp=RecoveryConfirmationPolicy.number(nativeRecord.get("time"));
             if(stamp==null)throw new IllegalStateException("Unreadable native incident needs human review");
             latest=stamp;
@@ -59,8 +68,9 @@ public final class EmergencyExit {
         if(MaterialHealthHoldPolicy.active(script,nativeRecord)){
             try{
                 var record=JsonParser.parseString(java.nio.file.Files.readString(script)).getAsJsonObject();
-                RecoveryConfirmationPolicy.requireOrigin(record,c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip,
-                    c.level.dimension().identifier().toString(),c.player.getUUID().toString());
+                RecoveryConfirmationPolicy.requireOrigin(record,server,
+                    dimension==null?record.has("dimension")?record.get("dimension").getAsString():"":dimension,
+                    player==null?record.has("player")?record.get("player").getAsString():"":player);
                 var stamp=RecoveryConfirmationPolicy.number(record.get("time"));
                 if(stamp==null)throw new IllegalStateException("Unreadable script incident needs human review");
                 latest=Math.max(latest,stamp);

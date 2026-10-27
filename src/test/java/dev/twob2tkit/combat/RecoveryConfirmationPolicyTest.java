@@ -5,6 +5,15 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RecoveryConfirmationPolicyTest {
+    @Test void recoveryConnectionRequiresSameGrantAndReservesItOnlyOnce(@org.junit.jupiter.api.io.TempDir java.nio.file.Path root)throws Exception {
+        var request=grant();RecoveryConfirmationPolicy.requireGrant(request,200,100,"w",5);
+        RecoveryConfirmationPolicy.reserveConnection(root,request);
+        assertThrows(java.nio.file.FileAlreadyExistsException.class,()->RecoveryConfirmationPolicy.reserveConnection(root,request));
+        request.addProperty("id","new-request-id");
+        assertThrows(java.nio.file.FileAlreadyExistsException.class,()->RecoveryConfirmationPolicy.reserveConnection(root,request));
+        var old=grant();old.addProperty("confirmed_hold_time",99);
+        assertThrows(IllegalStateException.class,()->RecoveryConfirmationPolicy.requireGrant(old,200,100,"w",5));
+    }
     JsonObject grant(){return JsonParser.parseString("{\"confirmed_by_user\":true,\"authorization_channel\":\"human_chat\",\"authorization_reference\":\"user-message-1\",\"authorization_text\":\"已恢复，你操作\",\"confirmed_hold_time\":100,\"confirmation_recorded_at\":120,\"world_session\":\"w\",\"expected_revision\":5,\"expires_at\":1000}").getAsJsonObject();}
     void allow(JsonObject request){RecoveryConfirmationPolicy.require(request,200,100,"w",5,true,20,20,true,true,true);}
     @Test void directHumanConfirmationMayPersistForTheSameIncident(){assertDoesNotThrow(()->allow(grant()));var r=grant();r.addProperty("confirmation_recorded_at",101);assertDoesNotThrow(()->allow(r));}

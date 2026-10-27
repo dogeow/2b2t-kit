@@ -2,7 +2,8 @@
 
 The caller must have a direct human instruction for this incident and provide
 its reference, quote and recorded timestamp. This module never edits health
-locks, reconnects, or invokes the UI button on the human's behalf.
+locks or invokes the UI button on the human's behalf. The separate connect_once
+entry point reserves one incident-bound native recovery connection.
 """
 import time
 import math
@@ -11,6 +12,54 @@ from pathlib import Path
 from kit_runtime.journal import write_json
 from live_snapshot import read_fresh
 from safety_interlock import require_assistant_control_allowed,require_unlocked
+
+
+def connection_request_for(state,address,expected_player,*,user_reference,user_text,hold_time,confirmation_recorded_at,now_ms):
+    if (not isinstance(user_reference,str)or not user_reference.strip()or len(user_reference)>256
+            or not isinstance(user_text,str)or not user_text.strip()or len(user_text)>512
+            or type(hold_time)is not int or hold_time<=0
+            or type(confirmation_recorded_at)is not int or not hold_time<=confirmation_recorded_at<=now_ms):
+        raise ValueError('Direct human confirmation for this incident is required')
+    if (type(state.get('explicit_recovery_connection_protocol'))is not int
+            or state['explicit_recovery_connection_protocol']!=1
+            or state.get('connected')is not False or state.get('screen')not in('TitleScreen','DisconnectedScreen')
+            or state.get('account_name')!=expected_player or state.get('supervision_lease')
+            or state.get('pending_scan')is not None or state.get('manual_movement')
+            or not(state.get('safety_hold')or{}).get('active')
+            or state['safety_hold'].get('time')!=hold_time):
+        raise RuntimeError('Recovery connection requires this incident and idle title account')
+    return {'id':'recovery-connect-'+uuid.uuid4().hex[:12],'op':'connect_server','address':address,
+            'expected_player':expected_player,'world_session':state['world_session'],
+            'expected_revision':state['control_revision'],'expires_at':now_ms+12000,'recovery_only':True,
+            'authorization_channel':'human_chat','confirmed_by_user':True,'authorization_reference':user_reference,
+            'authorization_text':user_text,'confirmed_hold_time':hold_time,'confirmation_recorded_at':confirmation_recorded_at}
+
+
+def connect_once(root,out,address,expected_player,**grant):
+    import json
+    from game_connection_cli import pending_screen,connection_screen_seen
+    root,out=Path(root),Path(out);require_assistant_control_allowed(root);state=read_fresh(root)
+    request=connection_request_for(state,address,expected_player,now_ms=int(time.time()*1000),**grant)
+    mailbox=root/'request.json'
+    if mailbox.exists()and json.loads(mailbox.read_text()).get('id')!=state.get('last_request'):
+        raise RuntimeError('Foreign request pending; no connection published')
+    out.mkdir(parents=True,exist_ok=False);write_json(out/'intent.json',request);write_json(root/'request.json',request)
+    reply=root/('reply-'+request['id']+'.json');deadline=time.monotonic()+60
+    while not reply.exists():
+        if time.monotonic()>deadline:raise RuntimeError('Connection receipt unknown; never replay')
+        time.sleep(.1)
+    receipt=json.loads(reply.read_text());write_json(out/'native-reply.json',receipt)
+    if receipt.get('id')!=request['id']or receipt.get('phase')!='done':raise RuntimeError(receipt.get('detail','Recovery connection rejected'))
+    started=time.monotonic();seen=False
+    while time.monotonic()<deadline:
+        current=read_fresh(root);write_json(out/'latest.json',current)
+        if current.get('connected')is True:
+            if current.get('player_name')!=expected_player or current.get('server','').lower().removesuffix(':25565')!=address.lower().removesuffix(':25565'):
+                raise RuntimeError('Actual connected identity differs; no gameplay')
+            write_json(out/'connected.json',current);return current
+        if not pending_screen(current.get('screen'),seen,time.monotonic()-started):raise RuntimeError('Recovery connection failed; no retry')
+        seen=connection_screen_seen(current.get('screen'),seen);time.sleep(.2)
+    raise RuntimeError('Connection outcome unconfirmed; no retry')
 
 
 def request_for(state,*,user_reference,user_text,hold_time,confirmation_recorded_at,now_ms):

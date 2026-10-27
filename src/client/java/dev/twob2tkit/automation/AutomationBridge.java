@@ -2111,11 +2111,15 @@ public final class AutomationBridge {
                 preemptIdleForPlayer(c,"FORMAL_NATIVE_INPUT");
         String command=str(r,"op");
         if(command.equals("connect_server")||command.equals("client_quit")){
+            boolean recovery=command.equals("connect_server")
+                &&dev.twob2tkit.combat.RecoveryConfirmationPolicy.flag(r.get("recovery_only"),true);
+            if(recovery)dev.twob2tkit.combat.RecoveryConfirmationPolicy.requireGrant(r,System.currentTimeMillis(),
+                dev.twob2tkit.combat.EmergencyExit.recoveryConnectionIncident(c,str(r,"address")),session(c),controlRevision);
             TitleConnectionPolicy.require(c.player==null&&c.level==null,
                 c.gui.screen() instanceof net.minecraft.client.gui.screens.TitleScreen
                     ||c.gui.screen() instanceof net.minecraft.client.gui.screens.DisconnectedScreen,
                 active==null&&nativeMaterialOwner==null&&supervisionLease==null,
-                dev.twob2tkit.combat.EmergencyExit.held(c)||healthRecoveryHold,
+                !recovery&&(dev.twob2tkit.combat.EmergencyExit.held(c)||healthRecoveryHold),
                 session(c),str(r,"world_session"),controlRevision,
                 r.has("expected_revision")?r.get("expected_revision").getAsLong():-1,
                 System.currentTimeMillis(),r.has("expires_at")?r.get("expires_at").getAsLong():0,
@@ -2127,6 +2131,8 @@ public final class AutomationBridge {
                 server=list.get(address);
                 if(server==null)throw new IllegalArgumentException("Connection target must already exist in this profile's saved server list");
             }
+            if(recovery)dev.twob2tkit.combat.RecoveryConfirmationPolicy.reserveConnection(
+                root(c).resolve("recovery-connection-attempts"),r);
             controlRevision++;statusId=lastId;op=command;phase="done";
             detail=command.equals("connect_server")?"normal saved-server connection requested; await actual world":"idle title client exit requested";
             var receipt=snapshot(c);receipt.addProperty("id",lastId);receipt.addProperty("op",command);
@@ -4404,6 +4410,7 @@ public final class AutomationBridge {
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
         j.addProperty("client_connection_protocol",1);j.addProperty("account_name",c.getUser().getName());
         j.addProperty("explicit_recovery_confirmation_protocol",1);
+        j.addProperty("explicit_recovery_connection_protocol",1);
         j.addProperty("inventory_click_protocol",InventoryDiagnostics.PROTOCOL);j.addProperty("inventory_probe_protocol",InventoryDiagnostics.PROTOCOL);
         j.addProperty("processing_menu_protocol",ProcessingMenus.PROTOCOL);j.addProperty("decoration_attack_protocol",1);
         j.add("auto_refill_guard",AutoRefillCompatibility.snapshot());

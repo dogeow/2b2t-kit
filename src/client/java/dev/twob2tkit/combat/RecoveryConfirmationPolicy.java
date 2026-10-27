@@ -27,6 +27,11 @@ public final class RecoveryConfirmationPolicy {
     }
     public static void require(JsonObject request,long now,long hold,String world,long revision,
             boolean alive,double health,int food,boolean idle,boolean safeScreen,boolean quiet) {
+        requireGrant(request,now,hold,world,revision);
+        if(!alive||!Double.isFinite(health)||health<18||food<8||!idle||!safeScreen||!quiet)
+            throw new IllegalStateException("Recover safely first: healthy alive player, quiet scene and idle control required");
+    }
+    public static void requireGrant(JsonObject request,long now,long hold,String world,long revision) {
         Long target=number(request.get("confirmed_hold_time")),confirmed=number(request.get("confirmation_recorded_at"));
         Long expected=number(request.get("expected_revision")),expires=number(request.get("expires_at"));
         String reference=text(request,"authorization_reference"),quote=text(request,"authorization_text");
@@ -37,8 +42,18 @@ public final class RecoveryConfirmationPolicy {
         if(world==null||world.isBlank()||!world.equals(text(request,"world_session"))||expected==null||expected!=revision
                 ||expires==null||expires<now||expires-now>15000)
             throw new IllegalStateException("Recovery confirmation belongs to an old world or control scope");
-        if(!alive||!Double.isFinite(health)||health<18||food<8||!idle||!safeScreen||!quiet)
-            throw new IllegalStateException("Recover safely first: healthy alive player, quiet scene and idle control required");
+    }
+    /** Durable reservation before connection dispatch. A failed attempt never becomes an automatic retry. */
+    public static void reserveConnection(java.nio.file.Path directory,JsonObject request)throws java.io.IOException {
+        String reference=text(request,"authorization_reference");
+        String stamp=String.valueOf(number(request.get("confirmed_hold_time")));
+        final String key;
+        try{key=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest((stamp+"\n"+reference).getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
+        catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
+        java.nio.file.Files.createDirectories(directory);
+        java.nio.file.Files.writeString(directory.resolve(key+".json"),request.toString(),
+                java.nio.file.StandardOpenOption.CREATE_NEW,java.nio.file.StandardOpenOption.WRITE);
     }
     public static boolean explicitAck(JsonObject record,long hold) {
         if(record==null||!flag(record.get("active"),false)||!flag(record.get("confirmed_by_user"),true)
