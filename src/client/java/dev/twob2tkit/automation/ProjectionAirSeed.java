@@ -68,7 +68,8 @@ final class ProjectionAirSeed {
         boolean isolatedStem=MushroomStemPlacementPolicy.isolated(expected,target,schematic::getBlockState)
             &&MushroomStemPlacementPolicy.isolated(expected,target,c.level::getBlockState);
         boolean hopper=expected.is(net.minecraft.world.level.block.Blocks.HOPPER);
-        if(expected.isAir()||!hopper&&!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty()||axisOnly||isolatedStem,
+        boolean slab=singleSlab(expected);
+        if(expected.isAir()||!hopper&&!slab&&!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty()||axisOnly||isolatedStem,
                 expected.isCollisionShapeFullBlock(schematic,target),expected.getBlock() instanceof FallingBlock,
                 expected.getBlock() instanceof EntityBlock)||!expected.getFluidState().isEmpty()
                 ||!expected.toString().equals(string(request,"expected_state")))
@@ -119,9 +120,19 @@ final class ProjectionAirSeed {
     static Direction placementFace(BlockState expected,Direction motion) {
         if(expected.is(net.minecraft.world.level.block.Blocks.HOPPER))
             return expected.getValue(net.minecraft.world.level.block.HopperBlock.FACING).getOpposite();
+        if(expected.getBlock() instanceof net.minecraft.world.level.block.SlabBlock){
+            if(!singleSlab(expected))throw new IllegalStateException("Air seed admits only one dry single slab, never a double slab");
+            return expected.getValue(net.minecraft.world.level.block.SlabBlock.TYPE)==net.minecraft.world.level.block.state.properties.SlabType.TOP
+                ?Direction.DOWN:Direction.UP;
+        }
         return expected.getBlock() instanceof RotatedPillarBlock&&expected.getProperties().size()==1
             ?Direction.fromAxisAndDirection(expected.getValue(RotatedPillarBlock.AXIS),Direction.AxisDirection.POSITIVE)
             :motion.getOpposite();
+    }
+    static boolean singleSlab(BlockState state){
+        return state.getBlock() instanceof net.minecraft.world.level.block.SlabBlock
+            &&!(state.getBlock() instanceof EntityBlock)&&state.getFluidState().isEmpty()
+            &&state.getValue(net.minecraft.world.level.block.SlabBlock.TYPE)!=net.minecraft.world.level.block.state.properties.SlabType.DOUBLE;
     }
 
     static boolean flowingWaterRequested(JsonObject request){
@@ -194,12 +205,12 @@ final class ProjectionAirSeed {
             throw new IllegalStateException("Air seed main hand does not contain the exact expected block item");
         if(c.player.getEyePosition().distanceTo(Vec3.atCenterOf(target))>c.player.blockInteractionRange()-.2)
             throw new IllegalStateException("Air seed target is outside normal interaction reach");
-        if(expected.is(net.minecraft.world.level.block.Blocks.HOPPER)){
+        if(expected.is(net.minecraft.world.level.block.Blocks.HOPPER)||singleSlab(expected)){
             var hit=new BlockHitResult(Vec3.atCenterOf(target),face,target,false);
             var context=new net.minecraft.world.item.context.BlockPlaceContext(c.player,InteractionHand.MAIN_HAND,held,hit);
             // Use vanilla placement prediction, including powered state. No corrective second click.
             if(!target.equals(context.getClickedPos())||!expected.equals(expected.getBlock().getStateForPlacement(context)))
-                throw new IllegalStateException("Directed hopper air seed does not predict the exact projected state");
+                throw new IllegalStateException("Directed air seed does not predict the exact projected block state");
         }
         if(!c.level.getEntities((Entity)null,new AABB(target),Entity::isAlive).isEmpty())
             throw new IllegalStateException("Air seed cube contains an entity");

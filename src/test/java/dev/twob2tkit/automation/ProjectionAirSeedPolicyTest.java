@@ -11,6 +11,24 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ProjectionAirSeedPolicyTest {
+    @Test void singleSlabsPredictTheRequestedHalfUsingOneFace(){
+        var bottom=Blocks.COBBLESTONE_SLAB.defaultBlockState();
+        var top=bottom.setValue(net.minecraft.world.level.block.SlabBlock.TYPE,net.minecraft.world.level.block.state.properties.SlabType.TOP);
+        assertTrue(ProjectionAirSeed.singleSlab(bottom));assertTrue(ProjectionAirSeed.singleSlab(top));
+        for(var motion:Direction.values()){
+            assertEquals(Direction.UP,ProjectionAirSeed.placementFace(bottom,motion));
+            assertEquals(Direction.DOWN,ProjectionAirSeed.placementFace(top,motion));
+        }
+    }
+    @Test void doubleAndWaterloggedSlabsCannotBecomeAOneItemSeed(){
+        var dry=Blocks.COBBLESTONE_SLAB.defaultBlockState();
+        var doubled=dry.setValue(net.minecraft.world.level.block.SlabBlock.TYPE,net.minecraft.world.level.block.state.properties.SlabType.DOUBLE);
+        var wet=dry.setValue(net.minecraft.world.level.block.SlabBlock.WATERLOGGED,true);
+        for(var invalid:new net.minecraft.world.level.block.state.BlockState[]{doubled,wet}){
+            assertFalse(ProjectionAirSeed.singleSlab(invalid));assertThrows(IllegalStateException.class,()->ProjectionAirSeed.placementFace(invalid,Direction.EAST));
+        }
+        assertFalse(ProjectionAirSeed.singleSlab(Blocks.COBBLESTONE.defaultBlockState()));
+    }
     @Test void flowingWaterOptInProtectsSourcesLavaAndOtherBlocks(){
         var hopper=Blocks.HOPPER.defaultBlockState();
         for(int level=1;level<=15;level++){
