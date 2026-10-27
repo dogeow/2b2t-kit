@@ -1,7 +1,8 @@
 """All unattended entry points must fail closed after a native safety exit.
 
 This module deliberately has no clear/unlock API. A later native Kit user
-acknowledgement can satisfy a hold; unattended callers never clear one.
+acknowledgement (UI or validated direct human chat) can satisfy a hold;
+unattended callers never clear one.
 """
 import json,time,os,tempfile,math
 from pathlib import Path
@@ -16,6 +17,17 @@ def require_assistant_control_allowed(root):
         raise RuntimeError('Assistant control hold unreadable; do not probe or control the game') from error
     if hold['active']:
         raise RuntimeError('User requested offline Kit work; wait for explicit server-ready authorization')
+
+
+def explicit_chat_acknowledgement(native,hold_time):
+    target=native.get('confirmed_hold_time');confirmed=native.get('confirmation_recorded_at');cleared=native.get('cleared_at')
+    reference=native.get('authorization_reference');quote=native.get('authorization_text')
+    return (native.get('active')is False and native.get('cleared_by')=='explicit_chat'
+            and native.get('confirmed_by_user')is True and native.get('authorization_channel')=='human_chat'
+            and isinstance(reference,str)and bool(reference.strip())and len(reference)<=256
+            and isinstance(quote,str)and bool(quote.strip())and len(quote)<=512
+            and all(type(n)is int and n>=0 for n in (target,confirmed,cleared))
+            and target>=hold_time and confirmed>=target and cleared>=confirmed and cleared>hold_time)
 
 
 def require_unlocked(root, status=None):
@@ -42,8 +54,8 @@ def require_unlocked(root, status=None):
                 raise ValueError('Invalid material health record')
         except (OSError,ValueError,AttributeError) as error:
             raise RuntimeError('Material health record unreadable; await manual confirmation') from error
-        acknowledged=(native.get('cleared_by')=='game_ui'
-                      and native.get('cleared_at',0)>hold['time'])
+        acknowledged=((native.get('cleared_by')=='game_ui'
+                      and native.get('cleared_at',0)>hold['time'])or explicit_chat_acknowledgement(native,hold['time']))
         if hold['active'] and not acknowledged:
             raise RuntimeError('Material task exited for health; player must recover and explicitly confirm before automation resumes')
 

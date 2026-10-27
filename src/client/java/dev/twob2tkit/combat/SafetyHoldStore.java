@@ -26,4 +26,7 @@ public final class SafetyHoldStore {
     public void clearByUser()throws IOException{
         var j=read();j.addProperty("active",false);j.addProperty("cleared_by","game_ui");j.addProperty("cleared_at",System.currentTimeMillis());write(j);
     }
+    void clearByExplicitChat(JsonObject request,long now)throws IOException{
+        var j=read();RecoveryConfirmationPolicy.copyGrant(j,request,now);write(j);
+    }
 }

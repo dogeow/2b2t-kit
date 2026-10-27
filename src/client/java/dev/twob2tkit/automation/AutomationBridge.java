@@ -2185,6 +2185,7 @@ public final class AutomationBridge {
             writeStatus(c);return;
         }
         guard(c,r);
+        if(confirmExplicitRecovery(c,r))return;
         if(r.has("task_session")&&!command.equals("material_session")){
             long expiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
             if(supervisionLease==null||!str(supervisionLease,"kind").equals("materials")||!str(r,"task_session").equals(str(supervisionLease,"job_session"))||!str(r,"world_session").equals(session(c))||!r.has("expected_revision")||r.get("expected_revision").getAsLong()!=controlRevision||expiry<0||expiry>15000)throw new IllegalStateException("Material action scope changed");
@@ -4372,9 +4373,37 @@ public final class AutomationBridge {
         result.addProperty("source",selected.source());
         return result;
     }
+    private static boolean confirmExplicitRecovery(Minecraft c,JsonObject request)throws Exception{
+        if(!str(request,"op").equals("confirm_recovery"))return false;
+        long now=System.currentTimeMillis(),incident=dev.twob2tkit.combat.EmergencyExit.recoveryIncident(c);
+        boolean alive=c.player!=null&&c.level!=null&&!c.player.isDeadOrDying();
+        boolean screen=c.gui.screen()==null||c.gui.screen() instanceof net.minecraft.client.gui.screens.PauseScreen
+            ||c.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.InventoryScreen;
+        boolean transientEmpty=alive;
+        if(alive)for(int slot=0;slot<5;slot++)transientEmpty&=!c.player.inventoryMenu.getSlot(slot).hasItem();
+        boolean idle=active==null&&nativeMaterialOwner==null&&supervisionLease==null
+            &&!KitClient.anyAfkAuto()&&!guardBusy&&!KitKeys.manualMovementDown(c)
+            &&alive&&c.player.containerMenu==c.player.inventoryMenu&&c.player.containerMenu.getCarried().isEmpty()
+            &&transientEmpty&&!c.player.isUsingItem()&&!dev.twob2tkit.combat.EmergencyExit.active();
+        dev.twob2tkit.combat.RecoveryConfirmationPolicy.require(request,now,incident,session(c),controlRevision,
+            alive,alive?c.player.getHealth():0,alive?c.player.getFoodData().getFoodLevel():0,idle,screen,
+            KitClient.config().lastAttackTimeEpochMillis<=now-5000);
+        dev.twob2tkit.combat.EmergencyExit.acknowledgeExplicitChat(c,request,now);
+        armPveGuard(c);
+        if(!guardArmed()||!pveOnly()){
+            dev.twob2tkit.combat.EmergencyExit.begin(c,"人工恢复确认后防护未能就绪");
+            throw new IllegalStateException("Recovery defense did not arm; automation remains stopped");
+        }
+        if(c.gui.screen() instanceof net.minecraft.client.gui.screens.PauseScreen
+                ||c.gui.screen() instanceof net.minecraft.client.gui.screens.inventory.InventoryScreen)c.gui.setScreen(null);
+        controlRevision++;statusId=lastId;op="confirm_recovery";phase="done";detail="direct human chat recovery confirmed; PvE guard armed";
+        var result=snapshot(c);result.addProperty("id",lastId);result.addProperty("op",op);result.addProperty("phase","done");
+        result.addProperty("detail",detail);save(root(c).resolve("reply-"+safeId(lastId)+".json"),result);writeStatus(c);return true;
+    }
     private static JsonObject snapshot(Minecraft c){
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
         j.addProperty("client_connection_protocol",1);j.addProperty("account_name",c.getUser().getName());
+        j.addProperty("explicit_recovery_confirmation_protocol",1);
         j.addProperty("inventory_click_protocol",InventoryDiagnostics.PROTOCOL);j.addProperty("inventory_probe_protocol",InventoryDiagnostics.PROTOCOL);
         j.addProperty("processing_menu_protocol",ProcessingMenus.PROTOCOL);j.addProperty("decoration_attack_protocol",1);
         j.add("auto_refill_guard",AutoRefillCompatibility.snapshot());

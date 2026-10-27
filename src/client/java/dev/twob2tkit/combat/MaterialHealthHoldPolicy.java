@@ -3,7 +3,7 @@ package dev.twob2tkit.combat;
 import com.google.gson.*;
 import java.nio.file.*;
 
-/** Read-only script health hold. Only a newer native game-UI acknowledgement satisfies it. */
+/** Read-only script health hold. Only a newer native user acknowledgement satisfies it. */
 public final class MaterialHealthHoldPolicy {
     public static boolean active(Path path,JsonObject nativeRecord){
         // Python atomically replaces this file; do not cache an older task's record.
@@ -18,6 +18,7 @@ public final class MaterialHealthHoldPolicy {
         if(active==null||time==null)return true;
         if(!active)return false;
         if(nativeRecord==null||!Boolean.FALSE.equals(booleanValue(nativeRecord.get("active"))))return true;
+        if(RecoveryConfirmationPolicy.explicitAck(nativeRecord,time))return false;
         var by=nativeRecord.get("cleared_by");Long clearedAt=timestamp(nativeRecord.get("cleared_at"));
         return by==null||!by.isJsonPrimitive()||!by.getAsJsonPrimitive().isString()
             ||!"game_ui".equals(by.getAsString())||clearedAt==null||clearedAt<=time;

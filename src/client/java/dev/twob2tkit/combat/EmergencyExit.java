@@ -40,11 +40,38 @@ public final class EmergencyExit {
         j.addProperty("active",held(c));j.addProperty("escaping",escaping);j.addProperty("detail",reason);return j;}
     public static void joined(Minecraft c){if(held(c))MeteorModules.disable(AUTO_RECONNECT);}
     public static void acknowledge(Minecraft c){
-        // Only the in-game button calls this. No bridge command can clear the lock.
+        // The in-game button retains its independent, existing confirmation path.
         if(c.player==null||c.player.isDeadOrDying()||c.player.getHealth()<18||escaping)return;
         try{store(c).clearByUser();memoryHold=false;c.player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
             held(c)?"[保护] 退出记录仍需确认，安全离线锁保持开启。":"[保护] 已手动解除离线锁；请自行启动需要的功能。"));}
         catch(Exception e){memoryHold=true;}
+    }
+    public static long recoveryIncident(Minecraft c){
+        var nativeRecord=store(c).read();long latest=0;
+        if(store(c).active()||memoryHold){
+            RecoveryConfirmationPolicy.requireOrigin(nativeRecord,c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip,
+                c.level.dimension().identifier().toString(),c.player.getUUID().toString());
+            var stamp=RecoveryConfirmationPolicy.number(nativeRecord.get("time"));
+            if(stamp==null)throw new IllegalStateException("Unreadable native incident needs human review");
+            latest=stamp;
+        }
+        var script=c.gameDirectory.toPath().resolve("config/twob2tkit/automation/material-health-hold.json");
+        if(MaterialHealthHoldPolicy.active(script,nativeRecord)){
+            try{
+                var record=JsonParser.parseString(java.nio.file.Files.readString(script)).getAsJsonObject();
+                RecoveryConfirmationPolicy.requireOrigin(record,c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip,
+                    c.level.dimension().identifier().toString(),c.player.getUUID().toString());
+                var stamp=RecoveryConfirmationPolicy.number(record.get("time"));
+                if(stamp==null)throw new IllegalStateException("Unreadable script incident needs human review");
+                latest=Math.max(latest,stamp);
+            }catch(Exception error){throw new IllegalStateException("Unreadable script incident needs human review",error);}
+        }
+        return latest;
+    }
+    public static void acknowledgeExplicitChat(Minecraft c,JsonObject request,long now){
+        try{store(c).clearByExplicitChat(request,now);memoryHold=false;}
+        catch(Exception error){memoryHold=true;throw new IllegalStateException("Cannot persist explicit recovery confirmation",error);}
+        if(held(c)){memoryHold=true;throw new IllegalStateException("A newer health incident remains locked");}
     }
     public static void begin(Minecraft c,String why){
         start(c,why,false);
