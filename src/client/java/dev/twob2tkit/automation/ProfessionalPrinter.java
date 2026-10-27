@@ -8,7 +8,8 @@ import net.minecraft.client.Minecraft;
 public final class ProfessionalPrinter {
     private static final String CONFIG="me.aleksilassila.litematica.printer.config.Configs";
     private static final String AIR=MeteorModules.AIR_PLACE;
-    private static boolean owned, paused,placementSneak,recheck;
+    private static boolean owned, paused,placementSneak,recheck,travelling,travelActionSafe;
+    private static net.minecraft.world.phys.Vec3 pendingHit;
     private static net.minecraft.world.item.Item expectedHand;
     private static long lastOwnedClick;
     private static int recoveredMenus;
@@ -37,6 +38,12 @@ public final class ProfessionalPrinter {
     }
     public static boolean owned(){return owned;}
     public static void resume(){paused=false;}
+    public static void travelling(boolean value){travelling=owned&&value;}
+    public static boolean mayAdvance(Minecraft c,net.minecraft.world.phys.Vec3 probe){
+        if(!owned||paused||c.player==null||!failure.isEmpty())return false;
+        if(pacing.awaiting()&&!travelActionSafe)return false;
+        return FlatPrintTravel.keepsReach(c.player.getEyePosition(),probe,pacing.awaiting()?pendingHit:null);
+    }
     private static int elapsedTicks;
     private static int savedInterval=-1,lastWrittenInterval=40;
     private static boolean fastEnabled=true;
@@ -82,6 +89,13 @@ public final class ProfessionalPrinter {
     public static boolean observeCandidate(Object source){
         try{candidateTarget=((net.minecraft.core.BlockPos)source.getClass().getField("blockPos").get(source)).immutable();candidateState=(net.minecraft.world.level.block.state.BlockState)source.getClass().getField("targetState").get(source);}
         catch(ReflectiveOperationException|RuntimeException e){fail(Minecraft.getInstance(),"无法读取打印器的原始目标");return false;}
+        if(travelling){
+            var world=dev.twob2tkit.builder.LitematicaAccess.schematicWorld();
+            if(world==null||!ConfirmedPlacementPacer.safeSimple(candidateState.getProperties().isEmpty(),
+                    candidateState.isCollisionShapeFullBlock(world,candidateTarget),
+                    candidateState.getBlock() instanceof net.minecraft.world.level.block.FallingBlock,
+                    candidateState.getBlock() instanceof net.minecraft.world.level.block.EntityBlock))return false;
+        }
         return AutomationBridge.projectionBatchAllows(Minecraft.getInstance(),candidateTarget);
     }
     public static Object emptyCandidateGuides(){
@@ -121,7 +135,7 @@ public final class ProfessionalPrinter {
             if(c.player==null||!AutomationBridge.projectionBatchFeetAllowed(c.player.getY()))throw new IllegalStateException("Printer actor is below this batch minimum feet height");
             if(queue(printer).isEmpty()){pacing.cancelUnsent(elapsedTicks);return;}
             Object h=handler(printer),prepare=h.getClass().getField("lookAction").get(h);
-            pendingTarget=pendingAnchor=null;pendingState=null;pendingFace=null;placementSneak=false;expectedHand=null;
+            pendingTarget=pendingAnchor=null;pendingState=null;pendingFace=null;placementSneak=false;expectedHand=null;pendingHit=null;travelActionSafe=false;
             boolean simple=false;
             if(prepare!=null&&queue(printer).contains(prepare)){
                 Object raw=prepare.getClass().getField("context").get(prepare);
@@ -141,6 +155,10 @@ public final class ProfessionalPrinter {
                         simple=context.getItemInHand().getItem() instanceof net.minecraft.world.item.BlockItem && ConfirmedPlacementPacer.safeSimple(state.getProperties().isEmpty(),state.isCollisionShapeFullBlock(world,target),state.getBlock() instanceof net.minecraft.world.level.block.FallingBlock,state.getBlock() instanceof net.minecraft.world.level.block.EntityBlock);
                         var hit=(net.minecraft.world.phys.BlockHitResult)raw.getClass().getField("hitResult").get(raw);
                         pendingTarget=target;pendingState=state;pendingAnchor=hit.getBlockPos().immutable();pendingFace=hit.getDirection();
+                        pendingHit=hit.getLocation();
+                        travelActionSafe=simple&&!placementSneak
+                            &&!prepare.getClass().getField("modifyYaw").getBoolean(prepare)
+                            &&!prepare.getClass().getField("modifyPitch").getBoolean(prepare);
                     }
                 }
             }
@@ -205,6 +223,7 @@ public final class ProfessionalPrinter {
         JsonObject j=new JsonObject();
         try{j.addProperty("available",true);j.addProperty("enabled",get("PRINT_MODE"));j.addProperty("rotate",get("ROTATE"));j.addProperty("in_air",get("PRINT_IN_AIR"));Object i=option("PRINTING_INTERVAL");j.addProperty("interval",(int)i.getClass().getMethod("getIntegerValue").invoke(i));}
         catch(ReflectiveOperationException e){j.addProperty("available",false);j.addProperty("error",e.toString());}
+        j.addProperty("printing_while_travelling",owned&&travelling&&!paused);j.addProperty("travel_action_safe",travelActionSafe);
         j.add("last_proposal",lastProposal.deepCopy());j.addProperty("last_hand_mismatch",lastHandMismatch);j.addProperty("action_interval_unit","client_ticks");j.addProperty("owned_menu_recoveries",recoveredMenus);j.addProperty("placement_sneak",placementSneak);j.addProperty("air_place",MeteorModules.isActive(AIR));j.addProperty("owned",owned);j.addProperty("proposal_period_ticks",fastEnabled?8:20);j.addProperty("fast_proposals",fastProposals);j.addProperty("complex_proposals",complexProposals);j.addProperty("server_confirmed",confirmedPlacements);j.addProperty("waiting_for_server",owned&&pacing.awaiting());j.addProperty("travel_pending",travel.pendingCount());j.addProperty("ready_for_travel",owned&&readyForTravel());j.addProperty("failure",failure);j.add("confirmation_seconds",new com.google.gson.Gson().toJsonTree(confirmationSeconds));return j;
     }
     public static void start(){start(true);}
@@ -222,7 +241,7 @@ public final class ProfessionalPrinter {
             Object interval=option("PRINTING_INTERVAL");
             int old=(int)interval.getClass().getMethod("getIntegerValue").invoke(interval);
             if(old<1)throw new IllegalStateException("Invalid printer action tick interval");
-            placementSneak=false;recheck=false;lastOwnedClick=0;expectedHand=null;savedInterval=old;lastWrittenInterval=4;interval.getClass().getMethod("setIntegerValue",int.class).invoke(interval,4);
+            placementSneak=false;recheck=false;lastOwnedClick=0;expectedHand=null;pendingHit=null;travelling=travelActionSafe=false;savedInterval=old;lastWrittenInterval=4;interval.getClass().getMethod("setIntegerValue",int.class).invoke(interval,4);
             set("PRINT_MODE",false);elapsedTicks=0;owned=true;paused=false;fastEnabled=acceleratePlainBlocks;pacing=new ConfirmedPlacementPacer(fastEnabled);travel=new PlacementTravelBarrier<>(PrinterStateConfirmation::matches);sessionNanos=System.nanoTime();confirmationSeconds.clear();pendingTarget=pendingAnchor=null;pendingState=null;failure="";fastProposals=complexProposals=confirmedPlacements=0;
         }catch(ReflectiveOperationException e){throw new IllegalStateException("Installed Litematica Printer is not compatible",e);}
     }
@@ -239,7 +258,7 @@ public final class ProfessionalPrinter {
     /** Drop queued proposals before combat, retaining the placement session and its interval lease. */
     public static void pause(){
         if(!owned)return;
-        paused=true;travel.cancelUnsent();
+        paused=true;travelling=false;travel.cancelUnsent();
         if(pacing.cancelUnsent(elapsedTicks)){pendingTarget=pendingAnchor=null;pendingState=null;}
         try{set("PRINT_MODE",false);Class.forName("me.aleksilassila.litematica.printer.LitematicaMixinMod").getField("printer").set(null,null);}
         catch(ReflectiveOperationException e){throw new IllegalStateException("Could not pause printer",e);}
@@ -254,6 +273,6 @@ public final class ProfessionalPrinter {
             if(savedInterval>=0){Object i=option("PRINTING_INTERVAL");if((int)i.getClass().getMethod("getIntegerValue").invoke(i)==lastWrittenInterval)i.getClass().getMethod("setIntegerValue",int.class).invoke(i,savedInterval);}
         }catch(ClassNotFoundException absent){/* Optional dependency. */}
         catch(ReflectiveOperationException e){throw new IllegalStateException("Could not stop Litematica Printer",e);}
-        finally{owned=false;paused=false;placementSneak=false;expectedHand=null;lastOwnedClick=0;recheck=false;savedInterval=-1;pendingTarget=pendingAnchor=null;pendingState=null;}
+        finally{owned=false;paused=false;placementSneak=false;expectedHand=null;lastOwnedClick=0;recheck=false;savedInterval=-1;pendingTarget=pendingAnchor=null;pendingState=null;pendingHit=null;travelling=travelActionSafe=false;}
     }
 }

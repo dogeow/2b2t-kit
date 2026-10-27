@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import dev.twob2tkit.runtime.api.BuildNavigation;
 import dev.twob2tkit.*;
 import dev.twob2tkit.automation.ProfessionalPrinter;
+import dev.twob2tkit.automation.FlatPrintTravel;
 import dev.twob2tkit.runtime.api.RotationAim;
 import dev.twob2tkit.runtime.engine.BorerAreaFlightSession;
 import net.minecraft.client.Minecraft;
@@ -27,7 +28,7 @@ public final class ProjectionBuildJob {
     private int lastDepartureIdleTicks=-1;
     private boolean lastDepartureEarly;
     private final BorerAreaFlightSession flight=new BorerAreaFlightSession();
-    private boolean active,autoMove,loading,defensePaused;
+    private boolean active,autoMove,loading,defensePaused,continuousFlatPrint;
     private String session="",outcome="idle",lastSupervision="";
     private int lastSupervisionTick=-1000,supervisionCount,loadWait;
     private Iterator<BlockPos> rescan;
@@ -83,7 +84,7 @@ public final class ProjectionBuildJob {
             if(c.player.position().distanceTo(Vec3.atCenterOf(selection.min()))>150)return fail("请先走近选中的投影");
             var printer=ProfessionalPrinter.status();
             if(!printer.has("rotate") || !printer.get("rotate").getAsBoolean() || printer.get("in_air").getAsBoolean() || printer.get("air_place").getAsBoolean())return fail("打印器需开启自动朝向，关闭悬空打印及 Meteor Air Place");
-            defensePaused=false;autoMove=config.projectionAutoMove;level=c.level;active=true;loading=true;session=UUID.randomUUID().toString();outcome="running";lastSupervisionTick=-1000;supervisionCount=0;loadWait=0;rescan=null;tick=matched=total=initial=0;
+            defensePaused=false;continuousFlatPrint=false;autoMove=config.projectionAutoMove;level=c.level;active=true;loading=true;session=UUID.randomUUID().toString();outcome="running";lastSupervisionTick=-1000;supervisionCount=0;loadWait=0;rescan=null;tick=matched=total=initial=0;
             discardSearch();departure.reset();lastDepartureIdleTicks=-1;lastDepartureEarly=false;expected.clear();actual.clear();blocked.clear();path=List.of();station=null;look=null;
             iterator=BlockPos.betweenClosed(selection.min(),selection.max()).iterator();
             if(autoMove){flight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/build-flight-speed.bak"));String error=flight.acquire(c.player);if(error!=null){finishJob(c,error,"dependency_error");return false;}flight.hover();}
@@ -188,7 +189,9 @@ public final class ProjectionBuildJob {
                 if(!completed&&(tick-lastGain<navigation.policy().retryTicks()||!ProfessionalPrinter.queueIdleForTravel()))return;
                 lastDepartureIdleTicks=tick-lastGain;lastDepartureEarly=completed;
                 KitClient.LOGGER.info("[Build] station-complete idle_ticks={} confirmed_local_completion={} station={}",lastDepartureIdleTicks,completed,station);
-                ProfessionalPrinter.stop(c,false);look=null;recount(c);
+                // Flat map art can keep the same native printer session while
+                // travelling. Oriented/complex blocks remain station work.
+                if(!continuousFlatPrint)ProfessionalPrinter.stop(c,false);look=null;recount(c);
                 if(!autoMove){if(available(c).isEmpty()&&!missing.isBlank())finishJob(c,missing,"missing_materials");else finishJob(c,"附近暂时没有可放方块；移动到下一处后继续","needs_reposition");return;}
                 if(station!=null)blocked.put(station,tick+600);
                 station=null;
@@ -215,6 +218,9 @@ public final class ProjectionBuildJob {
         }
         if(iterator.hasNext())return;
         loading=false;total=expected.size();if(total==0){finishJob(c,"可见层没有可建造方块","empty_projection");return;}
+        var printPositions=ProjectionPrintScope.currentPositions(c,expected.keySet());
+        int flatY=printPositions.isEmpty()?0:printPositions.getFirst().getY();
+        continuousFlatPrint=autoMove&&!printPositions.isEmpty()&&printPositions.stream().allMatch(p->p.getY()==flatY);
         recount(c);initial=matched;lastMatched=matched;lastGain=tick;
     }
     private Map<Item,Integer> inventory(Minecraft c){var result=new HashMap<Item,Integer>();for(int i=0;i<36;i++){var s=c.player.getInventory().getItem(i);if(!s.isEmpty())result.merge(s.getItem(),s.getCount(),Integer::sum);}return result;}
@@ -308,7 +314,6 @@ public final class ProjectionBuildJob {
         path=result.nodes();pathIndex=0;station=path.getLast();stall=0;bestDistance=Double.POSITIVE_INFINITY;
     }
     private void move(Minecraft c){
-        ProfessionalPrinter.pause();
         if(pathIndex>=path.size()){path=List.of();beginPrinting(c);return;}
         var dest=feet(path.get(pathIndex));var delta=dest.subtract(c.player.position());double dist=delta.length();
         var motion=navigation.motion(delta);
@@ -320,6 +325,13 @@ public final class ProjectionBuildJob {
             navigationDebug.addProperty("blocked_from",c.player.position().toString());navigationDebug.addProperty("blocked_destination",dest.toString());
             navigationDebug.addProperty("blocked_probe",probe.toString());replan(c,"身体前方有障碍");return;
         }
+        if(continuousFlatPrint&&FlatPrintTravel.horizontal(delta)){
+            if(!ProfessionalPrinter.owned())ProfessionalPrinter.start();
+            ProfessionalPrinter.resume();ProfessionalPrinter.travelling(true);
+            if(!ProfessionalPrinter.mayAdvance(c,probe)){
+                stall=0;flight.hover();phase="边走边打印";reason="等待当前放置动作，保持点击距离";return;
+            }
+        }else ProfessionalPrinter.pause();
         // Drive axes from the probe so steep 3D legs descend diagonally instead of
         // finishing all vertical motion before any horizontal key is held.
         flight.speed(motion.speed());
@@ -328,11 +340,11 @@ public final class ProjectionBuildJob {
             look=new RotationAim.Look((float)(Math.toDegrees(Math.atan2(delta.z,delta.x))-90),0);
             RotationAim.apply(c.player,look);c.options.keyUp.setDown(true);
         }
-        phase="自动走位";reason=(pathIndex+1)+" / "+path.size()+" · "+station.toShortString();
+        phase=continuousFlatPrint&&FlatPrintTravel.horizontal(delta)?"边走边打印":"自动走位";reason=(pathIndex+1)+" / "+path.size()+" · "+station.toShortString();
     }
-    private void replan(Minecraft c,String why){discardSearch();release(c);flight.hover();if(station!=null)blocked.put(station,tick+600);path=List.of();station=null;reason=why;}
+    private void replan(Minecraft c,String why){discardSearch();ProfessionalPrinter.pause();release(c);flight.hover();if(station!=null)blocked.put(station,tick+600);path=List.of();station=null;reason=why;}
     private void beginPrinting(Minecraft c){
-        departure.reset();release(c);look=null;if(autoMove){flight.hover();flight.allowPlacementSneak(true);}if(!ProfessionalPrinter.owned())ProfessionalPrinter.start();if(station==null)station=stationKey(c.player.position());lastMatched=matched;lastGain=tick;printSince=tick;phase="打印中";reason="由 Litematica Printer 放置与校正朝向";
+        departure.reset();release(c);look=null;if(autoMove){flight.hover();flight.allowPlacementSneak(true);}if(!ProfessionalPrinter.owned())ProfessionalPrinter.start();ProfessionalPrinter.travelling(false);ProfessionalPrinter.resume();if(station==null)station=stationKey(c.player.position());lastMatched=matched;lastGain=tick;printSince=tick;phase="打印中";reason="由 Litematica Printer 放置与校正朝向";
     }
     private static void release(Minecraft c){if(c.options==null)return;c.options.keyUp.setDown(false);c.options.keyDown.setDown(false);c.options.keyLeft.setDown(false);c.options.keyRight.setDown(false);c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);c.options.keySprint.setDown(false);}
 }

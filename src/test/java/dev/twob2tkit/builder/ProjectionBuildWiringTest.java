@@ -7,10 +7,20 @@ import static org.junit.jupiter.api.Assertions.*;
 class ProjectionBuildWiringTest {
     private MethodNode method(String cls,String name)throws Exception{var n=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/"+cls+".class")){assertNotNull(in);new ClassReader(in).accept(n,0);}return n.methods.stream().filter(m->m.name.equals(name)).findFirst().orElseThrow();}
     private List<String> calls(MethodNode m){var r=new ArrayList<String>();for(var i:m.instructions)if(i instanceof MethodInsnNode c)r.add(c.name);return r;}
-    @Test void jobDelegatesPlacementAndPausesItDuringMovement()throws Exception{
+    @Test void jobDelegatesPlacementAndChecksCollisionAndPendingClickDuringFlatTravel()throws Exception{
         assertTrue(calls(method("builder/ProjectionBuildJob","beginPrinting")).containsAll(List.of("release","hover","start")));
         assertTrue(calls(method("builder/ProjectionBuildJob","move")).containsAll(List.of("pause","noCollision","speed")));
+        var move=calls(method("builder/ProjectionBuildJob","move"));
+        assertTrue(move.containsAll(List.of("horizontal","travelling","resume","mayAdvance")));
+        assertTrue(move.indexOf("noCollision")<move.indexOf("mayAdvance"));
+        assertTrue(move.indexOf("mayAdvance")<move.indexOf("speed"));
         for(String name:List.of("tick","move","beginPrinting"))assertFalse(calls(method("builder/ProjectionBuildJob",name)).contains("useItemOn"));
+    }
+    @Test void walkingDoesNotRemoveTheServerAcknowledgementOrComplexBlockGate()throws Exception{
+        assertTrue(calls(method("automation/ProfessionalPrinter","mayAdvance")).containsAll(List.of("awaiting","keepsReach")));
+        assertTrue(calls(method("automation/ProfessionalPrinter","observeCandidate")).containsAll(List.of("safeSimple","projectionBatchAllows")));
+        assertTrue(calls(method("automation/ProfessionalPrinter","nativeProposalQueued")).containsAll(List.of("getBoolean","queued")));
+        assertTrue(calls(method("builder/ProjectionBuildJob","replan")).containsAll(List.of("pause","release","hover")));
     }
     @Test void stationTargetsRequireLiveSupportWithoutBypassingTheBatchMask()throws Exception{
         var calls=calls(method("builder/ProjectionBuildJob","available"));
