@@ -11,6 +11,11 @@ class PriorityRecoveryTest(unittest.TestCase):
   self.assertTrue(recovery_action_allowed(state,'navigate',{'target':[1,110,2],'air_only':True}))
   self.assertFalse(recovery_action_allowed(state,'navigate',{'target':[1,60,2],'air_only':True}))
   self.assertFalse(recovery_action_allowed(state,'navigate',{'target':[5,110,2],'air_only':True}))
+ def test_recovery_vertical_segments_match_native_guard_escape_limits(self):
+  state={'pos':[1,70,2]}
+  for rise in [1.5,64.1,90]:self.assertFalse(recovery_action_allowed(state,'navigate',{'target':[1,70+rise,2],'air_only':True}))
+  for rise in [2,32,64]:self.assertTrue(recovery_action_allowed(state,'navigate',{'target':[1,70+rise,2],'air_only':True}))
+
  def test_formal_acquisition_waits_for_idle_release_before_initializing_and_cleans_token_on_failure(self):
   token=Mock();order=[]
   with patch('live_snapshot.read_fresh',return_value={'world_session':'w'}),patch('safety_interlock.require_unlocked'),patch('idle_priority.request_foreground',side_effect=lambda *a:(order.append('idle released')or token)),patch.object(MaterialClient,'_init_material',side_effect=lambda *a:(order.append('init')or (_ for _ in ()).throw(RuntimeError('init failure')))):

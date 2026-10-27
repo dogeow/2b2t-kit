@@ -107,7 +107,7 @@ def recovery_action_allowed(state,op,params):
  if op!='navigate':return False
  source=state.get('pos');target=params.get('target')
  if any(not isinstance(p,(list,tuple)) or len(p)!=3 or any(type(v)not in (int,float) or not math.isfinite(v) for v in p) for p in (source,target)):return False
- return bool(params.get('air_only')is True and target[1]>source[1]+1 and math.hypot(target[0]-source[0],target[2]-source[2])<=.5)
+ return bool(params.get('air_only')is True and 2<=target[1]-source[1]<=64 and math.hypot(target[0]-source[0],target[2]-source[2])<=.5)
 class Client:
  def __init__(self,root,out,server,min_health=18):
   self.root=Path(root);self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True);self.server=server
@@ -631,7 +631,8 @@ class MaterialClient(Client):
   samples=[]
   while True:
    state=self.status(wait_interface=False)
-   if state.get('health',0)<18:raise RuntimeError('Health reserve changed while waiting for guard admission')
+   minimum=14 if getattr(self,'recovery_only',False) else 18
+   if state.get('health',0)<minimum:raise RuntimeError('Health reserve changed while waiting for guard admission')
    if time.monotonic()>=deadline:return False
    pos=state.get('pos');stamp=state.get('time');entities=state.get('entities')
    valid=(isinstance(pos,list) and len(pos)==3

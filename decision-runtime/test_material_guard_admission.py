@@ -15,6 +15,19 @@ class GuardAdmissionTest(unittest.TestCase):
   return c
  def frame(self,n,**changes):
   return {'health':20,'time':n,'pos':[1.,130.,2.],'guard_busy':False,'entities':[],**changes}
+ def test_recovery_uses_its_existing14_health_floor_without_lowering_normal_work(self):
+  for recovery,health,allowed in [(True,16.6,True),(True,14,True),(True,13.9,False),(False,17.9,False)]:
+   with self.subTest(recovery=recovery,health=health),tempfile.TemporaryDirectory()as d:
+    c=self.client(d,[self.frame(i,health=health)for i in [1,2,3]]);c.recovery_only=recovery
+    with patch('material_client.time.sleep'),patch('material_client.time.monotonic',return_value=0):
+     if allowed:self.assertTrue(c._wait_guard_admission(10))
+     else:
+      with self.assertRaisesRegex(RuntimeError,'Health reserve changed'):c._wait_guard_admission(10)
+ def test_busy_recovery_defers_without_misclassifying_allowed_health_as_new_injury(self):
+  with tempfile.TemporaryDirectory()as d:
+   c=self.client(d,[self.frame(1,health=16.6,guard_busy=True)]);c.recovery_only=True
+   with patch('material_client.time.sleep'),patch('material_client.time.monotonic',side_effect=[0,11]):self.assertFalse(c._wait_guard_admission(10))
+
  def test_waits_for_busy_live_hostile_and_three_distinct_stable_frames_before_one_retry(self):
   with tempfile.TemporaryDirectory() as d:
    states=[self.frame(i,guard_busy=True) for i in range(8)]
