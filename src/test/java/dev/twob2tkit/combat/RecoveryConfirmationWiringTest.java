@@ -7,6 +7,15 @@ import org.objectweb.asm.tree.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RecoveryConfirmationWiringTest {
+    @Test void disconnectedClientHasAFreshNonemptyScopeBeforeFirstWorldJoin()throws Exception {
+        var init=code("automation/AutomationBridge").methods.stream().filter(m->m.name.equals("<clinit>")).findFirst().orElseThrow();
+        var instructions=init.instructions.toArray();
+        for(int i=0;i<instructions.length;i++)if(instructions[i] instanceof FieldInsnNode f&&f.getOpcode()==Opcodes.PUTSTATIC&&f.name.equals("worldSession")){
+            assertTrue(instructions[i-1] instanceof MethodInsnNode call&&call.name.equals("toString"));
+            assertTrue(instructions[i-2] instanceof MethodInsnNode call&&call.owner.equals("java/util/UUID")&&call.name.equals("randomUUID"));return;
+        }
+        fail("Fresh title scope must be initialized");
+    }
     @Test void explicitRecoveryDispatchDoesNotEnterIdleHandoffThatRejectsHealthLocks()throws Exception {
         var method=code("automation/AutomationBridge").methods.stream().filter(m->m.name.equals("dispatch")).findFirst().orElseThrow();
         var seen=new HashSet<String>();

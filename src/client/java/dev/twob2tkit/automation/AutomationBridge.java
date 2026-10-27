@@ -256,7 +256,7 @@ public final class AutomationBridge {
     private static double nativeAirReturnLastY;
     private static long controlRevision;
     private static Object observedLevel;
-    private static String worldSession="";
+    private static String worldSession=UUID.randomUUID().toString();
     private static final InterfacePausePolicy.InventoryState inventoryInterfacePause=new InterfacePausePolicy.InventoryState();
     private static boolean survivalArmed, survivalBackground;
     private static int useCount, pathIndex, foodOriginalSlot=-1, foodUseSlot=-1, concretePickupDeadline;
