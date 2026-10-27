@@ -91,6 +91,18 @@ class JournaledTerrainTests(unittest.TestCase):
    self.assertEqual(1,len(result['removed']));self.assertEqual(1,c.mines)
    intent=json.loads(next((Path(d)/'projection-terrain-intents').glob('*.json')).read_text())
    self.assertIsNone(intent['pending']);self.assertEqual('mining-once',intent['mining_request_id']);self.assertEqual(0,intent['inventory_credit'])
+ def test_diagonal_water_is_deferred_before_approach_or_mining(self):
+  with tempfile.TemporaryDirectory()as d:
+   c,row=self.fake(Path(d));original=c.request
+   def read(op,**kwargs):
+    result=original(op,**kwargs)
+    if op=='scan':result['blocks'].append({'pos':[2,3,4],'state':'Block{minecraft:water}[level=0]','fluid':True})
+    return result
+   c.request=read
+   with patch('projection_terrain.require_unlocked'),patch('projection_terrain.approach_faces')as approach:
+    result=clear_batch(c,1,expected_item='minecraft:stone_bricks',positions=[row['pos']])
+   self.assertEqual([],result['removed']);self.assertEqual([row['pos']],result['deferred']);self.assertEqual(0,c.mines);approach.assert_not_called()
+   self.assertFalse((Path(d)/'projection-terrain-intents').exists())
  def test_unknown_mining_is_durable_and_never_replayed_even_after_reconnect(self):
   with tempfile.TemporaryDirectory()as d:
    c,row=self.fake(Path(d),confirmed=False)

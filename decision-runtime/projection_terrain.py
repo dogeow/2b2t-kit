@@ -125,6 +125,10 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
         actual = next((r for r in region if r['pos'] == pos), None)
         if not actual or actual['state'] != row['actual'] or actual.get('block_entity') or actual.get('fluid'):
             raise RuntimeError('Terrain changed after audit; do not replace player edits')
+        # Audit adjacency covers faces; the mining admission protects the entire
+        # local volume, including diagonal water. Defer wet cells before moving.
+        if any(r.get('fluid') for r in region):
+            deferred.add(tuple(pos)); continue
         block, _ = block_state(row['actual'])
         tool = 'minecraft:diamond_shovel' if block in ('minecraft:dirt', 'minecraft:grass_block') else 'minecraft:diamond_pickaxe'
         if client.status().get('hand',{}).get('item')!=tool:
