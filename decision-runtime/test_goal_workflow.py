@@ -72,6 +72,25 @@ class WorkbenchTests(unittest.TestCase):
 
 
 class BuildProgressTests(unittest.TestCase):
+    def test_native_completion_race_is_reconciled_by_the_real_build_exit(self):
+        from build_pause_reconciliation import REJECTION
+        class Completed:
+            def __init__(self,out):self.out=out;self.active=True;self.pauses=0
+            def status(self):
+                return {'connected':True,'screen':'','window_active':True,'manual_movement':False,'projection_selection':{'key':'selected'},'inventory':[],
+                    'build_job':{'active':self.active,'session':'job','queue_settled':True},
+                    'professional_printer':{'owned':False,'waiting_for_server':False,'travel_pending':0}}
+            def checked(self,op,**kw):
+                if op!='projection_start':raise AssertionError('The exit must retain the original pause receipt')
+            def request(self,op,**kw):
+                if op=='build_control':self.pauses+=1;self.active=False;return {'id':'original','phase':'error','detail':REJECTION}
+                if op=='projection_audit':return {'projection_audit':{'matched':1,'total':1,'kinds':{}}}
+                raise AssertionError(op)
+        with tempfile.TemporaryDirectory()as d:
+            c=Completed(Path(d));result=build_phase(c,'selected',seconds=0,air_seed_limit=0)
+            self.assertEqual(1,c.pauses);self.assertEqual(1,result['matched'])
+            self.assertIn('original',(c.out/'build-pause-reconciliations.jsonl').read_text())
+
     def test_only_current_needed_material_is_prepared_and_real_hand_is_checked(self):
         class Supply(Client):
             def status(self):

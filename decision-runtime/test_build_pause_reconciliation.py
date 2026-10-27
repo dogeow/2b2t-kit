@@ -7,7 +7,7 @@ class TestPause(unittest.TestCase):
   self.state={'connected':True,'screen':'','manual_movement':False,'build_job':{'session':'job','active':False,'queue_settled':True},'professional_printer':{'owned':False,'waiting_for_server':False,'travel_pending':0}}
  def test_exact_completed_job(self):self.assertTrue(already_settled(self.reply,self.state,'job'))
  def test_wrong_identity_live_queue_manual_and_missing_evidence_rejected(self):
-  variants=[{'connected':False},{'manual_movement':True},{'screen':'ChatScreen'},{'navigating':True},{'pending_scan':{'id':'other'}},{'build_job':{'session':'other','active':False,'queue_settled':True}},{'build_job':{'session':'job','active':True,'queue_settled':True}},{'build_job':{'session':'job','active':False}},{'professional_printer':{'owned':False,'waiting_for_server':False,'travel_pending':1}},{'professional_printer':{}}]
+  variants=[{'connected':False},{'manual_movement':True},{'screen':'ChatScreen'},{'navigating':True},{'pending_scan':{'id':'other'}},{'pending_scan':{}},{'build_job':{'session':'other','active':False,'queue_settled':True}},{'build_job':{'session':'job','active':True,'queue_settled':True}},{'build_job':{'session':'job','active':False}},{'professional_printer':{'owned':False,'waiting_for_server':False,'travel_pending':1}},{'professional_printer':{}}]
   for change in variants:
    with self.subTest(change=change):self.assertFalse(already_settled(self.reply,{**self.state,**change},'job'))
  def test_unknown_and_other_errors_never_accepted(self):

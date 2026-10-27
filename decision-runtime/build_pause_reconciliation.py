@@ -6,7 +6,7 @@ def already_settled(reply,state,job):
         and state.get('connected')is True and not state.get('manual_movement')and not state.get('screen')
         and build.get('session')==job and build.get('active')is False and build.get('queue_settled')is True
         and printer.get('owned')is False and printer.get('waiting_for_server')is False
-        and printer.get('travel_pending')==0 and not state.get('navigating')and not state.get('pending_scan'))
+        and printer.get('travel_pending')==0 and not state.get('navigating')and state.get('pending_scan')is None)
 
 def pause_or_observe_completion(client,job):
     import json,time

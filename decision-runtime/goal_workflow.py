@@ -202,7 +202,9 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             print('BUILD_STALL',b.get('reason'),flush=True);break
         time.sleep(.3)
     s=client.status();b=s['build_job']
-    if b['active']:client.checked('build_control',job_session=b['session'],action='pause_and_report')
+    if b['active']:
+        from build_pause_reconciliation import pause_or_observe_completion
+        pause_or_observe_completion(client,b['session'])
     result=audit(client,'after-build-'+str(int(time.time())))
     if air_seed_limit and client.status().get('projection_air_seed_axis_protocol')==1:
         from projection_air_finish import finish_carried
