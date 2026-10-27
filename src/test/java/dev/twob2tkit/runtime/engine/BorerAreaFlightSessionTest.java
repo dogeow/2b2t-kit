@@ -29,6 +29,20 @@ final class BorerAreaFlightSessionTest {
 		hover.close();assertEquals(.12,f.flight.speed.get());
 	}
 
+    @Test void freshPeekMustNotMigrateAnOwnedGuardHoverToLegacySpeed() throws Exception {
+        Fixture f=new Fixture();var guard=f.session();
+        guard.prepare(temp.resolve("guard-hover-flight.bak"));assertNull(guard.acquire());guard.hover();
+        var fresh=f.session();assertNull(fresh.prepare(temp.resolve("combat-peek-flight.bak")));
+        assertEquals(0.0,f.flight.speed.get());assertNull(guard.acquire());
+        guard.close();assertEquals(.12,f.flight.speed.get());
+    }
+    @Test void freshGuardMustNotMigrateAnOwnedPeekHoverToLegacySpeed() throws Exception {
+        Fixture f=new Fixture();var peek=f.session();
+        peek.prepare(temp.resolve("combat-peek-flight.bak"));assertNull(peek.acquire());peek.hover();
+        var guard=f.session();assertNull(guard.prepare(temp.resolve("guard-hover-flight.bak")));
+        assertEquals(0.0,f.flight.speed.get());assertNull(peek.acquire());
+        peek.close();assertEquals(.12,f.flight.speed.get());
+    }
 	@Test void repairsLegacyPersistedHoverWithoutEnablingFlight() {
 		Fixture f = new Fixture();
 		f.flight.mode.set(Mode.Velocity); f.flight.noSneak.set(true); f.flight.speed.set(0.0);

@@ -34,7 +34,11 @@ public final class BorerAreaFlightSession implements AutoCloseable {
 			SettingHandle speed = new SettingHandle(module, "speed");
 			if (!(speed.original instanceof Double current)) throw new IllegalStateException("Flight 速度类型不兼容");
 			// A freshly loaded idle engine must not restore another feature's active hover.
-            if(BorerFlightSpeedBackup.otherReceiptClaims(path,current))return null;
+            if(BorerFlightSpeedBackup.otherReceiptClaims(path,current)){
+                // Borrow the observed setting without restoring over its current owner.
+                // Keep our own journal attached for subsequent writes and crash recovery.
+                speedBackup=new BorerFlightSpeedBackup(path);preparedPath=path;return null;
+            }
             BorerFlightSpeedBackup backup = new BorerFlightSpeedBackup(path);
 			BorerFlightSpeedBackup.Entry entry = backup.read();
 			double restored = entry == null ? current : entry.restore(current);

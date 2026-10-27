@@ -16,6 +16,12 @@ class BorerFlightSpeedBackupTest {
 		assertEquals(0.5, backup.read().restore(0.5));
 		backup.clear(); assertNull(backup.read());
 	}
+    @Test void unrelatedBakFilesAreNotReadAsSessionReceipts() throws Exception {
+        Files.writeString(temp.resolve("notes-flight.bak"), "not a flight receipt");
+        assertFalse(BorerFlightSpeedBackup.otherReceiptClaims(temp.resolve("own-flight-speed.bak"),0));
+        new BorerFlightSpeedBackup(temp.resolve("emergency-flight.bak")).beforeWrite(.12,0,0);
+        assertTrue(BorerFlightSpeedBackup.otherReceiptClaims(temp.resolve("own-flight-speed.bak"),0));
+    }
 	@Test void corruptBackupIsNotDeletedOrApplied() throws Exception {
 		Path path = temp.resolve("speed.bak");
 		Files.writeString(path, "NaN 0 0.02");

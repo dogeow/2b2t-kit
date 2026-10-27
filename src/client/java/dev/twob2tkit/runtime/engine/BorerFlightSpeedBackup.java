@@ -39,11 +39,16 @@ final class BorerFlightSpeedBackup {
     static boolean otherReceiptClaims(Path own,double current) throws IOException {
         Path parent=own.toAbsolutePath().getParent();if(!Files.isDirectory(parent))return false;
         try(var files=Files.list(parent)){
-            for(Path path:files.filter(p->p.getFileName().toString().endsWith("flight-speed.bak")&&!p.equals(own.toAbsolutePath())).toList()){
+            for(Path path:files.filter(p->isSessionReceipt(p)&&!p.equals(own.toAbsolutePath())).toList()){
                 Entry entry=new BorerFlightSpeedBackup(path).read();
                 if(entry!=null&&current!=entry.original()&&(current==entry.previous()||current==entry.requested()))return true;
             }
         }return false;
+    }
+    private static boolean isSessionReceipt(Path path) {
+        String name=path.getFileName().toString();
+        return name.endsWith("flight-speed.bak") || name.equals("guard-hover-flight.bak")
+            || name.equals("combat-peek-flight.bak") || name.equals("emergency-flight.bak");
     }
 	void clear() throws IOException { Files.deleteIfExists(path); }
 }
