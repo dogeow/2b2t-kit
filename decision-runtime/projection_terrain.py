@@ -161,6 +161,13 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
             reply = client.request('mine_block', pos=pos, face=face, expected_state=row['actual'], seconds=20)
         finally:
             intent['pending']['request_id']=client.last;write_json(journal,intent)
+        from native_outcome_fence import never_dispatched_mining
+        if never_dispatched_mining(reply,client.last,world,pos):
+            # A current preflight refusal certifies that no mining sequence was sent.
+            # Keep the receipt, skip this face, and continue other cells without replay.
+            intent.update(pending=None,removed=False,never_dispatched=True,
+                          preflight_request_id=reply['id'],native_no_send_receipt=reply)
+            write_json(journal,intent);deferred.add(tuple(pos));continue
         if (reply.get('id')!=client.last or reply.get('world_session')!=world or reply.get('phase')!='done'
                 or reply.get('server_confirmed')is not True
                 or reply.get('confirmation_scope')!='single_target_server_block_update_and_native_sequence_ack'

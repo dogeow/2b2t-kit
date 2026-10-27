@@ -103,6 +103,19 @@ class JournaledTerrainTests(unittest.TestCase):
     result=clear_batch(c,1,expected_item='minecraft:stone_bricks',positions=[row['pos']])
    self.assertEqual([],result['removed']);self.assertEqual([row['pos']],result['deferred']);self.assertEqual(0,c.mines);approach.assert_not_called()
    self.assertFalse((Path(d)/'projection-terrain-intents').exists())
+ def test_exact_no_sequence_occlusion_is_skipped_without_mining_replay(self):
+  with tempfile.TemporaryDirectory()as d:
+   c,row=self.fake(Path(d));original=c.request;calls=[]
+   def read(op,**kwargs):
+    if op=='mine_block':
+     calls.append(kwargs);c.last='preflight-only'
+     return {'id':c.last,'op':op,'world_session':c.world,'phase':'waiting','detail':'mining target is occluded','mining_target':row['pos'],'outcome_pending':False,'server_confirmed':False,'server_update_seen':False,'confirmation_scope':'none','native_sequence':-1,'server_ack_sequence':-1}
+    return original(op,**kwargs)
+   c.request=read
+   with patch('projection_terrain.require_unlocked'),patch('projection_terrain.approach_faces',return_value='up'):
+    result=clear_batch(c,1,expected_item='minecraft:stone_bricks',positions=[row['pos']])
+   self.assertEqual(1,len(calls));self.assertEqual(0,c.mines);self.assertEqual([],result['removed']);self.assertEqual([row['pos']],result['deferred'])
+   intent=json.loads(next((Path(d)/'projection-terrain-intents').glob('*.json')).read_text());self.assertIsNone(intent['pending']);self.assertTrue(intent['never_dispatched']);self.assertFalse(intent['removed'])
  def test_unknown_mining_is_durable_and_never_replayed_even_after_reconnect(self):
   with tempfile.TemporaryDirectory()as d:
    c,row=self.fake(Path(d),confirmed=False)
