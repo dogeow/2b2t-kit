@@ -195,7 +195,8 @@ public final class ProfessionalPrinter {
             boolean pacingAcknowledged=pacing.acknowledge();
             if(pacingAcknowledged){confirmedPlacements++;serverConfirmedTotal++;if(confirmationSeconds.size()<64)confirmationSeconds.add((System.nanoTime()-sessionNanos)/1e9);}
             batchCompletion.acknowledge(pos,pendingFinalState,travelAcknowledged,pacingAcknowledged,
-                pendingFinalState!=null&&pendingFinalState.equals(state));
+                pendingFinalState!=null&&pendingFinalState.equals(state),
+                PrinterStateConfirmation.passiveTorchTransition(pendingFinalState,pendingState)?pendingState:null);
         }else if(!state.isAir()&&!state.canBeReplaced())fail(Minecraft.getInstance(),"服务器返回的方块与当前放置动作不一致，已停止放置");
     }
     private static void setInterval(int value)throws ReflectiveOperationException{
@@ -224,6 +225,7 @@ public final class ProfessionalPrinter {
     public static JsonObject status(){
         JsonObject j=new JsonObject();
         j.addProperty("server_confirmed_epoch",serverConfirmationEpoch);j.addProperty("server_confirmed_total",serverConfirmedTotal);
+        j.addProperty("passive_torch_protocol",1);
         try{j.addProperty("available",true);j.addProperty("enabled",get("PRINT_MODE"));j.addProperty("rotate",get("ROTATE"));j.addProperty("in_air",get("PRINT_IN_AIR"));Object i=option("PRINTING_INTERVAL");j.addProperty("interval",(int)i.getClass().getMethod("getIntegerValue").invoke(i));}
         catch(ReflectiveOperationException e){j.addProperty("available",false);j.addProperty("error",e.toString());}
         j.addProperty("printing_while_travelling",owned&&travelling&&!paused);j.addProperty("travel_action_safe",travelActionSafe);

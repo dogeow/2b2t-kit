@@ -2455,15 +2455,7 @@ public final class AutomationBridge {
             if(expiry<0 || expiry>15000)throw new IllegalStateException("Build decision expired");
             KitClient.buildJob().supervise(c,str(r,"action"),str(r,"job_session"));phase="done";detail="build supervision applied; verify subsequent progress";
         }else if(command.equals("professional_print")){
-            var completionTargets=currentMaterialRequest(c,r)&&projectionBatch.active()&&projectionBatchCurrent(c)
-                ?projectionBatch.positions():Set.<BlockPos>of();
-            KitClient.stopWork("使用投影打印机");
-            if(c.player.getHealth()<14 || !MeteorModules.isActive(MeteorModules.KILL_AURA) || !MeteorModules.isActive(MeteorModules.AUTO_LOG))throw new IllegalStateException("Health or defense requires attention");
-            ProfessionalPrinter.start(!r.has("conservative") || !r.get("conservative").getAsBoolean(),completionTargets);active=r.deepCopy();op=command;phase="running";detail="Litematica Printer owns placement";
-            active.add("printer_completion_targets",JSON.toJsonTree(completionTargets.stream().map(pos->new int[]{pos.getX(),pos.getY(),pos.getZ()}).toList()));
-            active.addProperty("printer_completion_world",session(c));
-            active.addProperty("printer_completion_key",completionTargets.isEmpty()?"":projectionBatch.owner().projection());
-            deadline=ticks+20*Math.max(1,Math.min(30,r.has("seconds")?r.get("seconds").getAsInt():10));
+            startOwnedProfessionalPrinter(c,r);
         }else if(command.equals("planter_wheat_batch")){
             externalMaterialScope(c,r);
             if(!currentMaterialRequest(c,r)||!guardArmed()||!pveOnly()||c.player.getHealth()<19
@@ -4379,6 +4371,20 @@ public final class AutomationBridge {
         result.addProperty("dimension",selected.dimension());
         result.addProperty("source",selected.source());
         return result;
+    }
+    private static void startOwnedProfessionalPrinter(Minecraft c,JsonObject request){
+        boolean material=currentMaterialRequest(c,request);
+        var completionTargets=material&&projectionBatch.active()&&projectionBatchCurrent(c)
+            ?projectionBatch.positions():Set.<BlockPos>of();
+        stopWorkForScript(request,material);
+        if(c.player.getHealth()<14||!MeteorModules.isActive(MeteorModules.KILL_AURA)||!MeteorModules.isActive(MeteorModules.AUTO_LOG))
+            throw new IllegalStateException("Health or defense requires attention");
+        ProfessionalPrinter.start(!request.has("conservative")||!request.get("conservative").getAsBoolean(),completionTargets);
+        active=request.deepCopy();op="professional_print";phase="running";detail="Litematica Printer owns placement";
+        active.add("printer_completion_targets",JSON.toJsonTree(completionTargets.stream().map(pos->new int[]{pos.getX(),pos.getY(),pos.getZ()}).toList()));
+        active.addProperty("printer_completion_world",session(c));
+        active.addProperty("printer_completion_key",completionTargets.isEmpty()?"":projectionBatch.owner().projection());
+        deadline=ticks+20*Math.max(1,Math.min(30,request.has("seconds")?request.get("seconds").getAsInt():10));
     }
     private static boolean confirmExplicitRecovery(Minecraft c,JsonObject request)throws Exception{
         if(!str(request,"op").equals("confirm_recovery"))return false;

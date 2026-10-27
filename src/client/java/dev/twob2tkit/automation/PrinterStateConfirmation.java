@@ -45,9 +45,19 @@ public final class PrinterStateConfirmation {
         for(var property:goal.getProperties()){
             String name=property.getName();
             if(name.equals("open")&&(goal.getBlock() instanceof DoorBlock||goal.getBlock() instanceof TrapDoorBlock||goal.getBlock() instanceof FenceGateBlock))continue;
-            if(name.equals("lit")&&(goal.getBlock() instanceof CampfireBlock||goal.getBlock() instanceof CandleBlock))continue;
+            if(name.equals("lit")&&(goal.getBlock() instanceof CampfireBlock||goal.getBlock() instanceof CandleBlock||passiveTorchTransition(goal,predicted)))continue;
             if(!predicted.hasProperty(property)||!Objects.equals(goal.getValue(property),predicted.getValue(property)))return goal;
         }
         return predicted;
+    }
+    /** A powered support turns a newly placed lit torch off after its normal scheduled tick. */
+    public static boolean passiveTorchTransition(BlockState goal,BlockState initial){
+        if(goal==null||initial==null||goal.getBlock()!=initial.getBlock()
+                ||!(goal.getBlock() instanceof RedstoneTorchBlock||goal.getBlock() instanceof RedstoneWallTorchBlock)
+                ||goal.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.LIT)
+                ||!initial.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.LIT))return false;
+        for(var property:goal.getProperties())if(!property.getName().equals("lit")
+                &&(!initial.hasProperty(property)||!Objects.equals(goal.getValue(property),initial.getValue(property))))return false;
+        return true;
     }
 }
