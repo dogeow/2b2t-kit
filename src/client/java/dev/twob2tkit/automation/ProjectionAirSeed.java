@@ -25,7 +25,7 @@ import net.minecraft.world.phys.Vec3;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
-/** One deliberate Meteor-equivalent air seed, using current-connection server evidence. */
+/** One deliberate Meteor-equivalent projected placement, using current-connection server evidence. */
 final class ProjectionAirSeed {
     static final String STAGE="projection_air_seed";
     enum Outcome { RUNNING,DONE,WAITING }
@@ -33,6 +33,9 @@ final class ProjectionAirSeed {
     private final String world,requestId,placementKey;
     private final BlockPos target;
     private final BlockState expected,projected;
+    private final BlockState originalTarget;
+    private final boolean flowingWaterHopper;
+    private final java.util.Map<BlockPos,BlockState> waterSources=new java.util.HashMap<>();
     private final Direction face;
     private final Item item;
     private final int selectedSlot,beforeCount;
@@ -55,6 +58,11 @@ final class ProjectionAirSeed {
         if(schematic==null)throw new IllegalStateException("Air seed projection world is unavailable");
         projected=schematic.getBlockState(target);
         expected=placementState(projected,string(request,"expected_item"));
+        flowingWaterHopper=flowingWaterRequested(request);
+        originalTarget=c.level.getBlockState(target);
+        if(flowingWaterHopper&&(!targetAllowed(originalTarget,expected,true)
+                ||!originalTarget.toString().equals(string(request,"expected_current_state"))))
+            throw new IllegalStateException("Flowing-water hopper requires the exact observed flowing water; sources are protected");
         boolean axisOnly=expected.getBlock() instanceof RotatedPillarBlock
             &&expected.getProperties().size()==1&&expected.hasProperty(RotatedPillarBlock.AXIS);
         boolean isolatedStem=MushroomStemPlacementPolicy.isolated(expected,target,schematic::getBlockState)
@@ -72,8 +80,18 @@ final class ProjectionAirSeed {
         if(!MeteorModules.isActive(MeteorModules.FLIGHT))
             throw new IllegalStateException("Current Meteor Flight must already be active");
         if(c.gui.screen()!=null||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty()
-            ||c.player.isUsingItem()||c.options.keyUse.isDown()||c.player.isInWater()||c.player.isInLava()||c.player.isOnFire())
-            throw new IllegalStateException("Air seed requires an idle dry inventory and released use key");
+            ||c.player.isUsingItem()||c.options.keyUse.isDown()
+            ||!surfacePlayerAllowed(flowingWaterHopper,c.player.isInWater(),c.player.isUnderWater(),c.player.getAirSupply(),c.player.getMaxAirSupply())
+            ||c.player.isInLava()||c.player.isOnFire())
+            throw new IllegalStateException("Air seed requires idle inventory, released use key and a dry or oxygen-safe surface position");
+        if(flowingWaterHopper)for(var p:BlockPos.betweenClosed(target.offset(-2,-2,-2),target.offset(2,2,2))){
+            if(!serverChunk(c,p))throw new IllegalStateException("Flowing-water hopper neighborhood must be server loaded");
+            var state=c.level.getBlockState(p);
+            if(state.getFluidState().is(net.minecraft.tags.FluidTags.LAVA))
+                throw new IllegalStateException("Flowing-water hopper cannot alter water near lava");
+            if(state.is(net.minecraft.world.level.block.Blocks.WATER)&&state.getFluidState().isSource())
+                waterSources.put(p.immutable(),state);
+        }
         selectedSlot=c.player.getInventory().getSelectedSlot();health=c.player.getHealth();
         beforeCount=afterCount=count(c);validateBeforeSend(c);
         // Same primitive used by installed player.AirPlace, without its stale cached camera endpoint.
@@ -106,6 +124,25 @@ final class ProjectionAirSeed {
             :motion.getOpposite();
     }
 
+    static boolean flowingWaterRequested(JsonObject request){
+        var value=request.get("replace_flowing_water");
+        if(value==null)return false;
+        if(!value.isJsonPrimitive()||!value.getAsJsonPrimitive().isBoolean())
+            throw new IllegalArgumentException("replace_flowing_water must be boolean");
+        return value.getAsBoolean();
+    }
+    static boolean targetAllowed(BlockState current,BlockState expected,boolean flowingWater){
+        if(!flowingWater)return current.isAir();
+        return expected.is(net.minecraft.world.level.block.Blocks.HOPPER)
+            &&current.is(net.minecraft.world.level.block.Blocks.WATER)&&!current.getFluidState().isSource();
+    }
+    static boolean surfacePlayerAllowed(boolean flowingWater,boolean bodyInWater,boolean headInWater,int air,int maxAir){
+        return flowingWater?!headInWater&&maxAir>0&&air>=Math.ceil(maxAir*.75):!bodyInWater&&!headInWater;
+    }
+    private boolean waterSourcesUnchanged(Minecraft c){
+        return waterSources.entrySet().stream().allMatch(e->serverChunk(c,e.getKey())&&e.getValue().equals(c.level.getBlockState(e.getKey())));
+    }
+
     private static String string(JsonObject request,String key) {
         return request.has(key)?request.get(key).getAsString():"";
     }
@@ -124,7 +161,10 @@ final class ProjectionAirSeed {
         return new BlockPos(values[0],values[1],values[2]);
     }
     private boolean serverChunk(Minecraft c) {
-        var chunk=c.level.getChunkSource().getChunk(target.getX()>>4,target.getZ()>>4,ChunkStatus.FULL,false);
+        return serverChunk(c,target);
+    }
+    private static boolean serverChunk(Minecraft c,BlockPos pos) {
+        var chunk=c.level.getChunkSource().getChunk(pos.getX()>>4,pos.getZ()>>4,ChunkStatus.FULL,false);
         return LoadedServerChunkEvidence.isServerChunk(c.level,chunk);
     }
     private int count(Minecraft c) {
@@ -145,7 +185,8 @@ final class ProjectionAirSeed {
                 &&(!MushroomStemPlacementPolicy.isolated(expected,target,c.level::getBlockState)
                    ||!MushroomStemPlacementPolicy.isolated(projected,target,LitematicaAccess.schematicWorld()::getBlockState)))
             throw new IllegalStateException("Isolated mushroom stem adjacency changed before the single use");
-        if(!serverChunk(c)||!c.level.getBlockState(target).isAir())
+        if(!serverChunk(c)||!targetAllowed(c.level.getBlockState(target),expected,flowingWaterHopper)
+                ||flowingWaterHopper&&(!originalTarget.equals(c.level.getBlockState(target))||!waterSourcesUnchanged(c)))
             throw new IllegalStateException("Air seed target is not actual air in a loaded server chunk");
         var held=c.player.getMainHandItem();
         if(held.isEmpty()||!held.is(item)||!(held.getItem() instanceof BlockItem blockItem)
@@ -189,7 +230,8 @@ final class ProjectionAirSeed {
 
     Outcome poll(Minecraft c,long tick,boolean timedOut) {
         validateProjection();afterCount=count(c);
-        if(!sent||!serverChunk(c)||c.player.getHealth()<health||c.gui.screen()!=null
+        if(!sent||!serverChunk(c)||c.player.getHealth()<health||c.gui.screen()!=null||!waterSourcesUnchanged(c)
+            ||!surfacePlayerAllowed(flowingWaterHopper,c.player.isInWater(),c.player.isUnderWater(),c.player.getAirSupply(),c.player.getMaxAirSupply())
             ||c.player.getInventory().getSelectedSlot()!=selectedSlot
             ||!c.player.getMainHandItem().isEmpty()&&!c.player.getMainHandItem().is(item)
             ||!MeteorModules.isActive(MeteorModules.FLIGHT))return Outcome.WAITING;
@@ -212,6 +254,16 @@ final class ProjectionAirSeed {
         out.addProperty("server_confirmed",complete&&confirmation.confirmed(world,requestId,STAGE,target));
         out.addProperty("confirmation_scope",confirmation.scope());
         out.addProperty("module_settings_changed",false);out.addProperty("automatic_retry_allowed",false);
+        out.addProperty("replaced_flowing_water",flowingWaterHopper);out.addProperty("original_target_state",originalTarget.toString());
+        out.addProperty("protected_water_sources",waterSources.size());
+        out.addProperty("water_sources_preserved",complete);
+        var sources=new com.google.gson.JsonArray();
+        waterSources.forEach((pos,state)->{
+            var entry=new JsonObject();var sourcePosition=new com.google.gson.JsonArray();
+            sourcePosition.add(pos.getX());sourcePosition.add(pos.getY());sourcePosition.add(pos.getZ());
+            entry.add("pos",sourcePosition);entry.addProperty("state",state.toString());sources.add(entry);
+        });
+        out.add("water_source_baseline",sources);
         out.addProperty("entity_coverage","current_client_loaded_entities_only");return out;
     }
 }

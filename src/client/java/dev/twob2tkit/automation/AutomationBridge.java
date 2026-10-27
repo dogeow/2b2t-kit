@@ -4546,6 +4546,7 @@ public final class AutomationBridge {
         try{var selected=dev.twob2tkit.builder.LitematicaAccess.buildSelection();var pick=new JsonObject();pick.addProperty("key",selected.key());pick.addProperty("name",selected.name());pick.add("min",JSON.toJsonTree(new int[]{selected.min().getX(),selected.min().getY(),selected.min().getZ()}));pick.add("max",JSON.toJsonTree(new int[]{selected.max().getX(),selected.max().getY(),selected.max().getZ()}));j.add("projection_selection",pick);}catch(Exception ignored){}
         j.addProperty("borer_status",KitClient.borer().status());
         j.addProperty("projection_mushroom_stem_seed_protocol",1);
+        j.addProperty("projection_flowing_hopper_seed_protocol",1);
         j.addProperty("planter_wheat_batch_protocol",1);j.add("planter_material_batch",KitClient.planter().materialSnapshot());
         j.addProperty("planter_status",KitClient.planter().status());j.addProperty("planter_count",KitClient.planter().plantedCount());j.addProperty("harvest_count",KitClient.planter().harvestedCount());
         j.addProperty("feeder_status",KitClient.feeder().status());j.addProperty("feeder_count",KitClient.feeder().fedCount());

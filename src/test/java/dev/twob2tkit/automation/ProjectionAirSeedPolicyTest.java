@@ -11,6 +11,31 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ProjectionAirSeedPolicyTest {
+    @Test void flowingWaterOptInProtectsSourcesLavaAndOtherBlocks(){
+        var hopper=Blocks.HOPPER.defaultBlockState();
+        for(int level=1;level<=15;level++){
+            var water=Blocks.WATER.defaultBlockState().setValue(net.minecraft.world.level.block.LiquidBlock.LEVEL,level);
+            assertTrue(ProjectionAirSeed.targetAllowed(water,hopper,true));
+            assertFalse(ProjectionAirSeed.targetAllowed(water,hopper,false));
+            assertFalse(ProjectionAirSeed.targetAllowed(water,Blocks.COBBLESTONE.defaultBlockState(),true));
+        }
+        for(var block:new net.minecraft.world.level.block.Block[]{Blocks.WATER,Blocks.LAVA,Blocks.CHEST,Blocks.AIR})
+            assertFalse(ProjectionAirSeed.targetAllowed(block.defaultBlockState(),hopper,true));
+        assertTrue(ProjectionAirSeed.targetAllowed(Blocks.AIR.defaultBlockState(),hopper,false));
+    }
+    @Test void waterFlagMustBeAnExplicitBoolean(){
+        assertFalse(ProjectionAirSeed.flowingWaterRequested(new com.google.gson.JsonObject()));
+        var r=new com.google.gson.JsonObject();r.addProperty("replace_flowing_water",true);assertTrue(ProjectionAirSeed.flowingWaterRequested(r));
+        r.addProperty("replace_flowing_water","true");assertThrows(IllegalArgumentException.class,()->ProjectionAirSeed.flowingWaterRequested(r));
+    }
+    @Test void surfaceWorkNeverAllowsSubmergedEyesOrLowOxygen(){
+        assertTrue(ProjectionAirSeed.surfacePlayerAllowed(true,true,false,225,300));
+        assertFalse(ProjectionAirSeed.surfacePlayerAllowed(true,true,false,224,300));
+        assertFalse(ProjectionAirSeed.surfacePlayerAllowed(true,false,false,224,300));
+        assertFalse(ProjectionAirSeed.surfacePlayerAllowed(true,true,true,300,300));
+        assertFalse(ProjectionAirSeed.surfacePlayerAllowed(false,true,false,300,300));
+        assertTrue(ProjectionAirSeed.surfacePlayerAllowed(false,false,false,300,300));
+    }
     @Test void hopperUsesClickedFaceOppositeItsOutputRatherThanPlayerMotion(){
         for(var facing:new Direction[]{Direction.DOWN,Direction.NORTH,Direction.SOUTH,Direction.EAST,Direction.WEST})
             for(var motion:Direction.values()){
@@ -74,7 +99,7 @@ class ProjectionAirSeedPolicyTest {
         assertEquals(1,helper.split("interact\\.invoke\\(",-1).length-1);
         assertTrue(helper.contains("if(sent)throw"));
         assertTrue(helper.contains("LoadedServerChunkEvidence.isServerChunk"));
-        assertTrue(helper.contains("getBlockState(target).isAir()"));
+        assertTrue(helper.contains("targetAllowed(c.level.getBlockState(target),expected,flowingWaterHopper)"));
         assertTrue(helper.contains("confirmation.sent(world,requestId,STAGE,target);sent=true"));
         assertFalse(helper.contains("setBlock("));
         assertFalse(helper.contains("setItem("));
