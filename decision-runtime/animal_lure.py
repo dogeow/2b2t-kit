@@ -1,4 +1,4 @@
-"""Lure one exact adult cow over freshly scanned flat ground while holding wheat."""
+"""Lure one exact adult cow or sheep over scanned flat ground while holding wheat."""
 from collections import deque
 import hashlib
 import json
@@ -58,9 +58,9 @@ def ground_route(state, start, destination, scene, max_route=40):
 
 
 def run(c, follower_uuid, destination, scene, out, checkpoint=lambda:None, *, max_route=40,
-        follower_wait_seconds=6, sleep=time.sleep, monotonic=time.monotonic):
+        follower_wait_seconds=6, sleep=time.sleep, monotonic=time.monotonic,species='minecraft:cow'):
     """Return observed cow/player proximity only; never feed, attack or claim breeding."""
-    if (not isinstance(follower_uuid,str) or not follower_uuid or not _point(destination)
+    if (species not in ('minecraft:cow','minecraft:sheep') or not isinstance(follower_uuid,str) or not follower_uuid or not _point(destination)
             or type(max_route) is not int or not 0 <= max_route <= 40
             or type(follower_wait_seconds) not in (int,float) or not 0 < follower_wait_seconds <= 6
             or not isinstance(scene,dict) or set(scene) != {'min','max'}
@@ -71,6 +71,8 @@ def run(c, follower_uuid, destination, scene, out, checkpoint=lambda:None, *, ma
         raise ValueError('A named follower, bounded native scene and route<=40m are required')
     directory = Path(out); directory.mkdir(parents=True,exist_ok=True)
     scope = {'uuid':follower_uuid,'destination':destination,'scene':scene,'server':c.server}
+    # Keep existing cow journal identities; a sheep must never inherit its receipts.
+    if species!='minecraft:cow':scope['species']=species
     path = directory/('animal-lure-'+hashlib.sha256(json.dumps(scope,sort_keys=True).encode()).hexdigest()[:16]+'.json')
     book = json.loads(path.read_text()) if path.exists() else {'scope':scope,'world_session':c.world,'steps':[],'pending':None}
     def save(): write_json(path,book)
@@ -92,8 +94,8 @@ def run(c, follower_uuid, destination, scene, out, checkpoint=lambda:None, *, ma
             checkpoint(); before = c.status(); safe(before)
             state = c.request('scan',min=bounds['min'],max=bounds['max'],details=True); safe(state)
             if state['time'] <= before['time']: raise FarmWait('WAIT_SCAN','Native scan is not a later frame')
-            cow = entity_rows(state,{'species':'minecraft:cow'}).get(follower_uuid,{})
-            if (cow.get('type') != 'minecraft:cow' or cow.get('alive') is not True or cow.get('is_baby') is not False
+            cow = entity_rows(state,{'species':species}).get(follower_uuid,{})
+            if (cow.get('type') != species or cow.get('alive') is not True or cow.get('is_baby') is not False
                     or cow.get('visible') is not True or math.dist(cow['pos'],state['pos'])>7):
                 raise FarmWait('WAIT_FOLLOWER','Exact live adult cow must remain visible within seven blocks')
             book['last_observation']={'time':state['time'],'player':state['pos'],'follower':cow}; save()

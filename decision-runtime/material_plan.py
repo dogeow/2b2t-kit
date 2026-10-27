@@ -54,18 +54,33 @@ class MaterialPlanner:
             'minecraft:gold_ingot', 'minecraft:diamond', 'minecraft:lapis_lazuli', 'minecraft:redstone',
             'minecraft:emerald', 'minecraft:bone_meal'))
 
-    def _candidates(self, item, stock):
+    def _candidates(self, item, stock, count):
         # A batch may need hundreds of planks. A few loose birch planks must not
         # force every barrel to use birch when oak logs can supply the whole batch.
         potential = stock.copy()
         for recipes in self.catalog.recipes.values():
             for recipe in recipes:
-                if len(recipe.cells) == 1:
+                if recipe.cells and all(options == recipe.cells[0][1] for _, options in recipe.cells):
                     _, options = recipe.cells[0]
-                    count = sum(stock[option] for option in options if option != recipe.output)
-                    potential[recipe.output] = max(potential[recipe.output], stock[recipe.output] + count * recipe.count)
+                    available_inputs = sum(stock[option] for option in options if option != recipe.output)
+                    # Slabs and other homogeneous intermediates also compete
+                    # inside tags. Three carried acacia planks can supply six
+                    # slabs even though that recipe occupies three grid cells.
+                    potential[recipe.output] = max(potential[recipe.output], stock[recipe.output]
+                        + (available_inputs // len(recipe.cells)) * recipe.count)
         found = {}
-        for selection_stock in (potential, stock):
+        selection_stocks = [potential, stock]
+        # Candidate selection normally budgets one crafting round. A few
+        # preferred oak planks can then occupy grid cells in *all* sixteen
+        # rounds even when carried dark oak covers the entire bed batch.
+        # Add per-round budgets as alternatives; dependency expansion below
+        # still charges the exact real quantities and compares acquisition.
+        rounds = {math.ceil(count / r.count) for r in self.catalog.recipes.get(item, [])}
+        for batches in sorted(rounds):
+            if batches > 1:
+                selection_stocks.extend(Counter({key: amount // batches for key, amount in source.items()})
+                                        for source in (potential, stock))
+        for selection_stock in selection_stocks:
             for candidate in self.catalog.candidates(item, selection_stock, 3):
                 key = (candidate['recipe_id'], tuple((k, tuple(v)) for k,v in sorted(candidate['ingredients'].items())))
                 found.setdefault(key, candidate)
@@ -85,7 +100,7 @@ class MaterialPlanner:
         if len(ancestors) >= 16:
             raise Cycle(item)
         try:
-            candidates = self._candidates(item, state.stock)
+            candidates = self._candidates(item, state.stock, count)
         except ValueError:
             candidates = []
         choices = []

@@ -1,9 +1,12 @@
 """Native 2x2 diorite batching, output capacity and exact retained inputs."""
 from copy import deepcopy
+import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+import zipfile
 
 from recipe_catalog import RecipeCatalog
 from material_manufacture import _inventory_batch, manufacture
@@ -26,7 +29,14 @@ class BulkDioriteTests(unittest.TestCase):
     def setUp(self):
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.catalog = RecipeCatalog('/Applications/.minecraft/versions/26.1.2/26.1.2.jar')
+        # Vanilla 26.2 recipe data; offline batching never needs a game install.
+        jar = Path(self.temp.name)/'recipes.jar'
+        with zipfile.ZipFile(jar,'w') as archive:
+            archive.writestr('data/minecraft/recipe/diorite.json',json.dumps({
+                'type':'minecraft:crafting_shaped','category':'building',
+                'key':{'C':'minecraft:cobblestone','Q':'minecraft:quartz'},
+                'pattern':['CQ','QC'],'result':{'count':2,'id':'minecraft:diorite'}}))
+        self.catalog = RecipeCatalog(jar)
         self.spec = self.catalog.choose('minecraft:diorite',
                                        {'minecraft:cobblestone':234, 'minecraft:quartz':234}, 2)
 
@@ -38,7 +48,7 @@ class BulkDioriteTests(unittest.TestCase):
             c.slots[i].update(item=item, count=n)
         return c
 
-    def test_native_catalog_and_full_cells_make128_in_one_shift_batch(self):
+    def test_fixture_catalog_and_full_cells_make128_in_one_shift_batch(self):
         self.assertEqual({'minecraft:cobblestone':[1,4], 'minecraft:quartz':[2,3]}, self.spec['ingredients'])
         self.assertEqual(2, self.spec['produces'])
         batch = _inventory_batch(self.client().status(), self.spec, 245)
@@ -66,6 +76,17 @@ class BulkDioriteTests(unittest.TestCase):
             if not row['count']:row.update(item='minecraft:diamond_sword', count=1, max_stack=1)
         with self.assertRaises(InventoryCapacity):_inventory_batch(c.status(), self.spec, 2)
         self.assertEqual([], c.calls)
+
+
+class InstalledDioriteRecipeTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get('MINECRAFT_TEST_CLIENT_JAR'),
+                         'Set MINECRAFT_TEST_CLIENT_JAR for installed recipe integration')
+    def test_explicit_installed_recipe_matches_offline_contract(self):
+        catalog=RecipeCatalog(os.environ['MINECRAFT_TEST_CLIENT_JAR'])
+        spec=catalog.choose('minecraft:diorite',
+                            {'minecraft:cobblestone':234,'minecraft:quartz':234},2)
+        self.assertEqual({'minecraft:cobblestone':[1,4],'minecraft:quartz':[2,3]},spec['ingredients'])
+        self.assertEqual(2,spec['produces'])
 
 
 if __name__ == '__main__':unittest.main()

@@ -1,6 +1,10 @@
 import copy
 import unittest
+import json,tempfile
+from pathlib import Path
+from unittest.mock import patch
 from projection_terrain import candidates,exposed_faces,accessible_room_order,footer_headroom
+from projection_terrain import clear_batch
 
 class Tests(unittest.TestCase):
  def fixture(self):
@@ -58,4 +62,48 @@ class FooterAccessTests(unittest.TestCase):
   self.assertTrue(footer_headroom([1,60,3],{(1,61,3):cell}))
   cell['fluid']=True
   self.assertFalse(footer_headroom([1,60,3],{(1,62,3):cell}))
+
+class JournaledTerrainTests(unittest.TestCase):
+ def fake(self,root,confirmed=True):
+  audit,state,row=Tests().fixture();row['actual']='Block{minecraft:stone}'
+  actual={'pos':row['pos'],'state':row['actual'],'fluid':False,'block_entity':False,'solid':True,'passable':False}
+  state.update(world_session='w',screen='',flight=True,hand={'item':'minecraft:diamond_pickaxe'},entities=[])
+  state['inventory'].append({'slot':1,'item':'minecraft:air','count':0})
+  class Client:
+   world='w';last=None
+   def __init__(self):self.root=root;self.out=root;self.mines=0;self.removed=False
+   def status(self):return {**state,'world_session':self.world}
+   def request(self,op,**kwargs):
+    if op=='projection_audit':return {'projection_audit':audit}
+    if op=='scan':return {'blocks':[]if self.removed else[actual]}
+    if op=='mine_block':
+     self.last='mining-once';self.mines+=1;self.removed=confirmed
+     return {'id':self.last,'phase':'done'if confirmed else'waiting','world_session':self.world,
+             'server_confirmed':confirmed,'native_sequence':7,'server_ack_sequence':7,
+             'confirmation_scope':'single_target_server_block_update_and_native_sequence_ack'}
+    raise AssertionError(op)
+  return Client(),row
+ def test_exact_supplied_cell_requires_server_ack_and_never_credits_drops(self):
+  with tempfile.TemporaryDirectory()as d:
+   c,row=self.fake(Path(d))
+   with patch('projection_terrain.require_unlocked'),patch('projection_terrain.approach_faces',return_value='up'),patch('projection_terrain.time.sleep'):
+    result=clear_batch(c,1,expected_item='minecraft:stone_bricks',positions=[row['pos']])
+   self.assertEqual(1,len(result['removed']));self.assertEqual(1,c.mines)
+   intent=json.loads(next((Path(d)/'projection-terrain-intents').glob('*.json')).read_text())
+   self.assertIsNone(intent['pending']);self.assertEqual('mining-once',intent['mining_request_id']);self.assertEqual(0,intent['inventory_credit'])
+ def test_unknown_mining_is_durable_and_never_replayed_even_after_reconnect(self):
+  with tempfile.TemporaryDirectory()as d:
+   c,row=self.fake(Path(d),confirmed=False)
+   with patch('projection_terrain.require_unlocked'),patch('projection_terrain.approach_faces',return_value='up'),patch('projection_terrain.time.sleep'):
+    with self.assertRaisesRegex(RuntimeError,'unconfirmed'):clear_batch(c,1,expected_item='minecraft:stone_bricks',positions=[row['pos']])
+    f=next((Path(d)/'projection-terrain-intents').glob('*.json'));before=f.read_bytes();c.world='new-world'
+    with self.assertRaisesRegex(RuntimeError,'no mining replay'):clear_batch(c,1,expected_item='minecraft:stone_bricks',positions=[row['pos']])
+   self.assertEqual(before,f.read_bytes());self.assertEqual(1,c.mines)
+ def test_other_material_or_position_is_never_excavated(self):
+  for options in ({'expected_item':'minecraft:spruce_planks'},{'positions':[[7,2,3]]}):
+   with self.subTest(options=options),tempfile.TemporaryDirectory()as d:
+    c,row=self.fake(Path(d))
+    with patch('projection_terrain.require_unlocked'):
+     result=clear_batch(c,1,**options)
+    self.assertEqual([],result['removed']);self.assertEqual(0,c.mines)
 if __name__=='__main__':unittest.main()

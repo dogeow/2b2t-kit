@@ -109,6 +109,45 @@ class NaturalBlockTests(unittest.TestCase):
     def mines(self):
         return [p for op,p in self.c.actions if op == 'mine_block']
 
+    def carried_tips(self,amount):
+        self.tips=amount;original=self.c.status
+        def status():
+            q=original();q['inventory'][7]={'slot':7,'item':'minecraft:pointed_dripstone','count':self.tips,'max_stack':64}
+            return q
+        self.c.status=status
+
+    def test_existing_twelve_tips_are_crafted_before_any_natural_source_scan_or_mining(self):
+        self.carried_tips(12);self.profile['external_dripstone_trip_paused']=True
+        def craft(target):
+            self.assertEqual({'minecraft:dripstone_block':3},target)
+            self.tips-=12;self.c.count+=3;return {'phase':'done','complete':True}
+        self.backend.craft=Mock(side_effect=craft)
+        result=self.go(3)
+        self.assertEqual('done',result['phase']);self.assertEqual(3,result['count'])
+        self.backend.craft.assert_called_once();self.assertEqual([],self.c.actions)
+        self.backend.prepare_travel.assert_not_called()
+        saved=json.loads((self.out/'natural-block-pipeline.json').read_text())
+        self.assertIsNone(saved['pending']);self.assertEqual(12,saved['receipts'][0]['tips_consumed'])
+
+    def test_short_home_growth_does_not_start_external_mining(self):
+        self.carried_tips(11);self.profile['external_dripstone_trip_paused']=True;self.backend.craft=Mock()
+        result=self.go(3)
+        self.assertEqual('WAIT_GROWTH',result['code']);self.assertEqual([],self.c.actions)
+        self.backend.craft.assert_not_called()
+
+    def test_uncertain_crafting_keeps_intent_and_never_repeats_or_mines(self):
+        self.carried_tips(12);self.backend.craft=Mock(return_value={'phase':'waiting'})
+        self.assertEqual('WAIT_RECONCILE',self.go(3)['code'])
+        self.assertEqual('WAIT_RECONCILE',self.go(3)['code'])
+        self.backend.craft.assert_called_once();self.assertEqual([],self.c.actions)
+
+    def test_original_unknown_mining_intent_cannot_be_bypassed_by_carried_crafting(self):
+        self.carried_tips(12);self.backend.craft=Mock()
+        (self.out/'natural-block-pipeline.json').write_text(json.dumps({
+            'schema':1,'world_session':'world','item':'minecraft:dripstone_block','target':3,
+            'target_scope':natural.TARGET_SCOPE,'pending':{'request_id':'old-mine'},'receipts':[]}))
+        self.assertEqual('WAIT_RECONCILE',self.go(3)['code']);self.backend.craft.assert_not_called()
+
     def test_five_registered_surface_blocks_finish_absolute_33_without_bulk_quarry(self):
         self.reset('minecraft:diorite');self.c.count=28
         region=self.profile['natural_source_regions'][0];region['single_block_air_approach']=True

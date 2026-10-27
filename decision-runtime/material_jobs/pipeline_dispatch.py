@@ -1,6 +1,6 @@
 """Explicit target scopes for the existing material backend's sole client."""
 from . import (mineral_pipeline, wood_pipeline, colored_pipeline,
-               natural_block_pipeline, mud_pipeline, stripped_wood_pipeline)
+               natural_block_pipeline, mud_pipeline, stripped_wood_pipeline,pointed_dripstone_pipeline)
 from .protocol import JobBlocked, fingerprint
 
 CARRIED_SCOPE = 'absolute_backpack_total'
@@ -15,6 +15,8 @@ FAMILIES = (
     (mud_pipeline, mud_pipeline.ITEMS, mud_pipeline.TARGET_SCOPE, 'mud_backend', mud_pipeline.MAX_TARGET_COUNT),
     (stripped_wood_pipeline, stripped_wood_pipeline.OUTPUTS, stripped_wood_pipeline.TARGET_SCOPE,
      'stripped_wood_backend', stripped_wood_pipeline.MAX_TARGET_COUNT),
+    (pointed_dripstone_pipeline,pointed_dripstone_pipeline.OUTPUTS,pointed_dripstone_pipeline.TARGET_SCOPE,
+     'pointed_backend',pointed_dripstone_pipeline.MAX_TARGET_COUNT),
 )
 
 

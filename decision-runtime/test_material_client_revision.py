@@ -3,6 +3,18 @@ from pathlib import Path
 from unittest.mock import patch
 from material_client import Client,Handoff
 class RevisionTest(unittest.TestCase):
+ def test_projection_switch_and_rollback_accept_the_native_success_revision(self):
+  for op in ('projection_load','projection_load_rollback'):
+   with self.subTest(op=op),tempfile.TemporaryDirectory()as d:
+    class Fake(Client):
+     def __init__(self):self.root=self.out=Path(d);self.world='world';self.rev=40;self.anchor=[1,2,3];self.owned=False;self.last=None
+     def raw(self):
+      s={'world_session':'world','control_revision':40,'connected':True,'screen':'','manual_movement':False,'health':20,'server':'simpcraft.com','dimension':'minecraft:overworld','pos':[1,2,3],'time':1,'inventory':[]}
+      p=self.root/'request.json'
+      if p.exists():
+       request=json.loads(p.read_text());s.update(control_revision=41,id=request['id'],last_request=request['id'],phase='done')
+      return s
+    c=Fake();self.assertEqual('done',c.request(op)['phase']);self.assertEqual(41,c.rev)
  def test_reply_created_after_observation_never_returns_stale_current_status(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d)

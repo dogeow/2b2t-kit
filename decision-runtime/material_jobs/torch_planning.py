@@ -128,7 +128,9 @@ def plan(catalog, targets, stock, warehouse_hint, factory):
             total = min(targets[TORCH], held + probe * 4)
             candidate = factory(catalog, {TORCH: total}, free)
             ready = (not candidate['missing_supplies']
-                     and all(s['kind'] in ('craft', 'reserve') for s in candidate['steps']))
+                     and all(s['kind'] in ('craft', 'reserve')
+                             and s.get('recipe_id') not in getattr(catalog,'smelting',{})
+                             for s in candidate['steps']))
             if ready:
                 low, best = probe, candidate
             else:

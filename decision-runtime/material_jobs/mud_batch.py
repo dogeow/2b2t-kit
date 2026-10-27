@@ -10,6 +10,15 @@ def visit_cells(request,profile):
     return value
 
 
+def item_visit_cells(request,profile,item):
+    if request.get('mode')!='item'or item!='minecraft:mud':return 4
+    cfg=profile.get('mud_station')or{}
+    value=cfg.get('item_cells_per_visit',4)
+    if type(value)is not int or not 4<=value<=64 or value%4:
+        raise ValueError('Item mud visit size must be a multiple of four from four to64')
+    return value if cfg.get('authorized')is True else 4
+
+
 def carried_visit_target(request,profile,state,item,final_count):
     if(request.get('mode')!='projection'or item!='minecraft:mud_bricks'
             or profile.get('mud_station',{}).get('authorized')is not True

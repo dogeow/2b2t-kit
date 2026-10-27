@@ -25,6 +25,7 @@ class NativePipelineBackend(FakeBackend):
         self.pipeline_targets = []
         self.stack_sizes.update({
             'minecraft:dripstone_block': 64, 'minecraft:mushroom_stem': 64,
+            'minecraft:pointed_dripstone':64,
             'minecraft:mud_bricks': 64, 'minecraft:raw_iron_block': 64,
             'minecraft:oak_planks': 64, 'minecraft:stripped_cherry_wood': 64})
 
@@ -71,6 +72,7 @@ class NativePipelineDispatchTests(unittest.TestCase):
     def test_native_item_dispatches_each_carried_family_with_its_exact_scope(self):
         for item, scope in (('minecraft:white_concrete', 'absolute_backpack'),
                             ('minecraft:dripstone_block', 'absolute_backpack'),
+                            ('minecraft:pointed_dripstone','absolute_backpack'),
                             ('minecraft:mud_bricks', 'absolute_backpack_total')):
             with self.subTest(item=item):
                 backend = NativePipelineBackend(self.catalog)

@@ -287,14 +287,27 @@ class TargetedSupplyTest(unittest.TestCase):
         self.job.fetch_packed.assert_not_called()
 
     def test_obstructed_chest_uses_real_vertical_scan_and_never_approaches(self):
+        self.job.profile['depots'] = [[1,64,1]]
         self.client.request = Mock(return_value={'blocks':[
             {'pos':[1,64,1],'state':'Block{minecraft:chest}[facing=north]'},
             {'pos':[1,65,1],'state':'Block{minecraft:stone}'},
         ]})
-        with self.assertRaisesRegex(RuntimeError,'landing column is obstructed'):
-            self.job.fetch({'minecraft:stone':64})
+        with patch.object(self.client,'transfer',wraps=self.client.transfer) as transfer:
+            result=self.job.fetch({'minecraft:stone':64})
+        self.assertEqual('waiting',result['phase'])
+        self.assertEqual({'minecraft:stone':64},result['missing'])
+        self.assertEqual([[1,64,1]],result['unavailable_sources'])
         self.client.request.assert_called_once_with('scan',min=[1,64,1],max=[1,70,1],details=True)
+        transfer.assert_not_called()
+        self.job.close_owned_menu.assert_not_called()
         self.assertFalse(self.client.calls)
+        source=json.loads((self.root/'sources.json').read_text())[0]
+        self.assertEqual('unavailable',source['phase'])
+        self.assertEqual('landing_column_obstructed',source['reason'])
+        self.assertEqual('landing_column_obstructed',source['scan_evidence']['reason'])
+        self.assertEqual('Block{minecraft:chest}[facing=north]',source['scan_evidence']['observed_state'])
+        self.assertEqual([1,70,1],source['scan_evidence']['scan']['max'])
+        self.assertEqual(self.client.request.return_value['blocks'],source['scan_evidence']['scan']['blocks'])
 
 
 if __name__ == '__main__':

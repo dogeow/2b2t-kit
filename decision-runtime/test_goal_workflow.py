@@ -3,18 +3,23 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 import goal_workflow
-from goal_workflow import open_workbench,subset_matches,build_phase,station_target,protected_background,verified_build_navigation
+from goal_workflow import open_workbench,subset_matches,build_phase,station_target,protected_background,verified_build_navigation,available_build_material,prepare_build_material
 
 
 class Client:
     def __init__(self, approach_fails=False):
         self.calls=[];self.opened=False;self.approach_fails=approach_fails;self.hand='minecraft:bow'
+        self.directory=tempfile.TemporaryDirectory();self.out=Path(self.directory.name)
     def status(self):
         return {'hand':{'item':self.hand},'inventory':[{'slot':0,'item':'minecraft:diamond_sword','count':1}],
                 'menu':{'type':'CraftingMenu' if self.opened else 'InventoryMenu'}}
     def fetch(self,*args):self.calls.append('near_depot');return {'phase':'done'}
     def request(self,op,**args):
-        self.calls.append(op);return {'blocks':[{'state':'Block{minecraft:crafting_table}'}]}
+        self.calls.append(op)
+        if op=='approach_block':
+            if self.approach_fails:raise RuntimeError('No clear path')
+            return {'phase':'done'}
+        return {'blocks':[{'state':'Block{minecraft:crafting_table}'}]}
     def checked(self,op,**args):
         self.calls.append(op)
         if op=='select_item':self.hand=args['item']
@@ -51,7 +56,7 @@ class WorkbenchTests(unittest.TestCase):
         self.assertFalse(subset_matches(observed,targets));self.assertFalse(subset_matches([],[]))
     def test_nearby_depot_does_not_substitute_for_actual_workbench_reach(self):
         c=Client();open_workbench(c,[10,65,20],[7,65,17])
-        self.assertEqual(c.calls,['near_depot','scan','approach_block','select_item','interact'])
+        self.assertEqual(c.calls,['near_depot','scan','scan','approach_block','select_item','interact'])
         self.assertTrue(c.opened)
     def test_failed_approach_never_attempts_interaction(self):
         c=Client(approach_fails=True)
@@ -67,6 +72,40 @@ class WorkbenchTests(unittest.TestCase):
 
 
 class BuildProgressTests(unittest.TestCase):
+    def test_only_current_needed_material_is_prepared_and_real_hand_is_checked(self):
+        class Supply(Client):
+            def status(self):
+                s=super().status();s['inventory']+=[{'slot':12,'item':'minecraft:dripstone_block','count':64},
+                    {'slot':13,'item':'minecraft:black_terracotta','count':4}]
+                s['hand']['count']=64 if self.hand=='minecraft:dripstone_block'else 1
+                s['build_job']={'material_needs':{'minecraft:dripstone_block':769,'minecraft:green_terracotta':182}}
+                return s
+        c=Supply();self.assertEqual('minecraft:dripstone_block',available_build_material(c.status()))
+        self.assertEqual('minecraft:dripstone_block',prepare_build_material(c,c.status()))
+        self.assertEqual(['select_item'],c.calls);self.assertIsNone(prepare_build_material(c,c.status()))
+        c.hand='minecraft:diamond_pickaxe';c.checked=lambda *a,**k:None
+        with self.assertRaisesRegex(RuntimeError,'held hand'):prepare_build_material(c,c.status())
+
+    def test_empty_printer_hand_pauses_before_refill_and_restarts_original_projection(self):
+        class Supply:
+            def __init__(self,out):self.out=out;self.calls=[];self.hand='minecraft:dripstone_block';self.count=64;self.starts=0
+            def status(self):
+                return {'time':1,'world_session':'w','pos':[.5,65,.5],'health':20,'guard_busy':False,'screen':'','window_active':True,
+                    'projection_selection':{'key':'selected'},'hand':{'item':self.hand,'count':self.count},
+                    'inventory':[{'slot':12,'item':'minecraft:dripstone_block','count':128}],
+                    'professional_printer':{'waiting_for_server':False,'last_hand_mismatch':'expected=minecraft:dripstone_block actual=minecraft:air'},
+                    'build_job':{'active':self.starts==1,'session':'job','placement_key':'selected','matched':64 if self.starts>1 else 0,
+                        'total':64,'phase':'打印中','material_needs':{'minecraft:dripstone_block':64}}}
+            def checked(self,op,**kw):
+                self.calls.append((op,kw))
+                if op=='projection_start':self.starts+=1;self.hand='minecraft:air'if self.starts==1 else'minecraft:dripstone_block';self.count=0 if self.starts==1 else 64
+                if op=='select_item':self.hand=kw['item'];self.count=64
+            def request(self,*a,**k):return {'projection_audit':{'matched':64,'total':64,'kinds':{}}}
+        with tempfile.TemporaryDirectory()as d:
+            c=Supply(Path(d));result=build_phase(c,'selected',seconds=5)
+            self.assertEqual(['projection_start','build_control','select_item','projection_start'],[op for op,kw in c.calls])
+            self.assertEqual('pause_and_report',c.calls[1][1]['action']);self.assertEqual('selected',c.calls[-1][1]['placement_key'])
+            self.assertEqual(64,result['matched'])
     def test_native_station_progress_requires_real_movement(self):
         old={'pos':[0,64,0],'build_job':{'path_step':1,'navigation':{'start':'0,64,0','path_length':10}}}
         moving={'pos':[1,64,0],'build_job':{'active':True,'auto_move':True,'phase':'自动走位',
@@ -104,6 +143,7 @@ class BuildProgressTests(unittest.TestCase):
                 return {'phase':'done'}
             def request(self,op,**kwargs):
                 self.assertion=op
+                if op=='build_control':return self.checked(op,**kwargs)
                 return {'projection_audit':{'matched':0,'total':10,'kinds':{}}}
         with tempfile.TemporaryDirectory() as directory:
             for moving in (False,True):

@@ -1,10 +1,35 @@
 """One journaled native AirPlace wood precursor, followed by normal axe stripping."""
-import json,time
+import json,time,math
 from pathlib import Path
 from material_plan import inventory_counts
 from projection_wood import log_target,cell_at,finish_beams
 from owned_air_escape import wait_known_idle
 from work_access import ApproachUnavailable
+
+
+def run_from_poses(client,row,poses,out,checkpoint,move_to):
+    """Try distinct observed access hints only after a proved pre-send refusal."""
+    out=Path(out);out.mkdir(parents=True,exist_ok=False)
+    if (not isinstance(poses,list)or not 1<=len(poses)<=16
+            or any(not isinstance(p,list)or len(p)!=3
+                   or any(type(v)not in(int,float)or not math.isfinite(v)for v in p)for p in poses)
+            or len({tuple(p)for p in poses})!=len(poses)):
+        raise ValueError('One to sixteen distinct finite access poses required')
+    for index,pose in enumerate(poses):
+        checkpoint();move_to(pose,out/('access-%02d'%index))
+        attempt=out/('placement-%02d'%index)
+        try:return run_one(client,row,attempt,checkpoint)
+        except ApproachUnavailable:
+            # This exception is recoverable only with run_one's exact physical
+            # no-change witness, never from a timeout or later axe operation.
+            book=json.loads((attempt/'progress.json').read_text())
+            if (book.get('world_session')!=client.world or book.get('target')!=row['pos']
+                    or book.get('known_not_sent')is not True or book.get('pending')is not None
+                    or book.get('complete')is not False or book.get('raw_placement_confirmed')
+                    or getattr(client,'native_inflight',None)is not None
+                    or getattr(client,'unconfirmed_native_request',None)is not None):
+                raise RuntimeError('Original air attempt lacks an exact no-send witness; no alternate pose')
+    raise ApproachUnavailable('No supplied pose passed native air admission; no placement was sent')
 
 
 def run_one(client,row,out,checkpoint):
@@ -28,10 +53,11 @@ def run_one(client,row,out,checkpoint):
     result=client.request('projection_air_seed',placement_key=key,target=pos,
                           expected_item=raw,expected_state=book['raw_state'])
     (out/'native-air-seed.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
-    # This exact host branch throws before constructing/sending the action.
+    # These exact host branches throw before sending the single interaction.
     # Retain its failed receipt, verify no change, and allow another target.
     if (result.get('phase')=='error'
-            and result.get('detail')=='Air seed requires the current healthy idle guarded material lease'):
+            and result.get('detail')in('Air seed requires the current healthy idle guarded material lease',
+                                       'Air seed target is occluded')):
         if cell_at(client,pos)['state']!=row['actual']or inventory_counts(client.status()).get(raw,0)!=count:
             raise RuntimeError('Air admission rejected but actual state changed; retain the original outcome')
         book.update(pending=None,known_not_sent=True,deferred=True);save()

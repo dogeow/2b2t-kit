@@ -69,6 +69,16 @@ class AnimalLureTest(unittest.TestCase):
         with self.assertRaises(FarmWait): ground_route(altered,[.5,64,.5],DEST,SCENE)
         with self.assertRaises(FarmWait): ground_route(state,[.5,64,.5],DEST,SCENE,max_route=5)
 
+    def test_sheep_use_same_conservative_route_without_reusing_cow_journal_identity(self):
+        client=LureClient();client.entities[0]['type']='minecraft:sheep'
+        result,book=self.execute(client,species='minecraft:sheep')
+        self.assertEqual('done',result['phase']);self.assertEqual('minecraft:sheep',book['scope']['species'])
+        self.assertEqual(4,client.inv[5]['count']);self.assertFalse(result['breeding_claimed'])
+        client=LureClient();result,book=self.execute(client)
+        self.assertNotIn('species',book['scope'],'Existing cow journal identities remain unchanged')
+        client=LureClient();result,_=self.execute(client,species='minecraft:sheep')
+        self.assertEqual('WAIT_FOLLOWER',result['code']);self.assertEqual([],client.moves())
+
     def test_cow_route_keeps_one_body_cell_from_wall_instead_of_cutting_corner(self):
         client=LureClient(); state=client.request('scan',min=SCENE['min'],max=SCENE['max'],details=True)
         state['blocks'].append(row((3,64,1),'Block{minecraft:oak_trapdoor}[open=true]'))

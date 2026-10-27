@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from container_access import OutdoorChestChanged, open_grounded_chest,open_chest_from_pose
+from container_access import OutdoorChestChanged, open_grounded_chest,open_chest_from_pose,verify_opened_chest
 from copy import deepcopy
 from unittest.mock import Mock
 
@@ -25,6 +25,18 @@ class FakeClient:
 
 
 class ContainerAccessTest(unittest.TestCase):
+    def test_explicit_stationary_hover_keeps_exact_pose_and_menu_verification(self):
+        c,s,scan,pos,pose=self.indoor_client();s.update(flight=True,on_ground=False,air_only_navigation_protocol=2)
+        opened={'menu':{'id':8,'type':'ChestMenu','cursor':{'count':0}}}
+        with patch('container_access.wait_container_contents',return_value=opened),patch('container_access.verify_opened_chest')as verify,patch('material_storage_index.bind_source'):
+            result=open_chest_from_pose(c,pos,pose,'south',allow_hover=True)
+        verify.assert_called_once_with(c,result['_verified_chest']);self.assertEqual('interact',c.checked.call_args.args[0])
+        for change in ({'flight':False},{'air_only_navigation_protocol':1},{'velocity':[0,.2,0]},{'pos':[1.8,65,5.5]}):
+            c,s,scan,pos,pose=self.indoor_client();s.update(flight=True,on_ground=False,air_only_navigation_protocol=2);s.update(change)
+            with self.subTest(change=change),self.assertRaises(RuntimeError):open_chest_from_pose(c,pos,pose,'south',allow_hover=True)
+            c.checked.assert_not_called()
+        c,s,scan,pos,pose=self.indoor_client()
+        with self.assertRaises(ValueError):open_chest_from_pose(c,pos,pose,'south',allow_hover=1)
     def indoor_client(self):
         pose=[1.5,65,5.5];pos=[1,66,2]
         state={'world_session':'w','control_revision':7,'connected':True,'pos':pose,'velocity':[0,0,0],
@@ -48,6 +60,50 @@ class ContainerAccessTest(unittest.TestCase):
              expected_state='Block{minecraft:chest}[facing=south]',expected_hand='minecraft:diamond_sword')
         wait.assert_called_once_with(c,'ChestMenu',require_nonempty=False)
         verify.assert_called_once_with(c,result['_verified_chest']);bind.assert_called_once_with(c,opened,pos,'minecraft:chest')
+
+    def test_registered_barrel_requires_explicit_kind_and_binds_actual_source(self):
+        c,s,scan,pos,pose=self.indoor_client()
+        scan['blocks'][0]['state']='Block{minecraft:barrel}[facing=north,open=false]'
+        opened={'menu':{'id':8,'type':'ChestMenu','cursor':{'count':0}}}
+        with self.assertRaises(OutdoorChestChanged):open_chest_from_pose(c,pos,pose,'north')
+        c.checked.assert_not_called()
+        with patch('container_access.wait_container_contents',return_value=opened), \
+             patch('container_access.verify_opened_chest'),patch('material_storage_index.bind_source')as bind:
+            result=open_chest_from_pose(c,pos,pose,'north',block_id='minecraft:barrel',allow_empty=True)
+        self.assertIn('barrel',result['_verified_chest']['state'])
+        bind.assert_called_once_with(c,opened,pos,'minecraft:barrel')
+        self.assertEqual('interact',c.checked.call_args.args[0])
+
+    def test_explicit_visible_top_keeps_registered_grounded_pose_and_server_menu_checks(self):
+        c,s,scan,pos,pose=self.indoor_client();opened={'menu':{'id':8,'type':'ChestMenu','cursor':{'count':0}}}
+        with patch('container_access.wait_container_contents',return_value=opened)as wait,patch('container_access.verify_opened_chest')as verify,patch('material_storage_index.bind_source'):
+            result=open_chest_from_pose(c,pos,pose,'up',allow_top_face=True)
+        c.checked.assert_called_once_with('interact',pos=pos,face='up',expected_state=scan['blocks'][0]['state'],expected_hand='minecraft:diamond_sword')
+        wait.assert_called_once_with(c,'ChestMenu',require_nonempty=True);verify.assert_called_once_with(c,result['_verified_chest'])
+        self.assertEqual(['scan'],[v.args[0]for v in c.request.call_args_list])
+
+    def test_top_face_opt_in_does_not_allow_flight_foreign_ui_or_nonboolean_flag(self):
+        for change in ({'flight':True},{'screen':'InventoryScreen'},{'manual_movement':True}):
+            c,s,scan,pos,pose=self.indoor_client();s.update(change)
+            with self.assertRaises(RuntimeError):open_chest_from_pose(c,pos,pose,'up',allow_top_face=True)
+            c.checked.assert_not_called()
+        c,s,scan,pos,pose=self.indoor_client()
+        with self.assertRaises(ValueError):open_chest_from_pose(c,pos,pose,'up',allow_top_face='yes')
+        c.request.assert_not_called()
+
+    def test_barrel_lid_animation_is_allowed_but_rotation_or_replacement_is_not(self):
+        c,s,scan,pos,pose=self.indoor_client()
+        source={'pos':pos,'state':'Block{minecraft:barrel}[facing=north,open=false]'}
+        scan['blocks'][0]['state']='Block{minecraft:barrel}[facing=north,open=true]'
+        verify_opened_chest(c,source)
+        for state in ('Block{minecraft:barrel}[facing=south,open=true]','Block{minecraft:chest}[facing=north]'):
+            scan['blocks'][0]['state']=state
+            with self.assertRaises(OutdoorChestChanged):verify_opened_chest(c,source)
+
+    def test_unsupported_indoor_kind_never_opens_or_scans(self):
+        c,s,scan,pos,pose=self.indoor_client()
+        with self.assertRaises(ValueError):open_chest_from_pose(c,pos,pose,'north',block_id='minecraft:shulker_box')
+        c.checked.assert_not_called();c.request.assert_not_called()
 
     def test_indoor_chest_refuses_flying_drifting_foreign_or_player_ui_before_scan_or_interaction(self):
         for change in ({'flight':True},{'pos':[1.5,66,5.5]},
@@ -152,7 +208,9 @@ class ContainerAccessTest(unittest.TestCase):
 
     def test_obstructed_landing_is_rejected_before_movement(self):
         client=FakeClient([0],blocked=True)
-        with self.assertRaisesRegex(RuntimeError,'obstructed'):open_grounded_chest(client,[1,64,2])
+        with self.assertRaisesRegex(OutdoorChestChanged,'obstructed')as caught:open_grounded_chest(client,[1,64,2])
+        self.assertEqual('landing_column_obstructed',caught.exception.reason)
+        self.assertEqual('landing_column_obstructed',caught.exception.evidence['reason'])
         self.assertEqual([],client.actions)
 
     def test_registered_chest_changed_records_exact_scan_without_approach(self):

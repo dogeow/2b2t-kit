@@ -336,13 +336,3 @@ def run(c, profile, item, target_count, out, checkpoint, *, acquire=None, craft=
         return {"phase":"done","item":item,"before":before,"after":after,"gained":after-before,"journal":str(path)}
     except Pending as stop:
         return {**stop.receipt,"journal":str(path)}
-
-
-def _distribution(amount, count):
-    if not 1 <= count <= 16:
-        raise Pending({"phase":"waiting","code":"WAIT_FURNACE","detail":"Configure1–16 verified ordinary furnaces"})
-    # processing.smelt loads at most 64 per furnace per wave; later waves ask
-    # for new fuel as a prerequisite. This predicts only its next actual wave.
-    amount=min(amount,count*64)
-    q,r=divmod(amount,count)
-    return [q+(i<r) for i in range(count)]

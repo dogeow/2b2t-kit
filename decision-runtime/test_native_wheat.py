@@ -5,7 +5,7 @@ from pathlib import Path
 from collections import Counter
 from unittest.mock import Mock, patch
 from potato_farm import FarmWait
-from material_jobs.native_wheat import run, validate_receipt, unresolved, leave_field, dry_footprint
+from material_jobs.native_wheat import run, validate_receipt, unresolved, leave_field, dry_footprint, enter_grounded
 
 CELLS = [[0,63,0],[1,63,0]]
 COUNTS = Counter({'minecraft:wheat':5,'minecraft:wheat_seeds':8})
@@ -19,13 +19,32 @@ def receipt():
 
 
 class NativeWheatTests(unittest.TestCase):
+    def test_entry_rises_before_crossing_then_lands_on_full_soil_outside_crops(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            c=Mock(world='world');c.status.return_value={'pos':[3.5,64.2,.5],'flight':True,'on_ground':False}
+            layout={'cells':CELLS,'scan_min':[0,63,0],'scan_max':[3,65,0]}
+            frame={'world_session':'world','scan_cells_read':12,'scan_total_cells':12,'blocks':[{'pos':[2,63,0],'state':'Block{minecraft:grass_block}[snowy=false]','solid':True,'fluid':False,'block_entity':False}]}
+            c.checked.side_effect=lambda op,**kw:frame if op=='scan'else{'phase':'done'}
+            landed={'pos':[2.5,64,.5],'on_ground':True,'flight':False}
+            with patch('material_jobs.fixed_tree_ground.prepare',return_value=landed)as prepare:
+                self.assertEqual(landed,enter_grounded(c,layout,tmp,lambda:None))
+            self.assertEqual([[3.5,65.2,.5],[2.5,65.2,.5],[2.5,64.15,.5]],
+                             [call.kwargs['target']for call in c.checked.call_args_list if call.args[0]=='navigate'])
+            prepare.assert_called_once();self.assertFalse((Path(tmp)/'native-wheat-batch.json').exists())
+    def test_hovering_planter_must_land_before_creating_any_crop_intent(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            root=Path(tmp);registry=root/'registry.json';registry.write_text('{}')
+            c=Mock(world='world');c.status.return_value={'pos':[.5,65.2,.5],'flight':True,'on_ground':False}
+            with patch('material_jobs.native_wheat.inventory_counts',return_value=COUNTS),patch('material_jobs.native_wheat.enter_grounded',side_effect=RuntimeError('landing not proved')):
+                with self.assertRaisesRegex(RuntimeError,'landing not proved'):run(c,registry,{'cells':CELLS},CELLS,root/'visit',lambda:None)
+            c.checked.assert_not_called();self.assertFalse(unresolved(registry));self.assertFalse((root/'visit/native-wheat-batch.json').exists())
     def test_larger_visit_preserves_prior_completed_harvest_before_next_native_dispatch(self):
         with tempfile.TemporaryDirectory()as tmp:
             root=Path(tmp);out=root/'visit';out.mkdir();registry=root/'registry.json';registry.write_text('{}')
             original=b'{"complete":true,"pending":null,"historical_grain_gain":16}'
             (out/'native-wheat-batch.json').write_bytes(original)
             (out/'native-wheat-receipt.json').write_text('{"original":"receipt"}')
-            c=Mock(world='world');c.checked.side_effect=RuntimeError('unknown new visit')
+            c=Mock(world='world');c.status.return_value={'pos':[.5,63.9375,.5]};c.checked.side_effect=RuntimeError('unknown new visit')
             with patch('material_jobs.native_wheat.inventory_counts',return_value=COUNTS):
                 with self.assertRaises(RuntimeError):run(c,registry,{'cells':CELLS},CELLS,out,lambda:None)
             archives=list((out/'completed-visits').glob('*/native-wheat-batch.json'))
@@ -109,12 +128,21 @@ class NativeWheatTests(unittest.TestCase):
     def test_unknown_native_dispatch_is_retained_and_blocks_every_replay(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);registry=root/'registry.json';registry.write_text('{}')
-            c=Mock(world='world');c.checked.side_effect=RuntimeError('unknown')
+            c=Mock(world='world');c.status.return_value={'pos':[.5,63.9375,.5]};c.checked.side_effect=RuntimeError('unknown')
             layout={'cells':CELLS}
             with patch('material_jobs.native_wheat.inventory_counts',return_value=COUNTS):
                 with self.assertRaises(RuntimeError):run(c,registry,layout,CELLS,root/'first',lambda:None)
                 with self.assertRaises(FarmWait):run(c,registry,layout,CELLS,root/'second',lambda:None)
             self.assertEqual(1,c.checked.call_count)
+
+    def test_distant_preflight_never_creates_an_unresolved_native_intent(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            root=Path(tmp);registry=root/'registry.json';registry.write_text('{}')
+            c=Mock(world='world');c.status.return_value={'pos':[20.,64.,0.]}
+            with patch('material_jobs.native_wheat.inventory_counts',return_value=COUNTS):
+                with self.assertRaisesRegex(FarmWait,'Approach'):
+                    run(c,registry,{'cells':CELLS},CELLS,root/'visit',lambda:None)
+            c.checked.assert_not_called();self.assertFalse(unresolved(registry))
 
 
 if __name__ == '__main__': unittest.main()

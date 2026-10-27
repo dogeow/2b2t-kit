@@ -49,21 +49,22 @@ def take_portion(s,source,amount):
     s=checked('slot_click',menu_id=s['menu']['id'],slot=source['slot'],expected_item=source['item'],expected_count=source['count'],kind='pickup',button=button)
     # A completed click request can still contain the preceding inventory snapshot.
     # Observe both sides of the pickup before splitting; never resend the pickup.
-    deadline=time.monotonic()+6
-    while True:
-        m=s['menu'];cursor=m['cursor'];cell=m['slots'][source['slot']]
-        if m['id']!=menu_id:raise RuntimeError('Crafting menu changed during ingredient pickup')
-        if cursor['item']==source['item'] and cursor['count']==picked and cell['count']==source['count']-picked and (not cell['count'] or cell['item']==source['item']):break
-        if time.monotonic()>=deadline:raise RuntimeError('Ingredient pickup not confirmed; no duplicate click')
-        time.sleep(.15);s=k.status()
+    from kit_runtime.inventory import InventorySession
+    session=InventorySession(k)
+    s=session._wait(s,menu_id,lambda m:
+        m['cursor']['item']==source['item']and m['cursor']['count']==picked
+        and m['slots'][source['slot']]['count']==source['count']-picked
+        and(not m['slots'][source['slot']]['count']or m['slots'][source['slot']]['item']==source['item']),
+        'craft_portion_pickup_later_frames',confirmations=2,interval=.1,fresh=True)
     while s['menu']['cursor']['count']>amount:
-        cell=s['menu']['slots'][source['slot']];old=s['menu']['cursor']['count']
+        cell=s['menu']['slots'][source['slot']];old=s['menu']['cursor']['count'];old_source=cell['count']
         if cell['item'] not in ('minecraft:air',source['item']):raise RuntimeError('Ingredient source slot changed')
-        s=checked('slot_click',menu_id=s['menu']['id'],slot=source['slot'],expected_item=cell['item'],expected_count=cell['count'],kind='pickup',button=1)
-        deadline=time.monotonic()+3
-        while s['menu']['cursor']['count']==old and time.monotonic()<deadline:
-            time.sleep(.2);s=k.status()
-        if s['menu']['cursor']['count']!=old-1:raise RuntimeError('Ingredient split not confirmed')
+        s=checked('slot_click',menu_id=menu_id,slot=source['slot'],expected_item=cell['item'],expected_count=old_source,
+                  expected_cursor=source['item'],expected_cursor_count=old,kind='pickup',button=1)
+        s=session._wait(s,menu_id,lambda m:
+            m['cursor']['item']==source['item']and m['cursor']['count']==old-1
+            and m['slots'][source['slot']]['item']==source['item']and m['slots'][source['slot']]['count']==old_source+1,
+            'craft_portion_return_later_frames',confirmations=2,interval=.1,fresh=True)
     if s['menu']['cursor']['count']!=amount:raise RuntimeError('Incorrect ingredient quantity')
     return s
 def batch(ingredient,output,slots,output_per_recipe,target_total=None):

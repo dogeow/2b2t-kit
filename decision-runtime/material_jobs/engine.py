@@ -232,6 +232,10 @@ class MaterialJob:
         known += [row['max_stack'] for row in self.snapshot.get('inventory', [])
                   if row.get('item') == item and row.get('count') and type(row.get('max_stack')) is int]
         if not known:
+            if item=='minecraft:dirt'and self.prerequisites.get(item,0):
+                # A tree-access dependency precedes the first dirt pickup.
+                # Existing live stack metadata above always takes precedence.
+                return 64
             # The selected projection advertises the finished post, not its
             # vanilla raw log prerequisite. Oak logs are always 64 per stack.
             if item == POST_RAW and self.request['mode'] == 'projection':

@@ -18,6 +18,13 @@ def state():
             'manual_movement': False, 'gravel': {'active': False, 'collected': 0}}
 
 
+def publish_json(path, payload):
+    """Match the native bridge's atomic publication of complete JSON files."""
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(payload))
+    temporary.replace(path)
+
+
 class KitCliTest(unittest.TestCase):
     def test_default_status_reads_current_26_2_instance_without_sending_actions(self):
         import kit_cli
@@ -45,7 +52,7 @@ class KitCliTest(unittest.TestCase):
                 while time.monotonic()<until:
                     if json.loads(path.read_text()).get('id')==request['id']:
                         reply={**request,'phase':'done','changed':False,'control_revision':8,'observed_at':int(time.time()*1000)}
-                        (root/('projection-supply-reply-'+request['id']+'.json')).write_text(json.dumps(reply));return
+                        publish_json(root/('projection-supply-reply-'+request['id']+'.json'),reply);return
                     time.sleep(.01)
             worker=threading.Thread(target=respond);worker.start()
             try:reply=send(root,request,timeout=1,supply_channel=True)
@@ -94,10 +101,10 @@ class KitCliTest(unittest.TestCase):
                     if json.loads((root/'request.json').read_text()).get('id')==request['id']:
                         receipt=state();receipt.update(id=request['id'],last_request=request['id'],phase='done')
                         receipt['gravel']['active']=True
-                        (root/('reply-'+request['id']+'.json')).write_text(json.dumps(receipt))
+                        publish_json(root/('reply-'+request['id']+'.json'),receipt)
                         overwritten=state();overwritten.update(id='native-child',last_request=request['id'],phase='running')
                         overwritten['gravel']['active']=True
-                        (root/'status.json').write_text(json.dumps(overwritten))
+                        publish_json(root/'status.json',overwritten)
                         return
                     time.sleep(.01)
 

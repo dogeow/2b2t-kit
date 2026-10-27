@@ -253,7 +253,7 @@ class MudPipelineTest(unittest.TestCase):
     def sea_source(self,uncertain=False,wrong_potion=False):
         from material_jobs.mud_water_supply import BOTTLE_SCOPE
         self.profile['mud_bucket_source']={'authorized':True,'pos':[104,63,100],
-            'approach':[103.5,64,100.5],'expected_state':'Block{minecraft:water}[level=0]'}
+            'approach':[104.5,64.2,100.5],'expected_state':'Block{minecraft:water}[level=0]'}
         self.c.blocks[(104,63,100)]='Block{minecraft:water}[level=0]'
         self.b.checkpoint=lambda:None
         original_status=self.c.status;original_request=self.c.request
@@ -271,6 +271,41 @@ class MudPipelineTest(unittest.TestCase):
                 'confirmed':True,'unknown_outcome':False,'server_hand_confirmed':True,'server_water_slot_confirmed':True,
                 'source_not_consumed_by_bottle_use':True,'confirmation_scope':BOTTLE_SCOPE}}
         self.c.status=status;self.c.request=request
+    def test_registered_stand_returns_from_low_water_before_generic_access(self):
+        self.sea_source();self.profile['mud_station']['approach']=[100.5,65.2,100.5]
+        self.c.blocks[(101,64,100)]=DIRT
+        with patch('work_access.approach_faces',side_effect=lambda *a,**k:(self.assertGreaterEqual(self.c.pos[1],65), 'up')[1]):
+            result=run(self.c,self.profile,'minecraft:mud',2,self.root/'job',lambda:None)
+        self.assertEqual('done',result['phase']);self.assertEqual(2,self.c.count('minecraft:mud'))
+        self.assertEqual(DIRT,self.c.blocks[(101,64,100)])
+        self.assertTrue((self.root/'job/station-air-return-000/local-air-path.json').exists())
+    def test_registered_overhead_stand_preserves_body_clearance_during_slot_selection(self):
+        self.sea_source();self.profile['mud_station']['approach']=[100.5,65.2,100.5]
+        checked=self.c.checked;request=self.c.request
+        def select(op,**kw):
+            result=checked(op,**kw)
+            if op=='select_item'and kw.get('item')=='minecraft:dirt':self.c.pos[1]-=.3
+            return result
+        def use(op,**kw):
+            if op=='interact'and kw.get('expected_hand')=='minecraft:dirt':self.assertGreaterEqual(self.c.pos[1],65)
+            return request(op,**kw)
+        self.c.checked=select;self.c.request=use
+        with patch('work_access.approach_faces',return_value='up')as access:
+            result=run(self.c,self.profile,'minecraft:mud',1,self.root/'job',lambda:None)
+        self.assertEqual('done',result['phase'])
+        self.assertFalse(any(call.args[1]==[100,63,100]for call in access.call_args_list))
+    def test_unknown_registered_return_retains_water_and_does_not_place_dirt(self):
+        self.sea_source();self.profile['mud_station']['approach']=[100.5,65.2,100.5]
+        from material_jobs.local_air_path import move
+        def route(c,target,out,**kw):
+            if 'station-air-return' in str(out):raise RuntimeError('unknown navigation')
+            return move(c,target,out,**kw)
+        with patch('material_jobs.local_air_path.move',side_effect=route),\
+             self.assertRaisesRegex(RuntimeError,'unknown navigation'):
+            self.go('minecraft:mud',1)
+        book=json.loads((self.root/'job/mud-pipeline.json').read_text())
+        self.assertIsNotNone(book['derived_water_slot']);self.assertEqual(1,self.c.count('minecraft:potion'))
+        self.assertFalse(any(op=='interact'and kw.get('expected_hand')=='minecraft:dirt'for op,kw in self.c.calls))
     def test_registered_sea_fills_four_bottles_without_cauldron_or_bucket(self):
         self.sea_source();self.assertEqual('done',self.go()['phase'])
         self.assertEqual(4,sum(op=='bottle_fill'for op,_ in self.c.calls))
@@ -289,6 +324,25 @@ class MudPipelineTest(unittest.TestCase):
         with self.assertRaisesRegex(JobBlocked,'unproved'):self.go('minecraft:mud',1)
         self.assertEqual('WAIT_RECONCILE',self.go('minecraft:mud',1)['code'])
         self.assertEqual(1,sum(op=='bottle_fill'for op,_ in self.c.calls))
+    def test_mud_pickup_uses_inventory_from_before_the_original_mining(self):
+        original=self.c.request;mined=[False];status=self.c.status
+        def request(op,**kw):
+            reply=original(op,**kw)
+            if op=='mine_block':mined[0]=True
+            return reply
+        def current():
+            s=status()
+            if mined[0]:s['entities']=[{'type':'minecraft:item','uuid':'late-removal','pos':[100.5,64.2,100.5],
+                                      'stack':{'item':'minecraft:mud','count':1}}]
+            return s
+        self.c.request=request;self.c.status=current
+        def collect(client,drop,observation=None):
+            self.assertEqual(0,sum(r['count']for r in observation['inventory']if r['item']=='minecraft:mud'))
+            self.assertEqual(1,client.count('minecraft:mud'));mined[0]=False;return True
+        with patch('material_jobs.mud_pipeline.collect_drop',side_effect=collect)as pickup:
+            result=self.go('minecraft:mud',1)
+        self.assertEqual('done',result['phase']);pickup.assert_called_once()
+
     def test_changed_sea_source_never_uses_bottle_or_falls_back_to_cauldron(self):
         self.sea_source();self.c.blocks[(104,63,100)]='Block{minecraft:water}[level=1]'
         with self.assertRaisesRegex(JobBlocked,'source changed'):self.go('minecraft:mud',1)
@@ -372,7 +426,7 @@ class MudPipelineTest(unittest.TestCase):
         self.profile['mud_station']['approach']=[102.5,64,100.5]
         self.assertEqual('done',self.go('minecraft:mud',1)['phase'])
         moves=[p for op,p in self.c.calls if op=='navigate']
-        self.assertEqual([102.5,64,100.5],moves[0]['target'])
+        self.assertEqual([102.5,64.2,100.5],moves[0]['target'])
     def test_inside_cell_without_registered_adjacent_stand_never_places(self):
         self.c.pos=[100.5,64,100.5]
         self.assertEqual('WAIT_SOURCE',self.go('minecraft:mud',1)['code'])
@@ -451,6 +505,34 @@ class MudPipelineTest(unittest.TestCase):
     def test_known_four_cell_budget_not_false_completion(self):
         result=self.go('minecraft:mud',8)
         self.assertEqual('WAIT_MUD_BATCH',result['code']);self.assertEqual(4,self.c.count('minecraft:mud'))
+    def test_registered_item_visit_prefetches_sixteen_dirt_once_and_confirms_all_mud(self):
+        self.sea_source();self.c.add('minecraft:dirt',-4)
+        self.profile['mud_station'].update(item_cells_per_visit=16,prefer_station_production=True)
+        original=self.b.fetch
+        def stored(target):
+            if target=={'minecraft:dirt':16}:
+                self.b.calls.append(('fetch',target));self.c.add('minecraft:dirt',16);return {'phase':'done'}
+            return original(target)
+        self.b.fetch=stored;result=self.go('minecraft:mud',16)
+        self.assertEqual('done',result['phase']);self.assertEqual(16,self.c.count('minecraft:mud'))
+        self.assertEqual([{'minecraft:dirt':16}],[r[1]for r in self.b.calls if r[0]=='fetch'and'minecraft:dirt'in r[1]])
+        self.assertEqual(16,sum(op=='bottle_fill'for op,_ in self.c.calls))
+        self.assertFalse(any(r[0]=='fetch'and'minecraft:mud'in r[1]for r in self.b.calls))
+
+    def test_registered_item_visit_still_keeps_larger_absolute_target_incomplete(self):
+        self.sea_source();self.c.add('minecraft:dirt',12)
+        self.profile['mud_station']['item_cells_per_visit']=16
+        result=self.go('minecraft:mud',32)
+        self.assertEqual('WAIT_MUD_BATCH',result['code']);self.assertEqual(16,self.c.count('minecraft:mud'))
+        self.assertFalse(json.loads((self.root/'job/mud-pipeline.json').read_text()).get('complete',False))
+
+    def test_item_visit_registration_rejects_invalid_sizes_and_preserves_default_four(self):
+        from material_jobs.mud_batch import item_visit_cells
+        self.assertEqual(4,item_visit_cells(self.b.request,self.profile,'minecraft:mud'))
+        for value in (True,3,5,65,'16'):
+            self.profile['mud_station']['item_cells_per_visit']=value
+            with self.assertRaises(ValueError):item_visit_cells(self.b.request,self.profile,'minecraft:mud')
+
     def test_projection_stock_visit_makes_sixteen_verified_bricks_without_completing_the_larger_goal(self):
         self.b.request.update(mode='projection',projection_key='map',context={'world_session':'world'})
         self.b.resource_pipeline_context={'target_scope':'absolute_backpack_total','projection_key':'map','world_session':'world'}

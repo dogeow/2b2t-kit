@@ -17,6 +17,7 @@ from .local_air_path import move,plan
 from .navigation import settled_state
 from .protocol import JobBlocked,JobPaused
 from .roof_harvest import light_supports
+from drop_collection import collect_drop
 
 
 def validate(region):
@@ -159,16 +160,38 @@ def run(c,profile,region,item,target,out,checkpoint,*,max_blocks=48):
         if (any(hand.get(k)!=tool.get(k)for k in ('item','count','durability','max_durability'))
                 or hand.get('enchantments',[])!=tool.get('enchantments',[])):
             raise JobBlocked('Dry clay tool selection was not actually observed')
-        initial=carried(q,output);book['pending']={'kind':'mine','pos':pos,'output':output,'before':initial,'gain':gain};save()
+        initial=carried(q,output);old_drops={e.get('uuid')for e in q.get('entities',[])if e.get('type')=='minecraft:item'}
+        book['pending']={'kind':'mine','pos':pos,'output':output,'before':initial,'gain':gain};save()
         try:r=c.request('mine_block',pos=pos,face=face,expected_state=b['state'],seconds=20)
         finally:book['pending']['request_id']=c.last;save()
         rid=c.last
-        if r.get('id')!=rid or r.get('phase')!='done'or r.get('world_session')!=c.world or _scan(c,pos,pos,state):
+        if (r.get('id')!=rid or r.get('phase')!='done'or r.get('world_session')!=c.world
+                or r.get('server_confirmed')is not True
+                or r.get('confirmation_scope')!='single_target_server_block_update_and_native_sequence_ack'
+                or type(r.get('native_sequence'))is not int or r['native_sequence']<=0
+                or r.get('server_ack_sequence')!=r['native_sequence']or _scan(c,pos,pos,state)):
             raise JobBlocked('Dry clay mining receipt/removal unresolved; no replay')
+        drops=[e for e in r.get('entities',[])if e.get('type')=='minecraft:item'and e.get('uuid')not in old_drops
+               and e.get('stack',{}).get('item')==output and e['stack'].get('count')==gain
+               and isinstance(e.get('pos'),list)and len(e['pos'])==3 and math.dist(e['pos'],pos)<4]
+        drop=drops[0]if len(drops)==1 else None
+        book['pending'].update(server_sequence=r['native_sequence'],drop_uuid=drop.get('uuid')if drop else None);save()
         move(c,station,out/('pickup-%d'%len(book['receipts'])),max_straight=4,foot_offset=.2)
-        until=time.monotonic()+5
-        while carried(state(),output)!=initial+gain and time.monotonic()<until:time.sleep(.15)
-        if carried(state(),output)!=initial+gain:raise JobBlocked('Dry clay exact drop delta unconfirmed; no replay')
+        until=time.monotonic()+15;collection_sent=False
+        while True:
+            q=state();held=carried(q,output)
+            live=next((e for e in q.get('entities',[])if drop and e.get('uuid')==drop['uuid']),None)
+            if held==initial+gain and live is None:break
+            if held not in (initial,initial+gain)or time.monotonic()>=until:
+                raise JobBlocked('Dry clay exact drop delta unconfirmed; no replay')
+            if live is not None and not collection_sent:
+                if live.get('stack')!=drop['stack']:raise JobBlocked('Original dry clay drop stack changed; no substitution')
+                book['pending']['pickup_uuid']=live['uuid'];save();collection_sent=True
+                # A new scoped pickup of the actually visible item, never a
+                # second mining dispatch or an uncertain movement replay.
+                if not collect_drop(c,live,observation=q,seconds=25):
+                    raise JobBlocked('Original dry clay pickup unconfirmed; no replay')
+            time.sleep(.15)
         book['receipts'].append({**book['pending'],'after':initial+gain});book['pending']=None;mined+=1;save()
     def compact():
         if item!='minecraft:clay':return

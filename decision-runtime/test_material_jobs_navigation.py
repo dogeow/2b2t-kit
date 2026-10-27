@@ -110,6 +110,49 @@ class SettledStateTest(unittest.TestCase):
                 patch('material_jobs.navigation.time.sleep',side_effect=clock.sleep):
             with self.assertRaises(JobBlocked):settled_state(client,seconds=1)
 
+    def hover_client(self,clock,**changes):
+        state={'pos':[1.,80.,1.],'velocity':[0,-.0784000015258789,0],'on_ground':False,
+               'flight':True,'guard_armed':True,'last_request':'r','world_session':'w','control_revision':4,
+               'supervision_lease':{'kind':'materials','job_session':'j','id':'l','world_session':'w','revision':4}}
+        state.update(changes)
+        c=SimpleNamespace(world='w',task='j',last='r',heartbeat=SimpleNamespace(id='l'),
+            last_terminal_evidence={'op':'navigate','phase':'done','params':{'air_only':True},
+                'request_id':'r','world_session':'w','revision_after':4},status=lambda:dict(state))
+        return c,state
+
+    def test_exact_owned_native_hover_accepts_only_actual_stationary_position(self):
+        clock=Clock();client,state=self.hover_client(clock)
+        with patch('material_jobs.navigation.time.monotonic',side_effect=clock.monotonic), \
+                patch('material_jobs.navigation.time.sleep',side_effect=clock.sleep):
+            self.assertEqual(state,settled_state(client,[1.,80.,1.],seconds=1))
+        self.assertGreaterEqual(clock.now,.4)
+
+    def test_read_only_audit_does_not_invalidate_an_owned_stationary_hover(self):
+        clock=Clock();client,state=self.hover_client(clock)
+        client.last_terminal_evidence.update(op='projection_audit',phase=None)
+        with patch('material_jobs.navigation.time.monotonic',side_effect=clock.monotonic), \
+                patch('material_jobs.navigation.time.sleep',side_effect=clock.sleep):
+            self.assertEqual(state,settled_state(client,seconds=1))
+
+    def test_real_fall_and_slow_cumulative_drift_never_count_as_hover(self):
+        for rate in (.08,.5):
+            clock=Clock();client,state=self.hover_client(clock)
+            client.status=lambda:{**state,'pos':[1.,80.-clock.now*rate,1.]}
+            with patch('material_jobs.navigation.time.monotonic',side_effect=clock.monotonic), \
+                    patch('material_jobs.navigation.time.sleep',side_effect=clock.sleep):
+                with self.assertRaises(JobBlocked):settled_state(client,seconds=1)
+
+    def test_changed_owner_or_unknown_native_receipt_cannot_ignore_velocity(self):
+        for change in ('lease','receipt','manual','pending'):
+            clock=Clock();client,state=self.hover_client(clock)
+            if change=='lease':state['supervision_lease']['id']='foreign'
+            if change=='receipt':client.last_terminal_evidence['phase']='waiting'
+            if change=='manual':state['manual_movement']=True
+            if change=='pending':client.unconfirmed_native_request={'id':'r'}
+            with patch('material_jobs.navigation.time.monotonic',side_effect=clock.monotonic), \
+                    patch('material_jobs.navigation.time.sleep',side_effect=clock.sleep):
+                with self.assertRaises(JobBlocked):settled_state(client,seconds=1)
+
     def test_arrival_receipt_does_not_hide_continuing_velocity(self):
         clock=Clock()
         client=SimpleNamespace(status=Mock(return_value={'pos':[1.,10.,1.],'velocity':[.12,0,0]}))
@@ -150,6 +193,59 @@ class SettledStateTest(unittest.TestCase):
 
 
 class TravelTakeoffTest(unittest.TestCase):
+    def test_canopy_ground_exit_edge_recenters_then_rescans_actual_body_columns(self):
+        import math
+        from material_jobs.navigation import local_park
+        with tempfile.TemporaryDirectory()as d:
+            s={'pos':[10.5,64.,20.7],'world_session':'w','health':20,'food':19,
+               'guard_armed':True,'guard_pve_only':True,'guard_busy':False}
+            scans=[];moves=[]
+            floor={'pos':[10,63,20],'passable':False,'fluid':False}
+            leaf={'pos':[10,70,21],'passable':False,'fluid':False}
+            c=SimpleNamespace(world='w',out=Path(d),last='center')
+            def scan(op,**kw):
+                self.assertEqual('scan',op);scans.append(kw)
+                rows=[r for r in(floor,leaf)if all(kw['min'][i]<=r['pos'][i]<=kw['max'][i]for i in range(3))]
+                return {'phase':'done','world_session':'w','blocks':rows}
+            def checked(op,**kw):
+                self.assertEqual('navigate',op);self.assertTrue(kw['air_only']);moves.append(kw)
+                s['pos']=[kw['target'][0],64.06,kw['target'][2]+.05]
+            c.request=scan;c.checked=checked
+            with patch('material_jobs.navigation.leave_projection'),\
+                 patch('material_jobs.navigation._escape_open_trapdoor',return_value=None),\
+                 patch('material_jobs.navigation._escape_local_canopy',side_effect=lambda _c:s),\
+                 patch('material_jobs.navigation.settled_state',side_effect=lambda *a,**k:s):
+                target=local_park(c)
+            self.assertEqual([10.5,88,20.55],target)
+            self.assertEqual(1,len(moves));self.assertEqual([10.5,64.2,20.5],moves[0]['target'])
+            self.assertEqual(21,scans[1]['max'][2]);self.assertEqual(20,scans[2]['max'][2])
+            proof=json.loads(next(Path(d).glob('canopy-center-*.json')).read_text())
+            self.assertFalse(proof['pending']);self.assertFalse(proof['parking_confirmed'])
+
+    def test_unknown_canopy_center_keeps_intent_and_never_retries_or_takes_off(self):
+        from material_jobs.navigation import _center_canopy_exit
+        with tempfile.TemporaryDirectory()as d:
+            state={'pos':[10.5,64.,20.7],'world_session':'w','health':20,'food':19,
+                   'guard_armed':True,'guard_pve_only':True}
+            c=SimpleNamespace(world='w',out=Path(d),last='uncertain',checked=Mock(side_effect=RuntimeError('unknown ACK')))
+            with self.assertRaisesRegex(RuntimeError,'unknown ACK'):_center_canopy_exit(c,state)
+            c.checked.assert_called_once()
+            proof=json.loads(next(Path(d).glob('canopy-center-*.json')).read_text())
+            self.assertTrue(proof['pending']);self.assertFalse(proof['parking_confirmed'])
+
+    def test_roof_over_the_center_still_blocks_parking_after_recentering(self):
+        from material_jobs.navigation import local_park
+        state={'pos':[10.5,64.,20.7]};centered={'pos':[10.5,64.06,20.55]}
+        roof={'pos':[10,70,20],'passable':False,'fluid':False}
+        c=SimpleNamespace(world='w',request=Mock(return_value={'phase':'done','world_session':'w','blocks':[roof]}),checked=Mock())
+        with patch('material_jobs.navigation.leave_projection'),\
+             patch('material_jobs.navigation._escape_open_trapdoor',return_value=None),\
+             patch('material_jobs.navigation._escape_local_canopy',return_value=state),\
+             patch('material_jobs.navigation._center_canopy_exit',return_value=centered),\
+             patch('material_jobs.navigation.settled_state',return_value=state):
+            with self.assertRaisesRegex(JobBlocked,'没有已验证'):local_park(c)
+        self.assertEqual(3,c.request.call_count);c.checked.assert_not_called()
+
     def test_edge_position_scans_neighbouring_body_column_and_uses_ground_exit(self):
         from material_jobs.navigation import local_park
         ground={'pos':[10.366,63.,20.244]}
@@ -206,6 +302,23 @@ class TravelTakeoffTest(unittest.TestCase):
 
 
 class GenericCanopyExitTest(unittest.TestCase):
+    def test_low_hover_settles_on_proved_ground_before_canopy_walk_continues(self):
+        with tempfile.TemporaryDirectory()as d:
+            c=self.client(Path(d));c.pos=[.5,65.04,.5]
+            def walking(op,**kw):
+                if kw.get('restore_flight')is False:c.pos=list(kw['target'])
+                return {'phase':'done'}
+            c.checked=Mock(side_effect=walking)
+            def settled(_client,target=None,tolerance=None):
+                if target and sum((a-b)**2 for a,b in zip(c.pos,target))>.4**2:
+                    raise JobBlocked('actual floor not reached')
+                return c.status()
+            with patch('wood_expedition.sky_path',return_value=[[.5,64.,.5],[1.5,64.,.5]]),\
+                 patch('material_jobs.navigation.settled_state',side_effect=settled):
+                result=_escape_local_canopy(c)
+            self.assertEqual([1.5,64.,.5],result['pos'])
+            self.assertEqual(2,c.checked.call_count)
+
     def client(self,root,phase='done',wet=False):
         position=[.5,64.,.5]
         floors=[{'pos':[x,63,z],'solid':True,'passable':False,'fluid':wet,'block_entity':False}
@@ -630,10 +743,10 @@ class ProjectionExitTest(unittest.TestCase):
                 self.client.blocks={(0,roof_y,0):{'pos':[0,roof_y,0],'passable':False,'state':'Block{minecraft:stone}'}}
                 if sealed:
                     for x,z in ((-1,0),(1,0),(0,-1),(0,1)):
-                        for y in (64,65):self.client.blocks[(x,y,z)]={'pos':[x,y,z],'passable':False,'state':'Block{minecraft:stone}'}
+                        for y in range(58,69):self.client.blocks[(x,y,z)]={'pos':[x,y,z],'passable':False,'state':'Block{minecraft:stone}'}
                 with patch('material_jobs.navigation.horizontal_exit',wraps=horizontal_exit) as horizontal:
                     if sealed:
-                        with self.assertRaisesRegex(RuntimeError,'No observed horizontal exit'):leave_projection(self.client)
+                        with self.assertRaisesRegex(JobBlocked,'三维空气出口'):leave_projection(self.client)
                     else:leave_projection(self.client)
                 horizontal.assert_called_once()
                 moves=[params['target'] for op,params in self.client.calls if op=='navigate']

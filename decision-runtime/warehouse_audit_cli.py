@@ -392,11 +392,10 @@ def _side_access(session,pos,block_state,*,house=False,profile=None):
             for face,stance in candidates:
                 try:points=plan(blockers,origin,stance,low,high,max_straight=2)
                 except JobBlocked:continue
-                # Native arrival is clamped to at least .2. Aim .2 above each
-                # integer air node so the actual foot remains above a lower
-                # leaf at the following turn. The 1.8-block body still fits
-                # the same two verified air cells; prove every sweep again.
-                points=[[p[0],p[1]+.2,p[2]]for p in points]+[stance]
+                # Centre the 1.8-block body in its two air cells. A +.2 pose
+                # left no ceiling margin when native braking settled .05 high.
+                from storage_air_path import flight_nodes
+                points=flight_nodes(points)+[stance]
                 start=origin;clear=True
                 for point in points:
                     if not _clear_sweep(session,start,point):clear=False;break

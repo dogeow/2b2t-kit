@@ -1,6 +1,8 @@
 """One registered native sea-water refill for an existing mud backend/controller."""
 import math
 import time
+import uuid
+from pathlib import Path
 from material_plan import inventory_counts
 from .protocol import JobBlocked
 
@@ -25,21 +27,43 @@ def fill_bottle(backend):
         raise JobBlocked('Direct source-water bottle protocol requires the updated Kit host')
     # Share the registered water route; nearby work never rises to cruise height.
     pose=c.status()['pos']
-    if math.dist(pose,approach)>6:
+    local=math.hypot(pose[0]-approach[0],pose[2]-approach[2])<=24 and abs(pose[1]-approach[1])<=64
+    if local:
+        from .local_air_path import move
+        move(c,approach,Path(c.out)/('source-water-air-'+uuid.uuid4().hex),
+             foot_offset=.2,max_horizontal=24)
+    elif math.dist(pose,approach)>6:
         from .acquisition import _travel
         from .navigation import lift_for_travel
         backend.prepare_travel();lift_for_travel(c)
         _travel(c,[approach[0],max(c.status()['pos'][1],approach[1]+24),approach[2]],backend.checkpoint,[],keep_cruise=True)
-    pose=c.status()['pos']
-    if pose[1]>approach[1]+.25 and math.hypot(pose[0]-approach[0],pose[2]-approach[2])>.25:
-        c.checked('navigate',target=[approach[0],pose[1],approach[2]],arrival=.15,air_only=True,seconds=20)
-    c.checked('navigate',target=approach,arrival=.15,air_only=True,seconds=20)
+    if not local:
+        pose=c.status()['pos']
+        if pose[1]>approach[1]+.25 and math.hypot(pose[0]-approach[0],pose[2]-approach[2])>.25:
+            c.checked('navigate',target=[approach[0],pose[1],approach[2]],arrival=.15,air_only=True,seconds=20)
+        c.checked('navigate',target=approach,arrival=.15,air_only=True,seconds=20)
+    if cfg.get('exact_approach') is True:
+        # A contained source can have a narrow visible ray over its rim. The
+        # voxel route reaches cell centres; finish at the registered real pose.
+        from .navigation import settled_state
+        backend.checkpoint()
+        c.checked('navigate',target=approach,arrival=.12,air_only=True,seconds=20)
+        settled_state(c,approach,.4)
     backend.checkpoint();fresh=c.checked('scan',min=pos,max=pos,details=True)
     if (fresh.get('world_session')!=c.world or len(fresh.get('blocks',[]))!=1
             or fresh['blocks'][0].get('pos')!=pos or fresh['blocks'][0].get('state')!=cfg['expected_state']):
         raise JobBlocked('Registered bottle source changed; no use sent')
     c.checked('select_item',item='minecraft:glass_bottle')
-    before=c.status();receipt=c.checked('bottle_fill',pos=pos,expected_state=cfg['expected_state'],expected_hand='minecraft:glass_bottle')
+    before=c.status()
+    try:
+        receipt=c.checked('bottle_fill',pos=pos,expected_state=cfg['expected_state'],expected_hand='minecraft:glass_bottle')
+    except RuntimeError:
+        from .bottle_source_guard import clear_drowned
+        if not clear_drowned(backend,before):raise
+        backend.checkpoint();c.checked('select_item',item='minecraft:glass_bottle');before=c.status()
+        # The first exact native refusal happened before a bottle action was
+        # constructed. A separately observed PvE clearance permits one new use.
+        receipt=c.checked('bottle_fill',pos=pos,expected_state=cfg['expected_state'],expected_hand='minecraft:glass_bottle')
     after=c.status();proof=receipt.get('bottle_water')or{};slot=proof.get('water_slot')
     old,new=inventory_counts(before),inventory_counts(after)
     water=next((r for r in after['inventory']if r.get('slot')==slot),None)

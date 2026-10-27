@@ -21,6 +21,15 @@ class OutdoorChestChanged(RuntimeError):
         super().__init__('Expected outdoor chest changed')
 
 
+class OutdoorChestLandingBlocked(OutdoorChestChanged):
+    """Known read-only access refusal; another registered source may be tried."""
+    reason='landing_column_obstructed'
+    def __init__(self,pos,block_id,expected,rows):
+        super().__init__(pos,block_id,expected,rows)
+        self.evidence['reason']=self.reason
+        self.args=('Chest landing column is obstructed',)
+
+
 def verify_opened_chest(client, source):
     """Recheck the exact block before trusting an open menu or transfer."""
     if source is None:
@@ -29,7 +38,17 @@ def verify_opened_chest(client, source):
     rows = client.request('scan', min=pos, max=pos, details=True)['blocks']
     observed = next((r['state'] for r in rows if r['pos'] == pos), '')
     if observed != expected:
-        raise OutdoorChestChanged(pos, 'minecraft:chest', observed, rows, scan_max=pos)
+        # A barrel's normal lid animation changes only its open property.
+        from projection_completion import block_state
+        try:
+            wanted, wp = block_state(expected); actual, ap = block_state(observed)
+            barrel_lid_only = (wanted == actual == 'minecraft:barrel'
+                and wp.get('open') in ('true', 'false') and ap.get('open') in ('true', 'false')
+                and {k:v for k,v in wp.items() if k != 'open'} == {k:v for k,v in ap.items() if k != 'open'})
+        except (ValueError, TypeError):
+            barrel_lid_only = False
+        if not barrel_lid_only:
+            raise OutdoorChestChanged(pos, 'minecraft:chest', observed, rows, scan_max=pos)
 
 
 def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=False):
@@ -41,7 +60,7 @@ def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=
     if not expected.startswith('Block{'+block_id+'}'):
         raise OutdoorChestChanged(pos, block_id, expected, rows)
     if any(r['pos'][1]>y and r['state']!='Block{minecraft:air}' for r in rows):
-        raise RuntimeError('Chest landing column is obstructed')
+        raise OutdoorChestLandingBlocked(pos,block_id,expected,rows)
     hand=select_container_hand(client)
     state=client.status();point=state.get('pos');lease=state.get('supervision_lease')or{}
     if (state.get('air_only_navigation_protocol',0)>=2 and lease.get('kind')=='materials'
@@ -74,17 +93,22 @@ def open_grounded_chest(client, pos, block_id='minecraft:chest', *, allow_empty=
     return {**state, '_verified_chest': {'pos': list(pos), 'state': expected}}
 
 
-def open_chest_from_pose(client,pos,pose,face,*,allow_empty=False):
+def open_chest_from_pose(client,pos,pose,face,*,allow_empty=False,block_id='minecraft:chest',allow_top_face=False,allow_hover=False):
     """Open a registered indoor chest after the existing route reached its pose.
 
     This function never finds a route, descends onto a roof, or moves the player.
-    The caller must supply an explicit registered stand and a side face.
+    The caller supplies a registered stand; an exposed top face is opt-in.
     """
+    if block_id not in ('minecraft:chest','minecraft:barrel','minecraft:ender_chest'):
+        raise ValueError('Registered indoor pose supports only ordinary, Ender chests or barrels')
+    if type(allow_top_face)is not bool:raise ValueError('Top face opt-in must be boolean')
+    if type(allow_hover)is not bool:raise ValueError('Hover pose opt-in must be boolean')
+    faces=('north','south','west','east','up')if allow_top_face else('north','south','west','east')
     if (not isinstance(pos,list)or len(pos)!=3 or any(type(v)is not int for v in pos)
             or not isinstance(pose,list)or len(pose)!=3
             or any(type(v)not in(int,float)or not math.isfinite(v)for v in pose)
-            or face not in('north','south','west','east')):
-        raise ValueError('Indoor chest needs an exact position, registered stand and side face')
+            or face not in faces):
+        raise ValueError('Indoor chest needs an exact position, registered stand and permitted face')
     def settled():
         until=time.monotonic()+4
         while True:
@@ -95,15 +119,16 @@ def open_chest_from_pose(client,pos,pose,face,*,allow_empty=False):
                 or lease.get('world_session')!=client.world or lease.get('job_session')!=client.task
                 or lease.get('revision')!=client.rev
                 or not isinstance(point,list)or len(point)!=3
-                or any(type(v)not in(int,float)or not math.isfinite(v)for v in point)or math.dist(point,pose)>.55
+                or any(type(v)not in(int,float)or not math.isfinite(v)for v in point)or math.dist(point,pose)>(.15 if allow_hover else .55)
                 or not isinstance(velocity,list)or len(velocity)!=3
                 or any(type(v)not in(int,float)or not math.isfinite(v)for v in velocity)
-                or s.get('flight')is not False
+                or (s.get('flight')is not True or s.get('air_only_navigation_protocol',0)<2 or abs(velocity[1])>.1
+                    if allow_hover else s.get('flight')is not False)
                 or s.get('under_water')is not False or s.get('manual_movement')is not False
                 or s.get('screen')!=''or s.get('health',0)<19 or s.get('guard_busy')is not False
                 or s.get('guard_armed')is not True or s.get('guard_pve_only')is not True
                 or menu.get('type')!='InventoryMenu'or menu.get('id')!=0 or menu.get('cursor',{}).get('count')!=0)
-            stable=not invalid and s.get('on_ground')is True and math.hypot(velocity[0],velocity[2])<.03
+            stable=not invalid and (allow_hover or s.get('on_ground')is True)and math.hypot(velocity[0],velocity[2])<.03
             if stable:return s
             if invalid or time.monotonic()>=until:
                 out=getattr(client,'out',None)
@@ -123,8 +148,8 @@ def open_chest_from_pose(client,pos,pose,face,*,allow_empty=False):
             or not isinstance(reply.get('blocks'),list)or len(reply['blocks'])!=1):
         raise RuntimeError('Indoor chest scan is incomplete; no interaction')
     row=reply['blocks'][0];expected=row.get('state','')
-    if row.get('pos')!=pos or not expected.startswith('Block{minecraft:chest}'):
-        raise OutdoorChestChanged(pos,'minecraft:chest',expected,reply['blocks'],scan_max=pos)
+    if row.get('pos')!=pos or not expected.startswith('Block{'+block_id+'}'):
+        raise OutdoorChestChanged(pos,block_id,expected,reply['blocks'],scan_max=pos)
     if row.get('fluid')is not False:
         raise RuntimeError('Indoor chest has unverified fluid; no interaction')
     settled();hand=select_container_hand(client);settled()
@@ -132,7 +157,7 @@ def open_chest_from_pose(client,pos,pose,face,*,allow_empty=False):
     state=wait_container_contents(client,'ChestMenu',require_nonempty=not allow_empty)
     source={'pos':list(pos),'state':expected};verify_opened_chest(client,source)
     from material_storage_index import bind_source
-    bind_source(client,state,pos,'minecraft:chest')
+    bind_source(client,state,pos,block_id)
     return {**state,'_verified_chest':source}
 
 

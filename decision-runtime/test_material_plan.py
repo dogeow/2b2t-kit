@@ -53,6 +53,23 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(p['surplus'], {'minecraft:oak_planks': 2, 'minecraft:oak_door': 1})
         self.verify_mass_balance(p)
 
+    def test_tagged_slabs_use_carried_homogeneous_intermediate_inputs(self):
+        slabs=['minecraft:oak_slab','minecraft:acacia_slab','minecraft:dark_oak_slab']
+        cat=self.catalog({
+            'lectern':recipe('minecraft:lectern',1,[slabs]*4+['minecraft:bookshelf']),
+            'oak_slab':recipe('minecraft:oak_slab',6,['minecraft:oak_planks']*3),
+            'acacia_slab':recipe('minecraft:acacia_slab',6,['minecraft:acacia_planks']*3),
+            'dark_oak_slab':recipe('minecraft:dark_oak_slab',6,['minecraft:dark_oak_planks']*3),
+        })
+        stock={'minecraft:bookshelf':12,'minecraft:dark_oak_slab':13,'minecraft:acacia_planks':24}
+        p=MaterialPlanner(cat).plan({'minecraft:lectern':12},stock)
+        self.assertFalse(p['missing_supplies'])
+        self.verify_mass_balance(p)
+        # Potential is only a ranking hint: preserved planks cannot be spent.
+        kept=MaterialPlanner(cat).plan({'minecraft:lectern':12},stock,{'minecraft:acacia_planks':24})
+        self.assertTrue(kept['missing_supplies'])
+        self.verify_mass_balance(kept)
+
     def test_existing_finished_materials_are_not_spent_on_other_goals(self):
         p = MaterialPlanner(self.wood()).plan({'minecraft:oak_planks': 4, 'minecraft:oak_door': 2}, {'minecraft:oak_planks': 6, 'minecraft:oak_log': 1})
         self.assertEqual(p['reserved_finished_items']['minecraft:oak_planks'], 4)
@@ -97,6 +114,31 @@ class PlannerTests(unittest.TestCase):
         p = MaterialPlanner(cat).plan({'minecraft:barrel': 45}, {'minecraft:oak_log': 100, 'minecraft:birch_planks': 2})
         self.assertFalse(p['missing_supplies'])
         self.assertEqual(p['surplus']['minecraft:birch_planks'], 2)
+        self.verify_mass_balance(p)
+
+    def test_bed_batch_does_not_acquire_oak_when_carried_dark_oak_covers_it(self):
+        woods = ['minecraft:oak_planks', 'minecraft:dark_oak_planks']
+        cat = self.catalog({'bed': recipe('minecraft:white_bed', 1,
+                                         ['minecraft:white_wool'] * 3 + [woods] * 3),
+                            'oak': recipe('minecraft:oak_planks', 4, ['minecraft:oak_log'])})
+        stock = {'minecraft:white_wool':48, 'minecraft:dark_oak_planks':49, 'minecraft:oak_planks':2}
+        p = MaterialPlanner(cat).plan({'minecraft:white_bed':16}, stock)
+        self.assertFalse(p['missing_supplies'])
+        craft = next(s for s in p['steps'] if s['kind']=='craft')
+        self.assertEqual(craft['ingredients'], {'minecraft:white_wool':48,'minecraft:dark_oak_planks':48})
+        self.assertEqual(p['surplus'], {'minecraft:dark_oak_planks':1,'minecraft:oak_planks':2})
+        self.verify_mass_balance(p)
+
+    def test_batch_budget_uses_recipe_output_count_and_respects_kept_wood(self):
+        woods = ['minecraft:oak_planks', 'minecraft:dark_oak_planks']
+        cat = self.catalog({'batch': recipe('minecraft:barrel', 3, [woods] * 6),
+                            'oak': recipe('minecraft:oak_planks', 4, ['minecraft:oak_log'])})
+        p = MaterialPlanner(cat).plan({'minecraft:barrel':12},
+                                     {'minecraft:dark_oak_planks':29,'minecraft:oak_planks':2},
+                                     {'minecraft:dark_oak_planks':5})
+        self.assertFalse(p['missing_supplies'])
+        self.assertEqual(p['steps'][0]['rounds'], 4)
+        self.assertEqual(p['kept'], {'minecraft:dark_oak_planks':5})
         self.verify_mass_balance(p)
 
     def test_cycle_in_base_material_does_not_hide_the_parent_recipe(self):

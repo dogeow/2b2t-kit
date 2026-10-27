@@ -1,6 +1,7 @@
 """Ordinary wood batching through the real catalog and isolated menu-0 executor."""
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -73,9 +74,10 @@ class BulkPlankTests(unittest.TestCase):
             self.assertEqual(1,len(results));self.assertTrue(all(p['menu_id']==0 for op,p in client.calls))
             self.assertFalse(any(row['count']for row in client.slots[1:5]));self.assertFalse(client.cursor['count'])
 
-    @unittest.skipUnless(Path('/Applications/.minecraft/versions/26.1.2/26.1.2.jar').is_file(),'Installed native recipe JAR is unavailable')
-    def test_installed_catalog_proves_exact_actual_oak53_and_spruce16(self):
-        catalog=RecipeCatalog('/Applications/.minecraft/versions/26.1.2/26.1.2.jar')
+    @unittest.skipUnless(os.environ.get('MINECRAFT_TEST_CLIENT_JAR'),
+                         'Set MINECRAFT_TEST_CLIENT_JAR for installed recipe integration')
+    def test_explicit_installed_catalog_proves_exact_actual_oak53_and_spruce16(self):
+        catalog=RecipeCatalog(os.environ['MINECRAFT_TEST_CLIENT_JAR'])
         for raw,n,before in [('minecraft:oak_log',53,8),('minecraft:spruce_log',16,0)]:
             spec=catalog.choose(PAIRS[raw],{raw:n},2)
             self.assertEqual({raw:[1]},spec['ingredients']);self.assertEqual(4,spec['produces'])

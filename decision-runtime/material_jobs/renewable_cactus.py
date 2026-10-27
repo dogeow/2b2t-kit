@@ -11,6 +11,12 @@ from .colored_sources import _protected
 
 SEED_RESERVE=6
 
+def _current(c, checkpoint):
+    # Native job checkpoints validate/cancel work and deliberately return None.
+    # Read the real client state after that guard rather than using its return.
+    checkpoint()
+    return c.status()
+
 def dye_budget(carried, reserve=SEED_RESERVE):
     if type(carried)is not int or carried<0 or type(reserve)is not int or reserve<1:
         raise ValueError('Actual carried cactus and positive seed reserve required')
@@ -99,7 +105,7 @@ def authorized_planting_cell(profile, state, world, pos):
 
 
 def owned_farm_top(profile, state, pos):
-    """Actual planting receipts authorize grown tops, never the farm's bases."""
+    """Planting or an explicit current farm survey authorizes tops, never bases."""
     from .protocol import server_key
     selected=state.get('projection_selection')or{}
     if selected.get('min')and selected.get('max')and all(
@@ -116,6 +122,16 @@ def owned_farm_top(profile, state, pos):
         for base in farm.get('positions',[]):
             if pos[0]==base[0]and pos[2]==base[2]and base[1]+1<=pos[1]<=base[1]+2:
                 return True
+    for farm in profile.get('survey_registered_cactus_farms',[]):
+        if(farm.get('authorized')is not True or farm.get('source')!='current_existing_farm_survey'
+                or not farm.get('survey_receipt')or farm.get('bases_verified')is not True or farm.get('supports_verified')is not True
+                or farm.get('world_session')!=state.get('world_session')
+                or not isinstance(farm.get('goal_key'),str)or not farm['goal_key']or farm['goal_key']!=selected.get('key')
+                or server_key(farm.get('server'))!=server_key(state.get('server'))
+                or farm.get('dimension')!=state.get('dimension')):continue
+        for base in farm.get('positions',[]):
+            if(isinstance(base,list)and len(base)==3 and all(type(v)is int for v in base)
+                    and pos[0]==base[0]and pos[2]==base[2]and base[1]+1<=pos[1]<=base[1]+2):return True
     return False
 
 
@@ -131,6 +147,9 @@ def harvest_top(c, pos, profile, out, checkpoint):
     Navigation, mining and pickup intent are durable. Pickup uses a proved side
     pose and normal movement; collect_item cannot choose a cactus-top pose here.
     """
+    if profile.get('cactus_harvest_paused')is True:
+        from .protocol import JobPaused
+        raise JobPaused('Cactus harvesting deferred for other resource work')
     if (not isinstance(pos, list) or len(pos) != 3 or any(type(n) is not int for n in pos)
             or not any(r.get('authorized') is True and r.get('item') == 'minecraft:cactus'
                        and all(r['min'][i] <= pos[i] <= r['max'][i] for i in range(3))
@@ -139,13 +158,13 @@ def harvest_top(c, pos, profile, out, checkpoint):
     out = Path(out); out.mkdir(parents=True, exist_ok=True); path = out/'cactus-side-harvest.json'
     if path.exists():
         raise RuntimeError('Existing cactus harvest intent is not replayed')
-    state = checkpoint()
+    state = _current(c, checkpoint)
     if _protected(pos, profile, state) and not owned_farm_top(profile,state,pos):
         raise RuntimeError('Cactus harvest overlaps a protected footprint')
     world = c.world; x, y, z = pos
     low, high = [x-3, y-2, z-3], [x+3, y+5, z+3]
     def observe():
-        q = checkpoint()
+        q = _current(c, checkpoint)
         if (q.get('world_session') != world or q.get('health') != 20
                 or q.get('guard_busy') or q.get('screen') or q.get('manual_movement')):
             raise RuntimeError('Cactus side harvest healthy control changed')
@@ -162,7 +181,10 @@ def harvest_top(c, pos, profile, out, checkpoint):
     if (not harvestable_top(rows, pos)
             or any(r.get('fluid') or r.get('block_entity') for r in rows)):
         raise RuntimeError('Harvest only an observed top with a retained dry base')
-    choices = side_poses(rows, low, high, pos)
+    # Clearance includes a .3 vertical margin. At +.25 that margin enters
+    # an ordinary floor immediately below a valid side cell; hover +.45 so
+    # both the padded plan and the actual arrival remain above that floor.
+    choices = side_poses(rows, low, high, pos, foot_offset=.45)
     if not choices:
         raise RuntimeError('No damaging-block-free cactus side pose')
     face, point = min(choices, key=lambda v: math.dist(v[1], state['pos']))
@@ -171,9 +193,16 @@ def harvest_top(c, pos, profile, out, checkpoint):
     write_json(path, book)
     from .acquisition import _travel
     from .navigation import lift_for_travel, settled_state
-    lift_for_travel(c)
-    high_point = [point[0], y+4., point[2]]
-    trace = []; _travel(c, high_point, checkpoint, trace)
+    trace=[]
+    if(profile.get('prefer_local_cactus_routes')is True
+            and math.hypot(point[0]-state['pos'][0],point[2]-state['pos'][2])<=24):
+        from .local_source_travel import approach
+        approach(c,point,out/'nearby-source-access',checkpoint)
+        trace.append({'mode':'nearby_source_air','fixed_cruise_detour':False})
+    else:
+        lift_for_travel(c)
+        high_point = [point[0], y+4., point[2]]
+        _travel(c, high_point, checkpoint, trace)
     rows = observe()
     if not side_pose_clear(rows, low, high, point):
         raise RuntimeError('Cactus side pose changed during access')
@@ -202,7 +231,9 @@ def harvest_top(c, pos, profile, out, checkpoint):
         raise RuntimeError('Cactus changed before mining; no mutation sent')
     from container_hand import select_container_hand
     select_container_hand(c)
-    before = inventory_counts(checkpoint()).get('minecraft:cactus', 0)
+    before_state = _current(c, checkpoint)
+    before = inventory_counts(before_state).get('minecraft:cactus', 0)
+    previous_entities={e.get('uuid')for e in before_state.get('entities',[])}
     book.update(pending='mine', before=before, expected_state=target['state'], route=trace)
     write_json(path, book)
     reply = c.request('mine_block', pos=pos, face=face, expected_state=target['state'], seconds=20)
@@ -212,11 +243,32 @@ def harvest_top(c, pos, profile, out, checkpoint):
     book['pending'] = 'side_pickup'; write_json(path, book)
     deadline = time.monotonic()+4
     while True:
-        q = checkpoint(); after = inventory_counts(q).get('minecraft:cactus', 0)
+        q = _current(c, checkpoint); after = inventory_counts(q).get('minecraft:cactus', 0)
         if after == before+1:
             break
-        if after != before or time.monotonic() >= deadline:
+        if after != before:
             raise RuntimeError('Cactus side pickup gain unconfirmed; no unsafe pickup route')
+        if time.monotonic() >= deadline:
+            from .cactus_drop_pickup import recover, UnreceivedCactusDrop
+            try:
+                q=recover(c,pos,reply,before,previous_entities,out/'tracked-ground-drop',checkpoint)
+            except UnreceivedCactusDrop as missing:
+                # The native server acknowledgement is already proved by
+                # recover. Keep the missing drop unresolved, verify the plant
+                # physically and permit another distinct top with zero credit.
+                # Existing journals, including old failed jobs, are not replayed.
+                rows=observe();by={tuple(r['pos']):r for r in rows}
+                q=_current(c,checkpoint)
+                if (tuple(pos) in by or block_id(by.get((x,y-1,z),{}))!='minecraft:cactus'
+                        or inventory_counts(q).get('minecraft:cactus',0)!=before):
+                    raise RuntimeError('Unreceived cactus removal/base or unchanged inventory unconfirmed')
+                book.update(pending='unreceived_drop',complete=False,unreceived=True,
+                            after=before,actual_gain=0,base_retained=True,
+                            mining_confirmed=True,drop_uuid=missing.uuid,
+                            pickup_confirmed=False,mine_replayed=False)
+                write_json(path,book);return book
+            after=inventory_counts(q).get('minecraft:cactus',0)
+            break
         time.sleep(.1)
     rows = observe(); by = {tuple(r['pos']): r for r in rows}
     if tuple(pos) in by or block_id(by.get((x, y-1, z), {})) != 'minecraft:cactus':
@@ -232,7 +284,7 @@ def plant(c,positions,profile,out,checkpoint):
         raise ValueError('Explicit distinct bounded cactus positions required')
     out=Path(out);out.mkdir(parents=True,exist_ok=True);path=out/'cactus-planting.json'
     if path.exists():raise RuntimeError('Existing planting intent is not replayed')
-    before=inventory_counts(checkpoint()).get('minecraft:cactus',0)
+    before=inventory_counts(_current(c, checkpoint)).get('minecraft:cactus',0)
     if before<len(positions):raise RuntimeError('Planting needs real carried cactus seeds')
     book={'world_session':c.world,'before':before,'positions':positions,'planted':[],'pending':None}
     write_json(path,book)
@@ -244,7 +296,7 @@ def plant(c,positions,profile,out,checkpoint):
                 or reply.get('scan_total_cells')!=cells):raise RuntimeError('Planting scan is incomplete')
         return reply['blocks']
     for pos in positions:
-        state=checkpoint()
+        state=_current(c, checkpoint)
         if _protected(pos,profile,state) and not authorized_planting_cell(profile,state,c.world,pos):
             raise RuntimeError('Cactus planting overlaps a protected footprint or depot')
         x,y,z=pos;low=[x-3,y-2,z-3];high=[x+3,y+5,z+3];rows=scan(low,high)
@@ -267,21 +319,21 @@ def plant(c,positions,profile,out,checkpoint):
         if not side_pose_clear(rows,low,high,state['pos'],tolerance=.05):raise RuntimeError('Actual planting pose touches a damaging block')
         if not suitable(rows,pos):raise RuntimeError('Cactus planting site changed during approach')
         c.checked('select_item',item='minecraft:cactus')
-        count=inventory_counts(checkpoint()).get('minecraft:cactus',0)
+        count=inventory_counts(_current(c, checkpoint)).get('minecraft:cactus',0)
         book['pending']={'pos':pos,'before':count};write_json(path,book)
         c.checked('interact',pos=floor,face='up',expected_state=ground['state'],expected_hand='minecraft:cactus')
         deadline=time.monotonic()+6
         while True:
-            actual=scan(pos,pos);state=checkpoint()
+            actual=scan(pos,pos);state=_current(c, checkpoint)
             if (len(actual)==1 and block_id(actual[0])=='minecraft:cactus'
                     and inventory_counts(state).get('minecraft:cactus',0)==count-1):break
             if time.monotonic()>=deadline:raise RuntimeError('Plant and seed consumption unconfirmed; no repeat')
             time.sleep(.15)
-        current=scan(low,high);state=checkpoint()
+        current=scan(low,high);state=_current(c, checkpoint)
         if not side_pose_clear(current,low,high,state['pos'],tolerance=.05):
             raise RuntimeError('Actual pose intersects the planted cactus; no further placement')
         book['planted'].append({'pos':pos,'state':actual[0]['state'],'after':count-1,
                                 'actual_side_pos':state['pos'],'health':state['health'],'route':trace})
         book['pending']=None;write_json(path,book)
-    book.update(complete=True,remaining=inventory_counts(checkpoint()).get('minecraft:cactus',0))
+    book.update(complete=True,remaining=inventory_counts(_current(c, checkpoint)).get('minecraft:cactus',0))
     write_json(path,book);return book

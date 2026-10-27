@@ -24,6 +24,8 @@ from .protocol import JobPaused, server_key
 SAPLING_SOILS = {'minecraft:grass_block', 'minecraft:dirt', 'minecraft:coarse_dirt',
                  'minecraft:rooted_dirt', 'minecraft:podzol', 'minecraft:mycelium',
                  'minecraft:moss_block'}
+WIDE_TREE_SPECIES = {'minecraft:spruce_log', 'minecraft:jungle_log',
+                     'minecraft:dark_oak_log', 'minecraft:pale_oak_log'}
 
 
 def _outside_future_trunk(state, root, species_item=None, margin=.35):
@@ -33,14 +35,80 @@ def _outside_future_trunk(state, root, species_item=None, margin=.35):
             or any(type(v) not in (int, float) or not math.isfinite(v) for v in point)):
         return False
     x, _, z = root
-    spread = int(species_item in {'minecraft:spruce_log', 'minecraft:jungle_log',
-                                  'minecraft:dark_oak_log', 'minecraft:pale_oak_log'})
+    spread = int(species_item in WIDE_TREE_SPECIES)
     return (point[0]+margin <= x-spread or point[0]-margin >= x+1+spread
             or point[2]+margin <= z-spread or point[2]-margin >= z+1+spread)
 
 
-def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
-    x,y,z=pos;budget=min(6,carried(c.status(),'minecraft:bone_meal'))
+def _ensure_growth_stance(c,species_item,pos,result,checkpoint):
+    """Leave the real sapling voxel before an approach can choose its top."""
+    from material_client import Handoff
+    from .local_air_path import move
+    current=c.status()
+    if _outside_future_trunk(current,pos,species_item):return True
+    out=getattr(c,'out',None)
+    if out is None:return False
+    x,y,z=pos
+    rows=_scan(c,[x-4,y-1,z-4],[x+4,y+2,z+4],checkpoint)
+    cells={tuple(r['pos']):r for r in rows};poses=[]
+    soft={'minecraft:short_grass','minecraft:tall_grass','minecraft:fern','minecraft:large_fern','minecraft:bush'}
+    for dx,dz in((3,0),(-3,0),(0,3),(0,-3)):
+        px,pz=x+dx,z+dz;floor=cells.get((px,y-1,pz))
+        if (not floor or floor.get('solid')is not True or floor.get('fluid')is not False
+                or floor.get('block_entity')is not False or block_id(floor)not in SAPLING_SOILS):continue
+        if any((px,h,pz)in cells and block_id(cells[px,h,pz])not in soft for h in(y,y+1)):continue
+        poses.append([px+.5,y+.2,pz+.5])
+    poses.sort(key=lambda p:math.dist(current['pos'],p))
+    for index,point in enumerate(poses):
+        directory=Path(out)/('bone-meal-safe-stance-'+str(time.time_ns())+'-'+str(index))
+        try:proof=move(c,point,directory,foot_offset=.2,max_horizontal=12)
+        except Handoff:raise
+        except RuntimeError as error:
+            if getattr(c,'native_inflight',None)or getattr(c,'unconfirmed_native_request',None):raise
+            result.setdefault('known_stance_blocks',[]).append({'path':str(directory),'reason':str(error)})
+            continue
+        checkpoint()
+        if _outside_future_trunk(c.status(),pos,species_item):
+            result['growth_stance']={'target':point,'actual':c.status()['pos'],'proof':str(directory)}
+            return True
+    return False
+
+
+def clear_grown_spruce_body_leaves(c,root,out,checkpoint):
+    """Free only actual body overlap inside the just-grown single spruce."""
+    out=Path(out);out.mkdir(parents=True,exist_ok=False)
+    q=c.status();_safe(q);p=q['pos']
+    low=[math.floor(p[0]-.3),math.floor(p[1]+1e-5),math.floor(p[2]-.3)]
+    high=[math.floor(p[0]+.3-1e-7),math.floor(p[1]+1.8-1e-7),math.floor(p[2]+.3-1e-7)]
+    rows=_scan(c,low,high,checkpoint);leaves=[r for r in rows if r.get('passable')is not True]
+    if len(leaves)>4:raise RuntimeError('New spruce body overlap exceeds bounded leaf cleanup')
+    for r in leaves:
+        if (block_id(r)!='minecraft:spruce_leaves'or'persistent=false'not in r['state']
+                or r.get('fluid')is not False or r.get('block_entity')is not False
+                or abs(r['pos'][0]-root[0])>3 or abs(r['pos'][2]-root[2])>3
+                or not root[1]<=r['pos'][1]<=root[1]+16):
+            raise RuntimeError('Body obstacle is not this confirmed grown spruce natural leaf')
+    book={'world_session':c.world,'root':root,'pending':None,'removed':[],'drop_credit':0}
+    write_json(out/'progress.json',book)
+    for r in leaves:
+        checkpoint();c.checked('select_item',item='minecraft:diamond_axe')
+        book['pending']={'pos':r['pos'],'expected':r['state']};write_json(out/'progress.json',book)
+        try:reply=c.request('mine_block',pos=r['pos'],face='up',expected_state=r['state'],seconds=15)
+        finally:
+            book['pending']['request_id']=c.last;write_json(out/'progress.json',book)
+        if (reply.get('phase')!='done'or reply.get('server_confirmed')is not True
+                or type(reply.get('native_sequence'))is not int or reply['native_sequence']<1
+                or reply.get('server_ack_sequence')!=reply['native_sequence']):
+            raise RuntimeError('Original owned body-leaf mining unconfirmed; never replay')
+        if _scan(c,r['pos'],r['pos'],checkpoint):raise RuntimeError('Owned body-leaf removal not observed')
+        book['removed'].append({'pos':r['pos'],'native_sequence':reply['native_sequence']})
+        book['pending']=None;write_json(out/'progress.json',book)
+    book['complete']=True;write_json(out/'progress.json',book);return book
+
+
+def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint,*,max_uses=6):
+    if type(max_uses)is not int or not 1<=max_uses<=12:raise ValueError('Bone meal budget must be1..12')
+    x,y,z=pos;budget=min(max_uses,carried(c.status(),'minecraft:bone_meal'))
     if not budget:
         result.update(stage='sapling_kept_no_bone_meal',detail='树苗已确认，当前没有骨粉')
         return result
@@ -50,8 +118,25 @@ def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
     if expected is None:
         result.update(stage='sapling_site_changed',detail='催熟前未再看到原树苗；不使用骨粉')
         return result
-    approach_faces(c,[x,y,z],expected['state'],['up','north','south','west','east'],
-                   seconds=30,stand_distance=1.5)
+    moved_from_sapling=not _outside_future_trunk(c.status(),pos,species_item)
+    if moved_from_sapling:
+        if not _ensure_growth_stance(c,species_item,pos,result,checkpoint):
+            result.update(stage='sapling_kept_unsafe_stand',detail='树苗保留，未找到已确认的树干外催熟站位')
+            return result
+    p=c.status()['pos'];dx,dz=p[0]-(x+.5),p[2]-(z+.5)
+    nearest_face=('east'if dx>=0 else'west')if abs(dx)>=abs(dz)else('south'if dz>=0 else'north')
+    faces=[nearest_face]+[f for f in('north','south','east','west','up')if f!=nearest_face]
+    used_face=approach_faces(c,[x,y,z],expected['state'],faces,
+                   seconds=30,stand_distance=3 if species_item in WIDE_TREE_SPECIES else 1.5)or'up'
+    if not _outside_future_trunk(c.status(),pos,species_item):
+        if not _ensure_growth_stance(c,species_item,pos,result,checkpoint):
+            result.update(stage='sapling_kept_unsafe_stand',detail='接近后仍与未来树干重叠，未使用骨粉')
+            return result
+        used_face=approach_faces(c,[x,y,z],expected['state'],faces,
+                       seconds=30,stand_distance=3 if species_item in WIDE_TREE_SPECIES else 1.5)or'up'
+        if not _outside_future_trunk(c.status(),pos,species_item):
+            result.update(stage='sapling_kept_unsafe_stand',detail='催熟接近仍未取得树干外可见站位，未使用骨粉')
+            return result
     checkpoint();nearby=_scan(c,[x,y,z],[x,y+1,z],checkpoint)
     if not any(row['pos']==[x,y,z] and block_id(row)==sapling_item for row in nearby):
         result.update(stage='sapling_site_changed',detail='接近后树苗状态已改变；不使用骨粉')
@@ -73,7 +158,7 @@ def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
             result.update(stage='sapling_kept_unsafe_stand',detail='骨粉前站位不安全；未使用骨粉')
             break
         before=carried(state,'minecraft:bone_meal')
-        c.checked('interact',pos=[x,y,z],face='up',expected_state=sapling['state'],expected_hand='minecraft:bone_meal')
+        c.checked('interact',pos=[x,y,z],face=used_face,expected_state=sapling['state'],expected_hand='minecraft:bone_meal')
         used=False;growth=None;deadline=time.monotonic()+3
         while time.monotonic()<deadline:
             checkpoint();fresh=c.status();_safe(fresh)
@@ -104,7 +189,12 @@ def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
         result['bone_meal_used']=result.get('bone_meal_used',0)+spent
         if growth:
             growth['bone_meal_used']=spent
-            result.update(stage='grown',growth_confirmed=True,growth=growth);break
+            result.update(stage='grown',growth_confirmed=True,growth=growth)
+            if species_item=='minecraft:spruce_log'and getattr(c,'out',None)is not None:
+                directory=Path(c.out)/('grown-spruce-body-leaves-'+str(time.time_ns()))
+                cleanup=clear_grown_spruce_body_leaves(c,pos,directory,checkpoint)
+                result['grown_body_leaf_cleanup']={'removed':len(cleanup['removed']),'proof':str(directory)}
+            break
         if not used or result.get('stage')=='sapling_site_changed':
             result.update(stage='sapling_kept_bone_meal_unconfirmed',
                           detail='本次骨粉效果未获服务器确认；没有重复点击');break
@@ -113,7 +203,7 @@ def _apply_bone_meal(c, species_item, sapling_item, pos, result, checkpoint):
 
 
 def _replant_tree_with_bonemeal(c, species_item, tree_root, plant_cell, drop_baseline,
-                                sapling_before, bone_meal_before, out, checkpoint):
+                                sapling_before, bone_meal_before, out, checkpoint,*,max_growth_uses=6):
     """Recover only sapling drops born at this tree, then regrow on its verified ground cell."""
     from drop_collection import collect_drop
 
@@ -162,7 +252,7 @@ def _replant_tree_with_bonemeal(c, species_item, tree_root, plant_cell, drop_bas
         result.update(stage='sapling_already_planted',planted=True,
                       sapling_state=initial_seed['state'],planted_count=0)
         result['saplings_on_hand']=carried(state,sapling_item)
-        result=_apply_bone_meal(c,species_item,sapling_item,plant_cell,result,checkpoint)
+        result=_apply_bone_meal(c,species_item,sapling_item,plant_cell,result,checkpoint,max_uses=max_growth_uses)
         result['saplings_on_hand']=carried(c.status(),sapling_item)
         _write_regrowth_receipt(c,species_item,out,result)
         return result
@@ -219,7 +309,7 @@ def _replant_tree_with_bonemeal(c, species_item, tree_root, plant_cell, drop_bas
             result.update(stage='sapling_planted', planted=True,
                           sapling_state=placed['state'], planted_count=1)
 
-            result=_apply_bone_meal(c,species_item,sapling_item,plant_cell,result,checkpoint)
+            result=_apply_bone_meal(c,species_item,sapling_item,plant_cell,result,checkpoint,max_uses=max_growth_uses)
 
     result['saplings_on_hand'] = carried(c.status(), sapling_item)
     result['bone_meal_on_hand'] = carried(c.status(), 'minecraft:bone_meal')
@@ -1902,7 +1992,7 @@ def _receipt(c, item, target, before, state, reply, entry, ledger, path, checkpo
 def fixed_tree_params(state,region,root):
     if type(state.get('fixed_tree_chop_protocol'))is not int or state['fixed_tree_chop_protocol']<1:return {}
     low,high=_bounds(region)
-    if region.get('source')=='owned_seeded_cherry_tree_farm':
+    if region.get('source')in('owned_seeded_cherry_tree_farm','owned_seeded_spruce_tree_farm'):
         return {'tree_root':list(root),'tree_min':low,'tree_max':high}
     if region.get('source')!='natural_survey' or region.get('fixed_tree_chop')is not True:return {}
     # The freshly scanned23x45x23 context constrains a single natural tree,
@@ -1912,15 +2002,51 @@ def fixed_tree_params(state,region,root):
     return {'tree_root':list(root),'tree_min':lo,'tree_max':hi}
 
 
+def grow_registered_spruce(c,item,profile,out,checkpoint):
+    """Tend a real sapling at an owned registered site before generic discovery."""
+    if item!='minecraft:spruce_log':return None
+    sources=[r for r in(profile or{}).get('resource_regions',[])if r.get('item')==item
+             and r.get('source')=='owned_seeded_spruce_tree_farm'and r.get('renewable')is True]
+    for region in sources:
+        root=region.get('root');low,high=_bounds(region)
+        if (not isinstance(root,list)or len(root)!=3 or any(type(v)is not int for v in root)
+                or not in_box(root,low,high)):
+            raise Unavailable('登记云杉树根不完整，未催熟','waiting',code='owned_tree_scope_required')
+        rows=_scan(c,[root[0],root[1]-1,root[2]],[root[0],root[1]+1,root[2]],checkpoint)
+        cells={tuple(r['pos']):r for r in rows};sapling=cells.get(tuple(root))
+        if sapling and block_id(sapling)==item:continue
+        if not sapling or block_id(sapling)!='minecraft:spruce_sapling':
+            return {'phase':'waiting','code':'owned_tree_state_required','detail':'登记云杉点不是可确认树苗；未开始泛搜索或改种'}
+        soil=cells.get((root[0],root[1]-1,root[2]))
+        if (not soil or block_id(soil)not in SAPLING_SOILS or soil.get('solid')is not True
+                or soil.get('fluid')is not False or soil.get('block_entity')is not False):
+            return {'phase':'waiting','code':'owned_tree_soil_required','detail':'登记树苗土壤已改变，保留原地'}
+        if carried(c.status(),'minecraft:bone_meal')<1:
+            return {'phase':'waiting','code':'owned_tree_bone_meal_required',
+                    'requirements':{'minecraft:bone_meal':32},'detail':'先补登记树苗所需骨粉，未转去泛搜索'}
+        directory=Path(out)/('owned-spruce-grow-'+_key(item,root,root));directory.mkdir(parents=True,exist_ok=True)
+        journal=directory/'progress.json'
+        if journal.exists()and json.loads(journal.read_text()).get('pending'):
+            raise Unavailable('原登记树苗催熟动作待核，不重复','waiting',code='wait_receipt')
+        book={'world_session':c.world,'root':root,'pending':'registered_tree_growth','before_bone_meal':carried(c.status(),'minecraft:bone_meal'),'raw_inventory_credit':0}
+        write_json(journal,book)
+        from .local_air_path import move
+        pose=[root[0]+3.5,root[1]+.2,root[2]+.5];q=c.status()
+        if math.hypot(q['pos'][0]-pose[0],q['pos'][2]-pose[2])>24 or abs(q['pos'][1]-pose[1])>64:
+            _travel(c,[pose[0],max(q['pos'][1],root[1]+30),pose[2]],checkpoint,[],keep_cruise=True)
+        move(c,pose,directory/('access-'+str(time.time_ns())),foot_offset=.2,max_horizontal=24)
+        result=_apply_bone_meal(c,item,'minecraft:spruce_sapling',root,{'planted':True},checkpoint,max_uses=12)
+        book.update(pending=None,growth=result,after_bone_meal=carried(c.status(),'minecraft:bone_meal'));write_json(journal,book)
+        if result.get('stage')!='grown':
+            return {'phase':'waiting','code':'owned_tree_growth_wait','detail':'登记树苗已按有限预算处理，尚未长树；未改去搜索','growth_proof':str(journal)}
+    return None
+
+
 def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None):
     if target > 512:raise Unavailable('原生砍树背包目标上限为 512，请分批存放再继续')
     state = c.status(); _safe(state)
     if state.get('tree_survey_protocol', 0) < 1:raise Unavailable('当前 Kit 缺少树种扫描接口')
     _tool(state, 'axe', target-carried(state, item)+32)
-    checkpoint(); survey = c.request('scan_trees', item=item, radius=96).get('tree_survey')
-    if not isinstance(survey, dict):raise Unavailable('树木扫描不可用', 'waiting')
-    trees = [tree for tree in survey.get('trees', []) if tree.get('natural_leaves', 0) >= 4
-             and any(in_box(tree.get('pos', []), *_bounds(region)) for region in regions)]
     pending=next((entry for entry in ledger['visited'].values()
                   if entry.get('state')=='route_hold'
                   and entry.get('route_code') in
@@ -1929,6 +2055,12 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
     if pending:
         raise Unavailable('原树木路线尚待核对，不换砍另一棵',
                           'waiting',code=pending['route_code'])
+    tended=grow_registered_spruce(c,item,profile,out,checkpoint)
+    if tended is not None:return tended
+    checkpoint(); survey = c.request('scan_trees', item=item, radius=96).get('tree_survey')
+    if not isinstance(survey, dict):raise Unavailable('树木扫描不可用', 'waiting')
+    trees = [tree for tree in survey.get('trees', []) if tree.get('natural_leaves', 0) >= 4
+             and any(in_box(tree.get('pos', []), *_bounds(region)) for region in regions)]
     for tree in trees:
         root = tree['pos']; key = _key(item, root, root)
         if ledger['visited'].get(key, {}).get('state') in ('empty_or_unsafe', 'no_progress', 'progress'):continue
@@ -2008,6 +2140,9 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
         plant_cell = list(root)
         entry = {'state': 'inflight', 'root': root, 'before': before, 'route': trace}
         ledger['visited'][key] = entry; write_json(path, ledger); checkpoint()
+        if fixed_tree:
+            from .fixed_tree_ground import prepare
+            prepare(c,checkpoint)
         reply = c.request('chop', item=item, target_count=target, tree_limit=1, seconds=240, **fixed_params)
         after = c.status(); _safe(after)
         entry['native'] = {name: reply[name] for name in ('id', 'world_session', 'phase', 'detail')
@@ -2028,7 +2163,7 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
             else:
                 regrowth = _replant_tree_with_bonemeal(c, item, root, plant_cell, old_drops,
                                                    0, carried(state, 'minecraft:bone_meal'),
-                                                   out, checkpoint)
+                                                   out, checkpoint,max_growth_uses=12 if region.get('source')=='owned_seeded_spruce_tree_farm' else 6)
         except NameError as error:
             # The optional regrowth tail must not discard already-confirmed
             # logs or force a safety logout. Keep the traceback location for repair.

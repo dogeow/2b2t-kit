@@ -32,6 +32,28 @@ STONE_SHAPES={
  'minecraft:stone_brick_slab':('minecraft:stone_bricks',6,{3:[1,2,3]}),
  'minecraft:chiseled_stone_bricks':('minecraft:stone_brick_slab',1,{2:[1,3],3:[1,4]}),
 }
+VANILLA_PLANKS={f'minecraft:{wood}_planks'for wood in
+ ('oak','spruce','birch','jungle','acacia','dark_oak','mangrove','cherry','pale_oak','bamboo','crimson','warped')}
+
+
+def _furnishing_recipe(spec):
+    width=spec.get('width');ingredients=spec.get('ingredients')
+    if (type(width)is not int or width not in(2,3)or type(spec.get('produces'))is not int
+            or spec['produces']!=1 or not isinstance(ingredients,dict)
+            or any(not isinstance(v,list)or any(type(p)is not int for p in v)for v in ingredients.values())):
+        return False
+    output=spec['output']
+    if spec.get('recipe_id')!=output.removeprefix('minecraft:'):return False
+    if output=='minecraft:book':
+        return ingredients=={'minecraft:paper':[1,2,3]if width==2 else[1,2,4],
+                             'minecraft:leather':[4]if width==2 else[5]}
+    if width!=3:return False
+    if output=='minecraft:flower_pot':return ingredients=={'minecraft:brick':[1,3,5]}
+    if output=='minecraft:bookshelf':
+        return (ingredients.get('minecraft:book')==[4,5,6]
+            and set(ingredients)-{'minecraft:book'}<=VANILLA_PLANKS
+            and sorted(p for k,v in ingredients.items()if k!='minecraft:book'for p in v)==[1,2,3,7,8,9])
+    return False
 
 
 DYE_RECIPES={
@@ -87,8 +109,34 @@ def _color_recipe(spec):
 
 def supported(spec):
     if cobblestone_recipe_supported(spec):return True
-    if spec.get('output') in ('minecraft:chest','minecraft:hopper'):
+    output=spec.get('output','')
+    if output in ('minecraft:chest','minecraft:hopper'):
         return storage_recipe_supported(spec)
+    if output=='minecraft:glow_item_frame':
+        return (spec.get('recipe_id')=='glow_item_frame'
+                and type(spec.get('width'))is int and spec['width']in(2,3)
+                and type(spec.get('produces'))is int and spec['produces']==1
+                and spec.get('ingredients')=={'minecraft:item_frame':[1],'minecraft:glow_ink_sac':[2]}
+                and all(type(cell)is int for cells in spec['ingredients'].values()for cell in cells))
+    if output in {f'minecraft:{c}_{kind}'for c in COLORS for kind in ('wool','carpet','banner')}:
+        ingredients=spec.get('ingredients')
+        if (type(spec.get('width'))is not int or type(spec.get('produces'))is not int
+                or not isinstance(ingredients,dict)
+                or any(not isinstance(cells,list)or any(type(cell)is not int for cell in cells)
+                       for cells in ingredients.values())):return False
+    for color in COLORS:
+        wool=f'minecraft:{color}_wool'
+        if output==wool and spec.get('recipe_id')==f'dye_{color}_wool':
+            return (spec.get('width')in(2,3)and type(spec.get('produces'))is int and spec['produces']==1
+                    and color!='white'and spec.get('ingredients')=={f'minecraft:{color}_dye':[1],'minecraft:white_wool':[2]})
+        if output==f'minecraft:{color}_carpet' and spec.get('recipe_id')==f'{color}_carpet':
+            return (spec.get('width')in(2,3)and type(spec.get('produces'))is int and spec['produces']==3
+                    and spec.get('ingredients')=={wool:[1,2]})
+        if output==f'minecraft:{color}_banner' and spec.get('recipe_id')==f'{color}_banner':
+            return (spec.get('width')==3 and type(spec.get('produces'))is int and spec['produces']==1
+                    and spec.get('ingredients')=={wool:[1,2,3,4,5,6],'minecraft:stick':[8]})
+    if spec.get('output')in('minecraft:book','minecraft:bookshelf','minecraft:flower_pot'):
+        return _furnishing_recipe(spec)
     if spec.get('output')in DYE_OUTPUTS:return _dye_recipe(spec)
     if spec.get('output')=='minecraft:clay':
         width=spec.get('width');cells={2:[1,2,3,4],3:[1,2,4,5]}.get(width)if type(width)is int else None
@@ -143,8 +191,8 @@ def grouped_batch(menu,spec,max_rounds):
     A partial 40+24 pair can produce ten rounds then six, without returning
     twenty items one at a time. Other recipes retain their ordinary cell path.
     """
-    if not ((spec.get('output') in COLOR_OUTPUTS and _color_recipe(spec))
-            or storage_recipe_supported(spec) or cobblestone_recipe_supported(spec)):return None
+    if not((spec.get('output')in COLOR_OUTPUTS and _color_recipe(spec))
+            or _furnishing_recipe(spec) or storage_recipe_supported(spec) or cobblestone_recipe_supported(spec)):return None
     for rounds in range(max_rounds,0,-1):
         slots=copy.deepcopy(menu['slots'][-36:]);actions=[]
         for item,cells in spec['ingredients'].items():

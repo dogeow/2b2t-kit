@@ -137,12 +137,6 @@ def _loading_matches(state,source,output,loaded_source,loaded_fuel,fuel_item="mi
     return slots[0]['count']+slots[2]['count']==loaded_source
 
 
-def loading_balance(state,source,output,loaded_source,loaded_fuel,fuel_item="minecraft:coal"):
-    """Only this batch may occupy an initially empty furnace; fuel may burn."""
-    if not _loading_matches(state,source,output,loaded_source,loaded_fuel,fuel_item):
-        raise RuntimeError('Furnace contents changed during batch loading; do not replay')
-
-
 def wait_loading_balance(client,state,source,output,loaded_source,loaded_fuel,menu_id,fuel_item="minecraft:coal"):
     """Observe split slot updates for at most six seconds, without any clicks."""
     scope={key:state[key] for key in ('world_session','control_revision') if key in state}

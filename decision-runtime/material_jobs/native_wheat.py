@@ -14,7 +14,12 @@ def unresolved(registry):
     if not pointer.exists():
         return False
     book = json.loads(Path(json.loads(pointer.read_text())['journal']).read_text())
-    return bool(book.get('pending') or not book.get('complete'))
+    rejected=book.get('known_preflight_not_started')is True and not book.get('pending')
+    rejected=rejected or(book.get('known_no_world_input')is True and not book.get('pending')
+        and(book.get('no_world_input_disconnect_proof')or{}).get('classification')=='disconnected_before_any_scoped_world_input')
+    from native_wheat_partial_reconcile import reconciled
+    rejected=rejected or reconciled(book)
+    return bool(book.get('pending') or not book.get('complete')and not rejected)
 
 
 def validate_receipt(receipt, cells, before, world):
@@ -86,6 +91,41 @@ def leave_field(c, layout, frame, out, checkpoint, book=None, journal=None):
     write_json(out/'farmland-exit.json',{**intent,'pending':False,'phase':'done','actual':after['pos'],
                'inventory_after':dict(inventory_counts(after)),'receipt':reply})
 
+def enter_grounded(c,layout,out,checkpoint):
+    """Hand the walking planter a real dry pose, outside the registered crops."""
+    import math,time
+    from .fixed_tree_ground import FLOORS,prepare
+    checkpoint();state=c.status()
+    if state.get('on_ground')is True and state.get('flight')is False:return state
+    if state.get('under_water'):raise FarmWait('WAIT_GROUND','Leave water before a wheat walking visit')
+    frame=c.checked('scan',min=layout['scan_min'],max=layout['scan_max'],details=True)
+    volume=1
+    for a,b in zip(layout['scan_min'],layout['scan_max']):volume*=b-a+1
+    if(frame.get('world_session')!=c.world or frame.get('scan_cells_read')!=volume
+            or frame.get('scan_total_cells')!=volume or frame.get('unloaded_chunks',0)):
+        raise FarmWait('WAIT_GROUND','Current registered-field landing scan is incomplete')
+    rows={tuple(r['pos']):r for r in frame['blocks']};owned={tuple(p)for p in layout['cells']};candidates=[]
+    for p,row in rows.items():
+        name=row['state'].split('}',1)[0].removeprefix('Block{')
+        if(p in owned or name not in FLOORS or not row.get('solid')or row.get('fluid')or row.get('block_entity')
+                or p[1]+2>layout['scan_max'][1]or any((p[0],y,p[2])in rows for y in(p[1]+1,p[1]+2))):continue
+        target=[p[0]+.5,float(p[1]+1),p[2]+.5]
+        candidates.append((math.dist(target,state['pos']),target))
+    if not candidates:raise FarmWait('WAIT_GROUND','No empty full-soil landing outside the registered crop cells')
+    target=min(candidates)[1];out=Path(out);out.mkdir(parents=True,exist_ok=True);path=out/('ground-entry-'+str(time.time_ns())+'.json')
+    book={'world_session':c.world,'target':target,'before':state['pos'],'pending':'grounded_planter_handoff','complete':False};write_json(path,book)
+    # Cross above the chest row before descending, then use the existing dry
+    # work-landing primitive. Never free-fall onto and trample mature farmland.
+    height=max(state['pos'][1],target[1]+1.2)
+    if height-state['pos'][1]>.1:
+        checkpoint();c.checked('navigate',target=[state['pos'][0],height,state['pos'][2]],arrival=.12,air_only=True,seconds=30)
+    checkpoint();c.checked('navigate',target=[target[0],height,target[2]],arrival=.12,air_only=True,seconds=30)
+    checkpoint();c.checked('navigate',target=[target[0],target[1]+.15,target[2]],arrival=.1,air_only=True,seconds=30)
+    actual=prepare(c,checkpoint)
+    if actual.get('on_ground')is not True or actual.get('flight')is not False:
+        raise FarmWait('WAIT_GROUND','Planter landing is still unconfirmed; no wheat intent created')
+    book.update(complete=True,pending=None,actual=actual['pos']);write_json(path,book);return actual
+
 
 def run(c, registry, layout, cells, out, checkpoint):
     if not cells or len(cells) > 16 or len({tuple(p) for p in cells}) != len(cells):
@@ -96,9 +136,18 @@ def run(c, registry, layout, cells, out, checkpoint):
         raise FarmWait('WAIT_RECONCILE', 'Original native wheat visit is unresolved; no new batch')
     before_state = c.status()
     before = inventory_counts(before_state)
+    import math
+    if any(math.dist(before_state['pos'],[p[0]+.5,p[1]+.5,p[2]+.5])>16 for p in cells):
+        raise FarmWait('WAIT_REACH','Approach the scoped field before creating a native wheat intent')
     if before['minecraft:wheat_seeds'] < len(cells)+4:
         raise FarmWait('WAIT_SEED', 'Native wheat visit keeps four seeds after all scoped replants')
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
+    if before_state.get('flight')is True or before_state.get('on_ground')is False:
+        enter_grounded(c,layout,out,checkpoint)
+        before_state=c.status();before=inventory_counts(before_state)
+        if any(math.dist(before_state['pos'],[p[0]+.5,p[1]+.5,p[2]+.5])>16 for p in cells):
+            raise FarmWait('WAIT_REACH','Grounded entry is outside the scoped wheat reach')
+        if before['minecraft:wheat_seeds']<len(cells)+4:raise FarmWait('WAIT_SEED','Grounded wheat entry lacks its seed reserve')
     journal = out/'native-wheat-batch.json'
     if journal.exists():
         old=journal.read_bytes();prior=json.loads(old)

@@ -34,6 +34,20 @@ class Client:
         return self.status()
 
 class GroupedRecipeTest(unittest.TestCase):
+    def test_bookshelf_batch_uses_two_confirmed_drags_instead_of_per_cell_deposits(self):
+        spec={'recipe_id':'bookshelf','output':'minecraft:bookshelf','produces':1,'width':3,
+              'ingredients':{'minecraft:acacia_planks':[1,2,3,7,8,9],'minecraft:book':[4,5,6]}}
+        state=fixture([('acacia_planks',59),('acacia_planks',37),('book',35),('book',1)],empty=4)
+        plan=plan_batch(state,spec,12)
+        self.assertEqual('exact_groups',plan['distribution']);self.assertEqual(6,plan['rounds'])
+        c=Client(state);session=InventorySession(c)
+        with patch('kit_runtime.inventory.time.sleep'):
+            for action in plan['actions']:
+                session.distribute_exact(c.status(),c.status()['menu']['slots'][action['source']],action['cells'],action['count'])
+        self.assertEqual(5,len(c.calls));self.assertEqual(2,sum(op=='distribute'for op,_ in c.calls))
+        self.assertEqual([6]*9,[r['count']for r in c.status()['menu']['slots'][1:10]])
+        self.assertNotIn('distribution',plan_batch(state,spec,12,grouped=False))
+
     def test_exact_64_stacks_make_128_powder_with_two_group_distribution_commands(self):
         state=fixture([('sand',64),('gravel',64),('black_dye',16)],empty=4)
         plan=plan_batch(state,SPEC,16);self.assertEqual(128,plan['produced']);self.assertEqual(3,len(plan['actions']))

@@ -10,6 +10,11 @@ from material_jobs_backend import Backend
 
 
 class PipelineDispatchTests(unittest.TestCase):
+    def test_pointed_dripstone_dispatch_reuses_the_existing_native_client(self):
+        with patch.object(dispatch.pointed_dripstone_pipeline,'run',return_value={'phase':'waiting'})as family:
+            result=self.call('minecraft:pointed_dripstone','absolute_backpack',8)
+        self.assertEqual('waiting',result['phase']);self.assertIs(self.backend,self.client.pointed_backend)
+        family.assert_called_once_with(self.client,self.backend.profile,'minecraft:pointed_dripstone',8,self.out,self.checkpoint)
     def setUp(self):
         self.client = SimpleNamespace()
         self.backend = SimpleNamespace(client=self.client, profile={'schema': 1})

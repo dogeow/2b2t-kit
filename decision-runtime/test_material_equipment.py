@@ -38,6 +38,19 @@ class ToolChest:
 
 
 class EquipmentTests(unittest.TestCase):
+    def test_tree_harvest_requires_recoverable_platform_material_before_starting(self):
+        class C:
+            inventory=[{'slot':0,'item':'minecraft:diamond_axe','count':1,'durability':1000}]
+            def status(self):return {'inventory':self.inventory}
+        c=C()
+        with tempfile.TemporaryDirectory()as d:
+            missing=e.prepare(c,'minecraft:spruce_log',16,{},Path(d),lambda:None)
+            self.assertEqual('waiting',missing['phase']);self.assertFalse(missing['tree_harvest_started'])
+            self.assertEqual({'minecraft:dirt':16},missing['requirements'])
+            c.inventory+=[{'slot':1,'item':'minecraft:dirt','count':16,'max_stack':64}]
+            ready=e.prepare(c,'minecraft:spruce_log',16,{},Path(d),lambda:None)
+            self.assertEqual('done',ready['phase'])
+
     def test_packed_silk_snow_shovel_is_withdrawn_with_exact_enchantment_requirement(self):
         tool={'slot':0,'item':'minecraft:diamond_shovel','count':1,'durability':600,
               'enchantments':[{'id':'minecraft:silk_touch','level':1}],'max_stack':1}

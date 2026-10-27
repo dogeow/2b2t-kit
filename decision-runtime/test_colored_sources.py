@@ -89,6 +89,12 @@ class ColoredSourcesTest(unittest.TestCase):
             result=acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
         self.assertEqual('done',result['phase'])
         self.assertTrue(any(r['pos']==[100,64,100]for r in self.c.rows))
+    def test_deferred_cactus_source_never_scans_moves_or_harvests(self):
+        self.cactus_setup();self.profile['cactus_harvest_paused']=True
+        with patch('material_jobs.renewable_cactus.harvest_top')as harvest:
+            result=acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
+        self.assertEqual('WAIT_CACTUS_DEFERRED',result['code'])
+        self.assertEqual([],self.c.actions);harvest.assert_not_called()
     def test_unknown_cactus_side_receipt_never_replays_the_harvest(self):
         self.cactus_setup()
         with patch('material_jobs.renewable_cactus.harvest_top',side_effect=RuntimeError('unknown'))as kernel:
@@ -96,6 +102,25 @@ class ColoredSourcesTest(unittest.TestCase):
                 acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
             result=acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
             self.assertEqual('WAIT_RECONCILE',result['code']);self.assertEqual(1,kernel.call_count)
+    def test_known_removed_unreceived_top_allows_distinct_top_without_credit_or_replay(self):
+        self.cactus_setup();seen=[]
+        def side(c,pos,profile,out,checkpoint):
+            seen.append(list(pos));c.rows=[r for r in c.rows if r['pos']!=pos]
+            if len(seen)==1:
+                return {'complete':False,'unreceived':True,'mining_confirmed':True,
+                        'base_retained':True,'actual_gain':0,'pickup_confirmed':False,'drop_uuid':'missing'}
+            c.count+=1;return {'complete':True,'base_retained':True}
+        with patch('material_jobs.renewable_cactus.harvest_top',side):
+            result=acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
+        self.assertEqual('done',result['phase']);self.assertEqual(1,self.c.count)
+        self.assertEqual([[100,66,100],[100,65,100]],seen)
+        book=json.loads((self.out/'colored-source-cactus.json').read_text())
+        self.assertEqual(['unreceived','done'],[r['state']for r in book['receipts']])
+        self.assertEqual(0,book['receipts'][0]['gained'])
+        self.c.rows.append(block([100,66,100],'cactus'))
+        with patch('material_jobs.renewable_cactus.harvest_top',side):
+            acquire(self.c,'minecraft:cactus',2,self.profile,self.out,lambda:None)
+        self.assertEqual(2,len(seen))
     def test_legacy_cache_region_is_not_authorized_source(self):
         self.profile["colored_source_regions"][0].pop("authorized")
         self.assertEqual("WAIT_SOURCE",self.go()["code"]); self.assertEqual([],self.c.actions)
@@ -181,6 +206,33 @@ class ColoredSourcesTest(unittest.TestCase):
         with patch('material_jobs.acquisition._travel') as travel:
             with self.assertRaises(JobPaused):_stage_source(self.c,[100,64,100],lambda:None)
         travel.assert_not_called()
+
+
+    def test_unloaded_owned_cactus_farm_is_visited_then_read_without_resource_credit(self):
+        self.cactus_setup();region=self.profile['colored_source_regions'][0]
+        region.update(source='owned_cactus_farm',min=[100,65,100])
+        with (patch('material_jobs.colored_sources._fresh_scan',side_effect=[None,[]])as scan,
+              patch('material_jobs.renewable_cactus.owned_farm_top',return_value=True),
+              patch('material_jobs.colored_sources._stage_source')as stage):
+            result=acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
+        self.assertEqual('WAIT_SOURCE',result['code']);self.assertEqual(2,scan.call_count)
+        stage.assert_called_once();self.assertEqual(region['min'],stage.call_args.args[1])
+        self.assertFalse(any(op=='mine_block'for op,_ in self.c.actions))
+
+    def test_unproved_cactus_farm_does_not_authorize_unloaded_source_travel(self):
+        self.cactus_setup();self.profile['colored_source_regions'][0]['source']='owned_cactus_farm'
+        with (patch('material_jobs.colored_sources._fresh_scan',return_value=None)as scan,
+              patch('material_jobs.renewable_cactus.owned_farm_top',return_value=False),
+              patch('material_jobs.colored_sources._stage_source')as stage):
+            acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
+        stage.assert_not_called();self.assertEqual(1,scan.call_count)
+
+    def test_loaded_but_empty_farm_does_not_repeat_a_travel(self):
+        self.cactus_setup();self.profile['colored_source_regions'][0]['source']='owned_cactus_farm'
+        with (patch('material_jobs.colored_sources._fresh_scan',return_value=[]),
+              patch('material_jobs.colored_sources._stage_source')as stage):
+            acquire(self.c,'minecraft:cactus',1,self.profile,self.out,lambda:None)
+        stage.assert_not_called()
 
 
 if __name__ == "__main__":unittest.main()

@@ -265,4 +265,8 @@ def prepare(c,item,target,profile,out,checkpoint):
         actual=c.status()['inventory']
         if not eligible(actual) or any(needs_pickaxe_storage(row,minimum) for row in actual):
             raise RuntimeError('工具寄存后没有确认仅保留合格镐，停止开始采集')
+    if item in LOGS and inventory_counts(c.status()).get('minecraft:dirt',0)<16:
+        return {'phase':'waiting','code':'tree_scaffold_supply_required',
+                'detail':'整树工作平台需要先补足16块泥土；尚未启动砍树',
+                'requirements':{'minecraft:dirt':16},'tree_harvest_started':False}
     return {'phase':'done','detail':'采集工具已核验'}

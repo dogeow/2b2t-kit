@@ -308,10 +308,6 @@ def _seed(proxy, crop, state=None):
     return _hand(proxy, crop.item, source['slot'])
 
 
-def _potato(proxy, state=None):
-    return _seed(proxy,'potato',state)
-
-
 def _hoe(proxy, remaining):
     state = proxy.status()
     choices = [r for r in state['inventory'] if r['slot'] < 36 and r['item'] in HOES and r['count'] == 1

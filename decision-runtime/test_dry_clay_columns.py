@@ -16,7 +16,7 @@ class Fake:
         self.counts={'minecraft:clay_ball':0,'minecraft:clay':0,'minecraft:cobblestone':0};self.last=None
         self.blocks={(100,18,100):block([100,18,100]),(101,18,100):block([101,18,100]),
                      (100,21,100):block([100,21,100],'clay')}
-        self.fault=None;self.manual=False;self.flight=True;self.hand={}
+        self.fault=None;self.manual=False;self.flight=True;self.hand={};self.drops=[]
     def status(self):
         tools=[{'slot':0,'item':'minecraft:diamond_pickaxe','count':1,'durability':500,'max_stack':1},
                {'slot':1,'item':'minecraft:diamond_shovel','count':1,'durability':500,'max_stack':1}]
@@ -25,7 +25,7 @@ class Fake:
         return {'connected':True,'world_session':self.world,'server':'server','dimension':'minecraft:overworld',
                 'health':20,'food':20,'guard_armed':True,'guard_pve_only':True,'guard_busy':False,
                 'under_water':False,'manual_movement':self.manual,'flight':self.flight,'control_revision':1,
-                'pos':list(self.pos),'velocity':[0,0,0],'inventory':rows,'hand':copy.deepcopy(self.hand),
+                'pos':list(self.pos),'velocity':[0,0,0],'inventory':rows,'hand':copy.deepcopy(self.hand),'entities':copy.deepcopy(self.drops),
                 'supervision_lease':{'kind':'materials','world_session':self.world,'job_session':self.task,'revision':1}}
     def request(self,op,**kw):
         self.calls.append((op,kw));self.last='req-'+str(len(self.calls));r={'id':self.last,'phase':'done','world_session':self.world}
@@ -40,10 +40,15 @@ class Fake:
         elif op=='navigate':self.pos=list(kw['target'])
         elif op=='guard':pass
         elif op=='mine_block':
+            r.update(server_confirmed=True,confirmation_scope='single_target_server_block_update_and_native_sequence_ack',
+                     native_sequence=2,server_ack_sequence=2)
             if self.fault=='unknown':r['phase']='waiting'
             else:
                 b=self.blocks.pop(tuple(kw['pos']));output='minecraft:clay_ball'if 'minecraft:clay}'in b['state']else'minecraft:cobblestone'
-                self.counts[output]+=5 if self.fault=='delta'else(4 if output=='minecraft:clay_ball'else 1)
+                if self.fault=='visible':
+                    self.drops=[{'type':'minecraft:item','uuid':'new-source-drop','pos':[100.5,19.125,100.5],
+                                 'stack':{'item':output,'count':4,'max_stack':64}}];r['entities']=copy.deepcopy(self.drops)
+                else:self.counts[output]+=5 if self.fault=='delta'else(4 if output=='minecraft:clay_ball'else 1)
                 if self.fault=='world':r['world_session']='foreign'
         else:raise AssertionError(op)
         return r
@@ -90,6 +95,24 @@ class DryClayTests(unittest.TestCase):
         with patch.object(m.time,'monotonic',side_effect=range(20)),self.assertRaisesRegex(JobBlocked,'drop delta'):
             self.run_source()
         book=json.loads((self.root/'job/dry-clay-columns.json').read_text());self.assertIsNotNone(book['pending']);self.assertFalse(book['complete'])
+
+    def test_native_done_without_server_sequence_confirmation_is_not_completion(self):
+        original=self.c.request
+        def unconfirmed(op,**kw):
+            r=original(op,**kw)
+            if op=='mine_block':r['server_ack_sequence']=1
+            return r
+        self.c.request=unconfirmed
+        with self.assertRaisesRegex(JobBlocked,'receipt/removal'):self.run_source()
+        self.assertIsNotNone(json.loads((self.root/'job/dry-clay-columns.json').read_text())['pending'])
+
+    def test_visible_uncollected_drop_uses_one_scoped_pickup_and_no_remine(self):
+        self.c.fault='visible'
+        def pickup(c,drop,**kw):
+            self.assertEqual('new-source-drop',drop['uuid']);c.counts['minecraft:clay_ball']+=4;c.drops=[];return True
+        with patch.object(m,'collect_drop',side_effect=pickup)as collected:
+            self.assertEqual('done',self.run_source()['phase'])
+        collected.assert_called_once();self.assertEqual(1,sum(op=='mine_block'for op,_ in self.c.calls))
     def test_tool_metadata_change_stops_before_mining(self):
         self.c.fault='tool'
         with self.assertRaisesRegex(JobBlocked,'tool selection'):self.run_source()

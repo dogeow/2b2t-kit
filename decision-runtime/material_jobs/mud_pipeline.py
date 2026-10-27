@@ -73,8 +73,8 @@ def run(c,profile,item,target_count,out,checkpoint):
     if any(book.get(k)!=v for k,v in scope.items()):raise JobPaused('Mud journal scope changed')
     if book.get('pending'):
         return {'phase':'waiting','code':'WAIT_RECONCILE','detail':'Previous mud action unknown; no replay','journal':str(path)}
-    from .mud_batch import visit_cells
-    cell_budget=visit_cells(backend.request,profile)if backend.request.get('mode')=='projection'else 4
+    from .mud_batch import visit_cells,item_visit_cells
+    cell_budget=visit_cells(backend.request,profile)if backend.request.get('mode')=='projection'else item_visit_cells(backend.request,profile,item)
     action_budget=max(256,cell_budget*16)if cell_budget>4 else 64
     prepare=getattr(backend,'prepare_mud_inventory',None)
     if (callable(prepare) and inventory_counts(c.status()).get(item,0)<target_count
@@ -91,8 +91,10 @@ def run(c,profile,item,target_count,out,checkpoint):
     catalog=RecipeCatalog(profile['recipe_jar']);actions=0;fetched=set();new_mud=0
     from .mud_batch import carried_visit_target
     bulk=carried_visit_target(backend.request,profile,c.status(),item,target_count) is not None
+    raw_bulk=backend.request.get('mode')=='item'and item=='minecraft:mud'and cell_budget>4
     initial=inventory_counts(c.status());gain=max(0,target_count-initial[item])
     visit_units=min(cell_budget,max(0,math.ceil(gain/4)*4-initial['minecraft:packed_mud']))if item=='minecraft:mud_bricks'else 0
+    if raw_bulk:visit_units=min(cell_budget,gain)
     bulk_inputs_ready=False
     bulk_wheat_ready=False
     bulk_workspace_ready=False
@@ -314,10 +316,10 @@ def run(c,profile,item,target_count,out,checkpoint):
         if (cfg.get('authorized')is not True or not _point(work)or not _point(floor)
                 or work!=[floor[0],floor[1]+1,floor[2]]or not isinstance(cfg.get('support_state'),str)):
             raise Wait('WAIT_SOURCE','Configure an explicitly owned dry mud work cell')
-        if bulk and not bulk_inputs_ready:
+        if (bulk or raw_bulk)and not bulk_inputs_ready:
             # Prepare only the current16-cell visit. Actual recipes, each cell
             # and all output deltas still use the existing four-unit worker.
-            desired=max(0,visit_units-inventory_counts(state())['minecraft:mud'])
+            desired=visit_units if raw_bulk else max(0,visit_units-inventory_counts(state())['minecraft:mud'])
             if feedstock=='minecraft:coarse_dirt':require_raw(feedstock,desired)
             else:fetch(feedstock,desired)
             if inventory_counts(state())[feedstock]<desired:
@@ -351,6 +353,26 @@ def run(c,profile,item,target_count,out,checkpoint):
             if actual!=MUD:
                 # Fill before placing dirt, shortening its exposed growth window.
                 water=bottle()
+            approach=cfg.get('approach')
+            if approach is not None:
+                if (not isinstance(approach,list)or len(approach)!=3
+                        or any(type(v)not in(int,float)or not math.isfinite(v)for v in approach)
+                        or math.hypot(approach[0]-(pos[0]+.5),approach[2]-(pos[2]+.5))>3
+                        or not pos[1]<=approach[1]<=pos[1]+2
+                        or abs(approach[0]-(pos[0]+.5))<.81 and abs(approach[2]-(pos[2]+.5))<.81
+                        and approach[1]<pos[1]+1):
+                    raise Wait('WAIT_SOURCE','Registered mud stand must stay above or beside the work cell')
+                # A low source-water pose must not use the generic straight
+                # depot approach across the raised farm edge. Recheck the
+                # complete body route before every return, including pickups.
+                from .local_air_path import move
+                air_stand=list(approach)
+                if abs(approach[0]-(pos[0]+.5))<.81 and abs(approach[2]-(pos[2]+.5))<.81:
+                    # Slot selection and Flight restoration can settle .2
+                    # blocks. Keep a full extra air cell above placement.
+                    air_stand[1]=max(approach[1],pos[1]+2.2)
+                move(client(),air_stand,out/('station-air-return-%03d'%new_mud),
+                     foot_offset=.2,max_horizontal=24)
             from work_access import approach_faces
             if actual==GRASS:
                 face=approach_faces(client(),pos,GRASS,('up','north','south','west','east'),seconds=45)
@@ -389,7 +411,7 @@ def run(c,profile,item,target_count,out,checkpoint):
                     pose=state()['pos']
                     if pos[0]-.35<pose[0]<pos[0]+1.35 and pos[2]-.35<pose[2]<pos[2]+1.35:
                         raise Wait('WAIT_SOURCE','Actual adjacent mud stand still overlaps the work cell')
-                face=approach_faces(client(),support,cfg['support_state'],('up',),seconds=45)
+                face='up' if approach is not None else approach_faces(client(),support,cfg['support_state'],('up',),seconds=45)
                 select(feedstock)
                 operation('place_owned_dirt' if feedstock_state==DIRT else 'place_owned_coarse_dirt',
                           lambda:client().request('interact',pos=support,face=face,expected_state=cfg['support_state'],expected_hand=feedstock),
@@ -423,7 +445,7 @@ def run(c,profile,item,target_count,out,checkpoint):
                     if (drop.get('type')=='minecraft:item' and drop.get('stack',{}).get('item')=='minecraft:mud'
                             and len(drop.get('pos',[]))==3 and math.dist(drop['pos'],pos)<=6
                             and drop.get('uuid') not in {e.get('uuid') for e in before.get('entities',[])}):
-                        checkpoint();picked=collect_drop(client(),drop)
+                        checkpoint();picked=collect_drop(client(),drop,observation=before)
                         if not picked:
                             terminal=getattr(client(),'last_terminal_evidence',{})or{}
                             if (terminal.get('op')=='scan'and terminal.get('phase')=='done'
@@ -440,6 +462,11 @@ def run(c,profile,item,target_count,out,checkpoint):
 
     def ensure(output,target):
         nonlocal bulk_wheat_ready
+        station_cfg=profile.get('mud_station')or{}
+        if (output=='minecraft:mud'and station_cfg.get('authorized')is True
+                and station_cfg.get('prefer_station_production')is True):
+            if stock()[output]<target:make_mud(target)
+            return
         fetch(output,target)
         held=stock()
         if held[output]>=target:return

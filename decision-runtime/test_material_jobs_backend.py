@@ -32,6 +32,25 @@ def inventory_rows(counts):
 
 
 class BackendTest(unittest.TestCase):
+    def test_clay_ball_item_input_uses_registered_home_farm_before_generic_ore_dispatch(self):
+        self.job.profile={'clay_conversion_farm':{'authorized':True,'positions':[[1,71,2]]}}
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
+        self.job.prepare_travel=Mock()
+        proof={'phase':'done','item':'minecraft:clay_ball','after':64}
+        with patch('material_jobs.home_clay_farm.run',return_value=proof)as farm:
+            self.assertEqual(proof,self.job.acquire('minecraft:clay_ball',64))
+        farm.assert_called_once_with(self.client,self.job.profile,'minecraft:clay_ball',64,self.root,self.job.checkpoint)
+        self.job.prepare_travel.assert_not_called()
+
+    def test_home_clay_pending_receipt_is_returned_without_falling_back_to_another_source(self):
+        self.job.profile={'clay_conversion_farm':{'authorized':True}}
+        self.job.action=Mock(return_value=nullcontext((self.client,self.root)))
+        self.job.prepare_travel=Mock()
+        proof={'phase':'waiting','code':'WAIT_RECONCILE','detail':'original mine receipt retained'}
+        with patch('material_jobs.home_clay_farm.run',return_value=proof):
+            self.assertEqual(proof,self.job.acquire('minecraft:clay_ball',64))
+        self.job.prepare_travel.assert_not_called()
+
     def indoor_depot_profile(self):
         bench=[10,65,10];pos=[9,66,7];pose=[9.5,65,10.5]
         return {'workbench':bench,'workbench_entry':[{'kind':'walk','target':[10.5,65,15.5]}],
@@ -1801,6 +1820,29 @@ class BackendTest(unittest.TestCase):
         saved=json.loads((self.root/'finish-deferred.json').read_text())
         self.assertFalse(saved['native_parking_confirmed']);self.assertFalse(saved['resource_actions_replayed'])
 
+    def test_failed_cleanup_exits_after_repeated_cactus_damage_even_at_full_health(self):
+        first=copy.deepcopy(self.current);first.update(time=1100,recent_hurt_at=1000,recent_attacker='仙人掌')
+        second=copy.deepcopy(first);second.update(time=2100,recent_hurt_at=2000)
+        with patch.object(backend,'read_fresh',side_effect=[first,second]),patch.object(backend.time,'sleep'), \
+                patch('safety_interlock.record_material_health_exit')as hold:
+            with self.assertRaisesRegex(JobBlocked,'仙人掌'):
+                backend.Backend.hold_failed_finish(self.job,RuntimeError('park rejected'))
+        self.client.request.assert_called_once_with('safe_logout')
+        self.client.heartbeat.close.assert_called_once();hold.assert_called_once()
+        proof=json.loads((self.root/'repeated-cactus-safety-exit.json').read_text())
+        self.assertEqual(2,len(proof['hits']));self.assertEqual(0,proof['goal_completion_credit'])
+        self.assertFalse(proof['original_actions_replayed'])
+
+    def test_cactus_cleanup_logout_does_not_create_health_hold_after_manual_race_before_dispatch(self):
+        first=copy.deepcopy(self.current);first.update(time=1100,recent_hurt_at=1000,recent_attacker='仙人掌')
+        second=copy.deepcopy(first);second.update(time=2100,recent_hurt_at=2000)
+        self.client.request.side_effect=JobPaused('manual handoff before dispatch')
+        with patch.object(backend,'read_fresh',side_effect=[first,second]),patch.object(backend.time,'sleep'), \
+                patch('safety_interlock.record_material_health_exit')as hold:
+            with self.assertRaisesRegex(JobPaused,'manual handoff'):
+                backend.Backend.hold_failed_finish(self.job,RuntimeError('park rejected'))
+        self.client.request.assert_called_once_with('safe_logout');hold.assert_not_called()
+
     def test_foreign_item_interface_wait_keeps_heartbeat_until_clean_current_inventory_scope(self):
         self.client.native_inflight=None
         opened=copy.deepcopy(self.current);opened['screen']='InventoryScreen'
@@ -1982,6 +2024,20 @@ class BackendTest(unittest.TestCase):
         self.assertEqual((result['phase'],result['free_slots']),('done',4))
         self.assertEqual(result['stored_items'],{'minecraft:dirt':256})
         self.assertEqual(backend.inventory_counts(self.current)['minecraft:mud_bricks'],2)
+
+    def test_mud_workspace_merges_two_plain_wheat_stacks_before_any_depot_visit(self):
+        self.job.profile={'depots':[[5,64,1]],'mud_inventory_staging':{
+            'authorized':True,'keep_wheat_seeds':32,'keep_dirt':64,'minimum_empty_slots':3}}
+        bag=[{'slot':i,'item':'minecraft:stone','count':64,'max_stack':64}for i in range(36)]
+        bag[0].update(item='minecraft:wheat',count=18);bag[1].update(item='minecraft:wheat',count=16)
+        for r in bag[-2:]:r.update(item='minecraft:air',count=0)
+        self.current['inventory']=bag
+        receipt={'phase':'done','free_slots':3,'inventory_credit':0,'depot_visits':0}
+        with (patch('material_stack_consolidation.run_inventory',side_effect=[None,receipt])as merge,
+              patch('material_stack_consolidation.run')as depot):
+            result=self.job.prepare_mud_inventory()
+        self.assertEqual('WORKSPACE_READY',result['code']);self.assertEqual('minecraft:wheat',merge.call_args.args[1])
+        self.assertEqual(2,merge.call_count);depot.assert_not_called()
 
     def test_unregistered_or_invalid_mud_staging_does_not_store_items(self):
         self.job.profile={}

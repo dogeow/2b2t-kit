@@ -1,6 +1,8 @@
-import unittest
+import unittest,tempfile
+from pathlib import Path
+from unittest.mock import patch
 from types import SimpleNamespace
-from material_jobs.mud_water_supply import fill
+from material_jobs.mud_water_supply import fill,fill_bottle
 from material_jobs.protocol import JobBlocked
 
 class Client:
@@ -56,5 +58,19 @@ class Tests(unittest.TestCase):
         result=fill(self.backend(c),1)
         self.assertTrue(result['source_still_renewed']);self.assertEqual(2,reads[0])
         self.assertEqual(1,sum(op=='bucket_fill'for op,_ in c.calls))
+    def test_contained_source_uses_registered_fractional_pose_before_bottle_dispatch(self):
+        with tempfile.TemporaryDirectory()as tmp:
+            c=Client();c.out=Path(tmp);status=c.status
+            c.status=lambda:{**status(),'bottle_water_protocol':1}
+            b=self.backend(c);pose=[43.5,64.,879.3]
+            b.profile['mud_bucket_source'].update(exact_approach=True,approach=pose)
+            def refused(op,**params):
+                c.calls.append((op,params))
+                if op=='navigate':raise RuntimeError('exact pose rejected')
+                raise AssertionError('No bottle may be sent after rejected pose')
+            c.checked=refused
+            with patch('material_jobs.local_air_path.move')as route:
+                with self.assertRaisesRegex(RuntimeError,'exact pose rejected'):fill_bottle(b)
+            route.assert_called_once();self.assertEqual([('navigate',{'target':pose,'arrival':.12,'air_only':True,'seconds':20})],c.calls)
 
 if __name__=='__main__':unittest.main()

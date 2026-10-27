@@ -1,8 +1,8 @@
-import tempfile,unittest
+import tempfile,unittest,json
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
-from projection_air_wood import run_one
+from projection_air_wood import run_one,run_from_poses
 
 class AirWoodTests(unittest.TestCase):
  def setUp(self):
@@ -52,5 +52,37 @@ class AirWoodTests(unittest.TestCase):
   with self.assertRaisesRegex(RuntimeError,'unavailable'):
    self.run_case([])
   self.assertEqual(self.calls,[])
+ def test_native_presend_occlusion_is_known_not_sent_after_proving_no_change(self):
+  self.receipt={'phase':'error','detail':'Air seed target is occluded'}
+  def reject(op,**kw):self.calls.append(op);return self.receipt
+  self.client.request=reject
+  from work_access import ApproachUnavailable
+  with self.assertRaises(ApproachUnavailable):self.run_case(['Block{minecraft:air}']*3)
+  self.assertEqual(1,self.calls.count('projection_air_seed'))
+
+ def test_pose_fallback_requires_explicit_no_send_witness_and_distinct_poses(self):
+  from work_access import ApproachUnavailable
+  moves=[]
+  def place(c,row,out,checkpoint):
+   out.mkdir()
+   if len(moves)==1:
+    (out/'progress.json').write_text(json.dumps({'world_session':'world','target':self.pos,'known_not_sent':True,'pending':None,'complete':False}))
+    raise ApproachUnavailable('known occlusion')
+   return {'complete':True}
+  with tempfile.TemporaryDirectory()as d,patch('projection_air_wood.run_one',side_effect=place)as attempt:
+   result=run_from_poses(self.client,self.row,[[.5,64.,2.5],[1.5,64.,2.5]],Path(d)/'attempts',lambda:self.state,lambda p,out:moves.append(p))
+  self.assertTrue(result['complete']);self.assertEqual(2,attempt.call_count);self.assertEqual(2,len(moves))
+
+ def test_unknown_or_pending_placement_never_selects_another_pose(self):
+  from work_access import ApproachUnavailable
+  for uncertain in(True,False):
+   moves=[]
+   def place(c,row,out,checkpoint):
+    if uncertain:raise RuntimeError('unknown server outcome')
+    out.mkdir();(out/'progress.json').write_text(json.dumps({'world_session':'world','target':self.pos,'known_not_sent':True,'pending':'one_native_air_seed','complete':False}))
+    raise ApproachUnavailable('incomplete witness')
+   with self.subTest(uncertain=uncertain),tempfile.TemporaryDirectory()as d,patch('projection_air_wood.run_one',side_effect=place):
+    with self.assertRaises(RuntimeError):run_from_poses(self.client,self.row,[[.5,64.,2.5],[1.5,64.,2.5]],Path(d)/'attempts',lambda:self.state,lambda p,out:moves.append(p))
+   self.assertEqual(1,len(moves))
 
 if __name__=='__main__':unittest.main()

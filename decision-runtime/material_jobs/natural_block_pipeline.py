@@ -161,6 +161,31 @@ def run(c, profile, item, target_count, out, checkpoint):
         book.update(complete=True, verified_count=inventory_counts(first)[item]); write_json(path, book)
         return {'phase': 'done', 'item': item, 'target_scope': TARGET_SCOPE,
                 'count': inventory_counts(first)[item], 'ai_calls': 0}
+    if item=='minecraft:dripstone_block':
+        held=inventory_counts(first);before=held[item];tips=held['minecraft:pointed_dripstone']
+        needed=target_count-before
+        if tips>=4*needed:
+            craft=getattr(backend,'craft',None)
+            if not callable(craft):return _wait(item,target_count,'WAIT_CRAFT','Existing client has no checked crafting backend')
+            book['pending']={'kind':'craft_from_carried_pointed_dripstone',
+                             'before':before,'tips_before':tips,'target':target_count}
+            write_json(path,book)
+            result=craft({item:target_count})
+            current=state()
+            if current is None:return _wait(item,target_count,'WAIT_RECONCILE','Craft ended without current healthy ownership')
+            after=inventory_counts(current);gain=after[item]-before
+            if (result.get('phase')!='done' or after[item]<target_count or gain<=0
+                    or tips-after['minecraft:pointed_dripstone']!=4*gain):
+                return _wait(item,target_count,'WAIT_RECONCILE','Original crafting counts unconfirmed; no repeat or source mining')
+            book['receipts'].append({**book['pending'],'actual_gain':gain,'tips_consumed':4*gain,
+                                     'craft_receipt':result})
+            book.update(pending=None,complete=True,verified_count=after[item]);write_json(path,book)
+            return {'phase':'done','item':item,'target_scope':TARGET_SCOPE,'count':after[item],
+                    'source':'current_carried_pointed_dripstone','ai_calls':0}
+        if profile.get('external_dripstone_trip_paused')is True:
+            return {'phase':'waiting','code':'WAIT_GROWTH','item':item,'target_scope':TARGET_SCOPE,
+                    'detail':'Wait for the home growth cycle; no external source collection',
+                    'requirements':{'minecraft:pointed_dripstone':4*needed},'ai_calls':0}
     regions = list(_regions(profile, item))
     if not regions:
         return _wait(item, target_count)

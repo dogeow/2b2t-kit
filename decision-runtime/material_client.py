@@ -99,7 +99,7 @@ def pending_request_state(request,last_request,owned_last,world):
  if request.get('id')==last_request:return 'clear'
  if request.get('id')==owned_last and request.get('world_session')==world:return 'wait_owned'
  return 'foreign'
-_REVISION_ADVANCING_OPS=frozenset(('navigate','chop','walk','walk_path','print','mine_block','recover_shulker','professional_print','projection_start','borer_start','planter_wheat_batch'))
+_REVISION_ADVANCING_OPS=frozenset(('navigate','chop','walk','walk_path','print','mine_block','recover_shulker','professional_print','projection_start','projection_load','projection_load_rollback','borer_start','planter_wheat_batch'))
 def expected_native_revision(op,base):
  return base+(2 if op in ('stop','safe_logout') else 1 if op in _REVISION_ADVANCING_OPS else 0)
 def recovery_action_allowed(state,op,params):
@@ -109,9 +109,11 @@ def recovery_action_allowed(state,op,params):
  if any(not isinstance(p,(list,tuple)) or len(p)!=3 or any(type(v)not in (int,float) or not math.isfinite(v) for v in p) for p in (source,target)):return False
  return bool(params.get('air_only')is True and 2<=target[1]-source[1]<=64 and math.hypot(target[0]-source[0],target[2]-source[2])<=.5)
 class Client:
- def __init__(self,root,out,server,min_health=18):
+ def __init__(self,root,out,server,min_health=18,dimension='minecraft:overworld'):
+  if dimension not in ('minecraft:overworld','minecraft:the_nether'):raise ValueError('Unsupported explicit material dimension')
   self.root=Path(root);self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True);self.server=server
-  s=self.raw();assert s.get('server','').removesuffix(':25565')==self.server.removesuffix(':25565') and s['dimension']=='minecraft:overworld'
+  self.dimension=dimension
+  s=self.raw();assert s.get('server','').removesuffix(':25565')==self.server.removesuffix(':25565') and s['dimension']==dimension
   assert not s['screen'] and not s.get('manual_movement') and s['health']>=min_health
   assert not any(s.get(k) for k in ('borer_active','chopping','navigating'))
   self.anchor=list(s['pos']);self.world=s['world_session'];self.rev=s['control_revision'];self.owned=False;self.last=None;self.native_inflight=None
@@ -132,7 +134,7 @@ class Client:
  def status(self,wait_seconds=None,*,wait_interface=True):
   while True:
    s=self.raw() if wait_seconds is None else self.raw(wait_seconds=wait_seconds)
-   if not s.get('connected') or s.get('world_session')!=self.world or s.get('control_revision')!=self.rev or s.get('manual_movement'):
+   if not s.get('connected') or s.get('world_session')!=self.world or s.get('control_revision')!=self.rev or s.get('manual_movement') or s.get('dimension')!=getattr(self,'dimension',s.get('dimension')):
     self.last_owned_ground_walk=None
     self.last_owned_idle_ground_read=None
     raise Handoff('Control or world changed; no more commands')
@@ -144,7 +146,15 @@ class Client:
     # raw() keeps the owned heartbeat and health observations alive while typing.
     time.sleep(.15);continue
    self._manual_idle_attempt=None
-   if s.get('screen') not in ('','ContainerScreen','InventoryScreen','CraftingScreen','ShulkerBoxScreen','FurnaceScreen','BlastFurnaceScreen','SmokerScreen','AnvilScreen','BrewingStandScreen'):raise Handoff('User opened a different interface')
+   if s.get('screen') not in ('','ContainerScreen','InventoryScreen','CraftingScreen','ShulkerBoxScreen','FurnaceScreen','BlastFurnaceScreen','SmokerScreen','AnvilScreen','BrewingStandScreen'):
+    menu=s.get('menu')or{};lease=s.get('supervision_lease')or{}
+    processing_owned=(s.get('screen')in('LoomScreen','StonecutterScreen','MerchantScreen')and menu.get('material_owned')is True
+      and menu.get('id',0)>0 and bool(getattr(self,'task',None))and lease.get('kind')=='materials'
+      and lease.get('job_session')==self.task and lease.get('world_session')==self.world and lease.get('revision')==self.rev)
+    if s.get('screen')=='MerchantScreen':
+     merchant=menu.get('merchant')or{}
+     processing_owned=processing_owned and merchant.get('protocol')==1 and merchant.get('owned')is True and merchant.get('owner_task')==getattr(self,'task',None) and bool(merchant.get('villager_uuid'))
+    if not processing_owned:raise Handoff('User opened a different interface')
    return s
  def request(self,op,**params):
   until=min(time.monotonic()+60,getattr(self,'guard_admission_deadline',math.inf))
@@ -558,7 +568,9 @@ class MaterialClient(Client):
       or abs(pos[1]-target_y)>2 or math.hypot(pos[0]-target[0],pos[2]-target[2])>.75):
    raise RuntimeError('High park vertical arrival or protection was not verified')
   return reached
- def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None,remote_finish='disconnect',park_target=None,recovery_only=False):
+ def __init__(self,root,out,server="simpcraft.com:25565",allow_empty_inventory=False,record_experience=True,experience_state=None,remote_finish='disconnect',park_target=None,recovery_only=False,dimension='minecraft:overworld'):
+  if dimension not in ('minecraft:overworld','minecraft:the_nether'):raise ValueError('Unsupported explicit material dimension')
+  self.requested_dimension=dimension
   if type(recovery_only)is not bool:raise ValueError('Recovery mode must be explicit boolean')
   if remote_finish not in ('disconnect','guard') or remote_finish=='guard' and (not isinstance(park_target,(list,tuple)) or len(park_target)!=3):raise ValueError('Guard finish requires a high park target')
   self.foreground_token=None;self.recovery_only=recovery_only
@@ -577,7 +589,7 @@ class MaterialClient(Client):
   if remote_finish not in ('disconnect','guard') or remote_finish=='guard' and (not isinstance(park_target,(list,tuple)) or len(park_target)!=3):raise ValueError('Guard finish requires a high park target')
   self.remote_finish=remote_finish;self.park_target=list(park_target) if park_target is not None else None
   self.heartbeat=None;self.owned_material_menu=None;self.owned_inventory_crafting=None;self.job_progress=None
-  super().__init__(root,out,server,min_health=14 if self.recovery_only else 18)
+  super().__init__(root,out,server,min_health=14 if self.recovery_only else 18,dimension=getattr(self,'requested_dimension','minecraft:overworld'))
   self.record_experience=record_experience;self.experience_state=experience_state
   s=self.raw()
   if remote_finish=='guard' and math.hypot(s['pos'][0]-self.park_target[0],s['pos'][2]-self.park_target[2])<=32:
@@ -621,11 +633,50 @@ class MaterialClient(Client):
   s=super().raw(wait_seconds=wait_seconds)
   self._observe_owned_health(s)
   if self.heartbeat:self.heartbeat.touch()
+  self._observe_stuck_damage(s)
   if getattr(self,'job_progress',None):
    # Only follow revisions already accepted by the owning Client request checks.
    self.job_progress.revision=self.rev
    self.job_progress.publish(s)
   return s
+ def _observe_stuck_damage(self,state):
+  if getattr(self,'stuck_damage_exit_started',False):return
+  scope=(getattr(self,'world',None),getattr(self,'task',None),getattr(getattr(self,'heartbeat',None),'id',None))
+  if not all(isinstance(v,str)and v for v in scope):return
+  from stuck_damage import StuckDamageWitness
+  witness=getattr(self,'stuck_damage_witness',None)
+  if witness is None:witness=self.stuck_damage_witness=StuckDamageWitness(*scope)
+  idle=(getattr(self,'native_inflight',None)is None and getattr(self,'unconfirmed_native_request',None)is None)
+  evidence=witness.observe(state,revision=self.rev,native_idle=idle)
+  if evidence is not None:self._exit_stuck_damage(evidence)
+ def _exit_stuck_damage(self,evidence):
+  """Same controller, one emergency exit; no second action or automatic reentry."""
+  if getattr(self,'stuck_damage_exit_started',False):raise Handoff('Original sustained-injury exit must not be replayed')
+  from kit_runtime.journal import write_json
+  from safety_interlock import record_material_health_exit
+  self.stuck_damage_exit_started=True
+  reason='Owned idle worker remained stationary with repeated unresolved injury; exit and wait for explicit renewed user authorization'
+  path=self.out/'stuck-damage-safety-exit.json'
+  book={'evidence':evidence,'pending':'one_safe_logout','logout_replayed':False,'reconnect_sent':False}
+  write_json(path,book);before=self.last;reply=None
+  try:
+   reply=self.request('safe_logout',reason=reason)
+   book['native_result']={k:reply.get(k)for k in('id','phase','detail','connected','world_session')}
+  except Exception as error:
+   book['original_error']={'type':type(error).__name__,'reason':str(error)}
+  finally:
+   attempted=self.last!=before
+   book.update(logout_request_published=attempted,request_id=self.last if attempted else None)
+   disconnected=reply is not None and reply.get('connected')is False
+   if attempted or disconnected:
+    record_material_health_exit(self.root,evidence['latest'],reason)
+    write_json(self.root/'assistant-control-hold.json',{'active':True,'time':int(time.time()*1000),
+      'reason':reason,'explicit_user_resume_required':True,'automatic_reconnect_allowed':False})
+   if disconnected:book['pending']=None
+   write_json(path,book)
+   if self.heartbeat:self.heartbeat.close()
+  if not attempted and not disconnected:raise Handoff('Control changed before emergency exit; no logout sent')
+  raise Handoff('Sustained idle injury: original exit retained; no reconnect or automatic resume')
  def _wait_guard_admission(self,deadline):
   """Observe three fresh settled poses before retrying a native admission rejection."""
   samples=[]

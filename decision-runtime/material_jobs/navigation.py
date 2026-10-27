@@ -97,7 +97,13 @@ def _air_scan(client, low, high):
     # dangerous non-full blocks must still obstruct this conservative route.
     from .acquisition import block_id
     safe_noncolliding = {'minecraft:'+name for name in
-                        ('torch','wall_torch','short_grass','tall_grass','fern','large_fern')}
+                        ('torch','wall_torch','lever','short_grass','tall_grass','fern','large_fern','bush')}
+    safe_noncolliding.update('minecraft:'+name+'_sapling'for name in
+                            ('oak','spruce','birch','jungle','acacia','dark_oak','cherry','pale_oak'))
+    # Vanilla buttons have no collision shape; retain them without pressing.
+    safe_noncolliding.update('minecraft:'+name+'_button'for name in
+                            ('oak','spruce','birch','jungle','acacia','dark_oak','mangrove','cherry',
+                             'pale_oak','bamboo','crimson','warped','stone','polished_blackstone'))
     return [row for row in reply['blocks'] if not (
         block_id(row) in safe_noncolliding and row.get('passable') is True
         and row.get('fluid') is False and row.get('block_entity') is False)]
@@ -105,6 +111,8 @@ def _air_scan(client, low, high):
 
 def _air_move(client, target, seconds=20, *, arrival=.25):
     reply=client.request('navigate',target=target,arrival=arrival,seconds=seconds,air_only=True)
+    if reply.get('phase')!='done':
+        raise JobBlocked('出口空气移动未确认：'+str(reply.get('detail','保留当前位置')))
     state=settled_state(client,target,.45)
     if reply.get('phase')!='done' or math.dist(state['pos'],target)>.45:
         raise JobBlocked('出口实际位置未到达已确认空气点，停止继续上升')
@@ -197,9 +205,34 @@ def move(client, target, seconds=120, arrival=1):
         raise JobBlocked('路线没有走通：' + str(reply.get('detail', '未确认到达')))
 
 
+def _owned_hover_gravity_pulse(client,state):
+    """Velocity Flight can retain vanilla gravity in the DTO while holding position."""
+    terminal=getattr(client,'last_terminal_evidence',None)or{}
+    lease=state.get('supervision_lease')or{}
+    velocity=state.get('velocity')or[0,0,0]
+    read_only=terminal.get('op')in('scan','snapshot','projection_audit','projection_model','map_audit')
+    known=terminal.get('phase')=='done'or read_only and terminal.get('phase')is None
+    return bool(state.get('flight')is True and state.get('guard_armed')is True
+        and not any(state.get(k)for k in ('manual_movement','under_water','on_fire','navigating'))
+        and not any((state.get('movement_keys')or{}).values())
+        and getattr(client,'native_inflight',None)is None
+        and getattr(client,'unconfirmed_native_request',None)is None
+        and known and all(isinstance(v,str)and v for v in
+            (getattr(client,'world',None),getattr(client,'task',None),lease.get('id')))
+        and terminal.get('request_id')==getattr(client,'last',None)==state.get('last_request')
+        and terminal.get('world_session')==getattr(client,'world',None)==state.get('world_session')
+        and terminal.get('revision_after')==state.get('control_revision')
+        and lease.get('kind')=='materials'and lease.get('job_session')==getattr(client,'task',None)
+        and lease.get('id')==getattr(getattr(client,'heartbeat',None),'id',None)
+        and lease.get('world_session')==state.get('world_session')
+        and lease.get('revision')==state.get('control_revision')
+        and abs(float(velocity[1])+.0784000015258789)<.000001
+        and math.hypot(float(velocity[0]),float(velocity[2]))<=.001)
+
+
 def settled_state(client, target=None, tolerance=.6, seconds=4):
     """Read actual rest after a native acknowledgement; never broaden arrival."""
-    deadline=time.monotonic()+seconds;stable_since=None;previous=None
+    deadline=time.monotonic()+seconds;stable_since=None;previous=None;hover_anchor=None
     while True:
         state=client.status();now=time.monotonic()
         velocity=state.get('velocity',[0,0,0]);position=state['pos']
@@ -208,6 +241,13 @@ def settled_state(client, target=None, tolerance=.6, seconds=4):
         # keep the vertical check for flying/swimming players.
         axes=(0,2) if state.get('on_ground') else (0,1,2)
         quiet=math.sqrt(sum(float(velocity[i])**2 for i in axes))<=.03
+        pulse=_owned_hover_gravity_pulse(client,state)
+        if pulse:
+            if hover_anchor is None:hover_anchor=list(position)
+            # Real falling and small cumulative drift cannot pass by reporting
+            # less than .08 displacement between two adjacent observations.
+            quiet=math.dist(hover_anchor,position)<=.02
+        else:hover_anchor=None
         quiet=quiet and (previous is None or math.dist(previous,position)<=.08)
         quiet=quiet and (target is None or math.dist(position,target)<=tolerance)
         stable_since=now if quiet and stable_since is None else stable_since if quiet else None
@@ -237,6 +277,13 @@ def _below_vertical_start(row, position):
     if (name=='minecraft:farmland' and row.get('block_entity') is False
             and state in {'Block{minecraft:farmland}[moisture=%d]'%n for n in range(8)}):
         return position[1]>=row['pos'][1]+.9375-1e-7
+    if name=='minecraft:mud'and row.get('block_entity')is False and state=='Block{minecraft:mud}':
+        return position[1]>=row['pos'][1]+.875-1e-7
+    wool_carpets={'minecraft:'+colour+'_carpet'for colour in(
+        'white','orange','magenta','light_blue','yellow','lime','pink','gray','light_gray',
+        'cyan','purple','blue','brown','green','red','black')}
+    if name in wool_carpets and row.get('block_entity')is False:
+        return position[1]>=row['pos'][1]+.0625-1e-7
     return (name.endswith('_slab') and row.get('block_entity') is False
             and '[type=bottom,' in state and 'waterlogged=false]' in state
             and position[1]>=row['pos'][1]+.5)
@@ -291,7 +338,17 @@ def leave_projection(client):
     if math.prod(hi[i]-lo[i]+1 for i in range(3)) > 50000:
         raise JobBlocked('建筑出口扫描范围过大，需要已有通道')
     rows = [{**row,'passable':False} for row in _air_scan(client,lo,hi)]
-    route = horizontal_exit(rows, p, low, high, lo, hi)
+    try:
+        route = horizontal_exit(rows, p, low, high, lo, hi)
+    except RuntimeError as error:
+        if str(error) != 'No observed horizontal exit; preserve the hull':
+            raise
+        # Rooms may connect through stairs while this slice remains sealed.
+        # No movement has been sent when the horizontal planner fails.
+        from .projection_air_exit import leave as leave_3d
+        if leave_3d(client, settled_state(client)):
+            return
+        raise
     write_json(client.out / ('exit-%d.json' % time.time_ns()), route)
     for waypoint in route['waypoints']:
         if math.dist(client.status()['pos'], waypoint) < .35:
@@ -347,7 +404,10 @@ def _escape_local_canopy(client):
                 'old_ground_walk_sent':False,'parking_confirmed':False})
             return fresh
         if math.dist(current['pos'],point)<.25:continue
-        client.checked('walk',target=point,arrival=.2,seconds=12)
+        # A same-column walk can finish before gravity lowers a low-flying
+        # actor. Restoring Flight immediately would freeze it one block above
+        # the proved floor, so retain normal walking until the route is done.
+        client.checked('walk',target=point,arrival=.2,seconds=12,restore_flight=False)
         settled_state(client,point,.4)
     actual=settled_state(client)
     write_json(client.out/('canopy-exit-%d.json'%time.time_ns()),
@@ -423,6 +483,33 @@ def _park_column(client,state):
     return reply['blocks']
 
 
+def _center_canopy_exit(client,state):
+    """A ground walk may settle at a cell edge below a neighbouring leaf column."""
+    from .acquisition import _safe
+    _safe(state)
+    if (state.get('world_session')!=client.world or state.get('health',0)<19
+            or state.get('guard_busy') or not state.get('guard_armed')
+            or not state.get('guard_pve_only') or state.get('under_water')):
+        raise JobBlocked('树冠出口居中前防护或世界状态未确认')
+    p=state['pos'];target=[math.floor(p[0])+.5,p[1]+.2,math.floor(p[2])+.5]
+    # Use the native real collision shape for this small same-cell movement.
+    # It does not turn the adjacent leaf voxel into air or authorize ascent.
+    journal=client.out/('canopy-center-%d.json'%time.time_ns())
+    book={'world_session':client.world,'from':p,'target':target,
+          'pending':True,'parking_confirmed':False,'mining_sent':False}
+    write_json(journal,book)
+    try:client.checked('navigate',target=target,arrival=.2,air_only=True,seconds=20)
+    finally:
+        book['request_id']=getattr(client,'last',None);write_json(journal,book)
+    fresh=settled_state(client,target,.4);_safe(fresh)
+    if (fresh.get('world_session')!=client.world or fresh.get('health',0)<19
+            or fresh.get('under_water') or fresh.get('guard_busy')
+            or not fresh.get('guard_armed') or not fresh.get('guard_pve_only')):
+        raise JobBlocked('树冠出口居中后防护或世界状态变化')
+    book.update(pending=False,actual=fresh['pos']);write_json(journal,book)
+    return fresh
+
+
 def local_park(client):
     """Pick the current column after exiting the hull; no fixed return flight."""
     leave_projection(client)
@@ -445,6 +532,10 @@ def local_park(client):
         x,z=math.floor(state['pos'][0]),math.floor(state['pos'][2])
         rows=_park_column(client,state)
         top=max((r['pos'][1]+1 for r in rows if r.get('fluid') or not r.get('passable',True)),default=None)
+        if top is not None and state['pos'][1]<top:
+            state=_center_canopy_exit(client,state)
+            rows=_park_column(client,state)
+            top=max((r['pos'][1]+1 for r in rows if r.get('fluid') or not r.get('passable',True)),default=None)
         if top is None or top+24>=319 or state['pos'][1]<top:
             raise JobBlocked('绕出树冠后仍没有已验证的本地高空停靠路线')
     fresh=settled_state(client)

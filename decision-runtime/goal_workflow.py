@@ -98,7 +98,25 @@ def verified_build_navigation(anchor,state):
             and job['path_step']>previous['path_step'])
 
 
-def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None,max_station_repositions=0,background=False,navigation_grace_seconds=15):
+def available_build_material(state):
+    """Use the native remaining-item map; never choose an unrelated carried tool."""
+    needs=(state.get('build_job')or{}).get('material_needs')or{}
+    held=stocks(state)
+    candidates=[(min(amount,held.get(item,0)),item)for item,amount in needs.items()
+                if isinstance(item,str)and item.startswith('minecraft:')and type(amount)is int
+                and amount>0 and held.get(item,0)>0]
+    return max(candidates)[1]if candidates else None
+
+def prepare_build_material(client,state):
+    item=available_build_material(state)
+    if item is None or state.get('hand',{}).get('item')==item and state['hand'].get('count',0)>0:return None
+    client.checked('select_item',item=item)
+    actual=client.status().get('hand',{})
+    if actual.get('item')!=item or actual.get('count',0)<1:
+        raise RuntimeError('Actual build material did not reach the held hand; no printer start')
+    return item
+
+def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None,max_station_repositions=0,background=False,navigation_grace_seconds=15,max_material_refills=32,air_seed_limit=8):
     s=client.status()
     if s['projection_selection'].get('key')!=selection_key:raise Handoff('Selected projection changed')
     if background and not protected_background(client,s):
@@ -106,9 +124,10 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
     if not s.get('window_active') and not background:
         raise RuntimeError('Minecraft must be the foreground window for construction movement')
     if s['screen']:client.checked('close_menu')
+    prepare_build_material(client,client.status())
     client.checked('projection_start',manual_start=True,placement_key=selection_key)
     started=time.monotonic();last_gain=started;last_navigation=None;navigation_anchor=s
-    best=0;last_report=-1;last_sample=0;last_subset_check=0;repositions=0
+    best=0;last_report=-1;last_sample=0;last_subset_check=0;repositions=0;material_refills=0
     while time.monotonic()-started<seconds:
         s=client.status();b=s['build_job']
         if time.monotonic()-last_sample>=2:
@@ -128,6 +147,25 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             progress=getattr(client,'set_progress',None)
             if callable(progress):progress(done=best,phase='自动放置')
         if not b['active']:break
+        printer=s.get('professional_printer',{})
+        if (material_refills<max_material_refills and not s.get('guard_busy')
+                and not printer.get('waiting_for_server') and printer.get('last_hand_mismatch')
+                and available_build_material(s) and s.get('hand',{}).get('count',0)==0):
+            # Litematica can leave the hand empty after a full stack. Pause its
+            # owned queue before one ordinary inventory swap, validate the real
+            # hand, then resume the same complete projection. No placement or
+            # success counter is synthesized by the supply action.
+            client.checked('build_control',job_session=b['session'],action='pause_and_report')
+            fresh=client.status()
+            if fresh.get('projection_selection',{}).get('key')!=selection_key:raise Handoff('Projection changed before material refill')
+            item=prepare_build_material(client,fresh)
+            if item:
+                with(client.out/'build-material-refills.jsonl').open('a')as stream:
+                    stream.write(json.dumps({'world_session':fresh.get('world_session'),'previous_job_session':b['session'],
+                        'item':item,'actual_hand':client.status().get('hand'),'matched_before':best,'placement_credit':0})+'\n')
+                client.checked('projection_start',manual_start=True,placement_key=selection_key)
+                material_refills+=1;last_gain=time.monotonic();last_navigation=None;navigation_anchor=client.status()
+                print('BUILD_ACTUAL_HAND_REFILLED',item,material_refills,flush=True);continue
         if complete_cells and not s.get('guard_busy') and b.get('queue_settled') and not s.get('professional_printer',{}).get('waiting_for_server') and time.monotonic()-last_subset_check>=3:
             last_subset_check=time.monotonic()
             low=[min(row['pos'][i] for row in complete_cells) for i in range(3)]
@@ -165,4 +203,17 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
         time.sleep(.3)
     s=client.status();b=s['build_job']
     if b['active']:client.checked('build_control',job_session=b['session'],action='pause_and_report')
-    return audit(client,'after-build-'+str(int(time.time())))
+    result=audit(client,'after-build-'+str(int(time.time())))
+    if air_seed_limit and client.status().get('projection_air_seed_axis_protocol')==1:
+        from projection_air_finish import finish_carried
+        def checkpoint():
+            q=client.status()
+            if q.get('projection_selection',{}).get('key')!=selection_key:raise Handoff('Projection changed before air finish')
+            if (background and not protected_background(client,q))or(not background and not q.get('window_active')):
+                raise Handoff('Construction control changed before air finish')
+            return q
+        completed=finish_carried(client,result,client.out/('air-finish-'+str(time.time_ns())),checkpoint,air_seed_limit)
+        if completed:
+            print('BUILD_METEOR_AIR_FINISHED',len(completed),flush=True)
+            result=audit(client,'after-air-finish-'+str(int(time.time())))
+    return result

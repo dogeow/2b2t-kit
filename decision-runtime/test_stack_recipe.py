@@ -23,6 +23,44 @@ SPEC={'recipe_id':'white_concrete_powder','output':'minecraft:white_concrete_pow
       'ingredients':{'minecraft:sand':[1,2,3,4],'minecraft:gravel':[5,6,7,8],'minecraft:white_dye':[9]}}
 
 class StackRecipeTest(unittest.TestCase):
+    def test_furnishing_batches_preserve_real_input_and_output_counts(self):
+        specs=[
+          ({'recipe_id':'book','output':'minecraft:book','produces':1,'width':3,
+            'ingredients':{'minecraft:paper':[1,2,4],'minecraft:leather':[5]}},
+           [('paper',64),('paper',10),('leather',24)],21),
+          ({'recipe_id':'bookshelf','output':'minecraft:bookshelf','produces':1,'width':3,
+            'ingredients':{'minecraft:oak_planks':[1,2,3,7,8,9],'minecraft:book':[4,5,6]}},
+           [('oak_planks',48),('book',24)],8),
+          ({'recipe_id':'flower_pot','output':'minecraft:flower_pot','produces':1,'width':3,
+            'ingredients':{'minecraft:brick':[1,3,5]}},[('brick',30)],10)]
+        for spec,contents,rounds in specs:
+            self.assertTrue(supported(spec));before=fixture(contents,empty=2)
+            batch=plan_batch(before,spec,24 if spec['output']=='minecraft:book'else rounds)
+            self.assertEqual(rounds,batch['rounds'])
+            after=copy.deepcopy(before)
+            used={item:rounds*len(cells)for item,cells in spec['ingredients'].items()}
+            for row in after['menu']['slots'][10:]:
+                take=min(row['count'],used.get(row['item'],0));used[row['item']]=used.get(row['item'],0)-take;row['count']-=take
+                if not row['count']:row['item']='minecraft:air'
+            empty=next(r for r in after['menu']['slots'][10:]if not r['count']);empty.update(item=spec['output'],count=rounds)
+            after=snapshot(after['menu']['slots'])
+            self.assertTrue(settled_result(before,after,spec,batch))
+            empty['count']-=1;after=snapshot(after['menu']['slots'])
+            self.assertFalse(settled_result(before,after,spec,batch))
+
+    def test_furnishing_allowlist_rejects_other_shapes_remainders_and_wrong_counts(self):
+        spec={'recipe_id':'book','output':'minecraft:book','produces':1,'width':2,
+              'ingredients':{'minecraft:paper':[1,2,3],'minecraft:leather':[4]}}
+        self.assertTrue(supported(spec))
+        for change in ({'recipe_id':'custom_book'},{'produces':True},{'produces':2},{'width':True},
+                       {'ingredients':{'minecraft:paper':[1,2],'minecraft:leather':[3]}},
+                       {'ingredients':{'minecraft:paper':[1,2,3],'minecraft:milk_bucket':[4]}}):
+            self.assertFalse(supported({**spec,**change}))
+        shelf={'recipe_id':'bookshelf','output':'minecraft:bookshelf','produces':1,'width':3,
+               'ingredients':{'minecraft:oak_planks':[1,2,3],'minecraft:spruce_planks':[7,8,9],'minecraft:book':[4,5,6]}}
+        self.assertTrue(supported(shelf));self.assertFalse(supported({**shelf,'width':2}))
+        self.assertFalse(supported({**shelf,'ingredients':{'minecraft:stone':[1,2,3,7,8,9],'minecraft:book':[4,5,6]}}))
+
     def test_dye_allowlist_requires_exact_recipe_output_inputs_and_normalized_cells(self):
         for recipe_id,(color,produces,inputs) in DYE_RECIPES.items():
             for width in (2,3):

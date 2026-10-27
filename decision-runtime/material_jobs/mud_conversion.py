@@ -42,6 +42,11 @@ def side_stations(rows,mud):
         sx,sz=x+dx,z+dz
         if all((sx,h,sz)not in cells for h in (y-4,y-3,y-2)):
             result.append([sx+.5,y-3+.2,sz+.5])
+    # Dense neighbouring tips can occlude every side ray. A proved lower
+    # two-cell body pose remains entirely below the future spike, and reaches
+    # the support vertically without removing neighbouring farm blocks.
+    if all((x,h,z)not in cells for h in(y-5,y-4,y-3)):
+        result.append([x+.5,y-5+.2,z+.5])
     return result
 
 
@@ -125,12 +130,13 @@ def install(c,mud,out,checkpoint):
             raise RuntimeError('Mud bed or actual dripstone changed before placement')
     try:
         poses.sort(key=lambda p:math.dist(p,state()['pos']))
-        for index,pose in enumerate(poses[:4]):
+        for index,pose in enumerate(poses[:9]):
             move(c,pose,out/('side-access-%02d'%index),max_straight=3,foot_offset=.2)
             settled_state(c,pose,.45)
             c.checked('select_item',item=ITEM);pre_use()
             q=state();tip=original['tip_pos']
-            if (abs(q['pos'][0]-(tip[0]+.5))<.81 and abs(q['pos'][2]-(tip[2]+.5))<.81):
+            if (abs(q['pos'][0]-(tip[0]+.5))<.81 and abs(q['pos'][2]-(tip[2]+.5))<.81
+                    and q['pos'][1]+1.8>tip[1] and q['pos'][1]<tip[1]+1):
                 raise RuntimeError('Player overlaps the intended spike; no interaction sent')
             reply=c.request('interact',pos=support['pos'],face='down',
                             expected_state=support['state'],expected_hand=ITEM)
@@ -141,7 +147,7 @@ def install(c,mud,out,checkpoint):
             if not pre_use_rejected(reply):raise RuntimeError(reply.get('detail','Dripstone interaction unconfirmed'))
         else:
             book.update(pending=False,placement_dispatched=False);write_json(path,book)
-            raise ApproachUnavailable('No visible lower face from the four proved side poses')
+            raise ApproachUnavailable('No visible lower face from the proved non-overlapping poses')
     finally:
         book['request_id']=c.last;write_json(path,book)
     deadline=time.monotonic()+5
@@ -188,15 +194,33 @@ def harvest(c,mud,out,checkpoint):
     old={e['uuid'] for e in before_state.get('entities',[])if e.get('type')=='minecraft:item'}
     book={'world_session':c.world,'mud':mud,'support':original['support'],'tip':original['tip'],
           'before':before,'pending':True};write_json(path,book)
-    try:c.checked('mine_block',pos=mud,face=face,expected_state='Block{minecraft:clay}',seconds=20)
+    try:reply=c.checked('mine_block',pos=mud,face=face,expected_state='Block{minecraft:clay}',seconds=20)
     finally:book['request_id']=c.last;write_json(path,book)
-    q=state()
-    if inventory_counts(q).get('minecraft:clay_ball',0)==before:
+    sequence=reply.get('native_sequence')
+    if (reply.get('id')!=book['request_id'] or reply.get('world_session')!=c.world
+            or reply.get('phase')!='done' or reply.get('mining_target')!=mud
+            or reply.get('server_confirmed')is not True
+            or reply.get('confirmation_scope')!='single_target_server_block_update_and_native_sequence_ack'
+            or type(sequence)is not int or sequence<=0 or reply.get('server_ack_sequence')!=sequence):
+        raise RuntimeError('Original farm mining server acknowledgement unconfirmed; no replay')
+    book['mining_receipt']={k:reply.get(k)for k in ('id','op','phase','world_session','mining_target',
+                             'server_confirmed','confirmation_scope','native_sequence','server_ack_sequence')}
+    write_json(path,book)
+    q=state();deadline=time.monotonic()+15
+    # Server removal can precede its item-entity and inventory packets. Observe
+    # the original mining result before requiring the one four-ball drop.
+    while inventory_counts(q).get('minecraft:clay_ball',0)==before:
         drops=[e for e in q.get('entities',[])if e.get('type')=='minecraft:item'
-               and e.get('stack',{}).get('item')=='minecraft:clay_ball' and e.get('uuid')not in old
+               and e.get('stack',{}).get('item')=='minecraft:clay_ball'and e.get('uuid')not in old
                and math.dist(e['pos'],mud)<6]
-        if len(drops)!=1 or drops[0]['stack']['count']!=4 or not collect_drop(c,drops[0],q):
+        if len(drops)==1 and drops[0]['stack']['count']==4:
+            book['new_drop_uuid']=drops[0]['uuid'];write_json(path,book)
+            if not collect_drop(c,drops[0],q):
+                raise RuntimeError('Original four-ball pickup unconfirmed; no mining replay')
+            q=state();break
+        if drops or time.monotonic()>=deadline:
             raise RuntimeError('Four new clay balls not exactly identified or collected; no mining replay')
+        time.sleep(.15);q=state()
     rows=observe();cells={tuple(b['pos']):b for b in rows};x,y,z=mud
     after=inventory_counts(state()).get('minecraft:clay_ball',0)
     if (tuple(mud)in cells or after!=before+4

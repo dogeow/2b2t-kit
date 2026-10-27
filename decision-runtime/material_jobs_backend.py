@@ -218,7 +218,7 @@ def observed_packed_stack_sizes(rows, registered):
 def unavailable_registered_source(pos, error):
     """Keep a failed registered source distinct from a verified empty chest."""
     return {'pos': list(pos), 'phase': 'unavailable',
-            'reason': 'registered_chest_changed', 'scan_evidence': error.evidence}
+            'reason': getattr(error,'reason','registered_chest_changed'), 'scan_evidence': error.evidence}
 
 
 def next_sequence(out):
@@ -608,6 +608,8 @@ class Backend:
     def hold_failed_finish(self, error, *, retry_after_interface=False):
         """Keep a healthy failed cleanup owned; never replay its resource actions."""
         c = self.client
+        from material_jobs.repeated_cactus_damage import RepeatedCactusDamage
+        cactus_damage=RepeatedCactusDamage(c.world,c.task,c.heartbeat.id)
         try:
             write_json(self.out/'finish-deferred.json', {
                 'reason':str(error), 'action':'WAIT_OWNED_PVE_GUARD',
@@ -627,6 +629,27 @@ class Backend:
                 raise JobPaused('收尾等待期间控制权已变化，保留进度') from error
             if fresh.get('safety_hold', {}).get('active'):
                 raise JobPaused('原生健康防护已接管，保留进度') from error
+            if cactus_damage.observe(fresh):
+                # Regeneration can hide continuous cactus damage at 20 HP.
+                # An unresolved cleanup is not a safe hover. Use the existing
+                # normal safety logout once, retaining all original receipts.
+                try:
+                    write_json(self.out/'repeated-cactus-safety-exit.json',{
+                        'world_session':c.world,'task_session':c.task,'lease_id':c.heartbeat.id,
+                        'action':'REQUEST_SAFE_LOGOUT','logout_confirmed':False,'hits':cactus_damage.hits,
+                        'original_actions_replayed':False,'goal_completion_credit':0})
+                except OSError:
+                    print('Repeated cactus damage journal unavailable; safety logout still required',flush=True)
+                c.rev=fresh['control_revision']
+                previous_request=getattr(c,'last',None);logout_requested=False
+                try:
+                    c.request('safe_logout');logout_requested=True
+                finally:
+                    c.heartbeat.close()
+                    if logout_requested or getattr(c,'last',None)!=previous_request:
+                        from safety_interlock import record_material_health_exit
+                        record_material_health_exit(self.root,fresh,'Repeated cactus damage while cleanup was unresolved')
+                raise JobBlocked('收尾期间持续受到仙人掌伤害，已请求安全退出；原始动作保留') from error
             # This is a live, observed owner waiting for cleanup, not a hung
             # controller. Keep the heartbeat worker's ten-second liveness
             # window open only while the exact current lease is still owned.
@@ -1029,9 +1052,13 @@ class Backend:
             raise JobBlocked('泥流水线工作槽未完整确认')
         free=sum(not r.get('count',0)for r in rows)
         if free>=minimum:return {'phase':'done','prepared':True,'free_slots':free}
-        from material_stack_consolidation import run as consolidate,run_inventory
+        from material_stack_consolidation import run as consolidate,run_inventory,offer
         merged=run_inventory(self,'minecraft:glass_bottle',minimum)
         if merged is not None:return {**merged,'prepared':True,'code':'WORKSPACE_READY'}
+        for item in ('minecraft:wheat','minecraft:dirt'):
+            if offer(state,item,minimum)is not None:
+                merged=run_inventory(self,item,minimum)
+                if merged is not None:return {**merged,'prepared':True,'code':'WORKSPACE_READY'}
         consolidated=consolidate(self,'minecraft:mud_bricks',minimum)
         if consolidated is not None:
             return {**consolidated,'prepared':True,'code':'WORKSPACE_READY'}
@@ -1466,6 +1493,13 @@ class Backend:
 
     def acquire(self, item, count):
         from material_jobs.snow_harvest import PRODUCTS as SNOW_PRODUCTS
+        if item=='minecraft:clay_ball' and self.profile.get('clay_conversion_farm',{}).get('authorized')is True:
+            # Item-mode clay crafting asks for clay balls. Route that raw input
+            # to the same registered home farm used by colored-terracotta jobs,
+            # before generic rock acquisition rejects this unsupported ore.
+            from material_jobs.home_clay_farm import run as home_clay
+            with self.action('home-clay-source') as(c,out):
+                return home_clay(c,self.profile,item,count,out,self.checkpoint)
         if item=='minecraft:raw_iron_block':
             state=read_fresh(self.root)
             require_unlocked(self.root,state)

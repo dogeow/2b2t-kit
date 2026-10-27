@@ -195,6 +195,11 @@ otherwise WAIT_SOURCE. Wet clay is rejected by the current native mine guard.
     before = inventory_counts(state)[item]
     if before >= target_count:
         return {"phase": "done", "item": item, "before": before, "after": before}
+    if item=='minecraft:cactus' and profile.get('cactus_harvest_paused')is True:
+        return _wait(item,target_count,'WAIT_CACTUS_DEFERRED','Cactus harvesting deferred; keep existing seeds and do other material work')
+    if item in ('minecraft:clay','minecraft:clay_ball')and profile.get('clay_conversion_farm',{}).get('authorized')is True:
+        from .home_clay_farm import run as local_clay
+        return local_clay(c,profile,item,target_count,out/'home-clay-farm',checkpoint)
     regions = list(_regions(profile, item))
     if not regions:
         return _wait(item, target_count)
@@ -223,10 +228,18 @@ otherwise WAIT_SOURCE. Wet clay is rejected by the current native mine guard.
         return _wait(item, target_count, detail="No authorized real ink drop; no native squid-attack protocol")
     if item not in BLOCK_SOURCES:
         return _wait(item, target_count)
-    spent = {tuple(r["pos"]) for r in book["receipts"] if r.get("state") == "done" and "pos" in r}
+    spent = {tuple(r["pos"]) for r in book["receipts"] if r.get("state") in ("done","unreceived") and "pos" in r}
     mined = 0
     for region in regions:
         rows = _fresh_scan(c, region["min"], region["max"], checkpoint)
+        if rows is None and item == 'minecraft:cactus' and region.get('source') == 'owned_cactus_farm':
+            from .renewable_cactus import owned_farm_top
+            if owned_farm_top(profile, c.status(), region['min']):
+                # A registered farm outside the loaded chunk radius is not
+                # proof of missing growth. Travel to its existing safe air
+                # approach, then observe actual blocks before any harvesting.
+                _stage_source(c, region['min'], checkpoint)
+                rows = _fresh_scan(c, region['min'], region['max'], checkpoint)
         if rows is None:
             continue
         for row in _ordered_rows(rows, item, state['pos']):
@@ -257,6 +270,16 @@ otherwise WAIT_SOURCE. Wet clay is rejected by the current native mine guard.
                 result = harvest_top(c, pos, profile,
                                      out/("cactus-side-%d" % len(book["receipts"])), checkpoint)
                 after = inventory_counts(c.status())[item]
+                if (result.get('unreceived')is True and result.get('mining_confirmed')is True
+                        and result.get('base_retained')is True and result.get('actual_gain')==0
+                        and result.get('pickup_confirmed')is False and after==old_count):
+                    entry.update(state='unreceived',after=after,gained=0,
+                                 unresolved_drop_uuid=result['drop_uuid'],
+                                 child_journal=str(out/("cactus-side-%d"%len(book['receipts']))/'cactus-side-harvest.json'))
+                    write_json(path,book);spent.add(tuple(pos));mined+=1
+                    if mined>=4:
+                        return _wait(item,target_count,'SOURCE_BATCH','Known removed tops include unreceived drops; no inventory credit')
+                    continue
                 if (result.get('complete') is not True or result.get('base_retained') is not True
                         or after != old_count+1):
                     return _wait(item,target_count,"WAIT_RECONCILE","Cactus side gain/base retention unconfirmed")

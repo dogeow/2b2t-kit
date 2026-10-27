@@ -51,6 +51,23 @@ class Tests(unittest.TestCase):
    def status(self):return {'inventory':[],'entities':[DROP]}
    def request(self,*a,**k):self.calls+=1;return {'phase':'waiting','detail':'Drop disappeared without inventory confirmation'}
   c=C();self.assertFalse(collect_drop(c,DROP));self.assertEqual(c.calls,1)
+ def test_fresh_bamboo_or_honey_merge_is_a_new_exact_pickup_after_pre_dispatch_refusal(self):
+  for item in ('minecraft:bamboo','minecraft:honeycomb'):
+   original=copy.deepcopy(DROP);original['stack']['item']=item
+   class C:
+    old=True
+    def __init__(self):self.calls=[]
+    def status(self):
+     d=copy.deepcopy(original)
+     if not self.old:d['uuid']='merged';d['stack']['count']=16
+     return {'time':1000,'inventory':[],'entities':[d]}
+    def request(self,op,**kw):
+     self.calls.append(kw)
+     if self.old:self.old=False;return {'phase':'error','detail':'Drop is no longer loaded; observe again'}
+     return {'phase':'done'}
+   c=C()
+   with patch('drop_collection.time.sleep'):self.assertTrue(collect_drop(c,original,observation=c.status()))
+   self.assertEqual(['same','merged'],[r['expected_uuid']for r in c.calls]);self.assertEqual(16,c.calls[-1]['expected_count'])
  def test_reached_but_uncollected_drop_uses_one_verified_ground_correction(self):
   class C:
    calls=0
@@ -66,6 +83,16 @@ class Tests(unittest.TestCase):
    def status(self):return {'inventory':[{'slot':0,'item':'minecraft:cobblestone','count':1}], 'entities':[]}
    def request(self,*a,**k):raise AssertionError('No click should be needed')
   self.assertTrue(collect_drop(C(),DROP,observation={'inventory':[]}))
+ def test_inventory_gain_before_entity_removal_waits_without_another_pickup(self):
+  class C:
+   reads=0
+   def status(self):
+    self.reads+=1
+    return {'inventory':[{'slot':0,'item':'minecraft:cobblestone','count':1}],
+            'entities':[DROP]if self.reads<3 else[]}
+   def request(self,*a,**k):raise AssertionError('Original item already arrived; no pickup replay')
+  with patch('drop_collection.time.sleep'):
+   self.assertTrue(collect_drop(C(),DROP,observation={'inventory':[]}))
  def test_reached_air_drop_uses_existing_fractional_proof_without_another_pickup(self):
   class C:
    calls=0

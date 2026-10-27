@@ -66,6 +66,23 @@ def pin_furnace_cobblestone(plan):
         raise ValueError('Not an ordinary eight-stone furnace recipe')
     return {**plan,'ingredients':{'minecraft:cobblestone':cells}}
 
+def deposit_one(state,menu_id,slot,item):
+    """Observe an exact right-click delta before sending any dependent click."""
+    from kit_runtime.inventory import InventorySession
+    menu=state['menu'];cell=menu['slots'][slot];cursor=menu['cursor']
+    if(menu['id']!=menu_id or cursor.get('item')!=item or cursor.get('count',0)<1
+            or cell.get('count',0)>0 and cell.get('item')!=item):
+        raise RuntimeError('Crafting cursor or ingredient cell changed before deposit')
+    old_cell=cell['count'];old_cursor=cursor['count']
+    reply=checked('slot_click',menu_id=menu_id,slot=slot,expected_item=cell['item'],
+                  expected_count=old_cell,expected_cursor=item,expected_cursor_count=old_cursor,
+                  kind='pickup',button=1)
+    return InventorySession(k)._wait(reply,menu_id,lambda m:
+        m['slots'][slot]['item']==item and m['slots'][slot]['count']==old_cell+1
+        and m['cursor']['count']==old_cursor-1
+        and(not m['cursor']['count']or m['cursor']['item']==item),
+        'craft_single_deposit_later_frames',confirmations=2,interval=.1,fresh=True)
+
 def mixed(recipe,output,output_per_recipe,target_total):
     """recipe maps item IDs to their 1-based crafting-grid slots."""
     while True:
@@ -106,9 +123,7 @@ def mixed(recipe,output,output_per_recipe,target_total):
                 # directly, then return the verified remainder to its source.
                 s=click(s,source['slot'])
                 s=wait_cursor_count(s,m['id'],item,source['count'])
-                cell=s['menu']['slots'][slots[0]]
-                s=checked('slot_click',menu_id=m['id'],slot=slots[0],expected_item=cell['item'],
-                          expected_count=cell['count'],kind='pickup',button=1)
+                s=deposit_one(s,m['id'],slots[0],item)
                 if source['count']>1:
                     s=wait_cursor_count(s,m['id'],item,source['count']-1)
                     s=click(s,source['slot'])
@@ -118,10 +133,10 @@ def mixed(recipe,output,output_per_recipe,target_total):
             pickup=(source['count']+1)//2 if amount<source['count'] and amount<=(source['count']+1)//2 else source['count']
             if safe_single_round(output) or amount+2 < pickup-amount+2:
                 s=click(s,source['slot'])
+                s=wait_cursor_count(s,m['id'],item,source['count'])
                 for cell_id in slots:
                     for _ in range(rounds):
-                        cell=s['menu']['slots'][cell_id]
-                        s=checked('slot_click',menu_id=m['id'],slot=cell_id,expected_item=cell['item'],expected_count=cell['count'],kind='pickup',button=1)
+                        s=deposit_one(s,m['id'],cell_id,item)
                 remaining=source['count']-amount
                 if remaining:
                     s=wait_cursor_count(s,m['id'],item,remaining)

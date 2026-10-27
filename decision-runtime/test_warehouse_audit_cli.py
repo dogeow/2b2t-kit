@@ -56,7 +56,7 @@ class CanopyCorridorTest(unittest.TestCase):
                 patch.object(module,'_follow_clear_points')as move:
             face=module._side_access(s,[10,65,10],'Block{minecraft:chest}')
         self.assertEqual('north',face)
-        adjusted=[[p[0],p[1]+.2,p[2]]for p in points]
+        adjusted=[[p[0],p[1]+.1,p[2]]for p in points]
         self.assertEqual(adjusted+[[10.5,65.02,9.5]],move.call_args.args[1])
         self.assertEqual(.2,move.call_args.kwargs['arrival'])
         self.assertEqual(list(reversed(adjusted))+[[10.5,100,10.5]],s.return_points)

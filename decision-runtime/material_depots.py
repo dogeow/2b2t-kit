@@ -1,4 +1,4 @@
-"""Store finished fungible materials and fetch raw inputs from approved chests."""
+"""Store finished materials and fetch raw inputs from approved containers."""
 import json,time
 from build_supervisor import stocks
 from container_access import open_grounded_chest
@@ -9,10 +9,11 @@ def _open_depot(client,pos,*,deposit_only=False):
     from material_storage_index import records
     cached=next((r for r in records(client)if list(pos)in r.get('aliases',[r.get('pos')])and not r.get('missing')),None)
     kind=(cached or {}).get('block_id','minecraft:chest')
-    if kind not in ('minecraft:chest','minecraft:ender_chest'):
+    if kind not in ('minecraft:chest','minecraft:ender_chest','minecraft:barrel'):
         raise RuntimeError('Registered depot type is unsupported; no opening or transfer')
     opener=getattr(client,'__dict__',{}).get('registered_depot_opener')
-    if kind=='minecraft:chest'and callable(opener):return opener(client,list(pos),allow_empty=deposit_only)
+    if kind in('minecraft:chest','minecraft:barrel')and callable(opener):return opener(client,list(pos),allow_empty=deposit_only)
+    if kind=='minecraft:barrel':raise RuntimeError('Registered barrel is unsupported without its recorded access route; no opening or transfer')
     if kind=='minecraft:chest'and not deposit_only:return open_grounded_chest(client,list(pos))
     return open_grounded_chest(client,list(pos),block_id=kind,allow_empty=deposit_only)
 
@@ -71,6 +72,10 @@ def exchange(client,chests,deposit=None,withdraw=None):
     deposit=deposit or {};withdraw=withdraw or {}
     if set(deposit)&set(withdraw):raise ValueError('A material cannot be deposited and withdrawn in the same exchange')
     if any(not isinstance(v,int) or v<0 for v in (*deposit.values(),*withdraw.values())):raise ValueError('Counts must be nonnegative')
+    if withdraw:
+        from material_stack_consolidation import prepare_fetch
+        _,missing=unmet(client.status(),deposit,withdraw)
+        prepare_fetch(client,missing)
     if deposit and not withdraw:
         from material_storage_index import select_destinations
         route=select_destinations(client,chests,deposit)

@@ -1,0 +1,928 @@
+{
+  "source": "live-village-121/gated-library-pass-1740-077/result.json",
+  "command": {
+    "id": "gated-library-pass-1740-077",
+    "action": "native",
+    "op": "professional_print",
+    "params": {
+      "seconds": 20
+    }
+  },
+  "reply": {
+    "phase": "waiting",
+    "detail": "printer interval ended without complete current bounded-mask server confirmation",
+    "id": "materials-2ceeb2d8441e",
+    "world_session": "0d85013b-cb06-431a-b303-57a0f170748c",
+    "control_revision": 1392,
+    "bounded_targets": [
+      [
+        761028,
+        65,
+        797813
+      ]
+    ],
+    "bounded_target_count": 1,
+    "placement_key": "Kit ES05 ES06 lecterns[Counters:BlockPos{x=761026, y=65, z=797813}:BlockPos{x=761028, y=65, z=797813}]/ALL/y/-30000000/30000000/BlockPos{x=761026, y=65, z=797813}/NONE/NONE",
+    "professional_printer": {
+      "available": true,
+      "enabled": false,
+      "rotate": true,
+      "in_air": false,
+      "interval": 12,
+      "printing_while_travelling": false,
+      "travel_action_safe": false,
+      "last_proposal": {},
+      "last_hand_mismatch": "",
+      "action_interval_unit": "client_ticks",
+      "owned_menu_recoveries": 0,
+      "placement_sneak": false,
+      "air_place": false,
+      "owned": false,
+      "proposal_period_ticks": 8,
+      "fast_proposals": 0,
+      "complex_proposals": 0,
+      "server_confirmed": 0,
+      "waiting_for_server": false,
+      "travel_pending": 0,
+      "ready_for_travel": false,
+      "failure": "",
+      "confirmation_seconds": []
+    },
+    "projection_batch": {
+      "protocol": 1,
+      "active": true,
+      "count": 1,
+      "placement_key": "Kit ES05 ES06 lecterns[Counters:BlockPos{x=761026, y=65, z=797813}:BlockPos{x=761028, y=65, z=797813}]/ALL/y/-30000000/30000000/BlockPos{x=761026, y=65, z=797813}/NONE/NONE",
+      "task_session": "materials-ba3b3ea3f7d74757"
+    },
+    "inventory": [
+      {
+        "item": "minecraft:netherite_sword",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 1982,
+        "max_durability": 2031,
+        "enchantments": [
+          {
+            "id": "minecraft:smite",
+            "level": 4
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:looting",
+            "level": 3
+          },
+          {
+            "id": "minecraft:sweeping_edge",
+            "level": 3
+          },
+          {
+            "id": "minecraft:fire_aspect",
+            "level": 2
+          }
+        ],
+        "slot": 0
+      },
+      {
+        "item": "minecraft:diamond_pickaxe",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 1368,
+        "max_durability": 1561,
+        "slot": 1
+      },
+      {
+        "item": "minecraft:diamond_axe",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 1363,
+        "max_durability": 1561,
+        "slot": 2
+      },
+      {
+        "item": "minecraft:diamond_shovel",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 1559,
+        "max_durability": 1561,
+        "slot": 3
+      },
+      {
+        "item": "minecraft:sugar_cane",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 4
+      },
+      {
+        "item": "minecraft:lectern",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 5
+      },
+      {
+        "item": "minecraft:dirt",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 6
+      },
+      {
+        "item": "minecraft:cooked_beef",
+        "count": 50,
+        "max_stack": 64,
+        "slot": 7
+      },
+      {
+        "item": "minecraft:bow",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 322,
+        "max_durability": 384,
+        "enchantments": [
+          {
+            "id": "minecraft:unbreaking",
+            "level": 1
+          },
+          {
+            "id": "minecraft:punch",
+            "level": 1
+          },
+          {
+            "id": "minecraft:infinity",
+            "level": 1
+          }
+        ],
+        "slot": 8
+      },
+      {
+        "item": "minecraft:torch",
+        "count": 9,
+        "max_stack": 64,
+        "slot": 9
+      },
+      {
+        "item": "minecraft:enchanted_book",
+        "count": 1,
+        "max_stack": 1,
+        "stored_enchantments": [
+          {
+            "id": "minecraft:flame",
+            "level": 1
+          }
+        ],
+        "slot": 10
+      },
+      {
+        "item": "minecraft:dark_oak_planks",
+        "count": 6,
+        "max_stack": 64,
+        "slot": 11
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 12
+      },
+      {
+        "item": "minecraft:shears",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 112,
+        "max_durability": 238,
+        "slot": 13
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 14
+      },
+      {
+        "item": "minecraft:emerald",
+        "count": 5,
+        "max_stack": 64,
+        "slot": 15
+      },
+      {
+        "item": "minecraft:book",
+        "count": 7,
+        "max_stack": 64,
+        "slot": 16
+      },
+      {
+        "item": "minecraft:sugar_cane",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 17
+      },
+      {
+        "item": "minecraft:arrow",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 18
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 19
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 20
+      },
+      {
+        "item": "minecraft:paper",
+        "count": 44,
+        "max_stack": 64,
+        "slot": 21
+      },
+      {
+        "item": "minecraft:stick",
+        "count": 14,
+        "max_stack": 64,
+        "slot": 22
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 23
+      },
+      {
+        "item": "minecraft:paper",
+        "count": 64,
+        "max_stack": 64,
+        "slot": 24
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 25
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 26
+      },
+      {
+        "item": "minecraft:bucket",
+        "count": 1,
+        "max_stack": 16,
+        "slot": 27
+      },
+      {
+        "item": "minecraft:cooked_mutton",
+        "count": 32,
+        "max_stack": 64,
+        "slot": 28
+      },
+      {
+        "item": "minecraft:dark_oak_sapling",
+        "count": 3,
+        "max_stack": 64,
+        "slot": 29
+      },
+      {
+        "item": "minecraft:diamond",
+        "count": 12,
+        "max_stack": 64,
+        "slot": 30
+      },
+      {
+        "item": "minecraft:totem_of_undying",
+        "count": 1,
+        "max_stack": 1,
+        "slot": 31
+      },
+      {
+        "item": "minecraft:cobblestone_slab",
+        "count": 4,
+        "max_stack": 64,
+        "slot": 32
+      },
+      {
+        "item": "minecraft:bucket",
+        "count": 1,
+        "max_stack": 16,
+        "slot": 33
+      },
+      {
+        "item": "minecraft:fishing_rod",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 64,
+        "max_durability": 64,
+        "enchantments": [
+          {
+            "id": "minecraft:lure",
+            "level": 3
+          }
+        ],
+        "slot": 34
+      },
+      {
+        "item": "minecraft:acacia_fence",
+        "count": 3,
+        "max_stack": 64,
+        "slot": 35
+      },
+      {
+        "item": "minecraft:netherite_boots",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 472,
+        "max_durability": 481,
+        "enchantments": [
+          {
+            "id": "minecraft:thorns",
+            "level": 3
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:unbreaking",
+            "level": 3
+          },
+          {
+            "id": "minecraft:protection",
+            "level": 4
+          },
+          {
+            "id": "minecraft:depth_strider",
+            "level": 3
+          }
+        ],
+        "slot": 36
+      },
+      {
+        "item": "minecraft:netherite_leggings",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 538,
+        "max_durability": 555,
+        "enchantments": [
+          {
+            "id": "minecraft:thorns",
+            "level": 3
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:unbreaking",
+            "level": 3
+          },
+          {
+            "id": "minecraft:protection",
+            "level": 4
+          }
+        ],
+        "slot": 37
+      },
+      {
+        "item": "minecraft:netherite_chestplate",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 563,
+        "max_durability": 592,
+        "enchantments": [
+          {
+            "id": "minecraft:thorns",
+            "level": 3
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:unbreaking",
+            "level": 3
+          },
+          {
+            "id": "minecraft:protection",
+            "level": 4
+          }
+        ],
+        "slot": 38
+      },
+      {
+        "item": "minecraft:netherite_helmet",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 404,
+        "max_durability": 407,
+        "enchantments": [
+          {
+            "id": "minecraft:respiration",
+            "level": 3
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:protection",
+            "level": 4
+          },
+          {
+            "id": "minecraft:aqua_affinity",
+            "level": 1
+          },
+          {
+            "id": "minecraft:thorns",
+            "level": 3
+          }
+        ],
+        "slot": 39
+      },
+      {
+        "item": "minecraft:totem_of_undying",
+        "count": 1,
+        "max_stack": 1,
+        "slot": 40
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 41
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 42
+      }
+    ],
+    "health": 20.0,
+    "manual_movement": false,
+    "screen": "",
+    "navigating": false,
+    "native_material_busy": null,
+    "pending_scan": null,
+    "movement_keys": {
+      "forward": false,
+      "back": false,
+      "jump": false,
+      "sneak": false
+    }
+  },
+  "prior_intent": {
+    "id": "gated-library-pass-1740-076",
+    "action": "native",
+    "op": "projection_batch_set",
+    "params": {
+      "placement_key": "Kit ES05 ES06 lecterns[Counters:BlockPos{x=761026, y=65, z=797813}:BlockPos{x=761028, y=65, z=797813}]/ALL/y/-30000000/30000000/BlockPos{x=761026, y=65, z=797813}/NONE/NONE",
+      "positions": [
+        [
+          761028,
+          65,
+          797813
+        ]
+      ]
+    }
+  },
+  "prior": {
+    "world_session": "0d85013b-cb06-431a-b303-57a0f170748c",
+    "control_revision": 1391,
+    "inventory": [
+      {
+        "item": "minecraft:netherite_sword",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 1982,
+        "max_durability": 2031,
+        "enchantments": [
+          {
+            "id": "minecraft:smite",
+            "level": 4
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:looting",
+            "level": 3
+          },
+          {
+            "id": "minecraft:sweeping_edge",
+            "level": 3
+          },
+          {
+            "id": "minecraft:fire_aspect",
+            "level": 2
+          }
+        ],
+        "slot": 0
+      },
+      {
+        "item": "minecraft:diamond_pickaxe",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 1368,
+        "max_durability": 1561,
+        "slot": 1
+      },
+      {
+        "item": "minecraft:diamond_axe",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 1363,
+        "max_durability": 1561,
+        "slot": 2
+      },
+      {
+        "item": "minecraft:diamond_shovel",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 1559,
+        "max_durability": 1561,
+        "slot": 3
+      },
+      {
+        "item": "minecraft:sugar_cane",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 4
+      },
+      {
+        "item": "minecraft:lectern",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 5
+      },
+      {
+        "item": "minecraft:dirt",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 6
+      },
+      {
+        "item": "minecraft:cooked_beef",
+        "count": 50,
+        "max_stack": 64,
+        "slot": 7
+      },
+      {
+        "item": "minecraft:bow",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 322,
+        "max_durability": 384,
+        "enchantments": [
+          {
+            "id": "minecraft:unbreaking",
+            "level": 1
+          },
+          {
+            "id": "minecraft:punch",
+            "level": 1
+          },
+          {
+            "id": "minecraft:infinity",
+            "level": 1
+          }
+        ],
+        "slot": 8
+      },
+      {
+        "item": "minecraft:torch",
+        "count": 9,
+        "max_stack": 64,
+        "slot": 9
+      },
+      {
+        "item": "minecraft:enchanted_book",
+        "count": 1,
+        "max_stack": 1,
+        "stored_enchantments": [
+          {
+            "id": "minecraft:flame",
+            "level": 1
+          }
+        ],
+        "slot": 10
+      },
+      {
+        "item": "minecraft:dark_oak_planks",
+        "count": 6,
+        "max_stack": 64,
+        "slot": 11
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 12
+      },
+      {
+        "item": "minecraft:shears",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 112,
+        "max_durability": 238,
+        "slot": 13
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 14
+      },
+      {
+        "item": "minecraft:emerald",
+        "count": 5,
+        "max_stack": 64,
+        "slot": 15
+      },
+      {
+        "item": "minecraft:book",
+        "count": 7,
+        "max_stack": 64,
+        "slot": 16
+      },
+      {
+        "item": "minecraft:sugar_cane",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 17
+      },
+      {
+        "item": "minecraft:arrow",
+        "count": 1,
+        "max_stack": 64,
+        "slot": 18
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 19
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 20
+      },
+      {
+        "item": "minecraft:paper",
+        "count": 44,
+        "max_stack": 64,
+        "slot": 21
+      },
+      {
+        "item": "minecraft:stick",
+        "count": 14,
+        "max_stack": 64,
+        "slot": 22
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 23
+      },
+      {
+        "item": "minecraft:paper",
+        "count": 64,
+        "max_stack": 64,
+        "slot": 24
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 25
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 26
+      },
+      {
+        "item": "minecraft:bucket",
+        "count": 1,
+        "max_stack": 16,
+        "slot": 27
+      },
+      {
+        "item": "minecraft:cooked_mutton",
+        "count": 32,
+        "max_stack": 64,
+        "slot": 28
+      },
+      {
+        "item": "minecraft:dark_oak_sapling",
+        "count": 3,
+        "max_stack": 64,
+        "slot": 29
+      },
+      {
+        "item": "minecraft:diamond",
+        "count": 12,
+        "max_stack": 64,
+        "slot": 30
+      },
+      {
+        "item": "minecraft:totem_of_undying",
+        "count": 1,
+        "max_stack": 1,
+        "slot": 31
+      },
+      {
+        "item": "minecraft:cobblestone_slab",
+        "count": 4,
+        "max_stack": 64,
+        "slot": 32
+      },
+      {
+        "item": "minecraft:bucket",
+        "count": 1,
+        "max_stack": 16,
+        "slot": 33
+      },
+      {
+        "item": "minecraft:fishing_rod",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 64,
+        "max_durability": 64,
+        "enchantments": [
+          {
+            "id": "minecraft:lure",
+            "level": 3
+          }
+        ],
+        "slot": 34
+      },
+      {
+        "item": "minecraft:acacia_fence",
+        "count": 3,
+        "max_stack": 64,
+        "slot": 35
+      },
+      {
+        "item": "minecraft:netherite_boots",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 472,
+        "max_durability": 481,
+        "enchantments": [
+          {
+            "id": "minecraft:thorns",
+            "level": 3
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:unbreaking",
+            "level": 3
+          },
+          {
+            "id": "minecraft:protection",
+            "level": 4
+          },
+          {
+            "id": "minecraft:depth_strider",
+            "level": 3
+          }
+        ],
+        "slot": 36
+      },
+      {
+        "item": "minecraft:netherite_leggings",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 538,
+        "max_durability": 555,
+        "enchantments": [
+          {
+            "id": "minecraft:thorns",
+            "level": 3
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:unbreaking",
+            "level": 3
+          },
+          {
+            "id": "minecraft:protection",
+            "level": 4
+          }
+        ],
+        "slot": 37
+      },
+      {
+        "item": "minecraft:netherite_chestplate",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 563,
+        "max_durability": 592,
+        "enchantments": [
+          {
+            "id": "minecraft:thorns",
+            "level": 3
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:unbreaking",
+            "level": 3
+          },
+          {
+            "id": "minecraft:protection",
+            "level": 4
+          }
+        ],
+        "slot": 38
+      },
+      {
+        "item": "minecraft:netherite_helmet",
+        "count": 1,
+        "max_stack": 1,
+        "durability": 404,
+        "max_durability": 407,
+        "enchantments": [
+          {
+            "id": "minecraft:respiration",
+            "level": 3
+          },
+          {
+            "id": "minecraft:mending",
+            "level": 1
+          },
+          {
+            "id": "minecraft:protection",
+            "level": 4
+          },
+          {
+            "id": "minecraft:aqua_affinity",
+            "level": 1
+          },
+          {
+            "id": "minecraft:thorns",
+            "level": 3
+          }
+        ],
+        "slot": 39
+      },
+      {
+        "item": "minecraft:totem_of_undying",
+        "count": 1,
+        "max_stack": 1,
+        "slot": 40
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 41
+      },
+      {
+        "item": "minecraft:air",
+        "count": 0,
+        "max_stack": 1,
+        "slot": 42
+      }
+    ],
+    "phase": "done"
+  },
+  "event": {
+    "request_id": "materials-2ceeb2d8441e",
+    "op": "professional_print",
+    "phase": "waiting",
+    "detail": "printer interval ended without complete current bounded-mask server confirmation",
+    "world_session": "0d85013b-cb06-431a-b303-57a0f170748c",
+    "inventory_delta": {},
+    "health_before": 20.0,
+    "health_after": 20.0,
+    "revision_before": 1391,
+    "revision_after": 1392,
+    "params": {
+      "task_session": "materials-ba3b3ea3f7d74757",
+      "background_ok": true,
+      "seconds": 20
+    }
+  }
+}
