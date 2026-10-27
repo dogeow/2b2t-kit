@@ -59,13 +59,13 @@ final class ProjectionAirSeed {
             &&expected.getProperties().size()==1&&expected.hasProperty(RotatedPillarBlock.AXIS);
         boolean isolatedStem=MushroomStemPlacementPolicy.isolated(expected,target,schematic::getBlockState)
             &&MushroomStemPlacementPolicy.isolated(expected,target,c.level::getBlockState);
-        if(expected.isAir()||!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty()||axisOnly||isolatedStem,
+        boolean hopper=expected.is(net.minecraft.world.level.block.Blocks.HOPPER);
+        if(expected.isAir()||!hopper&&!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty()||axisOnly||isolatedStem,
                 expected.isCollisionShapeFullBlock(schematic,target),expected.getBlock() instanceof FallingBlock,
                 expected.getBlock() instanceof EntityBlock)||!expected.getFluidState().isEmpty()
                 ||!expected.toString().equals(string(request,"expected_state")))
             throw new IllegalStateException("Air seed requires the exact projected full cube or its axis-correct unstripped wood precursor");
-        face=axisOnly?Direction.fromAxisAndDirection(expected.getValue(RotatedPillarBlock.AXIS),Direction.AxisDirection.POSITIVE)
-            :c.player.getMotionDirection().getOpposite();
+        face=placementFace(expected,c.player.getMotionDirection());
         item=expected.getBlock().asItem();
         if(!BuiltInRegistries.ITEM.getKey(item).toString().equals(string(request,"expected_item")))
             throw new IllegalStateException("Air seed expected item does not match the projection");
@@ -96,6 +96,14 @@ final class ProjectionAirSeed {
                 ||raw.getBlock().defaultBlockState().getProperties().size()!=1)
             throw new IllegalStateException("Air seed unstripped item is not an axis-only wood block");
         return raw.getBlock().defaultBlockState().setValue(RotatedPillarBlock.AXIS,projected.getValue(RotatedPillarBlock.AXIS));
+    }
+
+    static Direction placementFace(BlockState expected,Direction motion) {
+        if(expected.is(net.minecraft.world.level.block.Blocks.HOPPER))
+            return expected.getValue(net.minecraft.world.level.block.HopperBlock.FACING).getOpposite();
+        return expected.getBlock() instanceof RotatedPillarBlock&&expected.getProperties().size()==1
+            ?Direction.fromAxisAndDirection(expected.getValue(RotatedPillarBlock.AXIS),Direction.AxisDirection.POSITIVE)
+            :motion.getOpposite();
     }
 
     private static String string(JsonObject request,String key) {
@@ -145,6 +153,13 @@ final class ProjectionAirSeed {
             throw new IllegalStateException("Air seed main hand does not contain the exact expected block item");
         if(c.player.getEyePosition().distanceTo(Vec3.atCenterOf(target))>c.player.blockInteractionRange()-.2)
             throw new IllegalStateException("Air seed target is outside normal interaction reach");
+        if(expected.is(net.minecraft.world.level.block.Blocks.HOPPER)){
+            var hit=new BlockHitResult(Vec3.atCenterOf(target),face,target,false);
+            var context=new net.minecraft.world.item.context.BlockPlaceContext(c.player,InteractionHand.MAIN_HAND,held,hit);
+            // Use vanilla placement prediction, including powered state. No corrective second click.
+            if(!target.equals(context.getClickedPos())||!expected.equals(expected.getBlock().getStateForPlacement(context)))
+                throw new IllegalStateException("Directed hopper air seed does not predict the exact projected state");
+        }
         if(!c.level.getEntities((Entity)null,new AABB(target),Entity::isAlive).isEmpty())
             throw new IllegalStateException("Air seed cube contains an entity");
         var obstruction=c.level.clip(new ClipContext(c.player.getEyePosition(),Vec3.atCenterOf(target),

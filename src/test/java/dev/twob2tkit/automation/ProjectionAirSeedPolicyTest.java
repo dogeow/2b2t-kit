@@ -11,6 +11,19 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ProjectionAirSeedPolicyTest {
+    @Test void hopperUsesClickedFaceOppositeItsOutputRatherThanPlayerMotion(){
+        for(var facing:new Direction[]{Direction.DOWN,Direction.NORTH,Direction.SOUTH,Direction.EAST,Direction.WEST})
+            for(var motion:Direction.values()){
+                var expected=Blocks.HOPPER.defaultBlockState().setValue(net.minecraft.world.level.block.HopperBlock.FACING,facing);
+                assertEquals(facing.getOpposite(),ProjectionAirSeed.placementFace(expected,motion));
+            }
+    }
+    @Test void directedHopperMustPredictVanillaStateBeforeTheOnlySend()throws Exception {
+        var source=Files.readString(Path.of("src/client/java/dev/twob2tkit/automation/ProjectionAirSeed.java"));
+        assertTrue(source.contains("target.equals(context.getClickedPos())"));
+        assertTrue(source.contains("expected.equals(expected.getBlock().getStateForPlacement(context))"));
+        assertTrue(source.indexOf("getStateForPlacement(context)")<source.indexOf("void sendOnce"));
+    }
     @BeforeAll static void bootstrap(){net.minecraft.SharedConstants.tryDetectVersion();net.minecraft.server.Bootstrap.bootStrap();}
     @Test void airWoodPreservesEveryProjectedAxisForDirectAndUnstrippedItems(){
         for(var axis:Direction.Axis.values()){
