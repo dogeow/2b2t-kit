@@ -2242,6 +2242,7 @@ public final class AutomationBridge {
             if(expiry<0||expiry>15000||!r.has("expected_revision")||r.get("expected_revision").getAsLong()!=controlRevision||!str(r,"world_session").equals(session(c))||!leaseAvailable||KitClient.anyAfkAuto()||c.gui.screen()!=null||KitKeys.manualMovementDown(c)||c.player.getHealth()<14)throw new IllegalStateException("Material session cannot acquire control");
             boolean guardFinish=str(r,"remote_finish").equals("guard");
             if(guardFinish){JsonArray park=r.getAsJsonArray("park_target");if(park==null||park.size()!=3)throw new IllegalArgumentException("High guard finish requires a park target");for(var value:park)if(!Double.isFinite(value.getAsDouble()))throw new IllegalArgumentException("Invalid park target");}
+            PrinterInventoryAdmission.requireIdle(r);
             CraftingCompatibility.requireReady();
             ProfessionalPrinter.stop(c,true); // Inventory/crafting ownership excludes an externally enabled printer.
             if(resumePark)supervisionLease=null;
@@ -4252,7 +4253,7 @@ public final class AutomationBridge {
         j.addProperty("material_job_control_protocol",1);
         j.addProperty("material_task_api_protocol",dev.twob2tkit.material.MaterialTaskProtocol.VERSION);j.add("material_task",dev.twob2tkit.material.MaterialJobs.snapshot());
         j.addProperty("projection_supply_protocol",1);
-        j.addProperty("projection_load_protocol",1);
+        j.addProperty("projection_load_protocol",1);j.addProperty("printer_idle_admission_protocol",1);
         j.addProperty("scan_prediction_protocol",1);
         j.addProperty("projection_batch_protocol",ProjectionBatchScope.PROTOCOL);j.addProperty("projection_model_protocol",1);j.addProperty("dry_paving_protocol",2);j.addProperty("terrain_replace_protocol",1);j.add("projection_batch",projectionBatchSnapshot());
         if(rockQuarryProgress!=null&&str(rockQuarryProgress,"world_session").equals(session(c)))

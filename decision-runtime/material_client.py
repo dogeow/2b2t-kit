@@ -590,15 +590,14 @@ class MaterialClient(Client):
    raise Handoff('Inventory is empty or not synchronized; material work cannot start')
   if s.get('professional_printer',{}).get('enabled'):
    if s.get('professional_printer',{}).get('owned') or s.get('build_job',{}).get('active') or s.get('supervision_lease',{}).get('kind') not in (None,'parking'):raise Handoff('Another task owns printing; do not interrupt it for material work')
-   stopped=Client.request(self,'stop')
-   s=self.status()
-   if stopped.get('phase')!='stopped' or s.get('professional_printer',{}).get('enabled'):raise Handoff('External printer could not be suspended before material control')
+   raise Handoff('External Litematica Printer is enabled; leave its mode unchanged and wait for a coordinated printer handoff')
   parking=s.get('supervision_lease',{});replace=parking.get('id') if parking.get('kind')=='parking' else None
   self.task='materials-'+uuid.uuid4().hex[:16]
   write_manifest(self.out,self.task,s)
   self.heartbeat=SafetyHeartbeat(self.root,self.world);self.heartbeat.start()
   try:
    self.checked('material_session',supervision_lease=self.heartbeat.id,remote_finish=self.remote_finish,
+                **({'printer_idle_required':True} if s.get('printer_idle_admission_protocol',0)>=1 else {}),
                 **({'park_target':self.park_target} if self.park_target is not None else {}),
                 **({'replace_parking_lease':replace} if replace else {}))
    self.heartbeat.attached=True
