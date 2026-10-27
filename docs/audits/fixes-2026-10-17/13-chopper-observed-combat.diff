@@ -1,0 +1,201 @@
+diff --git a/src/client/java/dev/twob2tkit/chopper/AutoChopper.java b/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
+--- a/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
++++ b/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
+@@ -20,6 +20,8 @@
+ import net.minecraft.world.item.Item;
+ import net.minecraft.world.item.ShearsItem;
+ import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.Mob;
++import net.minecraft.world.entity.animal.golem.IronGolem;
+ import net.minecraft.world.entity.monster.Enemy;
+ import net.minecraft.world.item.ItemStack;
+ import net.minecraft.world.level.block.state.BlockState;
+@@ -743,7 +745,7 @@
+ 	private boolean updateCombatPause(Minecraft client, LocalPlayer player) {
+ 		String combat = BorerThreats.combatPauseReason(player);
+ 		String nearby = nearbyHostile(client, player);
+-		if (combat != null || nearby != null) combatPauseTicks = 40;
++		if (ChopperCombatPolicy.shouldPause(combat != null, nearby != null)) combatPauseTicks = 40;
+ 		if (combatPauseTicks <= 0) return false;
+ 		combatPauseTicks--;
+ 		mineLook = null;
+@@ -756,17 +758,36 @@
+ 		return true;
+ 	}
+ 
+-	/** 半径内最近敌对生物显示名；没有则 null。 */
++	/** 半径内敌对生物或已交战傀儡的显示名；没有则 null。 */
+ 	private static String nearbyHostile(Minecraft client, LocalPlayer player) {
+ 		if (client.level == null) return null;
+-		double radius = 8.0;
++		double radius = ChopperCombatPolicy.RADIUS;
+ 		AABB box = player.getBoundingBox().inflate(radius);
++		Entity auraTarget = activeAuraTarget();
+ 		for (Entity entity : client.level.getEntities(player, box)) {
+-			if (!(entity instanceof Enemy) || !entity.isAlive()) continue;
++			if (!entity.isAlive()) continue;
+ 			if (player.distanceTo(entity) > radius) continue;
++			boolean recentAttacker = ChopperCombatPolicy.recentAttacker(entity == player.getLastHurtByMob(),
++				player.tickCount - player.getLastHurtByMobTimestamp());
++			if (!ChopperCombatPolicy.isThreat(entity instanceof Enemy, entity instanceof IronGolem,
++				entity instanceof Mob mob && mob.getTarget() == player, recentAttacker, entity == auraTarget)) continue;
+ 			return entity.getName().getString();
+ 		}
+ 		return null;
++	}
++
++	/** 可选 Meteor 集成只读当前目标，不修改模块开关或用户的目标设置。 */
++	private static Entity activeAuraTarget() {
++		try {
++			Class<?> registry = Class.forName("meteordevelopment.meteorclient.systems.modules.Modules");
++			Class<?> type = Class.forName(dev.twob2tkit.MeteorModules.KILL_AURA);
++			Object module = registry.getMethod("get", Class.class).invoke(registry.getMethod("get").invoke(null), type);
++			if (module == null || !Boolean.TRUE.equals(type.getMethod("isActive").invoke(module))) return null;
++			Object target = type.getMethod("getTarget").invoke(module);
++			return target instanceof Entity entity ? entity : null;
++		} catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
++			return null;
++		}
+ 	}
+ 
+ 	/** 目标仍是可砍原木，或（勾选/还在砍树时）可砍树叶。 */
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperCombatPolicy.java b/src/client/java/dev/twob2tkit/chopper/ChopperCombatPolicy.java
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperCombatPolicy.java
++++ b/src/client/java/dev/twob2tkit/chopper/ChopperCombatPolicy.java
+@@ -3,32 +3,24 @@
+ /**
+  * 挖树遇战。只改这一处。
+  * <p>
+- * 铁傀儡不是 {@code Enemy}，只扫敌对会漏掉。Meteor KillAura 开着打傀儡时，
+- * 本模块还在换剪刀砍树叶，就会拿剪刀抽傀儡、不切剑、不飞起来。
++ * 铁傀儡不是 {@code Enemy}；只在有实际交战证据时停砍，避免把和平傀儡当成敌人。
+  */
+ public final class ChopperCombatPolicy {
+ 	/** 附近威胁扫描半径（格）。 */
+ 	public static final double RADIUS = 8.0;
+-	/** 铁傀儡实体类型 id（中立但可能被 KillAura 打）。 */
+-	public static final String IRON_GOLEM = "iron_golem";
+ 
+ 	private ChopperCombatPolicy() {
+ 	}
+ 
+-	/** 敌对生物，或需要特殊处理的中立傀儡，都算威胁类型。 */
+-	public static boolean isThreatType(boolean enemy, String typeId) {
+-		if (enemy) return true;
+-		return isNeutralGolem(typeId);
++	/** 开启 KillAura 本身不算证据，必须是它当前实际选中的傀儡。 */
++	public static boolean isThreat(boolean enemy, boolean ironGolem, boolean targetingPlayer,
++		boolean recentAttacker, boolean activeAuraTarget) {
++		return enemy || ironGolem && (targetingPlayer || recentAttacker || activeAuraTarget);
+ 	}
+ 
+-	/** 是否为铁傀儡（不是 Enemy，但挖树时常被误伤）。 */
+-	public static boolean isNeutralGolem(String typeId) {
+-		return IRON_GOLEM.equals(typeId);
+-	}
+-
+-	/** KillAura 会打附近傀儡，或傀儡已经在打你：都要停砍切剑。 */
+-	public static boolean shouldEngageNeutral(boolean killAuraOn, boolean targetingPlayer) {
+-		return killAuraOn || targetingPlayer;
++	/** 只保留近期且时间有效的受击记录，不能把旧仇恨无限延长。 */
++	public static boolean recentAttacker(boolean sameAttacker, int ageTicks) {
++		return sameAttacker && ageTicks >= 0 && ageTicks <= 100;
+ 	}
+ 
+ 	/** 刚被打或身边有威胁：暂停挖树。 */
+diff --git a/src/test/java/dev/twob2tkit/ChopperCombatPolicyTest.java b/src/test/java/dev/twob2tkit/ChopperCombatPolicyTest.java
+--- a/src/test/java/dev/twob2tkit/ChopperCombatPolicyTest.java
++++ b/src/test/java/dev/twob2tkit/ChopperCombatPolicyTest.java
+@@ -8,25 +8,31 @@
+ 
+ final class ChopperCombatPolicyTest {
+ 	@Test
+-	void ironGolemIsAThreatEvenThoughNotEnemy() {
+-		assertTrue(ChopperCombatPolicy.isThreatType(false, "iron_golem"));
+-		assertTrue(ChopperCombatPolicy.isNeutralGolem("iron_golem"));
+-		assertFalse(ChopperCombatPolicy.isNeutralGolem("zombie"));
+-		assertTrue(ChopperCombatPolicy.isThreatType(true, "zombie"));
+-		assertFalse(ChopperCombatPolicy.isThreatType(false, "cow"));
+-		assertFalse(ChopperCombatPolicy.isThreatType(false, "snow_golem"));
++	void hostileMobsRetainTheExistingPauseAndOtherNeutralAnimalsStayIgnored() {
++		assertTrue(ChopperCombatPolicy.isThreat(true, false, false, false, false));
++		assertFalse(ChopperCombatPolicy.isThreat(false, false, false, false, false));
++		assertFalse(ChopperCombatPolicy.isThreat(false, false, true, true, true));
+ 	}
+ 
+ 	@Test
+-	void peacefulGolemIgnoredWhenKillAuraOff() {
+-		assertFalse(ChopperCombatPolicy.shouldEngageNeutral(false, false));
++	void peacefulGolemIsIgnoredWithoutEvidenceOfEngagement() {
++		assertFalse(ChopperCombatPolicy.isThreat(false, true, false, false, false));
+ 	}
+ 
+ 	@Test
+-	void golemEngagedWhenKillAuraOnOrTargetingPlayer() {
+-		assertTrue(ChopperCombatPolicy.shouldEngageNeutral(true, false));
+-		assertTrue(ChopperCombatPolicy.shouldEngageNeutral(false, true));
+-		assertTrue(ChopperCombatPolicy.shouldEngageNeutral(true, true));
++	void golemPausesChoppingOnlyWhenTargetingAttackingOrActuallySelectedByAura() {
++		assertTrue(ChopperCombatPolicy.isThreat(false, true, true, false, false));
++		assertTrue(ChopperCombatPolicy.isThreat(false, true, false, true, false));
++		assertTrue(ChopperCombatPolicy.isThreat(false, true, false, false, true));
++	}
++
++	@Test
++	void recentAttackEvidenceExpiresAndRejectsAnInvalidAge() {
++		assertTrue(ChopperCombatPolicy.recentAttacker(true, 0));
++		assertTrue(ChopperCombatPolicy.recentAttacker(true, 100));
++		assertFalse(ChopperCombatPolicy.recentAttacker(true, 101));
++		assertFalse(ChopperCombatPolicy.recentAttacker(true, -1));
++		assertFalse(ChopperCombatPolicy.recentAttacker(false, 0));
+ 	}
+ 
+ 	@Test
+diff --git a/src/test/java/dev/twob2tkit/chopper/ChopperCombatWiringTest.java b/src/test/java/dev/twob2tkit/chopper/ChopperCombatWiringTest.java
+new file mode 100644
+--- /dev/null
++++ b/src/test/java/dev/twob2tkit/chopper/ChopperCombatWiringTest.java
+@@ -0,0 +1,43 @@
++package dev.twob2tkit.chopper;
++
++import org.junit.jupiter.api.Test;
++import org.objectweb.asm.ClassReader;
++import org.objectweb.asm.tree.*;
++import java.util.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class ChopperCombatWiringTest {
++    private MethodNode method(String name) throws Exception {
++        var node = new ClassNode();
++        try (var in = getClass().getResourceAsStream("/dev/twob2tkit/chopper/AutoChopper.class")) {
++            assertNotNull(in);
++            new ClassReader(in).accept(node, 0);
++        }
++        return node.methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
++    }
++    private List<String> calls(String name) throws Exception {
++        var names = new ArrayList<String>();
++        for (var instruction : method(name).instructions)
++            if (instruction instanceof MethodInsnNode call) names.add(call.name);
++        return names;
++    }
++    @Test void actualScanUsesObservedTargetsAndTimeBoundedAttackerEvidence() throws Exception {
++        assertTrue(calls("nearbyHostile").containsAll(List.of("activeAuraTarget", "getTarget", "getLastHurtByMob",
++            "getLastHurtByMobTimestamp", "recentAttacker", "isThreat")));
++        assertTrue(calls("updateCombatPause").containsAll(List.of("nearbyHostile", "shouldPause", "holdStill", "selectWeapon")));
++    }
++    @Test void auraIntegrationReadsActivityAndCurrentTargetWithoutChangingSettings() throws Exception {
++        var lookups = new ArrayList<String>();
++        for (var instruction : method("activeAuraTarget").instructions)
++            if (instruction instanceof LdcInsnNode constant && constant.cst instanceof String name) lookups.add(name);
++        assertTrue(lookups.indexOf("isActive") >= 0 && lookups.indexOf("getTarget") > lookups.indexOf("isActive"));
++        for (String mutator : List.of("enable", "disable", "toggle", "set")) assertFalse(lookups.contains(mutator));
++        // An inactive module must return before the getTarget reflection lookup.
++        int returns = 0;
++        for (var instruction : method("activeAuraTarget").instructions) {
++            if (instruction instanceof LdcInsnNode c && "getTarget".equals(c.cst)) break;
++            if (instruction.getOpcode() == org.objectweb.asm.Opcodes.ARETURN) returns++;
++        }
++        assertTrue(returns > 0);
++    }
++}

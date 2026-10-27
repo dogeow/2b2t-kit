@@ -1,0 +1,26 @@
+--- a/decision-runtime/test_material_jobs_acquisition.py
++++ b/decision-runtime/test_material_jobs_acquisition.py
+@@ -851,7 +851,10 @@
+         for protocol in (0,1):
+             with self.subTest(protocol=protocol), tempfile.TemporaryDirectory() as out:
+                 c=FakeClient(item='minecraft:cherry_log',before=2,gain=4)
+-                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=protocol)
++                c.task='fixed-tree-fixture'
++                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=protocol,
++                    on_ground=True,flight=False,supervision_lease={'kind':'materials',
++                        'job_session':c.task,'world_session':c.world,'revision':c.rev})
+                 c.rows=[block((x,63,z),'grass_block')for x in range(-11,12)for z in range(-11,12)]
+                 c.rows += [block((0,y,0),'cherry_log')for y in range(64,68)]
+                 c.trees=[{'pos':[0,64,0],'top':68,'natural_leaves':8}]
+@@ -887,7 +890,10 @@
+         for enabled in (False,True):
+             with self.subTest(enabled=enabled),tempfile.TemporaryDirectory()as out:
+                 c=FakeClient(item='minecraft:dark_oak_log',before=2,gain=4)
+-                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=1)
++                c.task='fixed-tree-fixture'
++                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=1,
++                    on_ground=True,flight=False,supervision_lease={'kind':'materials',
++                        'job_session':c.task,'world_session':c.world,'revision':c.rev})
+                 c.rows=[block((x,63,z),'grass_block')for x in range(-11,12)for z in range(-11,12)]
+                 c.rows += [block((x,y,z),'dark_oak_log')for x in(0,1)for z in(0,1)for y in range(64,68)]
+                 c.trees=[{'pos':[0,64,0],'top':68,'natural_leaves':8}]

@@ -1,0 +1,14 @@
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -19,6 +19,11 @@
+         with:
+           java-version: '25'
+           distribution: 'microsoft'
++      - name: setup gradle cache
++        uses: gradle/actions/setup-gradle@v6
++        with:
++          cache-provider: basic
++          cache-read-only: ${{ github.event_name != 'push' || github.ref_name != github.event.repository.default_branch }}
+       - name: make gradle wrapper executable
+         run: chmod +x ./gradlew
+       - name: build

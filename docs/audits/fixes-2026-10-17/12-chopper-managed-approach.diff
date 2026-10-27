@@ -1,0 +1,247 @@
+diff --git a/src/client/java/dev/twob2tkit/chopper/AutoChopper.java b/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
+--- a/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
++++ b/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
+@@ -94,9 +94,6 @@
+ 	private boolean currentTreeOpen;
+ 	private int logTicks;
+ 	private String lastFileLog = "";
+-	private double flightHorizBest = Double.MAX_VALUE;
+-	private int flightHorizTicks;
+-	private BlockPos flightDest;
+ 
+ 	public AutoChopper(KitConfig config) {
+ 		this.config = config;
+@@ -622,9 +619,9 @@
+ 	}
+ 
+ 	/**
+-	 * 走近目标格：卡住则整棵忽略；可选飞行。
++	 * 经已验证的工作位路线接近；无法到达时停止或推迟补种。
+ 	 *
+-	 * @return false 卡住已放弃；true 本拍已写入移动
++	 * @return false 已交给工作位流程、停止或推迟；true 正在返回补种站位
+ 	 */
+ 	private boolean approach(Minecraft client, LocalPlayer player, BlockPos dest) {
+ 		if (player.isPassenger()) {
+@@ -736,9 +733,6 @@
+ 		lastDestroyStage = -1;
+ 		approach.reset();
+ 		mineLook = null;
+-		flightDest = null;
+-		flightHorizBest = Double.MAX_VALUE;
+-		flightHorizTicks = 0;
+ 		ChopperKeys.resetSmoothLook();
+ 		combatPauseTicks = 0;
+ 		currentTreeOpen = false;
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperApproachPolicy.java b/src/client/java/dev/twob2tkit/chopper/ChopperApproachPolicy.java
+deleted file mode 100644
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperApproachPolicy.java
++++ /dev/null
+@@ -1,75 +0,0 @@
+-package dev.twob2tkit.chopper;
+-
+-/**
+- * 挖树走近：补种/走向树干时树叶挡路。
+- * <p>
+- * 准星已经打在树叶上却只按 W，会在叶墙里空走直到 approach-stuck。
+- * 够得着的树叶立刻剪；剪了一会儿还过不去再飞越。
+- */
+-public final class ChopperApproachPolicy {
+-	/** 卡住多久才允许飞越叶墙（tick）。 */
+-	public static final int FLY_OVER_TICKS = 20;
+-	/** 飞越时相对目标脚底抬高的高度（格）。 */
+-	public static final double FLY_OVER_HEIGHT = 5.0;
+-
+-	private ChopperApproachPolicy() {
+-	}
+-
+-	/** 准星打在树叶上且够得着、能挖时，先剪挡路叶。 */
+-	public static boolean shouldMineBlocker(boolean leaves, boolean canBreak, boolean inReach) {
+-		return leaves && canBreak && inReach;
+-	}
+-
+-	/** 卡住 tick 达到阈值则飞越，不要一直按 W。 */
+-	public static boolean shouldFlyOver(int stuckTicks) {
+-		return stuckTicks >= FLY_OVER_TICKS;
+-	}
+-
+-	/** 飞越悬停高度：目标脚底 Y + {@link #FLY_OVER_HEIGHT}。 */
+-	public static double flyOverFeetY(double destY) {
+-		return destY + FLY_OVER_HEIGHT;
+-	}
+-
+-	/** 水平还远且人低于悬停高度时继续爬升。 */
+-	public static boolean shouldAscendOver(double playerY, double hoverY, double horiz) {
+-		return horiz > 0.8 && playerY < hoverY - 0.35;
+-	}
+-
+-	/** 已贴近目标且人偏高时下落，落到补种/砍树高度。 */
+-	public static boolean shouldDescendToDest(double playerY, double destY, double horiz) {
+-		return horiz < 1.2 && playerY > destY + 1.2;
+-	}
+-
+-	/** 够得着就落地砍。空中挖更慢，开关飞行还会把人晃起来。 */
+-	public static boolean flyWhenInReach() {
+-		return false;
+-	}
+-
+-	/** 够得着却没挖成：站住砍准星那块，不要按 W / 起飞。 */
+-	public static boolean walkAfterMineFail(boolean inReach) {
+-		return !inReach;
+-	}
+-
+-	/** 挡路树叶/原木被 stall skip 后仍在眼前：再砍一次，不要改去飞近。 */
+-	public static boolean retryIgnoredLeaf(boolean leaves) {
+-		return leaves;
+-	}
+-
+-	/** 树叶或原木被跳过后，若仍挡路可再试一次。 */
+-	public static boolean retryIgnoredTreeBlock(boolean leaves, boolean wood) {
+-		return leaves || wood;
+-	}
+-
+-	/** 够得着却一直对不齐：约两秒后跳过这块，不要永远站住。 */
+-	public static final int STAND_FAIL_TICKS = 40;
+-
+-	/** 站住砍却对不齐超时则放弃这块。 */
+-	public static boolean giveUpStandStill(int ticks) {
+-		return ticks >= STAND_FAIL_TICKS;
+-	}
+-
+-	/** 够得着时瞬间对准，不要平滑转头导致每拍 clip-miss。 */
+-	public static boolean snapLookWhenInReach(boolean inReach) {
+-		return inReach;
+-	}
+-}
+diff --git a/src/test/java/dev/twob2tkit/ChopperApproachPolicyTest.java b/src/test/java/dev/twob2tkit/ChopperApproachPolicyTest.java
+deleted file mode 100644
+--- a/src/test/java/dev/twob2tkit/ChopperApproachPolicyTest.java
++++ /dev/null
+@@ -1,48 +0,0 @@
+-package dev.twob2tkit;
+-
+-import org.junit.jupiter.api.Test;
+-
+-import static org.junit.jupiter.api.Assertions.assertEquals;
+-import static org.junit.jupiter.api.Assertions.assertFalse;
+-import static org.junit.jupiter.api.Assertions.assertTrue;
+-import dev.twob2tkit.chopper.ChopperApproachPolicy;
+-
+-final class ChopperApproachPolicyTest {
+-	@Test
+-	void mineLeavesInReachImmediately() {
+-		assertTrue(ChopperApproachPolicy.shouldMineBlocker(true, true, true));
+-		assertFalse(ChopperApproachPolicy.shouldMineBlocker(true, true, false));
+-		assertFalse(ChopperApproachPolicy.shouldMineBlocker(false, true, true));
+-		assertFalse(ChopperApproachPolicy.shouldMineBlocker(true, false, true));
+-	}
+-
+-	@Test
+-	void flyOverAfterOneSecondStuck() {
+-		assertFalse(ChopperApproachPolicy.shouldFlyOver(19));
+-		assertTrue(ChopperApproachPolicy.shouldFlyOver(20));
+-		assertTrue(ChopperApproachPolicy.shouldFlyOver(100));
+-	}
+-
+-	@Test
+-	void hoverFiveBlocksAboveStump() {
+-		assertEquals(76.0, ChopperApproachPolicy.flyOverFeetY(71.0), 0.01);
+-		assertTrue(ChopperApproachPolicy.shouldAscendOver(72.0, 76.0, 6.5));
+-		assertFalse(ChopperApproachPolicy.shouldAscendOver(76.0, 76.0, 6.5));
+-		assertTrue(ChopperApproachPolicy.shouldDescendToDest(76.0, 71.0, 0.5));
+-		assertFalse(ChopperApproachPolicy.shouldDescendToDest(76.0, 71.0, 4.0));
+-	}
+-
+-	@Test
+-	void inReachStandsStillInsteadOfFlyingCloser() {
+-		assertFalse(ChopperApproachPolicy.flyWhenInReach());
+-		assertFalse(ChopperApproachPolicy.walkAfterMineFail(true));
+-		assertTrue(ChopperApproachPolicy.walkAfterMineFail(false));
+-		assertTrue(ChopperApproachPolicy.retryIgnoredLeaf(true));
+-		assertFalse(ChopperApproachPolicy.retryIgnoredLeaf(false));
+-		assertTrue(ChopperApproachPolicy.retryIgnoredTreeBlock(false, true));
+-		assertTrue(ChopperApproachPolicy.snapLookWhenInReach(true));
+-		assertFalse(ChopperApproachPolicy.snapLookWhenInReach(false));
+-		assertFalse(ChopperApproachPolicy.giveUpStandStill(39));
+-		assertTrue(ChopperApproachPolicy.giveUpStandStill(40));
+-	}
+-}
+diff --git a/src/test/java/dev/twob2tkit/chopper/ChopperApproachWiringTest.java b/src/test/java/dev/twob2tkit/chopper/ChopperApproachWiringTest.java
+new file mode 100644
+--- /dev/null
++++ b/src/test/java/dev/twob2tkit/chopper/ChopperApproachWiringTest.java
+@@ -0,0 +1,74 @@
++package dev.twob2tkit.chopper;
++
++import dev.twob2tkit.runtime.engine.BorerFlyPath;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.phys.Vec3;
++import org.junit.jupiter.api.Test;
++import org.objectweb.asm.ClassReader;
++import org.objectweb.asm.tree.*;
++import java.util.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class ChopperApproachWiringTest {
++    private ClassNode read(String owner) throws Exception {
++        var node = new ClassNode();
++        try (var in = getClass().getResourceAsStream("/dev/twob2tkit/chopper/" + owner + ".class")) {
++            assertNotNull(in);
++            new ClassReader(in).accept(node, 0);
++        }
++        return node;
++    }
++    private List<MethodInsnNode> calls(String owner, String name) throws Exception {
++        var method = read(owner).methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
++        var calls = new ArrayList<MethodInsnNode>();
++        for (var instruction : method.instructions)
++            if (instruction instanceof MethodInsnNode call) calls.add(call);
++        return calls;
++    }
++    private List<String> names(String owner, String name) throws Exception {
++        return calls(owner, name).stream().map(c -> c.name).toList();
++    }
++    @Test void actualApproachUsesManagedRoutesForTreeWorkAndReplanting() throws Exception {
++        var approach = names("AutoChopper", "approach");
++        assertTrue(approach.containsAll(List.of("moveToTree", "safeStandby", "returnToStandby", "stop")));
++        assertFalse(approach.contains("setDown"));
++        assertFalse(approach.contains("walkToward"));
++        assertTrue(names("ChopperScaffold", "planWork").contains("choose"));
++        assertTrue(names("ChopperScaffold", "travelTo").contains("findExact"));
++        assertTrue(names("ChopperScaffold", "safeStandby").contains("above"));
++    }
++    @Test void everyTravelInputChecksTheSweptBodyBeforeMovement() throws Exception {
++        var calls = calls("ChopperScaffold", "tick");
++        int safeMove = -1, speed = -1;
++        for (int i = 0; i < calls.size(); i++) {
++            var call = calls.get(i);
++            if (call.name.equals("safeMove")) safeMove = i;
++            if (call.owner.endsWith("BorerAreaFlightSession") && call.name.equals("speed") && speed < 0) speed = i;
++        }
++        assertTrue(safeMove >= 0 && speed > safeMove);
++        assertTrue(names("ChopperScaffold", "safeMove").containsAll(List.of("getBoundingBox", "expandTowards", "noCollision", "recoverCollision")));
++        var recoveryChecks = read("ChopperScaffold").methods.stream()
++            .filter(m -> m.name.startsWith("lambda$recoverCollision$")).toList();
++        assertEquals(2, recoveryChecks.size());
++        for (var method : recoveryChecks) {
++            boolean checksBody = false;
++            for (var instruction : method.instructions)
++                if (instruction instanceof MethodInsnNode call && call.name.equals("safeBox")) checksBody = true;
++            assertTrue(checksBody, method.name);
++        }
++    }
++    @Test void aFeetOnlyOpeningCannotBecomeAWorkPositionOrFlightRoute() {
++        ChopperPlatformPlan.World world = new ChopperPlatformPlan.World() {
++            public boolean clear(BlockPos p) {
++                return p.getZ() == 0 && (p.getY() == 0 && p.getX() >= 0 && p.getX() <= 4
++                    || p.equals(new BlockPos(0, 1, 0)));
++            }
++            public boolean replaceable(BlockPos p) { return true; }
++            public boolean floor(BlockPos p) { return true; }
++        };
++        assertTrue(BorerFlyPath.open(world, BlockPos.ZERO));
++        assertFalse(BorerFlyPath.open(world, new BlockPos(1, 0, 0)));
++        assertNull(ChopperPlatformPlan.choose(world, new Vec3(.5, 0, .5), List.of(new BlockPos(4, 0, 0)), 4.5));
++        assertTrue(BorerFlyPath.findExact(world, BlockPos.ZERO, new BlockPos(4, 0, 0), 8, 100).nodes().isEmpty());
++    }
++}

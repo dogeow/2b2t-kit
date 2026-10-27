@@ -1,0 +1,229 @@
+diff --git a/src/client/java/dev/twob2tkit/chopper/AutoChopper.java b/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
+--- a/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
++++ b/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
+@@ -801,51 +801,9 @@
+ 	private static boolean disposableGrass(BlockState state) { return state.is(net.minecraft.world.level.block.Blocks.SHORT_GRASS) || state.is(net.minecraft.world.level.block.Blocks.FERN); }
+ 	private boolean selectTool(Minecraft client, BlockPos pos) {
+ 		if (client.level != null && client.level.getBlockState(pos).is(BlockTags.LEAVES)) {
+-			return (leavesEnabled() ? selectShears(client) : selectAxe(client)) || selectSafeHand(client);
+-		}
+-		return selectAxe(client) || selectSafeHand(client);
+-	}
+-
+-	/** 快捷栏或背包换出斧子。 */
+-	private boolean selectAxe(Minecraft client) {
+-		return selectToolType(client, AxeItem.class);
+-	}
+-
+-	/** 快捷栏或背包换出剪刀。 */
+-	private boolean selectShears(Minecraft client) {
+-		return selectToolType(client, ShearsItem.class);
+-	}
+-
+-	private boolean selectToolType(Minecraft client, Class<? extends Item> type) {
+-		Inventory inventory = client.player.getInventory();
+-		int slot = ChopperToolPolicy.chooseSlot(inventory.getSelectedSlot(), 36,
+-			index -> usableTool(inventory.getItem(index), type));
+-		if (slot < 0) return false;
+-		selectSlot(client, slot);
+-		return usableTool(client.player.getMainHandItem(), type);
+-	}
+-
+-	private static boolean usableTool(ItemStack stack, Class<? extends Item> type) {
+-		return type.isInstance(stack.getItem())
+-			&& !ChopperToolPolicy.tooWorn(stack.getMaxDamage() - stack.getDamageValue(), stack.getMaxDamage());
+-	}
+-
+-	/** 空手优先；背包全满时可用不可损物品，绝不留下另一件磨损工具。 */
+-	private boolean selectSafeHand(Minecraft client) {
+-		Inventory inventory = client.player.getInventory();
+-		int slot = ChopperToolPolicy.chooseSlot(inventory.getSelectedSlot(), 36, index -> inventory.getItem(index).isEmpty());
+-		if (slot < 0) slot = ChopperToolPolicy.chooseSlot(inventory.getSelectedSlot(), 36,
+-			index -> !inventory.getItem(index).isDamageableItem());
+-		if (slot < 0) return false;
+-		selectSlot(client, slot);
+-		return !client.player.getMainHandItem().isDamageableItem();
+-	}
+-
+-	private static void selectSlot(Minecraft client, int slot) {
+-		LocalPlayer player = client.player;
+-		Inventory inventory = player.getInventory();
+-		if (slot < 9) inventory.setSelectedSlot(slot);
+-		else client.gameMode.handleContainerInput(player.containerMenu.containerId, slot, inventory.getSelectedSlot(), ContainerInput.SWAP, player);
++			return ChopperTools.select(client, leavesEnabled() ? ShearsItem.class : AxeItem.class);
++		}
++		return ChopperTools.select(client, AxeItem.class);
+ 	}
+ 
+ 	/** 把指定物品握到主手（或副手已有则用副手）；找不到返回 null。 */
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperScaffold.java b/src/client/java/dev/twob2tkit/chopper/ChopperScaffold.java
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperScaffold.java
++++ b/src/client/java/dev/twob2tkit/chopper/ChopperScaffold.java
+@@ -199,7 +199,7 @@
+             }
+             var hit=BorerAim.firstMineable(c,p,cell,b->b.equals(cell));
+             if(hit==null)throw new IllegalStateException("平台被遮挡，未挖其他方块");
+-            selectShovel(c);ChopperKeys.lookAt(p,BorerAim.lookAlongRay(p.getEyePosition(),hit));c.hitResult=hit;c.crosshairPickEntity=null;c.options.keyAttack.setDown(false);
++            ChopperTools.require(c,ShovelItem.class);ChopperKeys.lookAt(p,BorerAim.lookAlongRay(p.getEyePosition(),hit));c.hitResult=hit;c.crosshairPickEntity=null;c.options.keyAttack.setDown(false);
+             if(ticks==1)c.gameMode.startDestroyBlock(cell,hit.getDirection());else c.gameMode.continueDestroyBlock(cell,hit.getDirection());return true;
+         }
+         if(phase==Phase.RETURN_LAND){
+@@ -321,10 +321,5 @@
+ 			return c.player.getMainHandItem().is(Items.DIRT);
+ 		}return false;
+ 	}
+-	private static void selectShovel(Minecraft c){
+-		var inv=c.player.getInventory();for(int i=0;i<36;i++)if(inv.getItem(i).getItem() instanceof ShovelItem){
+-			if(i<9)inv.setSelectedSlot(i);else c.gameMode.handleContainerInput(c.player.containerMenu.containerId,i,inv.getSelectedSlot(),ContainerInput.SWAP,c.player);return;
+-		}
+-	}
+ 	private static void log(Minecraft c,String s){ChopperFileLog.append(c,AutoChopper.VERSION,s);}
+ }
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperLoot.java b/src/client/java/dev/twob2tkit/chopper/ChopperLoot.java
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperLoot.java
++++ b/src/client/java/dev/twob2tkit/chopper/ChopperLoot.java
+@@ -11,8 +11,10 @@
+ import net.minecraft.world.entity.item.ItemEntity;
+ import net.minecraft.world.entity.player.Inventory;
+ import net.minecraft.world.item.Item;
++import net.minecraft.world.item.AxeItem;
+ import net.minecraft.world.item.ItemStack;
+ import net.minecraft.world.item.Items;
++import net.minecraft.world.item.ShearsItem;
+ import net.minecraft.world.phys.AABB;
+ import net.minecraft.world.phys.BlockHitResult;
+ import net.minecraft.world.phys.Vec3;
+@@ -397,6 +399,7 @@
+ 			ChopperKeys.holdStill(client);
+ 			return true;
+ 		}
++		ChopperTools.require(client, collectLeaves ? ShearsItem.class : AxeItem.class);
+ 		client.hitResult = freshHit;
+ 		client.crosshairPickEntity = null;
+ 		if (fresh || leafObstacleTicks > 0 && leafObstacleTicks % LEAF_RETRY_TICKS == 0) {
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperTools.java b/src/client/java/dev/twob2tkit/chopper/ChopperTools.java
+new file mode 100644
+--- /dev/null
++++ b/src/client/java/dev/twob2tkit/chopper/ChopperTools.java
+@@ -0,0 +1,52 @@
++package dev.twob2tkit.chopper;
++
++import net.minecraft.client.Minecraft;
++import net.minecraft.world.inventory.ContainerInput;
++import net.minecraft.world.item.Item;
++import net.minecraft.world.item.ItemStack;
++
++/** One durability rule for tree blocks, pickup obstructions and owned platform cleanup. */
++final class ChopperTools {
++    private ChopperTools() {}
++
++    static boolean select(Minecraft client, Class<? extends Item> type) {
++        return selectToolType(client, type) || selectSafeHand(client);
++    }
++
++    static void require(Minecraft client, Class<? extends Item> type) {
++        if (!select(client, type))
++            throw new IllegalStateException("没有可安全使用的工具或空手槽位，已停止以保留工具耐久");
++    }
++
++    private static boolean selectToolType(Minecraft client, Class<? extends Item> type) {
++        var inventory = client.player.getInventory();
++        int slot = ChopperToolPolicy.chooseSlot(inventory.getSelectedSlot(), 36,
++            index -> usableTool(inventory.getItem(index), type));
++        if (slot < 0) return false;
++        selectSlot(client, slot);
++        return usableTool(client.player.getMainHandItem(), type);
++    }
++
++    private static boolean usableTool(ItemStack stack, Class<? extends Item> type) {
++        return type.isInstance(stack.getItem())
++            && !ChopperToolPolicy.tooWorn(stack.getMaxDamage() - stack.getDamageValue(), stack.getMaxDamage());
++    }
++
++    /** Prefer an empty slot; a full inventory may use an item that has no durability to consume. */
++    private static boolean selectSafeHand(Minecraft client) {
++        var inventory = client.player.getInventory();
++        int slot = ChopperToolPolicy.chooseSlot(inventory.getSelectedSlot(), 36, index -> inventory.getItem(index).isEmpty());
++        if (slot < 0) slot = ChopperToolPolicy.chooseSlot(inventory.getSelectedSlot(), 36,
++            index -> !inventory.getItem(index).isDamageableItem());
++        if (slot < 0) return false;
++        selectSlot(client, slot);
++        return !client.player.getMainHandItem().isDamageableItem();
++    }
++
++    private static void selectSlot(Minecraft client, int slot) {
++        var player = client.player;
++        var inventory = player.getInventory();
++        if (slot < 9) inventory.setSelectedSlot(slot);
++        else client.gameMode.handleContainerInput(player.containerMenu.containerId, slot, inventory.getSelectedSlot(), ContainerInput.SWAP, player);
++    }
++}
+diff --git a/src/test/java/dev/twob2tkit/chopper/ChopperToolWiringTest.java b/src/test/java/dev/twob2tkit/chopper/ChopperToolWiringTest.java
+--- a/src/test/java/dev/twob2tkit/chopper/ChopperToolWiringTest.java
++++ b/src/test/java/dev/twob2tkit/chopper/ChopperToolWiringTest.java
+@@ -7,32 +7,32 @@
+ import static org.junit.jupiter.api.Assertions.*;
+ 
+ class ChopperToolWiringTest {
+-    private ClassNode read() throws Exception {
++    private ClassNode read(String owner) throws Exception {
+         var node = new ClassNode();
+-        try (var in = getClass().getResourceAsStream("/dev/twob2tkit/chopper/AutoChopper.class")) {
++        try (var in = getClass().getResourceAsStream("/dev/twob2tkit/chopper/" + owner + ".class")) {
+             assertNotNull(in);
+             new ClassReader(in).accept(node, 0);
+         }
+         return node;
+     }
+-    private MethodNode method(String name) throws Exception {
+-        return read().methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
++    private MethodNode method(String owner, String name) throws Exception {
++        return read(owner).methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
+     }
+-    private List<String> calls(String name) throws Exception {
++    private List<String> calls(String owner, String name) throws Exception {
+         var calls = new ArrayList<String>();
+-        for (var instruction : method(name).instructions)
++        for (var instruction : method(owner, name).instructions)
+             if (instruction instanceof MethodInsnNode call) calls.add(call.name);
+         return calls;
+     }
+     @Test void axeAndShearsUseTheSameDurabilityCheckedSelection() throws Exception {
+-        assertTrue(calls("selectAxe").contains("selectToolType"));
+-        assertTrue(calls("selectShears").contains("selectToolType"));
+-        assertTrue(calls("selectToolType").containsAll(List.of("chooseSlot", "usableTool", "selectSlot")));
+-        assertTrue(calls("usableTool").contains("tooWorn"));
+-        assertTrue(calls("selectSafeHand").containsAll(List.of("chooseSlot", "selectSlot", "isDamageableItem")));
++        assertTrue(calls("AutoChopper", "selectTool").contains("select"));
++        assertTrue(calls("ChopperTools", "select").containsAll(List.of("selectToolType", "selectSafeHand")));
++        assertTrue(calls("ChopperTools", "selectToolType").containsAll(List.of("chooseSlot", "usableTool", "selectSlot")));
++        assertTrue(calls("ChopperTools", "usableTool").contains("tooWorn"));
++        assertTrue(calls("ChopperTools", "selectSafeHand").containsAll(List.of("chooseSlot", "selectSlot", "isDamageableItem")));
+     }
+     @Test void failedSafeSelectionStopsBeforeAnyMiningAction() throws Exception {
+-        var mine = method("mine");
++        var mine = method("AutoChopper", "mine");
+         AbstractInsnNode selected = null;
+         for (var instruction : mine.instructions)
+             if (instruction instanceof MethodInsnNode call && call.name.equals("selectTool")) selected = instruction;
+@@ -50,4 +50,20 @@
+         }
+         assertTrue(stopped && returned);
+     }
++
++    @Test void platformRemovalChecksTheSameToolsAfterConfirmationAndBeforeAttacking() throws Exception {
++        var names = calls("ChopperScaffold", "tick");
++        assertTrue(names.indexOf("pending") >= 0 && names.indexOf("require") > names.indexOf("pending"));
++        assertTrue(names.indexOf("startDestroyBlock") > names.indexOf("require"));
++        assertTrue(names.indexOf("continueDestroyBlock") > names.indexOf("require"));
++    }
++
++    @Test void pickupLeafClearingChecksTheSameToolsBeforeExistingAttackInput() throws Exception {
++        var names = calls("ChopperLoot", "clearLeafObstacle");
++        assertTrue(names.indexOf("require") >= 0 && names.indexOf("clickAttack") > names.indexOf("require"));
++        assertTrue(names.indexOf("setDown") > names.indexOf("require"));
++        assertTrue(calls("ChopperTools", "require").containsAll(List.of("select", "<init>")));
++        assertTrue(java.util.stream.StreamSupport.stream(method("ChopperTools", "require").instructions.spliterator(), false)
++            .anyMatch(instruction -> instruction.getOpcode() == org.objectweb.asm.Opcodes.ATHROW));
++    }
+ }

@@ -1,0 +1,40 @@
+--- a/decision-runtime/test_material_bulk_planks.py
++++ b/decision-runtime/test_material_bulk_planks.py
+@@ -1,6 +1,7 @@
+ """Ordinary wood batching through the real catalog and isolated menu-0 executor."""
+ from copy import deepcopy
+ import json
++import os
+ from pathlib import Path
+ from tempfile import TemporaryDirectory
+ import unittest
+@@ -73,9 +74,10 @@
+             self.assertEqual(1,len(results));self.assertTrue(all(p['menu_id']==0 for op,p in client.calls))
+             self.assertFalse(any(row['count']for row in client.slots[1:5]));self.assertFalse(client.cursor['count'])
+ 
+-    @unittest.skipUnless(Path('/Applications/.minecraft/versions/26.1.2/26.1.2.jar').is_file(),'Installed native recipe JAR is unavailable')
+-    def test_installed_catalog_proves_exact_actual_oak53_and_spruce16(self):
+-        catalog=RecipeCatalog('/Applications/.minecraft/versions/26.1.2/26.1.2.jar')
++    @unittest.skipUnless(os.environ.get('MINECRAFT_TEST_CLIENT_JAR'),
++                         'Set MINECRAFT_TEST_CLIENT_JAR for installed recipe integration')
++    def test_explicit_installed_catalog_proves_exact_actual_oak53_and_spruce16(self):
++        catalog=RecipeCatalog(os.environ['MINECRAFT_TEST_CLIENT_JAR'])
+         for raw,n,before in [('minecraft:oak_log',53,8),('minecraft:spruce_log',16,0)]:
+             spec=catalog.choose(PAIRS[raw],{raw:n},2)
+             self.assertEqual({raw:[1]},spec['ingredients']);self.assertEqual(4,spec['produces'])
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -22,6 +22,13 @@
+ 
+ Python 使用 `decision-runtime/check_offline.py` 的固定离线测试集。新测试覆盖真实失败边界，外部服务使用模拟响应；不把实现细节复制成断言。
+ 
++木板与闪长岩批次回归使用自含配方 JAR，默认不依赖旧游戏安装。可选的真实配方集成检查通过 `MINECRAFT_TEST_CLIENT_JAR` 显式选择客户端版本；在 `decision-runtime/` 中使用项目 Python 环境运行：
++
++```bash
++MINECRAFT_TEST_CLIENT_JAR=/Applications/.minecraft/versions/26.2/26.2.jar \
++  python -m unittest test_material_bulk_diorite test_material_bulk_planks
++```
++
+ Java 使用 `AGENTS.md` 中的 Java 25 构建命令。高风险控制流可使用仓库现有的字节码连线测试，核对真实引擎是否仍调用安全分支。
+ 
+ 保留原始游戏操作记录和检查点。诊断输出脱敏、有界，不能泄露密钥或用巨量快照代替问题摘要。交付时明确区分代码完成、测试通过、产物已构建、已安装和联机验证。

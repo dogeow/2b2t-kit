@@ -1,0 +1,2160 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -1,10 +1,17 @@
+-# Automatically build the project and run any configured tests for every push
+-# and submitted pull request. This can help catch issues that only occur on
+-# certain platforms or Java versions, and provides a first line of defence
+-# against bad commits.
++# Build pull requests, the integration branch, and tags; other branches can be
++# checked manually without duplicating their pull-request build.
+ 
+ name: build
+-on: [pull_request, push]
++on:
++  pull_request:
++  push:
++    branches: ['26.1.2']
++    tags: ['**']
++  workflow_dispatch:
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
++  cancel-in-progress: true
+ 
+ jobs:
+   build:
+@@ -19,6 +26,11 @@
+         with:
+           java-version: '25'
+           distribution: 'microsoft'
++      - name: setup gradle cache
++        uses: gradle/actions/setup-gradle@v6
++        with:
++          cache-provider: basic
++          cache-read-only: ${{ github.event_name != 'push' || github.ref_name != github.event.repository.default_branch }}
+       - name: make gradle wrapper executable
+         run: chmod +x ./gradlew
+       - name: build
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -22,6 +22,13 @@
+ 
+ Python 使用 `decision-runtime/check_offline.py` 的固定离线测试集。新测试覆盖真实失败边界，外部服务使用模拟响应；不把实现细节复制成断言。
+ 
++木板与闪长岩批次回归使用自含配方 JAR，默认不依赖旧游戏安装。可选的真实配方集成检查通过 `MINECRAFT_TEST_CLIENT_JAR` 显式选择客户端版本；在 `decision-runtime/` 中使用项目 Python 环境运行：
++
++```bash
++MINECRAFT_TEST_CLIENT_JAR=/Applications/.minecraft/versions/26.2/26.2.jar \
++  python -m unittest test_material_bulk_diorite test_material_bulk_planks
++```
++
+ Java 使用 `AGENTS.md` 中的 Java 25 构建命令。高风险控制流可使用仓库现有的字节码连线测试，核对真实引擎是否仍调用安全分支。
+ 
+ 保留原始游戏操作记录和检查点。诊断输出脱敏、有界，不能泄露密钥或用巨量快照代替问题摘要。交付时明确区分代码完成、测试通过、产物已构建、已安装和联机验证。
+diff --git a/decision-runtime/check_offline.py b/decision-runtime/check_offline.py
+--- a/decision-runtime/check_offline.py
++++ b/decision-runtime/check_offline.py
+@@ -3,7 +3,7 @@
+ import argparse,os,subprocess,sys
+ 
+ TESTS = (
+-    'test_material_client', 'test_material_health_exit', 'test_material_shutdown',
++    'test_material_client', 'test_material_health_exit', 'test_material_shutdown', 'test_kit_cli',
+     'test_material_ground_settlement','test_material_ground_rebase','test_material_idle_ground_finish',
+     'test_native_outcome_fence','test_material_audit_cli',
+     'test_cave_escape_cli',
+@@ -12,15 +12,17 @@
+     'test_natural_block_pipeline', 'test_mud_pipeline', 'test_material_stripped_wood_pipeline',
+     'test_terrain_replace_south', 'test_terrain_replace_south_cli',
+     'test_live_snapshot', 'test_job_progress', 'test_safety_interlock', 'test_server_probe',
+-    'test_inventory_session', 'test_stack_recipe', 'test_material_manufacture', 'test_material_bulk_planks', 'test_material_bulk_diorite', 'test_craft_recovery',
++    'test_inventory_session', 'test_recipe_catalog', 'test_stack_recipe', 'test_material_manufacture', 'test_material_bulk_planks', 'test_material_bulk_diorite', 'test_craft_recovery',
+     'test_container_access', 'test_material_depots', 'test_concrete_soil', 'test_shore_concrete', 'test_concrete_shelter',
+-    'test_furnace_batches', 'test_furnace_bank', 'test_smelting_workflow', 'test_smelting_fuel', 'test_journal', 'test_decision_advisor',
++    'test_furnace_batches', 'test_processing_fuels', 'test_furnace_bank', 'test_smelting_workflow', 'test_smelting_fuel', 'test_journal', 'test_decision_advisor',
++    'test_potato_farm', 'test_wheat_farm',
++    'test_direct_clay_refill', 'test_owned_grass_refill', 'test_registered_grass_bed',
+     'test_construction_materials', 'test_construction_obstruction',
+     'test_construction_obstruction_cli', 'test_goal_workflow',
+     'test_projection_material_plan', 'test_projection_stock_plan', 'test_projection_patch_plan', 'test_projection_advice', 'test_material_jobs', 'test_material_processing',
+     'test_material_jobs_backend', 'test_projection_ready_supply', 'test_targeted_supply',
+     'test_native_pipeline_dispatch','test_backend_pipeline_context','test_material_finish_wait',
+-    'test_material_jobs_acquisition', 'test_material_discovery', 'test_snow_biome_search',
++    'test_material_jobs_acquisition', 'test_fixed_tree_ground', 'test_material_discovery', 'test_snow_biome_search',
+     'test_seed_snow_search',
+     'test_material_snow_plan', 'test_material_snow_acquisition',
+     'test_construction_access_plan', 'test_construction_access_journal', 'test_construction_access_receipts', 'test_construction_access',
+diff --git a/decision-runtime/furnace_batches.py b/decision-runtime/furnace_batches.py
+--- a/decision-runtime/furnace_batches.py
++++ b/decision-runtime/furnace_batches.py
+@@ -135,12 +135,6 @@
+             or slots[1]['count']>loaded_fuel):
+         raise RuntimeError('Furnace contents changed during batch loading; do not replay')
+     return slots[0]['count']+slots[2]['count']==loaded_source
+-
+-
+-def loading_balance(state,source,output,loaded_source,loaded_fuel,fuel_item="minecraft:coal"):
+-    """Only this batch may occupy an initially empty furnace; fuel may burn."""
+-    if not _loading_matches(state,source,output,loaded_source,loaded_fuel,fuel_item):
+-        raise RuntimeError('Furnace contents changed during batch loading; do not replay')
+ 
+ 
+ def wait_loading_balance(client,state,source,output,loaded_source,loaded_fuel,menu_id,fuel_item="minecraft:coal"):
+diff --git a/decision-runtime/material_jobs/colored_pipeline.py b/decision-runtime/material_jobs/colored_pipeline.py
+--- a/decision-runtime/material_jobs/colored_pipeline.py
++++ b/decision-runtime/material_jobs/colored_pipeline.py
+@@ -336,13 +336,3 @@
+         return {"phase":"done","item":item,"before":before,"after":after,"gained":after-before,"journal":str(path)}
+     except Pending as stop:
+         return {**stop.receipt,"journal":str(path)}
+-
+-
+-def _distribution(amount, count):
+-    if not 1 <= count <= 16:
+-        raise Pending({"phase":"waiting","code":"WAIT_FURNACE","detail":"Configure1–16 verified ordinary furnaces"})
+-    # processing.smelt loads at most 64 per furnace per wave; later waves ask
+-    # for new fuel as a prerequisite. This predicts only its next actual wave.
+-    amount=min(amount,count*64)
+-    q,r=divmod(amount,count)
+-    return [q+(i<r) for i in range(count)]
+diff --git a/decision-runtime/potato_farm.py b/decision-runtime/potato_farm.py
+--- a/decision-runtime/potato_farm.py
++++ b/decision-runtime/potato_farm.py
+@@ -306,10 +306,6 @@
+     # Ordinary carried stacks are supported by native BlockItem.useOn. Re-select
+     # only when the previous carried stack was exhausted or the hand changed.
+     return _hand(proxy, crop.item, source['slot'])
+-
+-
+-def _potato(proxy, state=None):
+-    return _seed(proxy,'potato',state)
+ 
+ 
+ def _hoe(proxy, remaining):
+diff --git a/decision-runtime/test_kit_cli.py b/decision-runtime/test_kit_cli.py
+--- a/decision-runtime/test_kit_cli.py
++++ b/decision-runtime/test_kit_cli.py
+@@ -16,6 +16,13 @@
+             'dimension': 'minecraft:overworld', 'world_session': 'world-1',
+             'control_revision': 8, 'last_request': 'prior', 'pos': [10, 90, 20],
+             'manual_movement': False, 'gravel': {'active': False, 'collected': 0}}
++
++
++def publish_json(path, payload):
++    """Match the native bridge's atomic publication of complete JSON files."""
++    temporary = path.with_suffix('.tmp')
++    temporary.write_text(json.dumps(payload))
++    temporary.replace(path)
+ 
+ 
+ class KitCliTest(unittest.TestCase):
+@@ -45,7 +52,7 @@
+                 while time.monotonic()<until:
+                     if json.loads(path.read_text()).get('id')==request['id']:
+                         reply={**request,'phase':'done','changed':False,'control_revision':8,'observed_at':int(time.time()*1000)}
+-                        (root/('projection-supply-reply-'+request['id']+'.json')).write_text(json.dumps(reply));return
++                        publish_json(root/('projection-supply-reply-'+request['id']+'.json'),reply);return
+                     time.sleep(.01)
+             worker=threading.Thread(target=respond);worker.start()
+             try:reply=send(root,request,timeout=1,supply_channel=True)
+@@ -94,10 +101,10 @@
+                     if json.loads((root/'request.json').read_text()).get('id')==request['id']:
+                         receipt=state();receipt.update(id=request['id'],last_request=request['id'],phase='done')
+                         receipt['gravel']['active']=True
+-                        (root/('reply-'+request['id']+'.json')).write_text(json.dumps(receipt))
++                        publish_json(root/('reply-'+request['id']+'.json'),receipt)
+                         overwritten=state();overwritten.update(id='native-child',last_request=request['id'],phase='running')
+                         overwritten['gravel']['active']=True
+-                        (root/'status.json').write_text(json.dumps(overwritten))
++                        publish_json(root/'status.json',overwritten)
+                         return
+                     time.sleep(.01)
+ 
+diff --git a/decision-runtime/test_material_bulk_diorite.py b/decision-runtime/test_material_bulk_diorite.py
+--- a/decision-runtime/test_material_bulk_diorite.py
++++ b/decision-runtime/test_material_bulk_diorite.py
+@@ -1,9 +1,12 @@
+ """Native 2x2 diorite batching, output capacity and exact retained inputs."""
+ from copy import deepcopy
++import json
++import os
+ from pathlib import Path
+ from tempfile import TemporaryDirectory
+ import unittest
+ from unittest.mock import patch
++import zipfile
+ 
+ from recipe_catalog import RecipeCatalog
+ from material_manufacture import _inventory_batch, manufacture
+@@ -26,7 +29,14 @@
+     def setUp(self):
+         self.temp = TemporaryDirectory()
+         self.addCleanup(self.temp.cleanup)
+-        self.catalog = RecipeCatalog('/Applications/.minecraft/versions/26.1.2/26.1.2.jar')
++        # Vanilla 26.2 recipe data; offline batching never needs a game install.
++        jar = Path(self.temp.name)/'recipes.jar'
++        with zipfile.ZipFile(jar,'w') as archive:
++            archive.writestr('data/minecraft/recipe/diorite.json',json.dumps({
++                'type':'minecraft:crafting_shaped','category':'building',
++                'key':{'C':'minecraft:cobblestone','Q':'minecraft:quartz'},
++                'pattern':['CQ','QC'],'result':{'count':2,'id':'minecraft:diorite'}}))
++        self.catalog = RecipeCatalog(jar)
+         self.spec = self.catalog.choose('minecraft:diorite',
+                                        {'minecraft:cobblestone':234, 'minecraft:quartz':234}, 2)
+ 
+@@ -38,7 +48,7 @@
+             c.slots[i].update(item=item, count=n)
+         return c
+ 
+-    def test_native_catalog_and_full_cells_make128_in_one_shift_batch(self):
++    def test_fixture_catalog_and_full_cells_make128_in_one_shift_batch(self):
+         self.assertEqual({'minecraft:cobblestone':[1,4], 'minecraft:quartz':[2,3]}, self.spec['ingredients'])
+         self.assertEqual(2, self.spec['produces'])
+         batch = _inventory_batch(self.client().status(), self.spec, 245)
+@@ -68,4 +78,15 @@
+         self.assertEqual([], c.calls)
+ 
+ 
++class InstalledDioriteRecipeTests(unittest.TestCase):
++    @unittest.skipUnless(os.environ.get('MINECRAFT_TEST_CLIENT_JAR'),
++                         'Set MINECRAFT_TEST_CLIENT_JAR for installed recipe integration')
++    def test_explicit_installed_recipe_matches_offline_contract(self):
++        catalog=RecipeCatalog(os.environ['MINECRAFT_TEST_CLIENT_JAR'])
++        spec=catalog.choose('minecraft:diorite',
++                            {'minecraft:cobblestone':234,'minecraft:quartz':234},2)
++        self.assertEqual({'minecraft:cobblestone':[1,4],'minecraft:quartz':[2,3]},spec['ingredients'])
++        self.assertEqual(2,spec['produces'])
++
++
+ if __name__ == '__main__':unittest.main()
+diff --git a/decision-runtime/test_material_bulk_planks.py b/decision-runtime/test_material_bulk_planks.py
+--- a/decision-runtime/test_material_bulk_planks.py
++++ b/decision-runtime/test_material_bulk_planks.py
+@@ -1,6 +1,7 @@
+ """Ordinary wood batching through the real catalog and isolated menu-0 executor."""
+ from copy import deepcopy
+ import json
++import os
+ from pathlib import Path
+ from tempfile import TemporaryDirectory
+ import unittest
+@@ -73,9 +74,10 @@
+             self.assertEqual(1,len(results));self.assertTrue(all(p['menu_id']==0 for op,p in client.calls))
+             self.assertFalse(any(row['count']for row in client.slots[1:5]));self.assertFalse(client.cursor['count'])
+ 
+-    @unittest.skipUnless(Path('/Applications/.minecraft/versions/26.1.2/26.1.2.jar').is_file(),'Installed native recipe JAR is unavailable')
+-    def test_installed_catalog_proves_exact_actual_oak53_and_spruce16(self):
+-        catalog=RecipeCatalog('/Applications/.minecraft/versions/26.1.2/26.1.2.jar')
++    @unittest.skipUnless(os.environ.get('MINECRAFT_TEST_CLIENT_JAR'),
++                         'Set MINECRAFT_TEST_CLIENT_JAR for installed recipe integration')
++    def test_explicit_installed_catalog_proves_exact_actual_oak53_and_spruce16(self):
++        catalog=RecipeCatalog(os.environ['MINECRAFT_TEST_CLIENT_JAR'])
+         for raw,n,before in [('minecraft:oak_log',53,8),('minecraft:spruce_log',16,0)]:
+             spec=catalog.choose(PAIRS[raw],{raw:n},2)
+             self.assertEqual({raw:[1]},spec['ingredients']);self.assertEqual(4,spec['produces'])
+diff --git a/decision-runtime/test_material_jobs_acquisition.py b/decision-runtime/test_material_jobs_acquisition.py
+--- a/decision-runtime/test_material_jobs_acquisition.py
++++ b/decision-runtime/test_material_jobs_acquisition.py
+@@ -851,7 +851,10 @@
+         for protocol in (0,1):
+             with self.subTest(protocol=protocol), tempfile.TemporaryDirectory() as out:
+                 c=FakeClient(item='minecraft:cherry_log',before=2,gain=4)
+-                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=protocol)
++                c.task='fixed-tree-fixture'
++                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=protocol,
++                    on_ground=True,flight=False,supervision_lease={'kind':'materials',
++                        'job_session':c.task,'world_session':c.world,'revision':c.rev})
+                 c.rows=[block((x,63,z),'grass_block')for x in range(-11,12)for z in range(-11,12)]
+                 c.rows += [block((0,y,0),'cherry_log')for y in range(64,68)]
+                 c.trees=[{'pos':[0,64,0],'top':68,'natural_leaves':8}]
+@@ -887,7 +890,10 @@
+         for enabled in (False,True):
+             with self.subTest(enabled=enabled),tempfile.TemporaryDirectory()as out:
+                 c=FakeClient(item='minecraft:dark_oak_log',before=2,gain=4)
+-                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=1)
++                c.task='fixed-tree-fixture'
++                c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=1,
++                    on_ground=True,flight=False,supervision_lease={'kind':'materials',
++                        'job_session':c.task,'world_session':c.world,'revision':c.rev})
+                 c.rows=[block((x,63,z),'grass_block')for x in range(-11,12)for z in range(-11,12)]
+                 c.rows += [block((x,y,z),'dark_oak_log')for x in(0,1)for z in(0,1)for y in range(64,68)]
+                 c.trees=[{'pos':[0,64,0],'top':68,'natural_leaves':8}]
+diff --git a/decision-runtime/test_owned_grass_refill.py b/decision-runtime/test_owned_grass_refill.py
+--- a/decision-runtime/test_owned_grass_refill.py
++++ b/decision-runtime/test_owned_grass_refill.py
+@@ -2,14 +2,14 @@
+ import json
+ import unittest
+ from pathlib import Path
+-from test_direct_clay_refill import Tests as DirectFixture
++import test_direct_clay_refill as fixtures
+ from material_jobs.owned_grass_refill import finish
+ from material_jobs.protocol import JobBlocked
+ 
+ 
+ class Tests(unittest.TestCase):
+     def setUp(self):
+-        DirectFixture.setUp(self)
++        fixtures.Tests.setUp(self)
+         self.c.add('minecraft:dirt',-1);self.c.blocks[(100,64,100)]='Block{minecraft:grass_block}[snowy=false]'
+         self.old=self.out/'original-grass.json'
+         self.old.write_text(json.dumps({'world_session':'world','pos':[100,64,100],'water_request':'bottle-original',
+diff --git a/decision-runtime/test_registered_grass_bed.py b/decision-runtime/test_registered_grass_bed.py
+--- a/decision-runtime/test_registered_grass_bed.py
++++ b/decision-runtime/test_registered_grass_bed.py
+@@ -1,13 +1,13 @@
+ import json,unittest
+ from unittest.mock import patch
+-from test_direct_clay_refill import Tests as DirectFixture
++import test_direct_clay_refill as fixtures
+ from material_jobs import registered_grass_bed as m
+ from material_jobs.protocol import JobBlocked
+ 
+ 
+ class Tests(unittest.TestCase):
+     def setUp(self):
+-        DirectFixture.setUp(self)
++        fixtures.Tests.setUp(self)
+         self.c.blocks[(100,64,100)]='Block{minecraft:grass_block}[snowy=false]'
+         self.c.root=self.out
+         request=self.c.request
+diff --git a/decision-runtime/test_targeted_supply.py b/decision-runtime/test_targeted_supply.py
+--- a/decision-runtime/test_targeted_supply.py
++++ b/decision-runtime/test_targeted_supply.py
+@@ -287,14 +287,27 @@
+         self.job.fetch_packed.assert_not_called()
+ 
+     def test_obstructed_chest_uses_real_vertical_scan_and_never_approaches(self):
++        self.job.profile['depots'] = [[1,64,1]]
+         self.client.request = Mock(return_value={'blocks':[
+             {'pos':[1,64,1],'state':'Block{minecraft:chest}[facing=north]'},
+             {'pos':[1,65,1],'state':'Block{minecraft:stone}'},
+         ]})
+-        with self.assertRaisesRegex(RuntimeError,'landing column is obstructed'):
+-            self.job.fetch({'minecraft:stone':64})
++        with patch.object(self.client,'transfer',wraps=self.client.transfer) as transfer:
++            result=self.job.fetch({'minecraft:stone':64})
++        self.assertEqual('waiting',result['phase'])
++        self.assertEqual({'minecraft:stone':64},result['missing'])
++        self.assertEqual([[1,64,1]],result['unavailable_sources'])
+         self.client.request.assert_called_once_with('scan',min=[1,64,1],max=[1,70,1],details=True)
++        transfer.assert_not_called()
++        self.job.close_owned_menu.assert_not_called()
+         self.assertFalse(self.client.calls)
++        source=json.loads((self.root/'sources.json').read_text())[0]
++        self.assertEqual('unavailable',source['phase'])
++        self.assertEqual('landing_column_obstructed',source['reason'])
++        self.assertEqual('landing_column_obstructed',source['scan_evidence']['reason'])
++        self.assertEqual('Block{minecraft:chest}[facing=north]',source['scan_evidence']['observed_state'])
++        self.assertEqual([1,70,1],source['scan_evidence']['scan']['max'])
++        self.assertEqual(self.client.request.return_value['blocks'],source['scan_evidence']['scan']['blocks'])
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/src/client/java/dev/twob2tkit/ClickGuiPages.java b/src/client/java/dev/twob2tkit/ClickGuiPages.java
+--- a/src/client/java/dev/twob2tkit/ClickGuiPages.java
++++ b/src/client/java/dev/twob2tkit/ClickGuiPages.java
+@@ -837,18 +837,6 @@
+         return String.format(Locale.ROOT,"%s · %s · X %.0f Y %.0f Z %.0f · %s",origin,dimension,config.deathX,config.deathY,config.deathZ,time);
+     }
+ 
+-	/** 区域断面快捷 chip。 */
+-	private static KitFormScreen.Chip chipAreaSize(KitConfig config, String label, int w, int h) {
+-		return new KitFormScreen.Chip(label,
+-			() -> config.borerWidth == w && config.borerAreaSliceHeight == h,
+-			() -> {
+-				config.borerWidth = w;
+-				config.borerHeight = h;
+-				config.borerAreaSliceHeight = h;
+-				config.save();
+-			});
+-	}
+-
+ 	/** 巷道断面快捷 chip。 */
+ 	private static KitFormScreen.Chip chipSize(KitConfig config, String label, int w, int h) {
+ 		return new KitFormScreen.Chip(label,
+@@ -886,44 +874,6 @@
+ 		config.save();
+ 	}
+ 
+-	/** 写巡航坐标；支持粘贴传送文本。 */
+-	private static void setCoord(KitConfig config, String raw, char axis) {
+-		KitUi.TeleportCoords parsed = KitUi.parseTeleport(raw);
+-		if (parsed != null) {
+-			config.targetX = parsed.x();
+-			config.targetZ = parsed.z();
+-			if (parsed.y() != null) config.cruiseY = parsed.y();
+-			config.hasTarget = true;
+-			config.save();
+-			return;
+-		}
+-		try {
+-			double value = Double.parseDouble(raw.trim());
+-			if (!Double.isFinite(value)) return;
+-			if (axis == 'x') {
+-				config.targetX = value;
+-				config.hasTarget = true;
+-			} else if (axis == 'z') {
+-				config.targetZ = value;
+-				config.hasTarget = true;
+-			} else {
+-				config.cruiseY = value;
+-			}
+-			config.save();
+-		} catch (NumberFormatException ignored) {
+-		}
+-	}
+-
+-	/** 玩家当前 X。 */
+-	private static double currentX() {
+-		return mc().player == null ? 0 : mc().player.getX();
+-	}
+-
+-	/** 玩家当前 Z。 */
+-	private static double currentZ() {
+-		return mc().player == null ? 0 : mc().player.getZ();
+-	}
+-
+ 	/** 当前客户端实例。 */
+ 	private static Minecraft mc() {
+ 		return Minecraft.getInstance();
+diff --git a/src/client/java/dev/twob2tkit/SessionLog.java b/src/client/java/dev/twob2tkit/SessionLog.java
+--- a/src/client/java/dev/twob2tkit/SessionLog.java
++++ /dev/null
+@@ -1,38 +0,0 @@
+-package dev.twob2tkit;
+-
+-import net.minecraft.client.Minecraft;
+-
+-/** 单个功能的诊断日志：start/stop/periodic/once。 */
+-public final class SessionLog {
+-	private final String module;
+-	private String last = "";
+-	private int ticks;
+-
+-	public SessionLog(String module) {
+-		this.module = module;
+-	}
+-
+-	/** 清上次文案与周期计数。 */
+-	public void reset() {
+-		last = "";
+-		ticks = 0;
+-	}
+-
+-	/** 无条件写一行并记作上次文案。 */
+-	public void append(Minecraft client, String line) {
+-		ModuleFileLog.append(client, module, line);
+-		last = line;
+-	}
+-
+-	/** 与上次相同则跳过，避免刷屏。 */
+-	public void once(Minecraft client, String line) {
+-		if (line.equals(last)) return;
+-		append(client, line);
+-	}
+-
+-	/** 每约 2 秒（40 tick）为 true，供周期摘要。 */
+-	public boolean due() {
+-		ticks++;
+-		return ticks % 40 == 0;
+-	}
+-}
+diff --git a/src/client/java/dev/twob2tkit/adventure/AdventureScreen.java b/src/client/java/dev/twob2tkit/adventure/AdventureScreen.java
+--- a/src/client/java/dev/twob2tkit/adventure/AdventureScreen.java
++++ /dev/null
+@@ -1,27 +0,0 @@
+-package dev.twob2tkit.adventure;
+-
+-import net.minecraft.client.gui.screens.Screen;
+-import net.minecraft.network.chat.Component;
+-import dev.twob2tkit.AssistHomeScreen;
+-import dev.twob2tkit.KitConfig;
+-import dev.twob2tkit.KitController;
+-import dev.twob2tkit.KitHudScreen;
+-
+-/** 旧入口，转到顶部「助手」标签。 */
+-public final class AdventureScreen extends KitHudScreen {
+-	private final KitConfig config;
+-	private final KitController controller;
+-
+-	/** 旧助手入口，打开后立刻跳到 AssistHomeScreen。 */
+-	public AdventureScreen(Screen parent, KitConfig config, KitController controller) {
+-		super(Component.literal("助手"), parent);
+-		this.config = config;
+-		this.controller = controller;
+-	}
+-
+-	@Override
+-	/** 关掉本屏，改开助手首页。 */
+-	protected void init() {
+-		this.minecraft.gui.setScreen(new AssistHomeScreen(config, controller));
+-	}
+-}
+diff --git a/src/client/java/dev/twob2tkit/automation/PrinterPulse.java b/src/client/java/dev/twob2tkit/automation/PrinterPulse.java
+--- a/src/client/java/dev/twob2tkit/automation/PrinterPulse.java
++++ /dev/null
+@@ -1,7 +0,0 @@
+-package dev.twob2tkit.automation;
+-
+-/** Leave time for the native printer queue and multiplayer inventory/block updates. */
+-public final class PrinterPulse {
+-    private PrinterPulse() {}
+-    public static boolean allowProposal(int elapsedTicks){return elapsedTicks%20==0;}
+-}
+diff --git a/src/client/java/dev/twob2tkit/borer/BorerHotReloadPolicy.java b/src/client/java/dev/twob2tkit/borer/BorerHotReloadPolicy.java
+--- a/src/client/java/dev/twob2tkit/borer/BorerHotReloadPolicy.java
++++ /dev/null
+@@ -1,20 +0,0 @@
+-package dev.twob2tkit.borer;
+-
+-/** 外部引擎 jar 换新后，等复制完成再热加载。 */
+-public final class BorerHotReloadPolicy {
+-	/** 文件修改时间连续不变多久才算写稳（tick）。 */
+-	public static final int STABLE_TICKS = 40;
+-
+-	private BorerHotReloadPolicy() {
+-	}
+-
+-	/** 磁盘 jar 是否比已加载副本更新。 */
+-	public static boolean jarNewer(long loadedMtime, long fileMtime) {
+-		return fileMtime > loadedMtime;
+-	}
+-
+-	/** 同一 mtime 已持续足够 tick，可以安全热加载。 */
+-	public static boolean stable(int sameMtimeTicks, int needTicks) {
+-		return sameMtimeTicks >= needTicks;
+-	}
+-}
+diff --git a/src/client/java/dev/twob2tkit/borer/BorerScreenHud.java b/src/client/java/dev/twob2tkit/borer/BorerScreenHud.java
+--- a/src/client/java/dev/twob2tkit/borer/BorerScreenHud.java
++++ /dev/null
+@@ -1,66 +0,0 @@
+-package dev.twob2tkit.borer;
+-
+-import net.minecraft.client.Minecraft;
+-import net.minecraft.client.gui.Font;
+-import net.minecraft.client.gui.GuiGraphicsExtractor;
+-
+-import java.util.ArrayList;
+-import java.util.List;
+-import dev.twob2tkit.KitUi;
+-
+-/** 挖矿状态画在屏幕正中下方，不跟镜头、不跟人物晃。 */
+-public final class BorerScreenHud {
+-	private static volatile boolean visible;
+-	private static volatile String action = "";
+-	private static volatile String detail = "";
+-	private static volatile int color = 0xFFFF55;
+-
+-	private BorerScreenHud() {
+-	}
+-
+-	/** 显示主行与可选详情；动作为空则隐藏。 */
+-	public static void show(String actionText, int rgb, String detailText) {
+-		action = actionText == null ? "" : actionText;
+-		detail = detailText == null ? "" : detailText;
+-		color = rgb;
+-		visible = !action.isBlank();
+-	}
+-
+-	/** 关掉面板。 */
+-	public static void hide() {
+-		visible = false;
+-	}
+-
+-	/** 在 GUI 层画半透明底 + 居中换行文字。 */
+-	public static void render(Minecraft client, GuiGraphicsExtractor graphics) {
+-		if (!visible || client == null || graphics == null || client.player == null) return;
+-		if (client.gui.hud.isHidden() || dev.twob2tkit.hud.WorkHud.current()!=null) return;
+-		String actionText = action;
+-		String detailText = detail;
+-		int rgb = color;
+-		if (actionText == null || actionText.isBlank()) return;
+-		Font font = client.font;
+-		int maxW = Math.min(280, Math.max(80, graphics.guiWidth() - 24));
+-		List<String> lines = new ArrayList<>();
+-		lines.addAll(KitUi.wrap(font, actionText, maxW));
+-		if (detailText != null && !detailText.isBlank()) {
+-			lines.addAll(KitUi.wrap(font, detailText, maxW));
+-		}
+-		int lineH = 11;
+-		int pad = 5;
+-		int width = 48;
+-		for (String line : lines) width = Math.max(width, font.width(line) + 14);
+-		width = Math.min(maxW + 14, width);
+-		int height = pad * 2 + lines.size() * lineH;
+-		int x = (graphics.guiWidth() - width) / 2;
+-		int y = graphics.guiHeight() / 2 + 22;
+-		graphics.nextStratum();
+-		graphics.fill(x, y, x + width, y + height, 0xC0101018);
+-		int textY = y + pad;
+-		int center = graphics.guiWidth() / 2;
+-		for (int i = 0; i < lines.size(); i++) {
+-			KitUi.centered(graphics, font, lines.get(i), center, textY, i == 0 ? rgb : 0xC0C0C0);
+-			textY += lineH;
+-		}
+-	}
+-}
+diff --git a/src/client/java/dev/twob2tkit/builder/BuildMovement.java b/src/client/java/dev/twob2tkit/builder/BuildMovement.java
+--- a/src/client/java/dev/twob2tkit/builder/BuildMovement.java
++++ /dev/null
+@@ -1,7 +0,0 @@
+-package dev.twob2tkit.builder;
+-/** Legacy depot movement policy; projection motion lives in the reloadable navigation engine. */
+-public final class BuildMovement {
+-    private BuildMovement(){}
+-    public static boolean vertical(double dy){return dy>.015 || dy<-.08;}
+-    public static boolean arrived(double dx,double dy,double dz){return Math.hypot(dx,dz)<.12 && !vertical(dy);}
+-}
+diff --git a/src/client/java/dev/twob2tkit/builder/BuildStations.java b/src/client/java/dev/twob2tkit/builder/BuildStations.java
+--- a/src/client/java/dev/twob2tkit/builder/BuildStations.java
++++ /dev/null
+@@ -1,18 +0,0 @@
+-package dev.twob2tkit.builder;
+-import net.minecraft.core.BlockPos;
+-import java.util.*;
+-/** Candidate feet cells; live collision, eye reach and ray checks remain mandatory. */
+-public final class BuildStations {
+-    private BuildStations(){}
+-    public static List<BlockPos> around(BlockPos target){
+-        var cells=new ArrayList<BlockPos>();
+-        for(int dx=-3;dx<=3;dx++)for(int dz=-3;dz<=3;dz++)for(int dy=-3;dy<=2;dy++){
+-            // Feet are centered at +.5,+.02,+.5; approximate standing eye height is 1.62.
+-            double eyeDeltaY=dy+1.14;
+-            if(dx*dx+dz*dz+eyeDeltaY*eyeDeltaY>4.15*4.15)continue;
+-            if(dx==0&&dz==0&&dy<=0)continue; // Never stand inside the block being placed.
+-            cells.add(target.offset(dx,dy,dz));
+-        }
+-        return cells;
+-    }
+-}
+diff --git a/src/client/java/dev/twob2tkit/chopper/AutoChopper.java b/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
+--- a/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
++++ b/src/client/java/dev/twob2tkit/chopper/AutoChopper.java
+@@ -20,6 +20,8 @@
+ import net.minecraft.world.item.Item;
+ import net.minecraft.world.item.ShearsItem;
+ import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.Mob;
++import net.minecraft.world.entity.animal.golem.IronGolem;
+ import net.minecraft.world.entity.monster.Enemy;
+ import net.minecraft.world.item.ItemStack;
+ import net.minecraft.world.level.block.state.BlockState;
+@@ -45,8 +47,6 @@
+ public final class AutoChopper {
+ 	/** 挖树主机逻辑版本（打进诊断日志）。 */
+ 	public static final String VERSION = "1.9.54";
+-	/** 无进度时多久再点一次攻击（tick）。 */
+-	private static final int RETRY_TICKS = 40;
+ 	/** 挖不动多久跳过这块（tick）。 */
+ 	private static final int STALL_TICKS = 200;
+ 	/** 走近卡住多久换树（tick）。 */
+@@ -94,9 +94,6 @@
+ 	private boolean currentTreeOpen;
+ 	private int logTicks;
+ 	private String lastFileLog = "";
+-	private double flightHorizBest = Double.MAX_VALUE;
+-	private int flightHorizTicks;
+-	private BlockPos flightDest;
+ 
+ 	public AutoChopper(KitConfig config) {
+ 		this.config = config;
+@@ -490,7 +487,6 @@
+ 			if (mineTarget != null && mineTarget.equals(pos)) mineTarget = null;
+ 			return false;
+ 		}
+-		boolean fresh = !pos.equals(mineTarget) || mineTicks == 0;
+ 		if (!pos.equals(mineTarget)) {
+ 			mineTarget = pos.immutable();
+ 			mineTicks = 0;
+@@ -532,7 +528,10 @@
+ 			ChopperKeys.releaseMine(client);
+ 			return false;
+ 		}
+-		selectTool(client, aimed.getBlockPos());
++		if (!selectTool(client, aimed.getBlockPos())) {
++			stop(client,"没有可安全使用的工具或空手槽位，已停止以保留工具耐久");
++			return false;
++		}
+ 		client.hitResult = aimed;
+ 		client.crosshairPickEntity = null;
+ 		client.options.keyAttack.setDown(false);
+@@ -619,9 +618,9 @@
+ 	}
+ 
+ 	/**
+-	 * 走近目标格：卡住则整棵忽略；可选飞行。
++	 * 经已验证的工作位路线接近；无法到达时停止或推迟补种。
+ 	 *
+-	 * @return false 卡住已放弃；true 本拍已写入移动
++	 * @return false 已交给工作位流程、停止或推迟；true 正在返回补种站位
+ 	 */
+ 	private boolean approach(Minecraft client, LocalPlayer player, BlockPos dest) {
+ 		if (player.isPassenger()) {
+@@ -733,9 +732,6 @@
+ 		lastDestroyStage = -1;
+ 		approach.reset();
+ 		mineLook = null;
+-		flightDest = null;
+-		flightHorizBest = Double.MAX_VALUE;
+-		flightHorizTicks = 0;
+ 		ChopperKeys.resetSmoothLook();
+ 		combatPauseTicks = 0;
+ 		currentTreeOpen = false;
+@@ -746,7 +742,7 @@
+ 	private boolean updateCombatPause(Minecraft client, LocalPlayer player) {
+ 		String combat = BorerThreats.combatPauseReason(player);
+ 		String nearby = nearbyHostile(client, player);
+-		if (combat != null || nearby != null) combatPauseTicks = 40;
++		if (ChopperCombatPolicy.shouldPause(combat != null, nearby != null)) combatPauseTicks = 40;
+ 		if (combatPauseTicks <= 0) return false;
+ 		combatPauseTicks--;
+ 		mineLook = null;
+@@ -759,17 +755,36 @@
+ 		return true;
+ 	}
+ 
+-	/** 半径内最近敌对生物显示名；没有则 null。 */
++	/** 半径内敌对生物或已交战傀儡的显示名；没有则 null。 */
+ 	private static String nearbyHostile(Minecraft client, LocalPlayer player) {
+ 		if (client.level == null) return null;
+-		double radius = 8.0;
++		double radius = ChopperCombatPolicy.RADIUS;
+ 		AABB box = player.getBoundingBox().inflate(radius);
++		Entity auraTarget = activeAuraTarget();
+ 		for (Entity entity : client.level.getEntities(player, box)) {
+-			if (!(entity instanceof Enemy) || !entity.isAlive()) continue;
++			if (!entity.isAlive()) continue;
+ 			if (player.distanceTo(entity) > radius) continue;
++			boolean recentAttacker = ChopperCombatPolicy.recentAttacker(entity == player.getLastHurtByMob(),
++				player.tickCount - player.getLastHurtByMobTimestamp());
++			if (!ChopperCombatPolicy.isThreat(entity instanceof Enemy, entity instanceof IronGolem,
++				entity instanceof Mob mob && mob.getTarget() == player, recentAttacker, entity == auraTarget)) continue;
+ 			return entity.getName().getString();
+ 		}
+ 		return null;
++	}
++
++	/** 可选 Meteor 集成只读当前目标，不修改模块开关或用户的目标设置。 */
++	private static Entity activeAuraTarget() {
++		try {
++			Class<?> registry = Class.forName("meteordevelopment.meteorclient.systems.modules.Modules");
++			Class<?> type = Class.forName(dev.twob2tkit.MeteorModules.KILL_AURA);
++			Object module = registry.getMethod("get", Class.class).invoke(registry.getMethod("get").invoke(null), type);
++			if (module == null || !Boolean.TRUE.equals(type.getMethod("isActive").invoke(module))) return null;
++			Object target = type.getMethod("getTarget").invoke(module);
++			return target instanceof Entity entity ? entity : null;
++		} catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
++			return null;
++		}
+ 	}
+ 
+ 	/** 目标仍是可砍原木，或（勾选/还在砍树时）可砍树叶。 */
+@@ -784,48 +799,11 @@
+ 
+ 	/** 树叶换剪刀，否则换斧。 */
+ 	private static boolean disposableGrass(BlockState state) { return state.is(net.minecraft.world.level.block.Blocks.SHORT_GRASS) || state.is(net.minecraft.world.level.block.Blocks.FERN); }
+-	private void selectTool(Minecraft client, BlockPos pos) {
++	private boolean selectTool(Minecraft client, BlockPos pos) {
+ 		if (client.level != null && client.level.getBlockState(pos).is(BlockTags.LEAVES)) {
+-			if(leavesEnabled())selectShears(client);else selectAxe(client);
+-			return;
+-		}
+-		selectAxe(client);
+-	}
+-
+-	/** 快捷栏或背包换出斧子。 */
+-	private void selectAxe(Minecraft client) {
+-		LocalPlayer player = client.player;
+-		if (player.getMainHandItem().getItem() instanceof AxeItem) return;
+-		Inventory inventory = player.getInventory();
+-		for (int slot = 0; slot < 9; slot++) {
+-			if (inventory.getItem(slot).getItem() instanceof AxeItem) {
+-				inventory.setSelectedSlot(slot);
+-				return;
+-			}
+-		}
+-		for (int slot = 9; slot < 36; slot++) {
+-			if (!(inventory.getItem(slot).getItem() instanceof AxeItem)) continue;
+-			client.gameMode.handleContainerInput(player.containerMenu.containerId, slot, inventory.getSelectedSlot(), ContainerInput.SWAP, player);
+-			return;
+-		}
+-	}
+-
+-	/** 快捷栏或背包换出剪刀。 */
+-	private void selectShears(Minecraft client) {
+-		LocalPlayer player = client.player;
+-		if (player.getMainHandItem().getItem() instanceof ShearsItem) return;
+-		Inventory inventory = player.getInventory();
+-		for (int slot = 0; slot < 9; slot++) {
+-			if (inventory.getItem(slot).getItem() instanceof ShearsItem) {
+-				inventory.setSelectedSlot(slot);
+-				return;
+-			}
+-		}
+-		for (int slot = 9; slot < 36; slot++) {
+-			if (!(inventory.getItem(slot).getItem() instanceof ShearsItem)) continue;
+-			client.gameMode.handleContainerInput(player.containerMenu.containerId, slot, inventory.getSelectedSlot(), ContainerInput.SWAP, player);
+-			return;
+-		}
++			return ChopperTools.select(client, leavesEnabled() ? ShearsItem.class : AxeItem.class);
++		}
++		return ChopperTools.select(client, AxeItem.class);
+ 	}
+ 
+ 	/** 把指定物品握到主手（或副手已有则用副手）；找不到返回 null。 */
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperApproachPolicy.java b/src/client/java/dev/twob2tkit/chopper/ChopperApproachPolicy.java
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperApproachPolicy.java
++++ /dev/null
+@@ -1,75 +0,0 @@
+-package dev.twob2tkit.chopper;
+-
+-/**
+- * 挖树走近：补种/走向树干时树叶挡路。
+- * <p>
+- * 准星已经打在树叶上却只按 W，会在叶墙里空走直到 approach-stuck。
+- * 够得着的树叶立刻剪；剪了一会儿还过不去再飞越。
+- */
+-public final class ChopperApproachPolicy {
+-	/** 卡住多久才允许飞越叶墙（tick）。 */
+-	public static final int FLY_OVER_TICKS = 20;
+-	/** 飞越时相对目标脚底抬高的高度（格）。 */
+-	public static final double FLY_OVER_HEIGHT = 5.0;
+-
+-	private ChopperApproachPolicy() {
+-	}
+-
+-	/** 准星打在树叶上且够得着、能挖时，先剪挡路叶。 */
+-	public static boolean shouldMineBlocker(boolean leaves, boolean canBreak, boolean inReach) {
+-		return leaves && canBreak && inReach;
+-	}
+-
+-	/** 卡住 tick 达到阈值则飞越，不要一直按 W。 */
+-	public static boolean shouldFlyOver(int stuckTicks) {
+-		return stuckTicks >= FLY_OVER_TICKS;
+-	}
+-
+-	/** 飞越悬停高度：目标脚底 Y + {@link #FLY_OVER_HEIGHT}。 */
+-	public static double flyOverFeetY(double destY) {
+-		return destY + FLY_OVER_HEIGHT;
+-	}
+-
+-	/** 水平还远且人低于悬停高度时继续爬升。 */
+-	public static boolean shouldAscendOver(double playerY, double hoverY, double horiz) {
+-		return horiz > 0.8 && playerY < hoverY - 0.35;
+-	}
+-
+-	/** 已贴近目标且人偏高时下落，落到补种/砍树高度。 */
+-	public static boolean shouldDescendToDest(double playerY, double destY, double horiz) {
+-		return horiz < 1.2 && playerY > destY + 1.2;
+-	}
+-
+-	/** 够得着就落地砍。空中挖更慢，开关飞行还会把人晃起来。 */
+-	public static boolean flyWhenInReach() {
+-		return false;
+-	}
+-
+-	/** 够得着却没挖成：站住砍准星那块，不要按 W / 起飞。 */
+-	public static boolean walkAfterMineFail(boolean inReach) {
+-		return !inReach;
+-	}
+-
+-	/** 挡路树叶/原木被 stall skip 后仍在眼前：再砍一次，不要改去飞近。 */
+-	public static boolean retryIgnoredLeaf(boolean leaves) {
+-		return leaves;
+-	}
+-
+-	/** 树叶或原木被跳过后，若仍挡路可再试一次。 */
+-	public static boolean retryIgnoredTreeBlock(boolean leaves, boolean wood) {
+-		return leaves || wood;
+-	}
+-
+-	/** 够得着却一直对不齐：约两秒后跳过这块，不要永远站住。 */
+-	public static final int STAND_FAIL_TICKS = 40;
+-
+-	/** 站住砍却对不齐超时则放弃这块。 */
+-	public static boolean giveUpStandStill(int ticks) {
+-		return ticks >= STAND_FAIL_TICKS;
+-	}
+-
+-	/** 够得着时瞬间对准，不要平滑转头导致每拍 clip-miss。 */
+-	public static boolean snapLookWhenInReach(boolean inReach) {
+-		return inReach;
+-	}
+-}
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperCombatPolicy.java b/src/client/java/dev/twob2tkit/chopper/ChopperCombatPolicy.java
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperCombatPolicy.java
++++ b/src/client/java/dev/twob2tkit/chopper/ChopperCombatPolicy.java
+@@ -3,32 +3,24 @@
+ /**
+  * 挖树遇战。只改这一处。
+  * <p>
+- * 铁傀儡不是 {@code Enemy}，只扫敌对会漏掉。Meteor KillAura 开着打傀儡时，
+- * 本模块还在换剪刀砍树叶，就会拿剪刀抽傀儡、不切剑、不飞起来。
++ * 铁傀儡不是 {@code Enemy}；只在有实际交战证据时停砍，避免把和平傀儡当成敌人。
+  */
+ public final class ChopperCombatPolicy {
+ 	/** 附近威胁扫描半径（格）。 */
+ 	public static final double RADIUS = 8.0;
+-	/** 铁傀儡实体类型 id（中立但可能被 KillAura 打）。 */
+-	public static final String IRON_GOLEM = "iron_golem";
+ 
+ 	private ChopperCombatPolicy() {
+ 	}
+ 
+-	/** 敌对生物，或需要特殊处理的中立傀儡，都算威胁类型。 */
+-	public static boolean isThreatType(boolean enemy, String typeId) {
+-		if (enemy) return true;
+-		return isNeutralGolem(typeId);
++	/** 开启 KillAura 本身不算证据，必须是它当前实际选中的傀儡。 */
++	public static boolean isThreat(boolean enemy, boolean ironGolem, boolean targetingPlayer,
++		boolean recentAttacker, boolean activeAuraTarget) {
++		return enemy || ironGolem && (targetingPlayer || recentAttacker || activeAuraTarget);
+ 	}
+ 
+-	/** 是否为铁傀儡（不是 Enemy，但挖树时常被误伤）。 */
+-	public static boolean isNeutralGolem(String typeId) {
+-		return IRON_GOLEM.equals(typeId);
+-	}
+-
+-	/** KillAura 会打附近傀儡，或傀儡已经在打你：都要停砍切剑。 */
+-	public static boolean shouldEngageNeutral(boolean killAuraOn, boolean targetingPlayer) {
+-		return killAuraOn || targetingPlayer;
++	/** 只保留近期且时间有效的受击记录，不能把旧仇恨无限延长。 */
++	public static boolean recentAttacker(boolean sameAttacker, int ageTicks) {
++		return sameAttacker && ageTicks >= 0 && ageTicks <= 100;
+ 	}
+ 
+ 	/** 刚被打或身边有威胁：暂停挖树。 */
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperLoot.java b/src/client/java/dev/twob2tkit/chopper/ChopperLoot.java
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperLoot.java
++++ b/src/client/java/dev/twob2tkit/chopper/ChopperLoot.java
+@@ -11,8 +11,10 @@
+ import net.minecraft.world.entity.item.ItemEntity;
+ import net.minecraft.world.entity.player.Inventory;
+ import net.minecraft.world.item.Item;
++import net.minecraft.world.item.AxeItem;
+ import net.minecraft.world.item.ItemStack;
+ import net.minecraft.world.item.Items;
++import net.minecraft.world.item.ShearsItem;
+ import net.minecraft.world.phys.AABB;
+ import net.minecraft.world.phys.BlockHitResult;
+ import net.minecraft.world.phys.Vec3;
+@@ -397,6 +399,7 @@
+ 			ChopperKeys.holdStill(client);
+ 			return true;
+ 		}
++		ChopperTools.require(client, collectLeaves ? ShearsItem.class : AxeItem.class);
+ 		client.hitResult = freshHit;
+ 		client.crosshairPickEntity = null;
+ 		if (fresh || leafObstacleTicks > 0 && leafObstacleTicks % LEAF_RETRY_TICKS == 0) {
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperMinePolicy.java b/src/client/java/dev/twob2tkit/chopper/ChopperMinePolicy.java
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperMinePolicy.java
++++ /dev/null
+@@ -1,30 +0,0 @@
+-package dev.twob2tkit.chopper;
+-
+-/**
+- * 挖树挥镐节奏。秒破（剪刀砍树叶）每拍点一下，但这一拍仍要按住。
+- */
+-public final class ChopperMinePolicy {
+-	private ChopperMinePolicy() {
+-	}
+-
+-	/**
+-	 * 剪刀砍树叶是秒破：每拍点一下。
+-	 */
+-	public static boolean oneClickBreaks(float destroyProgress) {
+-		return destroyProgress >= 1.0f;
+-	}
+-
+-	/** 本拍是否要点攻击：新目标、重试、秒破或完全没进度。 */
+-	public static boolean clickThisTick(boolean newTarget, boolean retryDue, boolean insta, boolean noProgress) {
+-		return newTarget || retryDue || insta || noProgress;
+-	}
+-
+-	/**
+-	 * 正在挖就按住。秒破点完立刻 {@code setDown(false)} 会让原版
+-	 * {@code continueAttack(false)} 马上 {@code stopDestroyBlock}，
+-	 * Folia 上叶子一直 stage=-1（2026-09-01 382800,74,311320 attack=false 200 拍）。
+-	 */
+-	public static boolean holdAttack(boolean insta, boolean clickedThisTick) {
+-		return !insta || clickedThisTick;
+-	}
+-}
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperScaffold.java b/src/client/java/dev/twob2tkit/chopper/ChopperScaffold.java
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperScaffold.java
++++ b/src/client/java/dev/twob2tkit/chopper/ChopperScaffold.java
+@@ -199,7 +199,7 @@
+             }
+             var hit=BorerAim.firstMineable(c,p,cell,b->b.equals(cell));
+             if(hit==null)throw new IllegalStateException("平台被遮挡，未挖其他方块");
+-            selectShovel(c);ChopperKeys.lookAt(p,BorerAim.lookAlongRay(p.getEyePosition(),hit));c.hitResult=hit;c.crosshairPickEntity=null;c.options.keyAttack.setDown(false);
++            ChopperTools.require(c,ShovelItem.class);ChopperKeys.lookAt(p,BorerAim.lookAlongRay(p.getEyePosition(),hit));c.hitResult=hit;c.crosshairPickEntity=null;c.options.keyAttack.setDown(false);
+             if(ticks==1)c.gameMode.startDestroyBlock(cell,hit.getDirection());else c.gameMode.continueDestroyBlock(cell,hit.getDirection());return true;
+         }
+         if(phase==Phase.RETURN_LAND){
+@@ -321,10 +321,5 @@
+ 			return c.player.getMainHandItem().is(Items.DIRT);
+ 		}return false;
+ 	}
+-	private static void selectShovel(Minecraft c){
+-		var inv=c.player.getInventory();for(int i=0;i<36;i++)if(inv.getItem(i).getItem() instanceof ShovelItem){
+-			if(i<9)inv.setSelectedSlot(i);else c.gameMode.handleContainerInput(c.player.containerMenu.containerId,i,inv.getSelectedSlot(),ContainerInput.SWAP,c.player);return;
+-		}
+-	}
+ 	private static void log(Minecraft c,String s){ChopperFileLog.append(c,AutoChopper.VERSION,s);}
+ }
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperToolPolicy.java b/src/client/java/dev/twob2tkit/chopper/ChopperToolPolicy.java
+--- a/src/client/java/dev/twob2tkit/chopper/ChopperToolPolicy.java
++++ b/src/client/java/dev/twob2tkit/chopper/ChopperToolPolicy.java
+@@ -3,8 +3,7 @@
+ /**
+  * 挖树选工具。
+  * <p>
+- * Meteor {@code auto-tool} 的 anti-break（默认 10% 耐久）会取消破坏并松开左键，
+- * 快坏的剪刀拿在手上就一直挖不动。低于阈值时不要选它，叶子改空手。
++ * 保留至少 10% 耐久，避免磨损工具继续工作；没有可用工具时改用不会磨损的物品。
+  */
+ public final class ChopperToolPolicy {
+ 	/** 与 Meteor auto-tool anti-break-percentage 默认值一致。 */
+@@ -27,13 +26,10 @@
+ 		return remaining < maxDamage * ANTI_BREAK_PERCENT / 100;
+ 	}
+ 
+-	/** 没有可用剪刀时，叶子改空手挖，避免快坏剪刀被 Meteor 取消。 */
+-	public static boolean useFistForLeaves(boolean hasUsableShears) {
+-		return !hasUsableShears;
+-	}
+-
+-	/** 当前手持已是目标类型且未磨损则保持，不要每拍换槽。 */
+-	public static boolean keepCurrentTool(boolean isDesiredType, boolean worn) {
+-		return isDesiredType && !worn;
++	/** 保留可用的当前槽，否则先快捷栏后背包；没有安全选择返回 -1。 */
++	public static int chooseSlot(int selected, int slots, java.util.function.IntPredicate usable) {
++		if (selected >= 0 && selected < slots && usable.test(selected)) return selected;
++		for (int slot = 0; slot < slots; slot++) if (usable.test(slot)) return slot;
++		return -1;
+ 	}
+ }
+diff --git a/src/client/java/dev/twob2tkit/chopper/ChopperTools.java b/src/client/java/dev/twob2tkit/chopper/ChopperTools.java
+--- /dev/null
++++ b/src/client/java/dev/twob2tkit/chopper/ChopperTools.java
+@@ -0,0 +1,52 @@
++package dev.twob2tkit.chopper;
++
++import net.minecraft.client.Minecraft;
++import net.minecraft.world.inventory.ContainerInput;
++import net.minecraft.world.item.Item;
++import net.minecraft.world.item.ItemStack;
++
++/** One durability rule for tree blocks, pickup obstructions and owned platform cleanup. */
++final class ChopperTools {
++    private ChopperTools() {}
++
++    static boolean select(Minecraft client, Class<? extends Item> type) {
++        return selectToolType(client, type) || selectSafeHand(client);
++    }
++
++    static void require(Minecraft client, Class<? extends Item> type) {
++        if (!select(client, type))
++            throw new IllegalStateException("没有可安全使用的工具或空手槽位，已停止以保留工具耐久");
++    }
++
++    private static boolean selectToolType(Minecraft client, Class<? extends Item> type) {
++        var inventory = client.player.getInventory();
++        int slot = ChopperToolPolicy.chooseSlot(inventory.getSelectedSlot(), 36,
++            index -> usableTool(inventory.getItem(index), type));
++        if (slot < 0) return false;
++        selectSlot(client, slot);
++        return usableTool(client.player.getMainHandItem(), type);
++    }
++
++    private static boolean usableTool(ItemStack stack, Class<? extends Item> type) {
++        return type.isInstance(stack.getItem())
++            && !ChopperToolPolicy.tooWorn(stack.getMaxDamage() - stack.getDamageValue(), stack.getMaxDamage());
++    }
++
++    /** Prefer an empty slot; a full inventory may use an item that has no durability to consume. */
++    private static boolean selectSafeHand(Minecraft client) {
++        var inventory = client.player.getInventory();
++        int slot = ChopperToolPolicy.chooseSlot(inventory.getSelectedSlot(), 36, index -> inventory.getItem(index).isEmpty());
++        if (slot < 0) slot = ChopperToolPolicy.chooseSlot(inventory.getSelectedSlot(), 36,
++            index -> !inventory.getItem(index).isDamageableItem());
++        if (slot < 0) return false;
++        selectSlot(client, slot);
++        return !client.player.getMainHandItem().isDamageableItem();
++    }
++
++    private static void selectSlot(Minecraft client, int slot) {
++        var player = client.player;
++        var inventory = player.getInventory();
++        if (slot < 9) inventory.setSelectedSlot(slot);
++        else client.gameMode.handleContainerInput(player.containerMenu.containerId, slot, inventory.getSelectedSlot(), ContainerInput.SWAP, player);
++    }
++}
+diff --git a/src/client/java/dev/twob2tkit/planter/AutoPlanter.java b/src/client/java/dev/twob2tkit/planter/AutoPlanter.java
+--- a/src/client/java/dev/twob2tkit/planter/AutoPlanter.java
++++ b/src/client/java/dev/twob2tkit/planter/AutoPlanter.java
+@@ -16,7 +16,6 @@
+ import net.minecraft.world.entity.player.Inventory;
+ import net.minecraft.world.inventory.ContainerInput;
+ import net.minecraft.world.item.BlockItem;
+-import net.minecraft.world.item.HoeItem;
+ import net.minecraft.world.item.Item;
+ import net.minecraft.world.item.ItemStack;
+ import net.minecraft.world.item.Items;
+@@ -312,9 +311,8 @@
+ 		}
+ 
+ 		boolean needsFarm = needsFarmland(lockedCrop, plant);
+-		boolean hasHoe = false; // Daily maintenance never selects or uses a hoe.
+ 		List<Spot> spots = materialBatch == null
+-			? collect(client, player, plant, needsFarm, hasSeeds, hasHoe, now)
++			? collect(client, player, plant, hasSeeds, now)
+ 			: collectMaterial(client, player, plant, hasSeeds, now);
+ 		try {
+ 			emitGizmos(spots);
+@@ -341,14 +339,14 @@
+ 		}
+ 
+ 		if (PlanterPolicy.shouldStopNoHoeNoWork(
+-			hasSeeds, hasPlantOrHarvest(spots), needsFarm, false, false)) {
++			hasSeeds, !spots.isEmpty(), needsFarm, false, false)) {
+ 			if (pickupEnabled() && loot.beginNear(client, player, lockedCrop, plant, config.planterRange)) {
+ 				status = loot.status().isEmpty() ? "去捡掉落物" : loot.status();
+ 				overlay(client, status, 0x55FFFF);
+ 				return;
+ 			}
+ 			releaseKeys(client);
+-			stop(client, idleReason(player, plant, needsFarm, hasSeeds, hasHoe));
++			stop(client, idleReason(plant, hasSeeds));
+ 			return;
+ 		}
+ 
+@@ -371,7 +369,7 @@
+ 			releaseWalk(client);
+ 			releaseAttack(client);
+ 			holdSneak(client, player, false);
+-			stop(client, idleReason(player, plant, needsFarm, hasSeeds, hasHoe));
++			stop(client, idleReason(plant, hasSeeds));
+ 			return;
+ 		}
+ 
+@@ -411,9 +409,8 @@
+ 			return;
+ 		}
+ 		if (act(client, player, next, plant, now)) {
+-			if (next.till()) tilledCount++;
+-			else plantedCount++;
+-			status = (next.till() ? "已锄 " : "已种 ") + cropLabel()
++			plantedCount++;
++			status = "已种 " + cropLabel()
+ 				+ "  种" + plantedCount + " 锄" + tilledCount + " 收" + harvestedCount;
+ 			overlay(client, status, 0x55FF55);
+ 			cooldown = ACTION_COOLDOWN;
+@@ -576,7 +573,7 @@
+ 
+ 	/** 播种前后都读当前耕地；旧锄地配置不能成为开田授权。 */
+ 	private boolean act(Minecraft client, LocalPlayer player, Spot spot, Block plant, int now) {
+-		if (spot.till() || !field.canPlant(spot.pos, plant, client.level::getBlockState)) return false;
++		if (!field.canPlant(spot.pos, plant, client.level::getBlockState)) return false;
+ 		InteractionHand hand = selectItem(client, lockedCrop);
+ 		if (hand == null) {
+ 			releaseKeys(client);
+@@ -633,8 +630,7 @@
+ 	}
+ 
+ 	/** 范围内只收集本次已登记耕地上的播种和收成点。 */
+-	private List<Spot> collect(Minecraft client, LocalPlayer player, Block plant, boolean needsFarm,
+-		boolean hasSeeds, boolean hasHoe, int now) {
++	private List<Spot> collect(Minecraft client, LocalPlayer player, Block plant, boolean hasSeeds, int now) {
+ 		List<Spot> spots = new ArrayList<>();
+ 		int range = Math.max(3, (int)Math.round(config.planterRange));
+ 		BlockPos origin = player.blockPosition();
+@@ -665,17 +661,9 @@
+ 		return spots;
+ 	}
+ 
+-	/** 列表里是否还有可种或可收。 */
+-	private static boolean hasPlantOrHarvest(List<Spot> spots) {
+-		for (Spot spot : spots) {
+-			if (!spot.till()) return true;
+-		}
+-		return false;
+-	}
+-
+ 	/** 暂时没事做时的原因文案。 */
+-	private String idleReason(LocalPlayer player, Block plant, boolean needsFarm, boolean hasSeeds, boolean hasHoe) {
+-		return emptyStatus(player, plant, needsFarm, hasSeeds, hasHoe);
++	private String idleReason(Block plant, boolean hasSeeds) {
++		return emptyStatus(plant, hasSeeds);
+ 	}
+ 
+ 	/** 构造播种 Spot。 */
+@@ -703,37 +691,6 @@
+ 		return new Spot(pos.immutable(), pos.below().immutable(), Direction.UP, Action.PLANT, false);
+ 	}
+ 
+-	/** 构造锄地 Spot。 */
+-	private Spot tillSpot(Minecraft client, BlockPos soil, Block plant) {
+-		BlockState state = client.level.getBlockState(soil);
+-		if (!isTillable(state)) return null;
+-		BlockState above = client.level.getBlockState(soil.above());
+-		if (!isPlantableSpace(above)) return null;
+-		if (isEnclosureWallSoil(client, soil)) return null;
+-		if (!patchAllows(client, soil.above(), plant)) return null;
+-		if (needsWaterHydration(plant) && !farmlandHydrated(client, soil)) return null;
+-		return new Spot(soil.immutable(), soil.immutable(), Direction.UP, Action.TILL, false);
+-	}
+-
+-	/** 9×9 田边那圈土：一边耕地、两边连着土、一边空，锄了就像把围墙打掉。 */
+-	private static boolean isEnclosureWallSoil(Minecraft client, BlockPos soil) {
+-		int farmland = 0;
+-		int dirt = 0;
+-		int open = 0;
+-		for (Direction dir : Direction.Plane.HORIZONTAL) {
+-			BlockPos neighbor = soil.relative(dir);
+-			BlockState neighborState = client.level.getBlockState(neighbor);
+-			if (neighborState.is(Blocks.FARMLAND)) {
+-				farmland++;
+-			} else if (isTillable(neighborState) && isPlantableSpace(client.level.getBlockState(neighbor.above()))) {
+-				dirt++;
+-			} else if (isPlantableSpace(neighborState)) {
+-				open++;
+-			}
+-		}
+-		return PlanterPolicy.isEnclosureWallSoil(farmland, dirt, open);
+-	}
+-
+ 	/** 只收本次耕地名单中仍生长在真实耕地上的成熟作物。 */
+ 	private Spot harvestSpot(Minecraft client, BlockPos pos, Block plant) {
+ 		if (!client.level.hasChunkAt(pos) || !client.level.hasChunkAt(pos.below())
+@@ -747,19 +704,6 @@
+ 		return client.level.hasChunkAt(spot.pos) && client.level.hasChunkAt(spot.pos.below())
+ 			&& field.canHarvest(spot.pos, plant, client.level::getBlockState)
+ 			&& patchAllows(client, spot.pos, plant);
+-	}
+-
+-	/** 方块状态是否可收目标植株。 */
+-	private static boolean isHarvestTarget(BlockState state, Block plant) {
+-		if (!matchesLockedPlant(state, plant)) return false;
+-		if (isStackable(plant)) return false;
+-		return isMatureCrop(state);
+-	}
+-
+-	/** 是否与锁定作物一致。 */
+-	private static boolean matchesLockedPlant(BlockState state, Block plant) {
+-		if (state.is(plant)) return true;
+-		return plant instanceof TorchflowerCropBlock && state.is(Blocks.TORCHFLOWER);
+ 	}
+ 
+ 	/** 作物是否已成熟。 */
+@@ -875,7 +819,7 @@
+ 	}
+ 
+ 	/** 日常入口不会把缺少工作解释成新开田。 */
+-	private String emptyStatus(LocalPlayer player, Block plant, boolean needsFarm, boolean hasSeeds, boolean hasHoe) {
++	private String emptyStatus(Block plant, boolean hasSeeds) {
+ 		if (!PlanterFieldBoundary.supports(plant)) return "日常种田只维护已有耕地；其它种植需单独确认范围";
+ 		if (!hasSeeds) return "种子用完，原耕地内也没有成熟作物可收";
+ 		return "原耕地内没有可种或可收位置；不翻耕草地、泥土或覆盖装饰";
+@@ -896,21 +840,6 @@
+ 			}
+ 		}
+ 		return PlanterFieldBoundary.capture(soils, client.level::getBlockState);
+-	}
+-
+-	/** 附近是否已有耕地。 */
+-	private boolean hasFarmlandNearby(LocalPlayer player) {
+-		if (player.level() == null) return false;
+-		BlockPos origin = player.blockPosition();
+-		int range = Math.max(3, (int)Math.round(config.planterRange));
+-		for (int dx = -range; dx <= range; dx++) {
+-			for (int dz = -range; dz <= range; dz++) {
+-				for (int dy = -1; dy <= 1; dy++) {
+-					if (player.level().getBlockState(origin.offset(dx, dy, dz)).is(Blocks.FARMLAND)) return true;
+-				}
+-			}
+-		}
+-		return false;
+ 	}
+ 
+ 	/** 从手或田刷新锁定作物。 */
+@@ -1066,16 +995,6 @@
+ 			|| plant instanceof BambooSaplingBlock;
+ 	}
+ 
+-	/** 是否可锄成耕地。 */
+-	private static boolean isTillable(BlockState state) {
+-		return state.is(Blocks.DIRT) || state.is(Blocks.GRASS_BLOCK) || state.is(Blocks.DIRT_PATH);
+-	}
+-
+-	/** 顶上是否可种的空间。 */
+-	private static boolean isPlantableSpace(BlockState state) {
+-		return state.isAir() || state.canBeReplaced();
+-	}
+-
+ 	/** 该格是否有碰撞。 */
+ 	private static boolean hasCollision(Minecraft client, BlockPos pos) {
+ 		return !client.level.getBlockState(pos).getCollisionShape(client.level, pos).isEmpty();
+@@ -1099,25 +1018,6 @@
+ 			}
+ 		}
+ 		if (player.getOffhandItem().is(item)) return InteractionHand.OFF_HAND;
+-		return null;
+-	}
+-
+-	/** 手上换成锄。 */
+-	private InteractionHand selectHoe(Minecraft client) {
+-		LocalPlayer player = client.player;
+-		if (player.getMainHandItem().getItem() instanceof HoeItem) return InteractionHand.MAIN_HAND;
+-		Inventory inventory = player.getInventory();
+-		for (int slot = 0; slot < 9; slot++) {
+-			if (!(inventory.getItem(slot).getItem() instanceof HoeItem)) continue;
+-			inventory.setSelectedSlot(slot);
+-			return InteractionHand.MAIN_HAND;
+-		}
+-		for (int slot = 9; slot < 36; slot++) {
+-			if (!(inventory.getItem(slot).getItem() instanceof HoeItem)) continue;
+-			client.gameMode.handleContainerInput(player.containerMenu.containerId, slot, inventory.getSelectedSlot(), ContainerInput.SWAP, player);
+-			if (player.getMainHandItem().getItem() instanceof HoeItem) return InteractionHand.MAIN_HAND;
+-		}
+-		if (player.getOffhandItem().getItem() instanceof HoeItem) return InteractionHand.OFF_HAND;
+ 		return null;
+ 	}
+ 
+@@ -1142,9 +1042,6 @@
+ 			} else if (spot.harvest()) {
+ 				stroke = 0xFFFFFF55;
+ 				fill = 0x33FFFF00;
+-			} else if (spot.till()) {
+-				stroke = 0xFFFFAA00;
+-				fill = 0x33FFAA00;
+ 			} else {
+ 				stroke = 0xFF55FF55;
+ 				fill = 0x2200FF55;
+@@ -1233,7 +1130,6 @@
+ 	/** Spot 动作中文名。 */
+ 	private static String actionLabel(Spot spot) {
+ 		if (spot.harvest()) return "去收 ";
+-		if (spot.till()) return "去锄地 ";
+ 		return "去种 ";
+ 	}
+ 
+@@ -1313,15 +1209,11 @@
+ 	}
+ 
+ 	private enum Action {
+-		PLANT, TILL, HARVEST
++		PLANT, HARVEST
+ 	}
+ 
+ 	/** 一个工作点：位置、点击面与动作。 */
+ 	private record Spot(BlockPos pos, BlockPos click, Direction face, Action action, boolean stackHarvest) {
+-		boolean till() {
+-			return action == Action.TILL;
+-		}
+-
+ 		boolean harvest() {
+ 			return action == Action.HARVEST;
+ 		}
+diff --git a/src/client/java/dev/twob2tkit/runtime/engine/BorerAreaThinkDeploy.java b/src/client/java/dev/twob2tkit/runtime/engine/BorerAreaThinkDeploy.java
+--- a/src/client/java/dev/twob2tkit/runtime/engine/BorerAreaThinkDeploy.java
++++ /dev/null
+@@ -1,172 +0,0 @@
+-package dev.twob2tkit.runtime.engine;
+-
+-import org.slf4j.Logger;
+-import org.slf4j.LoggerFactory;
+-
+-import java.io.IOException;
+-import java.nio.charset.StandardCharsets;
+-import java.nio.file.AtomicMoveNotSupportedException;
+-import java.nio.file.Files;
+-import java.nio.file.Path;
+-import java.nio.file.StandardCopyOption;
+-import java.util.Map;
+-import java.util.concurrent.TimeUnit;
+-import java.util.regex.Matcher;
+-import java.util.regex.Pattern;
+-
+-/** 把 Grok 改过的引擎源码编成 jar 并原子复制到热加载目录。不在游戏线程里跑。 */
+-final class BorerAreaThinkDeploy {
+-	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
+-	private static final int GRADLE_TIMEOUT_SECONDS = 180;
+-	private static final Pattern RUNTIME_VERSION = Pattern.compile("(?m)^runtime_engine_version=(.+)$");
+-	private static final Pattern ENGINE_CONST = Pattern.compile(
+-		"RUNTIME_VERSION\\s*=\\s*\"([^\"]+)\"");
+-
+-	/** 一次编译部署结果：是否成功、新版本号、错误信息。 */
+-	public static final class Result {
+-		final boolean ok;
+-		final String version;
+-		final String error;
+-
+-		Result(boolean ok, String version, String error) {
+-			this.ok = ok;
+-			this.version = version == null ? "" : version;
+-			this.error = error == null ? "" : error;
+-		}
+-	}
+-
+-	private BorerAreaThinkDeploy() {
+-	}
+-
+-	/** 版本号末位加一。 */
+-	static String nextPatchVersion(String version) {
+-		if (version == null || version.isBlank()) return "1.6.1";
+-		int dot = version.lastIndexOf('.');
+-		if (dot < 0 || dot == version.length() - 1) return version + ".1";
+-		try {
+-			int patch = Integer.parseInt(version.substring(dot + 1));
+-			return version.substring(0, dot + 1) + (patch + 1);
+-		} catch (NumberFormatException ignored) {
+-			return version + ".1";
+-		}
+-	}
+-
+-	/** 读 gradle 里的引擎版本。 */
+-	static String readRuntimeEngineVersion(Path sourceRoot) throws IOException {
+-		Path props = sourceRoot.resolve("gradle.properties");
+-		Matcher matcher = RUNTIME_VERSION.matcher(Files.readString(props, StandardCharsets.UTF_8));
+-		if (!matcher.find()) throw new IOException("gradle.properties 没有 runtime_engine_version");
+-		return matcher.group(1).trim();
+-	}
+-
+-	/** 同步改源码与 gradle 版本号。 */
+-	static void bumpEngineVersion(Path sourceRoot, String from, String to) throws IOException {
+-		if (from == null || to == null || from.equals(to)) return;
+-		replaceFile(sourceRoot.resolve("gradle.properties"),
+-			"runtime_engine_version=" + from, "runtime_engine_version=" + to);
+-		Path engine = sourceRoot.resolve(
+-			"src/client/java/dev/twob2tkit/runtime/engine/DefaultTunnelBorerEngine.java");
+-		String text = Files.readString(engine, StandardCharsets.UTF_8);
+-		Matcher matcher = ENGINE_CONST.matcher(text);
+-		if (matcher.find() && from.equals(matcher.group(1))) {
+-			Files.writeString(engine, matcher.replaceFirst("RUNTIME_VERSION = \"" + to + "\""),
+-				StandardCharsets.UTF_8);
+-		}
+-	}
+-
+-	/** 解析编译用 JAVA_HOME。 */
+-	static Path javaHome(Path sourceRoot, String javaHomeEnv, String processJavaHome) {
+-		Path bundled = sourceRoot == null ? null : sourceRoot.resolve("../jdk25/Contents/Home").normalize();
+-		if (bundled != null && Files.isRegularFile(bundled.resolve("bin/java"))) return bundled;
+-		Path env = parse(javaHomeEnv);
+-		if (env != null && Files.isRegularFile(env.resolve("bin/java"))) return env;
+-		Path process = parse(processJavaHome);
+-		if (process != null && Files.isRegularFile(process.resolve("bin/java"))) return process;
+-		return process;
+-	}
+-
+-	/** 编译并安装热加载引擎 jar。 */
+-	static Result deploy(Path sourceRoot, Path javaHome, Path destJar, String runningVersion) {
+-		if (sourceRoot == null || destJar == null) {
+-			return new Result(false, "", "没有源码目录");
+-		}
+-		try {
+-			String version = readRuntimeEngineVersion(sourceRoot);
+-			if (version.equals(runningVersion)) {
+-				String next = nextPatchVersion(runningVersion);
+-				bumpEngineVersion(sourceRoot, runningVersion, next);
+-				version = next;
+-			}
+-			int code = runGradle(sourceRoot, javaHome);
+-			if (code != 0) return new Result(false, version, "gradle exit " + code);
+-			Path built = sourceRoot.resolve("build/runtime-engine/twob2tkit-engine.jar");
+-			if (!Files.isRegularFile(built)) return new Result(false, version, "没有编出引擎 jar");
+-			atomicInstall(built, destJar);
+-			return new Result(true, version, "");
+-		} catch (Exception exception) {
+-			LOGGER.warn("area-think deploy failed: {}", exception.toString());
+-			return new Result(false, "", exception.toString());
+-		}
+-	}
+-
+-	/** 跑 gradle 打引擎包。 */
+-	private static int runGradle(Path sourceRoot, Path javaHome) throws IOException, InterruptedException {
+-		Path gradlew = sourceRoot.resolve("gradlew");
+-		ProcessBuilder builder = new ProcessBuilder(
+-			gradlew.toAbsolutePath().toString(),
+-			"-p", sourceRoot.toAbsolutePath().toString(),
+-			"--offline",
+-			"test",
+-			"jar"
+-		);
+-		builder.directory(sourceRoot.toFile());
+-		BorerAreaThinkPolicy.discardStdin(builder);
+-		Path log = sourceRoot.resolve("build/area-think-deploy.log");
+-		Files.createDirectories(log.getParent());
+-		builder.redirectOutput(log.toFile());
+-		builder.redirectErrorStream(true);
+-		Map<String, String> env = builder.environment();
+-		if (javaHome != null) env.put("JAVA_HOME", javaHome.toAbsolutePath().toString());
+-		Process process = builder.start();
+-		boolean finished = process.waitFor(GRADLE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+-		if (!finished) {
+-			process.destroyForcibly();
+-			process.waitFor(5, TimeUnit.SECONDS);
+-			return 124;
+-		}
+-		return process.exitValue();
+-	}
+-
+-	/** 原子替换目标 jar。 */
+-	private static void atomicInstall(Path built, Path destJar) throws IOException {
+-		Files.createDirectories(destJar.getParent());
+-		Path prev = destJar.resolveSibling("twob2tkit-engine.prev.jar");
+-		if (Files.isRegularFile(destJar)) {
+-			Files.copy(destJar, prev, StandardCopyOption.REPLACE_EXISTING);
+-		}
+-		Path temp = destJar.resolveSibling("twob2tkit-engine.jar.new");
+-		Files.copy(built, temp, StandardCopyOption.REPLACE_EXISTING);
+-		try {
+-			Files.move(temp, destJar, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+-		} catch (AtomicMoveNotSupportedException ignored) {
+-			Files.move(temp, destJar, StandardCopyOption.REPLACE_EXISTING);
+-		}
+-	}
+-
+-	/** 文件内字符串替换。 */
+-	private static void replaceFile(Path path, String from, String to) throws IOException {
+-		String text = Files.readString(path, StandardCharsets.UTF_8);
+-		if (!text.contains(from)) return;
+-		Files.writeString(path, text.replace(from, to), StandardCharsets.UTF_8);
+-	}
+-
+-	/** 解析文本为结构化结果。 */
+-	private static Path parse(String text) {
+-		if (text == null || text.isBlank()) return null;
+-		try {
+-			return Path.of(text);
+-		} catch (RuntimeException ignored) {
+-			return null;
+-		}
+-	}
+-}
+diff --git a/src/test/java/dev/twob2tkit/BorerHotReloadPolicyTest.java b/src/test/java/dev/twob2tkit/BorerHotReloadPolicyTest.java
+--- a/src/test/java/dev/twob2tkit/BorerHotReloadPolicyTest.java
++++ /dev/null
+@@ -1,17 +0,0 @@
+-package dev.twob2tkit;
+-
+-import org.junit.jupiter.api.Test;
+-
+-import static org.junit.jupiter.api.Assertions.assertFalse;
+-import static org.junit.jupiter.api.Assertions.assertTrue;
+-import dev.twob2tkit.borer.BorerHotReloadPolicy;
+-
+-final class BorerHotReloadPolicyTest {
+-	@Test
+-	void waitsUntilNewJarStopsChanging() {
+-		assertFalse(BorerHotReloadPolicy.jarNewer(100, 100));
+-		assertTrue(BorerHotReloadPolicy.jarNewer(100, 200));
+-		assertFalse(BorerHotReloadPolicy.stable(10, BorerHotReloadPolicy.STABLE_TICKS));
+-		assertTrue(BorerHotReloadPolicy.stable(40, BorerHotReloadPolicy.STABLE_TICKS));
+-	}
+-}
+diff --git a/src/test/java/dev/twob2tkit/ChopperApproachPolicyTest.java b/src/test/java/dev/twob2tkit/ChopperApproachPolicyTest.java
+--- a/src/test/java/dev/twob2tkit/ChopperApproachPolicyTest.java
++++ /dev/null
+@@ -1,48 +0,0 @@
+-package dev.twob2tkit;
+-
+-import org.junit.jupiter.api.Test;
+-
+-import static org.junit.jupiter.api.Assertions.assertEquals;
+-import static org.junit.jupiter.api.Assertions.assertFalse;
+-import static org.junit.jupiter.api.Assertions.assertTrue;
+-import dev.twob2tkit.chopper.ChopperApproachPolicy;
+-
+-final class ChopperApproachPolicyTest {
+-	@Test
+-	void mineLeavesInReachImmediately() {
+-		assertTrue(ChopperApproachPolicy.shouldMineBlocker(true, true, true));
+-		assertFalse(ChopperApproachPolicy.shouldMineBlocker(true, true, false));
+-		assertFalse(ChopperApproachPolicy.shouldMineBlocker(false, true, true));
+-		assertFalse(ChopperApproachPolicy.shouldMineBlocker(true, false, true));
+-	}
+-
+-	@Test
+-	void flyOverAfterOneSecondStuck() {
+-		assertFalse(ChopperApproachPolicy.shouldFlyOver(19));
+-		assertTrue(ChopperApproachPolicy.shouldFlyOver(20));
+-		assertTrue(ChopperApproachPolicy.shouldFlyOver(100));
+-	}
+-
+-	@Test
+-	void hoverFiveBlocksAboveStump() {
+-		assertEquals(76.0, ChopperApproachPolicy.flyOverFeetY(71.0), 0.01);
+-		assertTrue(ChopperApproachPolicy.shouldAscendOver(72.0, 76.0, 6.5));
+-		assertFalse(ChopperApproachPolicy.shouldAscendOver(76.0, 76.0, 6.5));
+-		assertTrue(ChopperApproachPolicy.shouldDescendToDest(76.0, 71.0, 0.5));
+-		assertFalse(ChopperApproachPolicy.shouldDescendToDest(76.0, 71.0, 4.0));
+-	}
+-
+-	@Test
+-	void inReachStandsStillInsteadOfFlyingCloser() {
+-		assertFalse(ChopperApproachPolicy.flyWhenInReach());
+-		assertFalse(ChopperApproachPolicy.walkAfterMineFail(true));
+-		assertTrue(ChopperApproachPolicy.walkAfterMineFail(false));
+-		assertTrue(ChopperApproachPolicy.retryIgnoredLeaf(true));
+-		assertFalse(ChopperApproachPolicy.retryIgnoredLeaf(false));
+-		assertTrue(ChopperApproachPolicy.retryIgnoredTreeBlock(false, true));
+-		assertTrue(ChopperApproachPolicy.snapLookWhenInReach(true));
+-		assertFalse(ChopperApproachPolicy.snapLookWhenInReach(false));
+-		assertFalse(ChopperApproachPolicy.giveUpStandStill(39));
+-		assertTrue(ChopperApproachPolicy.giveUpStandStill(40));
+-	}
+-}
+diff --git a/src/test/java/dev/twob2tkit/ChopperCombatPolicyTest.java b/src/test/java/dev/twob2tkit/ChopperCombatPolicyTest.java
+--- a/src/test/java/dev/twob2tkit/ChopperCombatPolicyTest.java
++++ b/src/test/java/dev/twob2tkit/ChopperCombatPolicyTest.java
+@@ -8,25 +8,31 @@
+ 
+ final class ChopperCombatPolicyTest {
+ 	@Test
+-	void ironGolemIsAThreatEvenThoughNotEnemy() {
+-		assertTrue(ChopperCombatPolicy.isThreatType(false, "iron_golem"));
+-		assertTrue(ChopperCombatPolicy.isNeutralGolem("iron_golem"));
+-		assertFalse(ChopperCombatPolicy.isNeutralGolem("zombie"));
+-		assertTrue(ChopperCombatPolicy.isThreatType(true, "zombie"));
+-		assertFalse(ChopperCombatPolicy.isThreatType(false, "cow"));
+-		assertFalse(ChopperCombatPolicy.isThreatType(false, "snow_golem"));
++	void hostileMobsRetainTheExistingPauseAndOtherNeutralAnimalsStayIgnored() {
++		assertTrue(ChopperCombatPolicy.isThreat(true, false, false, false, false));
++		assertFalse(ChopperCombatPolicy.isThreat(false, false, false, false, false));
++		assertFalse(ChopperCombatPolicy.isThreat(false, false, true, true, true));
+ 	}
+ 
+ 	@Test
+-	void peacefulGolemIgnoredWhenKillAuraOff() {
+-		assertFalse(ChopperCombatPolicy.shouldEngageNeutral(false, false));
++	void peacefulGolemIsIgnoredWithoutEvidenceOfEngagement() {
++		assertFalse(ChopperCombatPolicy.isThreat(false, true, false, false, false));
+ 	}
+ 
+ 	@Test
+-	void golemEngagedWhenKillAuraOnOrTargetingPlayer() {
+-		assertTrue(ChopperCombatPolicy.shouldEngageNeutral(true, false));
+-		assertTrue(ChopperCombatPolicy.shouldEngageNeutral(false, true));
+-		assertTrue(ChopperCombatPolicy.shouldEngageNeutral(true, true));
++	void golemPausesChoppingOnlyWhenTargetingAttackingOrActuallySelectedByAura() {
++		assertTrue(ChopperCombatPolicy.isThreat(false, true, true, false, false));
++		assertTrue(ChopperCombatPolicy.isThreat(false, true, false, true, false));
++		assertTrue(ChopperCombatPolicy.isThreat(false, true, false, false, true));
++	}
++
++	@Test
++	void recentAttackEvidenceExpiresAndRejectsAnInvalidAge() {
++		assertTrue(ChopperCombatPolicy.recentAttacker(true, 0));
++		assertTrue(ChopperCombatPolicy.recentAttacker(true, 100));
++		assertFalse(ChopperCombatPolicy.recentAttacker(true, 101));
++		assertFalse(ChopperCombatPolicy.recentAttacker(true, -1));
++		assertFalse(ChopperCombatPolicy.recentAttacker(false, 0));
+ 	}
+ 
+ 	@Test
+diff --git a/src/test/java/dev/twob2tkit/ChopperMinePolicyTest.java b/src/test/java/dev/twob2tkit/ChopperMinePolicyTest.java
+--- a/src/test/java/dev/twob2tkit/ChopperMinePolicyTest.java
++++ /dev/null
+@@ -1,26 +0,0 @@
+-package dev.twob2tkit;
+-
+-import org.junit.jupiter.api.Test;
+-
+-import static org.junit.jupiter.api.Assertions.assertFalse;
+-import static org.junit.jupiter.api.Assertions.assertTrue;
+-import dev.twob2tkit.chopper.ChopperMinePolicy;
+-
+-final class ChopperMinePolicyTest {
+-	@Test
+-	void shearsOnLeavesClickEveryTickAndKeepHeldThatTick() {
+-		assertTrue(ChopperMinePolicy.oneClickBreaks(1.0f));
+-		assertFalse(ChopperMinePolicy.oneClickBreaks(0.2f));
+-		assertTrue(ChopperMinePolicy.clickThisTick(false, false, true, false));
+-		assertTrue(ChopperMinePolicy.holdAttack(true, true));
+-		assertFalse(ChopperMinePolicy.holdAttack(true, false));
+-	}
+-
+-	@Test
+-	void noProgressClicksAgain() {
+-		assertTrue(ChopperMinePolicy.clickThisTick(false, false, false, true));
+-		assertFalse(ChopperMinePolicy.clickThisTick(false, false, false, false));
+-		assertTrue(ChopperMinePolicy.holdAttack(false, false));
+-		assertTrue(ChopperMinePolicy.holdAttack(false, true));
+-	}
+-}
+diff --git a/src/test/java/dev/twob2tkit/ChopperToolPolicyTest.java b/src/test/java/dev/twob2tkit/ChopperToolPolicyTest.java
+--- a/src/test/java/dev/twob2tkit/ChopperToolPolicyTest.java
++++ b/src/test/java/dev/twob2tkit/ChopperToolPolicyTest.java
+@@ -3,6 +3,7 @@
+ import org.junit.jupiter.api.Test;
+ 
+ import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ import dev.twob2tkit.chopper.ChopperToolPolicy;
+ 
+@@ -22,11 +23,23 @@
+ 	}
+ 
+ 	@Test
+-	void noUsableShearsMeansFist() {
+-		assertTrue(ChopperToolPolicy.useFistForLeaves(false));
+-		assertFalse(ChopperToolPolicy.useFistForLeaves(true));
+-		assertTrue(ChopperToolPolicy.keepCurrentTool(true, false));
+-		assertFalse(ChopperToolPolicy.keepCurrentTool(true, true));
+-		assertFalse(ChopperToolPolicy.keepCurrentTool(false, false));
++	void wornCurrentToolIsReplacedByAUsableHotbarToolBeforeInventory() {
++		int[] remaining = {0, 200, 0, 8, 0, 0, 0, 0, 0, 238};
++		assertEquals(1, ChopperToolPolicy.chooseSlot(3, remaining.length,
++			slot -> !ChopperToolPolicy.tooWorn(remaining[slot], 238)));
++	}
++
++	@Test
++	void usableCurrentToolStaysSelectedAndInventoryIsUsedWhenNeeded() {
++		assertEquals(4, ChopperToolPolicy.chooseSlot(4, 36, slot -> slot == 1 || slot == 4 || slot == 12));
++		assertEquals(12, ChopperToolPolicy.chooseSlot(4, 36, slot -> slot == 12));
++		assertEquals(-1, ChopperToolPolicy.chooseSlot(4, 36, slot -> false));
++	}
++
++	@Test
++	void indestructibleItemsAndBoundaryDurabilityRemainUsable() {
++		assertFalse(ChopperToolPolicy.tooWorn(0, 0));
++		assertTrue(ChopperToolPolicy.tooWorn(22, 238));
++		assertFalse(ChopperToolPolicy.tooWorn(23, 238));
+ 	}
+ }
+diff --git a/src/test/java/dev/twob2tkit/automation/PrinterPulseTest.java b/src/test/java/dev/twob2tkit/automation/PrinterPulseTest.java
+--- a/src/test/java/dev/twob2tkit/automation/PrinterPulseTest.java
++++ /dev/null
+@@ -1,33 +0,0 @@
+-package dev.twob2tkit.automation;
+-import org.junit.jupiter.api.Test;
+-import static org.junit.jupiter.api.Assertions.*;
+-
+-class PrinterPulseTest {
+-    private int simulateDelayedServer(boolean gated,int interval){
+-        int queue=0,subTick=0,placements=0,ackAt=Integer.MAX_VALUE;
+-        boolean serverUpdated=false;
+-        for(int tick=0;tick<60;tick++){
+-            if(tick>=ackAt)serverUpdated=true;
+-            boolean allow=!gated||PrinterPulse.allowProposal(tick);
+-            for(int sub=0;sub<10;sub++){
+-                if(allow&&!serverUpdated&&queue==0)queue=2; // prepare + interact
+-                if(++subTick%interval==0 && queue>0 && --queue==0){
+-                    placements++;ackAt=Math.min(ackAt,tick+5);
+-                }
+-            }
+-        }
+-        return placements;
+-    }
+-    @Test void delayedBlockAcknowledgementCannotQueueDuplicatePlacement(){
+-        assertTrue(simulateDelayedServer(false,12)>1);
+-        assertEquals(1,simulateDelayedServer(true,12));
+-        assertEquals(1,simulateDelayedServer(true,40));
+-    }
+-    @Test void eachSecondHasOneProposalWindowRegardlessOfFrameRate(){
+-        for(int start=0;start<100;start++){
+-            int windows=0;
+-            for(int t=start;t<start+20;t++)if(PrinterPulse.allowProposal(t))windows++;
+-            assertEquals(1,windows);
+-        }
+-    }
+-}
+diff --git a/src/test/java/dev/twob2tkit/borer/BorerEngineLoadingTest.java b/src/test/java/dev/twob2tkit/borer/BorerEngineLoadingTest.java
+--- /dev/null
++++ b/src/test/java/dev/twob2tkit/borer/BorerEngineLoadingTest.java
+@@ -0,0 +1,79 @@
++package dev.twob2tkit.borer;
++
++import dev.twob2tkit.runtime.api.BuildNavigation;
++import dev.twob2tkit.runtime.engine.DefaultBuildNavigation;
++import net.minecraft.core.BlockPos;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++import org.objectweb.asm.ClassReader;
++import org.objectweb.asm.tree.*;
++import java.net.URL;
++import java.net.URLClassLoader;
++import java.nio.file.*;
++import java.util.*;
++import java.util.jar.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class BorerEngineLoadingTest {
++    @TempDir Path directory;
++
++    @Test void actualLoaderRejectsMissingAndTruncatedEngineClassesInsteadOfUsingBundledCopies() throws Exception {
++        String name=DefaultBuildNavigation.class.getName();
++        Path jar=directory.resolve("engine.jar");
++        writeJar(jar,null);
++        try(var loader=loader(jar)) {
++            assertThrows(ClassNotFoundException.class,()->loader.loadClass(name));
++        }
++        writeJar(jar,new byte[]{(byte)0xca,(byte)0xfe,(byte)0xba,(byte)0xbe});
++        try(var loader=loader(jar)) {
++            assertThrows(ClassFormatError.class,()->loader.loadClass(name));
++        }
++        try(var input=DefaultBuildNavigation.class.getResourceAsStream("DefaultBuildNavigation.class")) {
++            assertNotNull(input);writeJar(jar,input.readAllBytes());
++        }
++        try(var loader=loader(jar)) {
++            var type=loader.loadClass(name);
++            assertSame(loader,type.getClassLoader());
++            java.util.function.Predicate<BlockPos> clear=p->true;
++            var navigation=(BuildNavigation)type.getConstructor(java.util.function.Predicate.class).newInstance(clear);
++            assertTrue(navigation.stations(BlockPos.ZERO).contains(new BlockPos(0,1,0)));
++        }
++    }
++
++    @Test void actualReloadValidatesTheCandidateBeforeStoppingTheCurrentEngine() throws Exception {
++        var external=calls("loadExternalEngine");
++        assertTrue(external.containsAll(List.of("copy","preloadEngineClasses","newInstance")));
++        assertTrue(external.indexOf("copy")<external.indexOf("preloadEngineClasses"));
++        assertTrue(external.indexOf("preloadEngineClasses")<external.indexOf("newInstance"));
++        assertTrue(external.containsAll(List.of("requiredHostApiVersion","apiVersion","runtimeVersion","isBlank")));
++        var reload=calls("reload");
++        assertTrue(reload.containsAll(List.of("loadExternalEngine","runtimeVersion","stop")));
++        assertTrue(reload.indexOf("loadExternalEngine")<reload.indexOf("stop"));
++        assertTrue(reload.indexOf("runtimeVersion")<reload.indexOf("stop"));
++        assertTrue(reload.contains("closeQuietly"));
++    }
++
++    private void writeJar(Path path,byte[] navigation) throws Exception {
++        try(var output=new JarOutputStream(Files.newOutputStream(path))) {
++            if(navigation==null)return;
++            output.putNextEntry(new JarEntry("dev/twob2tkit/runtime/engine/DefaultBuildNavigation.class"));
++            output.write(navigation);output.closeEntry();
++        }
++    }
++    private URLClassLoader loader(Path jar) throws Exception {
++        var type=Class.forName("dev.twob2tkit.borer.TunnelBorer$ChildFirstEngineLoader");
++        var constructor=type.getDeclaredConstructor(URL[].class,ClassLoader.class);
++        constructor.setAccessible(true);
++        return (URLClassLoader)constructor.newInstance(new URL[]{jar.toUri().toURL()},getClass().getClassLoader());
++    }
++    private static List<String> calls(String name) throws Exception {
++        var node=new ClassNode();
++        try(var input=BorerEngineLoadingTest.class.getResourceAsStream("/dev/twob2tkit/borer/TunnelBorer.class")) {
++            assertNotNull(input);new ClassReader(input).accept(node,0);
++        }
++        var method=node.methods.stream().filter(m->m.name.equals(name)).findFirst().orElseThrow();
++        List<String> calls=new ArrayList<>();
++        for(var instruction:method.instructions)if(instruction instanceof MethodInsnNode call)calls.add(call.name);
++        return calls;
++    }
++}
+diff --git a/src/test/java/dev/twob2tkit/builder/BuildStationsTest.java b/src/test/java/dev/twob2tkit/builder/BuildStationsTest.java
+--- a/src/test/java/dev/twob2tkit/builder/BuildStationsTest.java
++++ b/src/test/java/dev/twob2tkit/builder/BuildStationsTest.java
+@@ -1,10 +1,11 @@
+ package dev.twob2tkit.builder;
+ import net.minecraft.core.BlockPos;
++import dev.twob2tkit.runtime.engine.DefaultBuildNavigation;
+ import org.junit.jupiter.api.Test;
+ import static org.junit.jupiter.api.Assertions.*;
+ class BuildStationsTest {
+     @Test void includesStandingAboveAFloorHoleAndNarrowSideAisles(){
+-        var cells=BuildStations.around(BlockPos.ZERO);
++        var cells=new DefaultBuildNavigation().stations(BlockPos.ZERO);
+         assertTrue(cells.contains(new BlockPos(1,1,0)));
+         assertTrue(cells.contains(new BlockPos(0,1,0)));
+         assertTrue(cells.contains(new BlockPos(1,0,1)));
+@@ -12,7 +13,7 @@
+     }
+     @Test void floorCandidatesProduceAReachableStationWhereOldBelowOnlyCandidatesCouldNot(){
+         var world=new BuildPath.World(){public boolean clear(BlockPos p){return p.getY()==1&&p.getX()>=-3&&p.getX()<=3&&p.getZ()>=-3&&p.getZ()<=3;}public boolean edge(BlockPos a,BlockPos b){return true;}};
+-        var route=BuildPath.find(world,new BlockPos(3,1,0),BuildStations.around(BlockPos.ZERO),100);
++        var route=BuildPath.find(world,new BlockPos(3,1,0),new DefaultBuildNavigation().stations(BlockPos.ZERO),100);
+         assertFalse(route.nodes().isEmpty());assertEquals(1,route.nodes().getLast().getY());
+     }
+ }
+diff --git a/src/test/java/dev/twob2tkit/chopper/ChopperApproachWiringTest.java b/src/test/java/dev/twob2tkit/chopper/ChopperApproachWiringTest.java
+--- /dev/null
++++ b/src/test/java/dev/twob2tkit/chopper/ChopperApproachWiringTest.java
+@@ -0,0 +1,74 @@
++package dev.twob2tkit.chopper;
++
++import dev.twob2tkit.runtime.engine.BorerFlyPath;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.phys.Vec3;
++import org.junit.jupiter.api.Test;
++import org.objectweb.asm.ClassReader;
++import org.objectweb.asm.tree.*;
++import java.util.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class ChopperApproachWiringTest {
++    private ClassNode read(String owner) throws Exception {
++        var node = new ClassNode();
++        try (var in = getClass().getResourceAsStream("/dev/twob2tkit/chopper/" + owner + ".class")) {
++            assertNotNull(in);
++            new ClassReader(in).accept(node, 0);
++        }
++        return node;
++    }
++    private List<MethodInsnNode> calls(String owner, String name) throws Exception {
++        var method = read(owner).methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
++        var calls = new ArrayList<MethodInsnNode>();
++        for (var instruction : method.instructions)
++            if (instruction instanceof MethodInsnNode call) calls.add(call);
++        return calls;
++    }
++    private List<String> names(String owner, String name) throws Exception {
++        return calls(owner, name).stream().map(c -> c.name).toList();
++    }
++    @Test void actualApproachUsesManagedRoutesForTreeWorkAndReplanting() throws Exception {
++        var approach = names("AutoChopper", "approach");
++        assertTrue(approach.containsAll(List.of("moveToTree", "safeStandby", "returnToStandby", "stop")));
++        assertFalse(approach.contains("setDown"));
++        assertFalse(approach.contains("walkToward"));
++        assertTrue(names("ChopperScaffold", "planWork").contains("choose"));
++        assertTrue(names("ChopperScaffold", "travelTo").contains("findExact"));
++        assertTrue(names("ChopperScaffold", "safeStandby").contains("above"));
++    }
++    @Test void everyTravelInputChecksTheSweptBodyBeforeMovement() throws Exception {
++        var calls = calls("ChopperScaffold", "tick");
++        int safeMove = -1, speed = -1;
++        for (int i = 0; i < calls.size(); i++) {
++            var call = calls.get(i);
++            if (call.name.equals("safeMove")) safeMove = i;
++            if (call.owner.endsWith("BorerAreaFlightSession") && call.name.equals("speed") && speed < 0) speed = i;
++        }
++        assertTrue(safeMove >= 0 && speed > safeMove);
++        assertTrue(names("ChopperScaffold", "safeMove").containsAll(List.of("getBoundingBox", "expandTowards", "noCollision", "recoverCollision")));
++        var recoveryChecks = read("ChopperScaffold").methods.stream()
++            .filter(m -> m.name.startsWith("lambda$recoverCollision$")).toList();
++        assertEquals(2, recoveryChecks.size());
++        for (var method : recoveryChecks) {
++            boolean checksBody = false;
++            for (var instruction : method.instructions)
++                if (instruction instanceof MethodInsnNode call && call.name.equals("safeBox")) checksBody = true;
++            assertTrue(checksBody, method.name);
++        }
++    }
++    @Test void aFeetOnlyOpeningCannotBecomeAWorkPositionOrFlightRoute() {
++        ChopperPlatformPlan.World world = new ChopperPlatformPlan.World() {
++            public boolean clear(BlockPos p) {
++                return p.getZ() == 0 && (p.getY() == 0 && p.getX() >= 0 && p.getX() <= 4
++                    || p.equals(new BlockPos(0, 1, 0)));
++            }
++            public boolean replaceable(BlockPos p) { return true; }
++            public boolean floor(BlockPos p) { return true; }
++        };
++        assertTrue(BorerFlyPath.open(world, BlockPos.ZERO));
++        assertFalse(BorerFlyPath.open(world, new BlockPos(1, 0, 0)));
++        assertNull(ChopperPlatformPlan.choose(world, new Vec3(.5, 0, .5), List.of(new BlockPos(4, 0, 0)), 4.5));
++        assertTrue(BorerFlyPath.findExact(world, BlockPos.ZERO, new BlockPos(4, 0, 0), 8, 100).nodes().isEmpty());
++    }
++}
+diff --git a/src/test/java/dev/twob2tkit/chopper/ChopperCombatWiringTest.java b/src/test/java/dev/twob2tkit/chopper/ChopperCombatWiringTest.java
+--- /dev/null
++++ b/src/test/java/dev/twob2tkit/chopper/ChopperCombatWiringTest.java
+@@ -0,0 +1,43 @@
++package dev.twob2tkit.chopper;
++
++import org.junit.jupiter.api.Test;
++import org.objectweb.asm.ClassReader;
++import org.objectweb.asm.tree.*;
++import java.util.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class ChopperCombatWiringTest {
++    private MethodNode method(String name) throws Exception {
++        var node = new ClassNode();
++        try (var in = getClass().getResourceAsStream("/dev/twob2tkit/chopper/AutoChopper.class")) {
++            assertNotNull(in);
++            new ClassReader(in).accept(node, 0);
++        }
++        return node.methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
++    }
++    private List<String> calls(String name) throws Exception {
++        var names = new ArrayList<String>();
++        for (var instruction : method(name).instructions)
++            if (instruction instanceof MethodInsnNode call) names.add(call.name);
++        return names;
++    }
++    @Test void actualScanUsesObservedTargetsAndTimeBoundedAttackerEvidence() throws Exception {
++        assertTrue(calls("nearbyHostile").containsAll(List.of("activeAuraTarget", "getTarget", "getLastHurtByMob",
++            "getLastHurtByMobTimestamp", "recentAttacker", "isThreat")));
++        assertTrue(calls("updateCombatPause").containsAll(List.of("nearbyHostile", "shouldPause", "holdStill", "selectWeapon")));
++    }
++    @Test void auraIntegrationReadsActivityAndCurrentTargetWithoutChangingSettings() throws Exception {
++        var lookups = new ArrayList<String>();
++        for (var instruction : method("activeAuraTarget").instructions)
++            if (instruction instanceof LdcInsnNode constant && constant.cst instanceof String name) lookups.add(name);
++        assertTrue(lookups.indexOf("isActive") >= 0 && lookups.indexOf("getTarget") > lookups.indexOf("isActive"));
++        for (String mutator : List.of("enable", "disable", "toggle", "set")) assertFalse(lookups.contains(mutator));
++        // An inactive module must return before the getTarget reflection lookup.
++        int returns = 0;
++        for (var instruction : method("activeAuraTarget").instructions) {
++            if (instruction instanceof LdcInsnNode c && "getTarget".equals(c.cst)) break;
++            if (instruction.getOpcode() == org.objectweb.asm.Opcodes.ARETURN) returns++;
++        }
++        assertTrue(returns > 0);
++    }
++}
+diff --git a/src/test/java/dev/twob2tkit/chopper/ChopperMiningWiringTest.java b/src/test/java/dev/twob2tkit/chopper/ChopperMiningWiringTest.java
+--- /dev/null
++++ b/src/test/java/dev/twob2tkit/chopper/ChopperMiningWiringTest.java
+@@ -0,0 +1,70 @@
++package dev.twob2tkit.chopper;
++
++import org.junit.jupiter.api.Test;
++import org.objectweb.asm.Opcodes;
++import org.objectweb.asm.ClassReader;
++import org.objectweb.asm.tree.*;
++import java.util.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class ChopperMiningWiringTest {
++    private ClassNode read() throws Exception {
++        var node = new ClassNode();
++        try (var in = getClass().getResourceAsStream("/dev/twob2tkit/chopper/AutoChopper.class")) {
++            assertNotNull(in);
++            new ClassReader(in).accept(node, 0);
++        }
++        return node;
++    }
++    private MethodNode method(String name) throws Exception {
++        return read().methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
++    }
++    private List<MethodInsnNode> calls(MethodNode method) {
++        var calls = new ArrayList<MethodInsnNode>();
++        for (var instruction : method.instructions)
++            if (instruction instanceof MethodInsnNode call) calls.add(call);
++        return calls;
++    }
++    @Test void realMiningUsesVanillaStartAndContinueInsteadOfSyntheticClicksOrHeldAttack() throws Exception {
++        var mine = method("mine");
++        var calls = calls(mine);
++        assertEquals(1, calls.stream().filter(c -> c.name.equals("startDestroyBlock")).count());
++        assertEquals(1, calls.stream().filter(c -> c.name.equals("continueDestroyBlock")).count());
++        assertFalse(calls.stream().anyMatch(c -> c.name.equals("clickAttack") || c.name.equals("click")));
++        int heldWrites = 0;
++        for (var call : calls) if (call.name.equals("setDown")) {
++            assertEquals(Opcodes.ICONST_0, call.getPrevious().getOpcode());
++            heldWrites++;
++        }
++        assertEquals(1, heldWrites);
++    }
++    @Test void pendingServerConfirmationReturnsBeforePruningOrMoreMining() throws Exception {
++        var tick = method("tick");
++        AbstractInsnNode pending = null, prune = null;
++        for (var instruction : tick.instructions) if (instruction instanceof MethodInsnNode call) {
++            if (call.owner.endsWith("BorerMiningConfirmation") && call.name.equals("pending") && pending == null) pending = instruction;
++            if (call.name.equals("pruneGone")) { prune = instruction; break; }
++        }
++        assertNotNull(pending);
++        assertNotNull(prune);
++        assertInstanceOf(JumpInsnNode.class, pending.getNext());
++        var branch = (JumpInsnNode) pending.getNext();
++        boolean heldStill = false, returned = false, timeoutStops = false;
++        for (var instruction = branch.getNext(); instruction != branch.label; instruction = instruction.getNext()) {
++            assertNotNull(instruction);
++            if (instruction instanceof MethodInsnNode call) {
++                heldStill |= call.name.equals("holdStill");
++                timeoutStops |= call.name.equals("stop");
++                assertFalse(List.of("mine", "pruneGone", "startDestroyBlock", "continueDestroyBlock").contains(call.name));
++            }
++            returned |= instruction.getOpcode() == Opcodes.RETURN;
++        }
++        assertTrue(heldStill && returned && timeoutStops);
++    }
++    @Test void predictedLogRemovalCannotCountAsAConfirmedHarvest() throws Exception {
++        var predicate = read().methods.stream().filter(m -> m.name.startsWith("lambda$pruneGone$")).findFirst().orElseThrow();
++        var names = calls(predicate).stream().map(c -> c.name).toList();
++        assertTrue(names.indexOf("pending") >= 0 && names.indexOf("isWood") > names.indexOf("pending"));
++        assertTrue(calls(method("verifyCrown")).stream().anyMatch(c -> c.owner.endsWith("BorerMiningConfirmation") && c.name.equals("pending")));
++    }
++}
+diff --git a/src/test/java/dev/twob2tkit/chopper/ChopperToolWiringTest.java b/src/test/java/dev/twob2tkit/chopper/ChopperToolWiringTest.java
+--- /dev/null
++++ b/src/test/java/dev/twob2tkit/chopper/ChopperToolWiringTest.java
+@@ -0,0 +1,69 @@
++package dev.twob2tkit.chopper;
++
++import org.junit.jupiter.api.Test;
++import org.objectweb.asm.ClassReader;
++import org.objectweb.asm.tree.*;
++import java.util.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class ChopperToolWiringTest {
++    private ClassNode read(String owner) throws Exception {
++        var node = new ClassNode();
++        try (var in = getClass().getResourceAsStream("/dev/twob2tkit/chopper/" + owner + ".class")) {
++            assertNotNull(in);
++            new ClassReader(in).accept(node, 0);
++        }
++        return node;
++    }
++    private MethodNode method(String owner, String name) throws Exception {
++        return read(owner).methods.stream().filter(m -> m.name.equals(name)).findFirst().orElseThrow();
++    }
++    private List<String> calls(String owner, String name) throws Exception {
++        var calls = new ArrayList<String>();
++        for (var instruction : method(owner, name).instructions)
++            if (instruction instanceof MethodInsnNode call) calls.add(call.name);
++        return calls;
++    }
++    @Test void axeAndShearsUseTheSameDurabilityCheckedSelection() throws Exception {
++        assertTrue(calls("AutoChopper", "selectTool").contains("select"));
++        assertTrue(calls("ChopperTools", "select").containsAll(List.of("selectToolType", "selectSafeHand")));
++        assertTrue(calls("ChopperTools", "selectToolType").containsAll(List.of("chooseSlot", "usableTool", "selectSlot")));
++        assertTrue(calls("ChopperTools", "usableTool").contains("tooWorn"));
++        assertTrue(calls("ChopperTools", "selectSafeHand").containsAll(List.of("chooseSlot", "selectSlot", "isDamageableItem")));
++    }
++    @Test void failedSafeSelectionStopsBeforeAnyMiningAction() throws Exception {
++        var mine = method("AutoChopper", "mine");
++        AbstractInsnNode selected = null;
++        for (var instruction : mine.instructions)
++            if (instruction instanceof MethodInsnNode call && call.name.equals("selectTool")) selected = instruction;
++        assertNotNull(selected);
++        assertInstanceOf(JumpInsnNode.class, selected.getNext());
++        var branch = (JumpInsnNode) selected.getNext();
++        boolean stopped = false, returned = false;
++        for (var instruction = branch.getNext(); instruction != branch.label; instruction = instruction.getNext()) {
++            assertNotNull(instruction);
++            if (instruction instanceof MethodInsnNode call) {
++                stopped |= call.name.equals("stop");
++                assertFalse(call.name.equals("startDestroyBlock") || call.name.equals("continueDestroyBlock"));
++            }
++            returned |= instruction.getOpcode() == org.objectweb.asm.Opcodes.IRETURN;
++        }
++        assertTrue(stopped && returned);
++    }
++
++    @Test void platformRemovalChecksTheSameToolsAfterConfirmationAndBeforeAttacking() throws Exception {
++        var names = calls("ChopperScaffold", "tick");
++        assertTrue(names.indexOf("pending") >= 0 && names.indexOf("require") > names.indexOf("pending"));
++        assertTrue(names.indexOf("startDestroyBlock") > names.indexOf("require"));
++        assertTrue(names.indexOf("continueDestroyBlock") > names.indexOf("require"));
++    }
++
++    @Test void pickupLeafClearingChecksTheSameToolsBeforeExistingAttackInput() throws Exception {
++        var names = calls("ChopperLoot", "clearLeafObstacle");
++        assertTrue(names.indexOf("require") >= 0 && names.indexOf("clickAttack") > names.indexOf("require"));
++        assertTrue(names.indexOf("setDown") > names.indexOf("require"));
++        assertTrue(calls("ChopperTools", "require").containsAll(List.of("select", "<init>")));
++        assertTrue(java.util.stream.StreamSupport.stream(method("ChopperTools", "require").instructions.spliterator(), false)
++            .anyMatch(instruction -> instruction.getOpcode() == org.objectweb.asm.Opcodes.ATHROW));
++    }
++}
+diff --git a/src/test/java/dev/twob2tkit/runtime/engine/BorerAreaThinkPolicyTest.java b/src/test/java/dev/twob2tkit/runtime/engine/BorerAreaThinkPolicyTest.java
+--- a/src/test/java/dev/twob2tkit/runtime/engine/BorerAreaThinkPolicyTest.java
++++ b/src/test/java/dev/twob2tkit/runtime/engine/BorerAreaThinkPolicyTest.java
+@@ -172,7 +172,6 @@
+ 		assertEquals(bin.toAbsolutePath(), BorerAreaThinkAsk.grokBin(grokHome, null));
+ 		assertTrue(BorerAreaThinkAsk.promptText("go|fly|same|wall|out|near", "MINE_LOOKED w=1 l=0", "stuck")
+ 			.contains("scene=go|fly|same|wall|out|near"));
+-		assertEquals("1.6.276", BorerAreaThinkDeploy.nextPatchVersion("1.6.275"));
+ 		Path repo = grokHome.resolve("repo");
+ 		Files.createDirectories(repo.resolve("src/client/java/dev/twob2tkit/runtime/engine"));
+ 		Files.writeString(repo.resolve("gradlew"), "#!/bin/sh\n");

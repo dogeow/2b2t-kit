@@ -1,0 +1,66 @@
+--- a/src/client/java/dev/twob2tkit/ClickGuiPages.java
++++ b/src/client/java/dev/twob2tkit/ClickGuiPages.java
+@@ -837,18 +837,6 @@
+         return String.format(Locale.ROOT,"%s · %s · X %.0f Y %.0f Z %.0f · %s",origin,dimension,config.deathX,config.deathY,config.deathZ,time);
+     }
+ 
+-	/** 区域断面快捷 chip。 */
+-	private static KitFormScreen.Chip chipAreaSize(KitConfig config, String label, int w, int h) {
+-		return new KitFormScreen.Chip(label,
+-			() -> config.borerWidth == w && config.borerAreaSliceHeight == h,
+-			() -> {
+-				config.borerWidth = w;
+-				config.borerHeight = h;
+-				config.borerAreaSliceHeight = h;
+-				config.save();
+-			});
+-	}
+-
+ 	/** 巷道断面快捷 chip。 */
+ 	private static KitFormScreen.Chip chipSize(KitConfig config, String label, int w, int h) {
+ 		return new KitFormScreen.Chip(label,
+@@ -886,44 +874,6 @@
+ 		config.save();
+ 	}
+ 
+-	/** 写巡航坐标；支持粘贴传送文本。 */
+-	private static void setCoord(KitConfig config, String raw, char axis) {
+-		KitUi.TeleportCoords parsed = KitUi.parseTeleport(raw);
+-		if (parsed != null) {
+-			config.targetX = parsed.x();
+-			config.targetZ = parsed.z();
+-			if (parsed.y() != null) config.cruiseY = parsed.y();
+-			config.hasTarget = true;
+-			config.save();
+-			return;
+-		}
+-		try {
+-			double value = Double.parseDouble(raw.trim());
+-			if (!Double.isFinite(value)) return;
+-			if (axis == 'x') {
+-				config.targetX = value;
+-				config.hasTarget = true;
+-			} else if (axis == 'z') {
+-				config.targetZ = value;
+-				config.hasTarget = true;
+-			} else {
+-				config.cruiseY = value;
+-			}
+-			config.save();
+-		} catch (NumberFormatException ignored) {
+-		}
+-	}
+-
+-	/** 玩家当前 X。 */
+-	private static double currentX() {
+-		return mc().player == null ? 0 : mc().player.getX();
+-	}
+-
+-	/** 玩家当前 Z。 */
+-	private static double currentZ() {
+-		return mc().player == null ? 0 : mc().player.getZ();
+-	}
+-
+ 	/** 当前客户端实例。 */
+ 	private static Minecraft mc() {
+ 		return Minecraft.getInstance();

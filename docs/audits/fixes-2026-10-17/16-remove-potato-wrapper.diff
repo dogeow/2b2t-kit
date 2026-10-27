@@ -1,0 +1,13 @@
+--- a/decision-runtime/potato_farm.py
++++ b/decision-runtime/potato_farm.py
+@@ -306,10 +306,6 @@
+     # Ordinary carried stacks are supported by native BlockItem.useOn. Re-select
+     # only when the previous carried stack was exhausted or the hand changed.
+     return _hand(proxy, crop.item, source['slot'])
+-
+-
+-def _potato(proxy, state=None):
+-    return _seed(proxy,'potato',state)
+ 
+ 
+ def _hoe(proxy, remaining):

@@ -1,0 +1,15 @@
+--- a/decision-runtime/furnace_batches.py
++++ b/decision-runtime/furnace_batches.py
+@@ -135,12 +135,6 @@
+             or slots[1]['count']>loaded_fuel):
+         raise RuntimeError('Furnace contents changed during batch loading; do not replay')
+     return slots[0]['count']+slots[2]['count']==loaded_source
+-
+-
+-def loading_balance(state,source,output,loaded_source,loaded_fuel,fuel_item="minecraft:coal"):
+-    """Only this batch may occupy an initially empty furnace; fuel may burn."""
+-    if not _loading_matches(state,source,output,loaded_source,loaded_fuel,fuel_item):
+-        raise RuntimeError('Furnace contents changed during batch loading; do not replay')
+ 
+ 
+ def wait_loading_balance(client,state,source,output,loaded_source,loaded_fuel,menu_id,fuel_item="minecraft:coal"):

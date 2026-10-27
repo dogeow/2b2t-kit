@@ -1,0 +1,74 @@
+{
+  "java": {
+    "tests": 2056.0,
+    "failures": 0.0,
+    "errors": 0.0,
+    "skipped": 0.0,
+    "time": 7.224,
+    "suites": 356
+  },
+  "python_fixed": {
+    "tests": 1907,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "seconds": 98.962
+  },
+  "python_full": {
+    "tests": 4208,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "blocked": [],
+    "unique_ids": 4208
+  },
+  "python_full_seconds": 184.198,
+  "companion": {
+    "tests": 37,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 0.163
+  },
+  "explicit_26_2_recipe_integration": {
+    "tests": 10,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "diffs": {
+    "independent_patches": 27,
+    "files": 44,
+    "added_lines": 588,
+    "deleted_lines": 910,
+    "net_lines": -322,
+    "unrelated_changes_not_included": [
+      "decision-runtime/village_feeding.py"
+    ],
+    "patch_replay_and_final_byte_comparison": "passed"
+  },
+  "artifact": {
+    "jar": "/Users/sam/Code/DogeOW/minecraft-kit/2b2t-kit/build/libs/twob2tkit-2026.10.17.5.jar",
+    "removed_classes": [
+      "builder/BuildMovement",
+      "builder/BuildStations",
+      "adventure/AdventureScreen",
+      "SessionLog",
+      "borer/BorerScreenHud",
+      "borer/BorerHotReloadPolicy",
+      "runtime/engine/BorerAreaThinkDeploy",
+      "automation/PrinterPulse",
+      "chopper/ChopperApproachPolicy",
+      "chopper/ChopperMinePolicy"
+    ],
+    "sha256": "fb82d6bb3a2ddc9cefcae9e9c4e3af0e7d3ca5695dc9d071f48c4257d7a567b5"
+  },
+  "ci_validation": {
+    "yaml": "passed",
+    "cache_permission_scenarios": 4,
+    "trigger_scenarios": 6,
+    "remote_runs": "not_run"
+  },
+  "deployed": false,
+  "game_started_or_connected": false
+}

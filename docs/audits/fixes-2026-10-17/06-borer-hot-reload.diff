@@ -1,0 +1,125 @@
+--- a/src/client/java/dev/twob2tkit/borer/BorerHotReloadPolicy.java
++++ /dev/null
+@@ -1,20 +0,0 @@
+-package dev.twob2tkit.borer;
+-
+-/** 外部引擎 jar 换新后，等复制完成再热加载。 */
+-public final class BorerHotReloadPolicy {
+-	/** 文件修改时间连续不变多久才算写稳（tick）。 */
+-	public static final int STABLE_TICKS = 40;
+-
+-	private BorerHotReloadPolicy() {
+-	}
+-
+-	/** 磁盘 jar 是否比已加载副本更新。 */
+-	public static boolean jarNewer(long loadedMtime, long fileMtime) {
+-		return fileMtime > loadedMtime;
+-	}
+-
+-	/** 同一 mtime 已持续足够 tick，可以安全热加载。 */
+-	public static boolean stable(int sameMtimeTicks, int needTicks) {
+-		return sameMtimeTicks >= needTicks;
+-	}
+-}
+--- a/src/test/java/dev/twob2tkit/BorerHotReloadPolicyTest.java
++++ /dev/null
+@@ -1,17 +0,0 @@
+-package dev.twob2tkit;
+-
+-import org.junit.jupiter.api.Test;
+-
+-import static org.junit.jupiter.api.Assertions.assertFalse;
+-import static org.junit.jupiter.api.Assertions.assertTrue;
+-import dev.twob2tkit.borer.BorerHotReloadPolicy;
+-
+-final class BorerHotReloadPolicyTest {
+-	@Test
+-	void waitsUntilNewJarStopsChanging() {
+-		assertFalse(BorerHotReloadPolicy.jarNewer(100, 100));
+-		assertTrue(BorerHotReloadPolicy.jarNewer(100, 200));
+-		assertFalse(BorerHotReloadPolicy.stable(10, BorerHotReloadPolicy.STABLE_TICKS));
+-		assertTrue(BorerHotReloadPolicy.stable(40, BorerHotReloadPolicy.STABLE_TICKS));
+-	}
+-}
+--- /dev/null
++++ b/src/test/java/dev/twob2tkit/borer/BorerEngineLoadingTest.java
+@@ -0,0 +1,79 @@
++package dev.twob2tkit.borer;
++
++import dev.twob2tkit.runtime.api.BuildNavigation;
++import dev.twob2tkit.runtime.engine.DefaultBuildNavigation;
++import net.minecraft.core.BlockPos;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++import org.objectweb.asm.ClassReader;
++import org.objectweb.asm.tree.*;
++import java.net.URL;
++import java.net.URLClassLoader;
++import java.nio.file.*;
++import java.util.*;
++import java.util.jar.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class BorerEngineLoadingTest {
++    @TempDir Path directory;
++
++    @Test void actualLoaderRejectsMissingAndTruncatedEngineClassesInsteadOfUsingBundledCopies() throws Exception {
++        String name=DefaultBuildNavigation.class.getName();
++        Path jar=directory.resolve("engine.jar");
++        writeJar(jar,null);
++        try(var loader=loader(jar)) {
++            assertThrows(ClassNotFoundException.class,()->loader.loadClass(name));
++        }
++        writeJar(jar,new byte[]{(byte)0xca,(byte)0xfe,(byte)0xba,(byte)0xbe});
++        try(var loader=loader(jar)) {
++            assertThrows(ClassFormatError.class,()->loader.loadClass(name));
++        }
++        try(var input=DefaultBuildNavigation.class.getResourceAsStream("DefaultBuildNavigation.class")) {
++            assertNotNull(input);writeJar(jar,input.readAllBytes());
++        }
++        try(var loader=loader(jar)) {
++            var type=loader.loadClass(name);
++            assertSame(loader,type.getClassLoader());
++            java.util.function.Predicate<BlockPos> clear=p->true;
++            var navigation=(BuildNavigation)type.getConstructor(java.util.function.Predicate.class).newInstance(clear);
++            assertTrue(navigation.stations(BlockPos.ZERO).contains(new BlockPos(0,1,0)));
++        }
++    }
++
++    @Test void actualReloadValidatesTheCandidateBeforeStoppingTheCurrentEngine() throws Exception {
++        var external=calls("loadExternalEngine");
++        assertTrue(external.containsAll(List.of("copy","preloadEngineClasses","newInstance")));
++        assertTrue(external.indexOf("copy")<external.indexOf("preloadEngineClasses"));
++        assertTrue(external.indexOf("preloadEngineClasses")<external.indexOf("newInstance"));
++        assertTrue(external.containsAll(List.of("requiredHostApiVersion","apiVersion","runtimeVersion","isBlank")));
++        var reload=calls("reload");
++        assertTrue(reload.containsAll(List.of("loadExternalEngine","runtimeVersion","stop")));
++        assertTrue(reload.indexOf("loadExternalEngine")<reload.indexOf("stop"));
++        assertTrue(reload.indexOf("runtimeVersion")<reload.indexOf("stop"));
++        assertTrue(reload.contains("closeQuietly"));
++    }
++
++    private void writeJar(Path path,byte[] navigation) throws Exception {
++        try(var output=new JarOutputStream(Files.newOutputStream(path))) {
++            if(navigation==null)return;
++            output.putNextEntry(new JarEntry("dev/twob2tkit/runtime/engine/DefaultBuildNavigation.class"));
++            output.write(navigation);output.closeEntry();
++        }
++    }
++    private URLClassLoader loader(Path jar) throws Exception {
++        var type=Class.forName("dev.twob2tkit.borer.TunnelBorer$ChildFirstEngineLoader");
++        var constructor=type.getDeclaredConstructor(URL[].class,ClassLoader.class);
++        constructor.setAccessible(true);
++        return (URLClassLoader)constructor.newInstance(new URL[]{jar.toUri().toURL()},getClass().getClassLoader());
++    }
++    private static List<String> calls(String name) throws Exception {
++        var node=new ClassNode();
++        try(var input=BorerEngineLoadingTest.class.getResourceAsStream("/dev/twob2tkit/borer/TunnelBorer.class")) {
++            assertNotNull(input);new ClassReader(input).accept(node,0);
++        }
++        var method=node.methods.stream().filter(m->m.name.equals(name)).findFirst().orElseThrow();
++        List<String> calls=new ArrayList<>();
++        for(var instruction:method.instructions)if(instruction instanceof MethodInsnNode call)calls.add(call.name);
++        return calls;
++    }
++}

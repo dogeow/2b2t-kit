@@ -1,0 +1,25 @@
+--- a/.github/workflows/build.yml
++++ b/.github/workflows/build.yml
+@@ -1,10 +1,17 @@
+-# Automatically build the project and run any configured tests for every push
+-# and submitted pull request. This can help catch issues that only occur on
+-# certain platforms or Java versions, and provides a first line of defence
+-# against bad commits.
++# Build pull requests, the integration branch, and tags; other branches can be
++# checked manually without duplicating their pull-request build.
+ 
+ name: build
+-on: [pull_request, push]
++on:
++  pull_request:
++  push:
++    branches: ['26.1.2']
++    tags: ['**']
++  workflow_dispatch:
++
++concurrency:
++  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
++  cancel-in-progress: true
+ 
+ jobs:
+   build:

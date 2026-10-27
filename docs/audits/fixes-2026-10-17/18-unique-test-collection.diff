@@ -1,0 +1,37 @@
+--- a/decision-runtime/test_owned_grass_refill.py
++++ b/decision-runtime/test_owned_grass_refill.py
+@@ -2,14 +2,14 @@
+ import json
+ import unittest
+ from pathlib import Path
+-from test_direct_clay_refill import Tests as DirectFixture
++import test_direct_clay_refill as fixtures
+ from material_jobs.owned_grass_refill import finish
+ from material_jobs.protocol import JobBlocked
+ 
+ 
+ class Tests(unittest.TestCase):
+     def setUp(self):
+-        DirectFixture.setUp(self)
++        fixtures.Tests.setUp(self)
+         self.c.add('minecraft:dirt',-1);self.c.blocks[(100,64,100)]='Block{minecraft:grass_block}[snowy=false]'
+         self.old=self.out/'original-grass.json'
+         self.old.write_text(json.dumps({'world_session':'world','pos':[100,64,100],'water_request':'bottle-original',
+--- a/decision-runtime/test_registered_grass_bed.py
++++ b/decision-runtime/test_registered_grass_bed.py
+@@ -1,13 +1,13 @@
+ import json,unittest
+ from unittest.mock import patch
+-from test_direct_clay_refill import Tests as DirectFixture
++import test_direct_clay_refill as fixtures
+ from material_jobs import registered_grass_bed as m
+ from material_jobs.protocol import JobBlocked
+ 
+ 
+ class Tests(unittest.TestCase):
+     def setUp(self):
+-        DirectFixture.setUp(self)
++        fixtures.Tests.setUp(self)
+         self.c.blocks[(100,64,100)]='Block{minecraft:grass_block}[snowy=false]'
+         self.c.root=self.out
+         request=self.c.request

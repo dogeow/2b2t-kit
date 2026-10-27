@@ -1,0 +1,32 @@
+--- a/decision-runtime/check_offline.py
++++ b/decision-runtime/check_offline.py
+@@ -3,7 +3,7 @@
+ import argparse,os,subprocess,sys
+ 
+ TESTS = (
+-    'test_material_client', 'test_material_health_exit', 'test_material_shutdown',
++    'test_material_client', 'test_material_health_exit', 'test_material_shutdown', 'test_kit_cli',
+     'test_material_ground_settlement','test_material_ground_rebase','test_material_idle_ground_finish',
+     'test_native_outcome_fence','test_material_audit_cli',
+     'test_cave_escape_cli',
+@@ -12,15 +12,17 @@
+     'test_natural_block_pipeline', 'test_mud_pipeline', 'test_material_stripped_wood_pipeline',
+     'test_terrain_replace_south', 'test_terrain_replace_south_cli',
+     'test_live_snapshot', 'test_job_progress', 'test_safety_interlock', 'test_server_probe',
+-    'test_inventory_session', 'test_stack_recipe', 'test_material_manufacture', 'test_material_bulk_planks', 'test_material_bulk_diorite', 'test_craft_recovery',
++    'test_inventory_session', 'test_recipe_catalog', 'test_stack_recipe', 'test_material_manufacture', 'test_material_bulk_planks', 'test_material_bulk_diorite', 'test_craft_recovery',
+     'test_container_access', 'test_material_depots', 'test_concrete_soil', 'test_shore_concrete', 'test_concrete_shelter',
+-    'test_furnace_batches', 'test_furnace_bank', 'test_smelting_workflow', 'test_smelting_fuel', 'test_journal', 'test_decision_advisor',
++    'test_furnace_batches', 'test_processing_fuels', 'test_furnace_bank', 'test_smelting_workflow', 'test_smelting_fuel', 'test_journal', 'test_decision_advisor',
++    'test_potato_farm', 'test_wheat_farm',
++    'test_direct_clay_refill', 'test_owned_grass_refill', 'test_registered_grass_bed',
+     'test_construction_materials', 'test_construction_obstruction',
+     'test_construction_obstruction_cli', 'test_goal_workflow',
+     'test_projection_material_plan', 'test_projection_stock_plan', 'test_projection_patch_plan', 'test_projection_advice', 'test_material_jobs', 'test_material_processing',
+     'test_material_jobs_backend', 'test_projection_ready_supply', 'test_targeted_supply',
+     'test_native_pipeline_dispatch','test_backend_pipeline_context','test_material_finish_wait',
+-    'test_material_jobs_acquisition', 'test_material_discovery', 'test_snow_biome_search',
++    'test_material_jobs_acquisition', 'test_fixed_tree_ground', 'test_material_discovery', 'test_snow_biome_search',
+     'test_seed_snow_search',
+     'test_material_snow_plan', 'test_material_snow_acquisition',
+     'test_construction_access_plan', 'test_construction_access_journal', 'test_construction_access_receipts', 'test_construction_access',
