@@ -223,6 +223,7 @@ public final class ProjectionBuildJob {
         for(var e:expected.entrySet()){
             var state=actual.get(e.getKey());if(e.getValue().equals(state)){matched++;continue;}
             if(state!=null&&!state.canBeReplaced()&&!state.isAir())blockedBlocks++;
+            if(!AutomationBridge.projectionBatchAllows(c,e.getKey()))continue;
             var item=e.getValue().getBlock().asItem();String s=e.getValue().toString();
             if(item!=Items.AIR&&!s.contains("half=upper")&&!s.contains("part=head"))needs.merge(item,1,Integer::sum);
         }
