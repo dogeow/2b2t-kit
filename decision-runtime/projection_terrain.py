@@ -166,7 +166,10 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
             # A current preflight refusal certifies that no mining sequence was sent.
             # Keep the receipt, skip this face, and continue other cells without replay.
             intent.update(pending=None,removed=False,never_dispatched=True,
-                          preflight_request_id=reply['id'],native_no_send_receipt=reply)
+                          preflight_request_id=reply['id'],native_no_send_receipt={key:reply.get(key) for key in (
+                              'id','op','world_session','phase','detail','mining_target','outcome_pending',
+                              'server_confirmed','server_update_seen','confirmation_scope',
+                              'native_sequence','server_ack_sequence')})
             write_json(journal,intent);deferred.add(tuple(pos));continue
         if (reply.get('id')!=client.last or reply.get('world_session')!=world or reply.get('phase')!='done'
                 or reply.get('server_confirmed')is not True
