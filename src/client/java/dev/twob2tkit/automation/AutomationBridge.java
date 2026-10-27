@@ -2107,7 +2107,8 @@ public final class AutomationBridge {
                 &&!IdleActivityPolicy.requestOwned(idleOwnerForAction(c),r))
                 throw new IllegalStateException("Idle action lacks a fresh exact owner; no foreign inputs stopped");
             if(!Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit",
-                "projection_model","map_audit","decision_screenshot","stop","material_job_pause","safe_logout","inventory_probe").contains(str(r,"op")))
+                "projection_model","map_audit","decision_screenshot","stop","material_job_pause","safe_logout","inventory_probe",
+                "connect_server","client_quit","confirm_recovery").contains(str(r,"op")))
                 preemptIdleForPlayer(c,"FORMAL_NATIVE_INPUT");
         String command=str(r,"op");
         if(command.equals("connect_server")||command.equals("client_quit")){

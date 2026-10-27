@@ -7,6 +7,17 @@ import org.objectweb.asm.tree.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RecoveryConfirmationWiringTest {
+    @Test void explicitRecoveryDispatchDoesNotEnterIdleHandoffThatRejectsHealthLocks()throws Exception {
+        var method=code("automation/AutomationBridge").methods.stream().filter(m->m.name.equals("dispatch")).findFirst().orElseThrow();
+        var seen=new HashSet<String>();
+        for(var instruction:method.instructions){
+            if(instruction instanceof LdcInsnNode value&&value.cst instanceof String s)seen.add(s);
+            if(instruction instanceof MethodInsnNode call&&call.name.equals("preemptIdleForPlayer")){
+                assertTrue(seen.containsAll(Set.of("connect_server","client_quit","confirm_recovery")));return;
+            }
+        }
+        fail("Expected ordinary dispatch preemption boundary");
+    }
     ClassNode code(String name)throws Exception{var c=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/"+name+".class")){assertNotNull(in);new ClassReader(in).accept(c,0);}return c;}
     List<String> calls(MethodNode m){var r=new ArrayList<String>();for(var i:m.instructions)if(i instanceof MethodInsnNode c)r.add(c.name);return r;}
     @Test void realDispatchValidatesBeforeAcknowledgingAndArmsDefenseBeforeClosingPause()throws Exception{
