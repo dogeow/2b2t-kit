@@ -260,8 +260,7 @@ public final class ProjectionBuildJob {
     private int reachable(Minecraft c,Vec3 feet,List<BlockPos> targets,boolean stopAtFirst){
         int count=0;var eye=feet.add(0,c.player.getEyeHeight(),0);
         for(var p:targets){var aim=Vec3.atCenterOf(p);if(eye.distanceTo(aim)>4.15 || body(feet).intersects(new AABB(p)))continue;
-            var hit=c.level.clip(new ClipContext(eye,aim,ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,c.player));
-            if(hit.getType()==HitResult.Type.MISS||hit.getBlockPos().equals(p)){count++;if(stopAtFirst)return count;}
+            if(ProjectionReachability.reachable(c,eye,p,4.15)){count++;if(stopAtFirst)return count;}
         }return count;
     }
     static BlockPos stationKey(Vec3 pos){return new BlockPos((int)Math.floor(pos.x),(int)Math.round(pos.y-.02),(int)Math.floor(pos.z));}
