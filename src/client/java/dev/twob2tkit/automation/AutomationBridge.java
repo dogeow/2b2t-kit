@@ -1628,6 +1628,9 @@ public final class AutomationBridge {
         if(c.gui.screen()!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyAttack.setDown(false);return true;}
         if(op.equals("mine_block")){
             try{guard(c,active);}catch(Exception e){finish(c,"stopped",e.getMessage());return true;}
+            if(BelowFlowMiningGuard.requested(active))try{
+                BelowFlowMiningGuard.require(c,active,singleBlockTarget(active),currentMaterialRequest(c,active)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),silk(c.player.getMainHandItem()),mineStarted);
+            }catch(Exception changed){finish(c,"waiting",changed.getMessage());return true;}
             if(ControlledWaterReleaseGuard.requested(active))try{
                 ControlledWaterReleaseGuard.require(c,active,singleBlockTarget(active),currentMaterialRequest(c,active)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),mineStarted);
             }catch(Exception changed){finish(c,"waiting",changed.getMessage());return true;}
@@ -2825,7 +2828,13 @@ public final class AutomationBridge {
                     throw new IllegalArgumentException("Controlled water release cannot combine excavation exceptions");
                 ControlledWaterReleaseGuard.require(c,r,pos,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),false);
             }
-            if(!underwater&&!dryRoof&&!controlledRelease)for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
+            boolean belowFlow=BelowFlowMiningGuard.requested(r);
+            if(belowFlow){
+                if(underwater||dryRoof||controlledRelease||recovery||furnaceRecovery||lecternReset||dryPaving||terrainReplace)
+                    throw new IllegalArgumentException("Below-flow glass removal cannot combine excavation exceptions");
+                BelowFlowMiningGuard.require(c,r,pos,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),silk(c.player.getMainHandItem()),false);
+            }
+            if(!underwater&&!dryRoof&&!controlledRelease&&!belowFlow)for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
             if(c.player.getEyePosition().distanceTo(blockAim(pos,r))>c.player.blockInteractionRange()-.2)throw new IllegalStateException("Mining target out of reach");
             if(furnaceRecovery)EmptyFurnaceRecovery.prepare(c,r,pos,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy
                 &&c.player.getHealth()>=19&&c.player.getFoodData().getFoodLevel()>=18&&!KitKeys.manualMovementDown(c));
@@ -4442,6 +4451,7 @@ public final class AutomationBridge {
         j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("job_hud_protocol",1);j.addProperty("quarry_protocol",1);j.addProperty("raw_iron_block_quarry_protocol",1);j.addProperty("tree_survey_protocol",1);j.addProperty("snow_biome_survey_protocol",SnowBiomeSurvey.PROTOCOL);j.addProperty("snow_seed_locator_protocol",SnowSeedExpedition.PROTOCOL);j.addProperty("snow_seed_locator_available",KitClient.seedScout()!=null&&KitClient.seedScout().hasStoredWorldSeed());j.addProperty("material_protocol",2);j.addProperty("air_return_protocol",1);j.addProperty("horse_nudge_protocol",1);j.addProperty("inventory_cursor_precondition_protocol",1);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("material_mining_isolation_protocol",1);j.addProperty("material_mining_cleanup_pending",materialMiningCleanupPending);j.add("material_mining_isolation",MaterialMiningLease.snapshot(materialMiningLease,!materialMiningScope(c).isEmpty()&&materialMiningScope(c).equals(materialMiningOwner)));j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("freefall_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",4);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.gui.screen()==null?"":c.gui.screen().getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
         j.addProperty("fixed_tree_chop_protocol",1);
         j.addProperty("dry_roof_mining_protocol",1);
+        j.addProperty("below_flow_glass_mining_protocol",1);
         j.addProperty("sapling_retention_chop_protocol",1);
         var gravelState=GravelCollector.snapshot();
         if(nativeMaterialOwner!=null&&GravelCollector.isActive())gravelState.addProperty("session",nativeMaterialOwner.job);
