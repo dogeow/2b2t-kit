@@ -11,6 +11,7 @@ final class NavigationHazardClearance {
     interface Cells {
         boolean loaded(BlockPos pos);
         boolean hazardous(BlockPos pos);
+        default boolean barrier(BlockPos pos){return false;}
     }
     private NavigationHazardClearance() {}
 
@@ -28,7 +29,26 @@ final class NavigationHazardClearance {
             var p=feet.offset(dx,dy,dz);
             if(!cells.loaded(p)||cells.hazardous(p))return false;
         }
+        // Low Flight waypoints need more than body collision clearance. Keep
+        // three blocks of exposed hot footing out of the vertical hover column.
+        // A verified dry floor blocks contact below it; it does not excuse an
+        // immediately adjacent hazard from the checks above.
+        for(int dx=-1;dx<=1;dx++)for(int dz=-1;dz<=1;dz++){
+            boolean covered=cells.barrier(feet.offset(dx,-1,dz));
+            for(int depth=2;depth<=3;depth++){
+                var p=feet.offset(dx,-depth,dz);
+                if(!cells.loaded(p)||!covered&&cells.hazardous(p))return false;
+                covered|=cells.barrier(p);
+            }
+        }
         return true;
+    }
+    static boolean barrier(net.minecraft.world.level.block.state.BlockState state,
+            net.minecraft.world.level.BlockGetter level,BlockPos pos){
+        if(!state.getFluidState().isEmpty()||state.hasBlockEntity())return false;
+        return state.isCollisionShapeFullBlock(level,pos)
+            ||state.hasProperty(BlockStateProperties.SLAB_TYPE)
+                &&state.getValue(BlockStateProperties.SLAB_TYPE)==net.minecraft.world.level.block.state.properties.SlabType.TOP;
     }
     static boolean current(BlockPos feet) {
         var c=Minecraft.getInstance();
@@ -49,6 +69,7 @@ final class NavigationHazardClearance {
                     BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString(),
                     state.hasProperty(BlockStateProperties.LIT)&&state.getValue(BlockStateProperties.LIT));
             }
+            public boolean barrier(BlockPos p){return NavigationHazardClearance.barrier(level.getBlockState(p),level,p);}
         });
     }
 }

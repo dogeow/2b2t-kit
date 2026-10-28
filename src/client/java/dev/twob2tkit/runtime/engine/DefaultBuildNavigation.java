@@ -22,7 +22,7 @@ public final class DefaultBuildNavigation implements BuildNavigation {
     }
     public List<BlockPos> stations(BlockPos target){
         var cells=new ArrayList<BlockPos>();
-        for(int dx=-3;dx<=3;dx++)for(int dz=-3;dz<=3;dz++)for(int dy=-3;dy<=2;dy++){
+        for(int dx=-3;dx<=3;dx++)for(int dz=-3;dz<=3;dz++)for(int dy=-3;dy<=3;dy++){
             double eyeDeltaY=dy+1.14;
             if(dx*dx+dz*dz+eyeDeltaY*eyeDeltaY>4.15*4.15||dx==0&&dz==0&&dy<=0)continue;
             cells.add(target.offset(dx,dy,dz));
