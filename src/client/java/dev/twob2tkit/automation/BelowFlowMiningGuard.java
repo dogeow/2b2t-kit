@@ -20,6 +20,13 @@ final class BelowFlowMiningGuard {
         return value.getAsBoolean();
     }
     private static String text(JsonObject r,String key){return r.has(key)?r.get(key).getAsString():"";}
+    static boolean preserveSourceRequested(JsonObject r){
+        if(!r.has("preserve_source_below"))return false;
+        var value=r.get("preserve_source_below");
+        if(!value.isJsonPrimitive()||!value.getAsJsonPrimitive().isBoolean())
+            throw new IllegalArgumentException("Source preservation flag must be boolean");
+        return value.getAsBoolean();
+    }
     static void require(Minecraft c,JsonObject r,BlockPos target,boolean owned,boolean silk,boolean started){
         if(c.player==null||c.level==null)throw new IllegalStateException("Live construction world required");
         var selection=LitematicaAccess.lockedBuildSelection();
@@ -52,7 +59,8 @@ final class BelowFlowMiningGuard {
         }
         boolean footing=c.player.onGround()&&(c.player.blockPosition().equals(target)||c.player.blockPosition().below().equals(target));
         var rejection=BelowFlowMiningPolicy.rejection(owned,healthy,projected,tool,footing,
-            c.level.getBlockState(target.below()).toString().equals(text(r,"expected_below_state")),neighbors);
+            c.level.getBlockState(target.below()).toString().equals(text(r,"expected_below_state")),
+            preserveSourceRequested(r),neighbors);
         if(rejection!=null)throw new IllegalStateException(rejection);
     }
 }

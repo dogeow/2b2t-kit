@@ -9,6 +9,11 @@ import java.util.HashSet;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BelowFlowMiningIntegrationTest {
+    @Test void sourcePreservationRequiresStrictBooleanOptIn(){
+        var r=new JsonObject();assertFalse(BelowFlowMiningGuard.preserveSourceRequested(r));
+        r.addProperty("preserve_source_below",true);assertTrue(BelowFlowMiningGuard.preserveSourceRequested(r));
+        r.addProperty("preserve_source_below","true");assertThrows(IllegalArgumentException.class,()->BelowFlowMiningGuard.preserveSourceRequested(r));
+    }
     @Test void optInIsStrictlyBooleanAndAbsentByDefault(){
         var request=new JsonObject();assertFalse(BelowFlowMiningGuard.requested(request));
         request.addProperty("flowing_water_below",false);assertFalse(BelowFlowMiningGuard.requested(request));

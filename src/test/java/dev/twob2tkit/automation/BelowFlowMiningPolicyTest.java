@@ -6,6 +6,20 @@ import static org.junit.jupiter.api.Assertions.*;
 import static dev.twob2tkit.automation.BelowFlowMiningPolicy.*;
 
 class BelowFlowMiningPolicyTest {
+    @Test void sourceBelowNeedsExplicitPreservationAndExactPinnedState(){
+        var rows=neighbors();rows.put(Side.DOWN,Fluid.WATER_SOURCE);
+        assertNotNull(rejection(true,true,true,true,false,true,rows));
+        assertNull(rejection(true,true,true,true,false,true,true,rows));
+        assertNotNull(rejection(true,true,true,true,false,false,true,rows));
+    }
+    @Test void preservationScopeDoesNotAdmitOtherLiquidsOrOtherSources(){
+        var rows=neighbors();rows.put(Side.DOWN,Fluid.OTHER);
+        assertNotNull(rejection(true,true,true,true,false,true,true,rows));
+        rows=neighbors();rows.put(Side.DOWN,Fluid.WATER_SOURCE);rows.put(Side.EAST,Fluid.WATER_SOURCE);
+        assertNotNull(rejection(true,true,true,true,false,true,true,rows));
+        rows.put(Side.EAST,Fluid.DRY);
+        assertNotNull(rejection(true,true,true,true,true,true,true,rows));
+    }
     private EnumMap<Side,Fluid> neighbors(){
         var rows=new EnumMap<Side,Fluid>(Side.class);
         for(var side:Side.values())rows.put(side,Fluid.DRY);

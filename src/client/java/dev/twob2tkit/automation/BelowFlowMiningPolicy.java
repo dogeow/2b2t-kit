@@ -10,6 +10,12 @@ final class BelowFlowMiningPolicy {
     static String rejection(boolean owned,boolean healthyDry,boolean exactProjectedGlass,
             boolean silkPickReady,boolean protectsFooting,boolean exactBelowState,
             Map<Side,Fluid> neighbors) {
+        return rejection(owned,healthyDry,exactProjectedGlass,silkPickReady,protectsFooting,
+            exactBelowState,false,neighbors);
+    }
+    static String rejection(boolean owned,boolean healthyDry,boolean exactProjectedGlass,
+            boolean silkPickReady,boolean protectsFooting,boolean exactBelowState,
+            boolean preserveSourceBelow,Map<Side,Fluid> neighbors) {
         if(!owned||!healthyDry)return "Healthy dry guarded material owner required";
         if(!exactProjectedGlass)return "Exact current projected glass required";
         if(!silkPickReady)return "Silk Touch pickaxe with reserve required";
@@ -21,7 +27,8 @@ final class BelowFlowMiningPolicy {
             var fluid=neighbors.get(side);
             if(fluid==null||fluid==Fluid.UNKNOWN)return "Neighbor fluid is unknown";
             if(side==Side.DOWN) {
-                if(fluid!=Fluid.FLOWING_WATER)return "Only nonsource water below is admitted";
+                if(fluid!=Fluid.FLOWING_WATER&&!(preserveSourceBelow&&fluid==Fluid.WATER_SOURCE))
+                    return "Source water below requires explicit preservation scope";
             } else if(fluid!=Fluid.DRY)return "Other neighboring fluids remain protected";
         }
         return null;
