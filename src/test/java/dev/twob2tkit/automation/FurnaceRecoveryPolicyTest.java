@@ -40,7 +40,9 @@ class FurnaceRecoveryPolicyTest {
         assertTrue(bridge.contains("EmptyFurnaceRecovery.opening(c,currentMaterialRequest(c,r)"));
         assertTrue(bridge.contains("EmptyFurnaceRecovery.prepare(c,r,pos,currentMaterialRequest(c,r)"));
         assertTrue(bridge.contains("EmptyFurnaceRecovery.validateMining(c,active,target)"));
-        assertTrue(bridge.contains("ordinaryMiningConfirmation.begin(c,session(c),str(r,\"id\"),pos,underwater,controlledRelease)"));
+        assertTrue(bridge.contains("ordinaryMiningConfirmation.begin(c,session(c),str(r,\"id\"),pos,underwater,controlledRelease,projectedWet)"));
+        assertTrue(bridge.contains("controlledRelease||belowFlow||recovery||furnaceRecovery||lecternReset||dryPaving||terrainReplace"),
+            "Wet terrain must reject furnace recovery rather than granting it water-aware removal");
         assertTrue(bridge.contains("underwater||dryRoof||recovery||furnaceRecovery||lecternReset||dryPaving||terrainReplace"));
     }
 }

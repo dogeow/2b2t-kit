@@ -2857,7 +2857,7 @@ public final class AutomationBridge {
                     dryPavingAckTarget(r),dryPavingAckExpected(r));
                 dryPavingConfirmedTick=-1;dryPavingClientAirTick=-1;
             }
-            if(!terrainReplace&&!dryPaving)ordinaryMiningConfirmation.begin(c,session(c),str(r,"id"),pos,underwater,controlledRelease);
+            if(!terrainReplace&&!dryPaving)ordinaryMiningConfirmation.begin(c,session(c),str(r,"id"),pos,underwater,controlledRelease,projectedWet);
             active=r.deepCopy();active.addProperty("single_block_world",session(c));op="mine_block";phase="running";detail="mining the verified target";mineStarted=false;deadline=ticks+20*Math.min(20,r.has("seconds")?r.get("seconds").getAsInt():10);
         }else if(command.equals("projection_scaffold_fill")){
             if(!r.has("task_session")||!currentMaterialRequest(c,r)||!guardArmed()||!pveOnly()||guardBusy
