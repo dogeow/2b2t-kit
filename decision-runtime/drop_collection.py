@@ -5,6 +5,7 @@ from ground_pickup import collect_nearby_ground
 
 REFRESH_ONLY={'Drop identity or stack changed','Drop is no longer loaded; observe again'}
 NO_ACCESS={'No visible collision-free depot approach','No loaded collision-free route to this depot; no ceiling is broken'}
+NO_ACCESS_AIR_ITEMS=frozenset('minecraft:'+n for n in ('dirt','cobblestone','stone','coal','sand','gravel'))
 
 def collect_nearby_plant_shape(client,drop,before):
     """One tiny native collision-checked step for a plant drop by a thin stem."""
@@ -46,15 +47,18 @@ def collect_nearby_air(client,drop,before_count):
     """
     terminal=getattr(client,'last_terminal_evidence',{})or{}
     params=terminal.get('params',{})
-    if (terminal.get('op')!='collect_item' or terminal.get('phase')!='waiting'
-            or terminal.get('detail')!='Drop pickup not confirmed at the reached position'
+    reached=(terminal.get('phase')=='waiting' and terminal.get('detail')=='Drop pickup not confirmed at the reached position')
+    no_route=(terminal.get('phase')=='error' and terminal.get('detail')in NO_ACCESS
+              and drop.get('stack',{}).get('item')in NO_ACCESS_AIR_ITEMS)
+    if (terminal.get('op')!='collect_item' or not(reached or no_route)
             or terminal.get('request_id')!=getattr(client,'last',None)
             or terminal.get('world_session')!=getattr(client,'world',None)
             or terminal.get('task_session')!=getattr(client,'task',None)
             or params.get('expected_uuid')!=drop.get('uuid')
             or params.get('expected_item')!=drop.get('stack',{}).get('item')
             or params.get('expected_count')!=drop.get('stack',{}).get('count')
-            or getattr(client,'unconfirmed_native_request',None)is not None):return False
+            or getattr(client,'unconfirmed_native_request',None)is not None
+            or getattr(client,'native_inflight',None)is not None):return False
     state=client.status();item=drop['stack']['item'];amount=drop['stack']['count']
     current=next((e for e in state.get('entities',[])if e.get('uuid')==drop['uuid']),None)
     if (not current or current.get('stack')!=drop['stack'] or type(amount)is not int or not 1<=amount<=64
@@ -79,6 +83,13 @@ def collect_nearby_air(client,drop,before_count):
             raise RuntimeError('Fractional pickup survival/control changed; no route replay')
         return q
     checkpoint()
+    if no_route:
+        # The integer pickup has a known terminal refusal. A different, fully
+        # scanned air stance is a new movement, never another collect request.
+        from material_jobs.dry_hover_harvest import pickup,pickup_count_supported
+        if not pickup_count_supported(item,amount):return False
+        return pickup(client,current,before_count,
+            client.out/('no-grid-air-pickup-'+terminal['request_id']),checkpoint,item=item,expected_count=amount)
     if beyond_short:
         # An item can fall after the integer-grid native pickup selected its
         # goal. Follow the current same UUID through freshly scanned body air;
@@ -163,6 +174,7 @@ def collect_drop(client,drop,observation=None,seconds=90):
         if reply.get('phase')=='error' and reply.get('detail') in REFRESH_ONLY:
             time.sleep(.2);continue
         if reply.get('detail') in NO_ACCESS:
+            if collect_nearby_air(client,current,before):return True
             if collect_nearby_ground(client,current):return True
             return collect_nearby_plant_shape(client,current,before)
         if reply.get('phase')=='waiting' and reply.get('detail')=='Drop pickup not confirmed at the reached position':

@@ -9,6 +9,24 @@ class Client:
   self.last_terminal_evidence={'op':'collect_item','phase':'waiting','detail':'Drop pickup not confirmed at the reached position','request_id':'r','world_session':'w','task_session':'t','revision_after':5,'params':{'expected_uuid':'d','expected_item':'minecraft:dirt','expected_count':1}}
  def status(self):return {'world_session':'w','control_revision':5,'health':20,'food':20,'flight':True,'guard_busy':False,'guard_armed':True,'guard_pve_only':True,'manual_movement':False,'screen':'','recent_hurt_at':1,'pos':[1.5,64.879,4.5],'entities':[copy.deepcopy(self.drop)]if self.present else [],'inventory':[{'slot':0,'item':'minecraft:dirt','count':self.count}]}
 class AirPickupTest(unittest.TestCase):
+ def test_three_stones_after_native_no_grid_route_use_exact_air_stance_without_collect_replay(self):
+  with tempfile.TemporaryDirectory()as root:
+   c=Client(root);c.drop['stack'].update(item='minecraft:stone',count=3)
+   c.last_terminal_evidence.update(phase='error',detail='No visible collision-free depot approach')
+   c.last_terminal_evidence['params'].update(expected_item='minecraft:stone',expected_count=3)
+   old=c.status;c.status=lambda:{**old(),'inventory':[{'slot':0,'item':'minecraft:stone','count':c.count}]}
+   with patch('material_jobs.dry_hover_harvest.pickup',return_value=True)as pickup,patch('material_jobs.local_air_path.move')as fractional:
+    self.assertTrue(collect_nearby_air(c,c.drop,13));pickup.assert_called_once();fractional.assert_not_called()
+    self.assertEqual(3,pickup.call_args.kwargs['expected_count'])
+ def test_no_route_does_not_admit_unrelated_items_or_unknown_native_action(self):
+  for kind in ('gear','unknown'):
+   with tempfile.TemporaryDirectory()as root:
+    c=Client(root);c.last_terminal_evidence.update(phase='error',detail='No visible collision-free depot approach')
+    if kind=='gear':
+     c.drop['stack']['item']='minecraft:diamond_sword';c.last_terminal_evidence['params']['expected_item']='minecraft:diamond_sword'
+    else:c.native_inflight={'request_id':'unknown'}
+    with patch('material_jobs.dry_hover_harvest.pickup')as pickup:
+     self.assertFalse(collect_nearby_air(c,c.drop,13));pickup.assert_not_called()
  def test_merged_terrain_stack_uses_adjoining_air_after_known_pre_move_blockage(self):
   for amount in (2,16,64):
    with self.subTest(amount=amount),tempfile.TemporaryDirectory()as root:
