@@ -124,6 +124,8 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
     if not s.get('window_active') and not background:
         raise RuntimeError('Minecraft must be the foreground window for construction movement')
     if s['screen']:client.checked('close_menu')
+    from material_jobs.construction_breathing import interrupt_submerged
+    interrupt_submerged(client,client.status(),client.out)
     prepare_build_material(client,client.status())
     client.checked('projection_start',manual_start=True,placement_key=selection_key)
     started=time.monotonic();last_gain=started;last_navigation=None;navigation_anchor=s
@@ -138,6 +140,7 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
         if (background and not protected_background(client,s)) or (not background and not s.get('window_active')):
             if b.get('active'):client.checked('build_control',job_session=b['session'],action='pause_and_report')
             raise RuntimeError('Minecraft left foreground during construction')
+        interrupt_submerged(client,s,client.out)
         now=time.monotonic()
         if b.get('matched',0)>best:best=b['matched'];last_gain=now
         if verified_build_navigation(navigation_anchor,s):

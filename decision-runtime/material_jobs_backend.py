@@ -629,6 +629,8 @@ class Backend:
                 raise JobPaused('收尾等待期间控制权已变化，保留进度') from error
             if fresh.get('safety_hold', {}).get('active'):
                 raise JobPaused('原生健康防护已接管，保留进度') from error
+            from material_jobs.construction_breathing import interrupt_submerged
+            interrupt_submerged(c,fresh,self.out)
             if cactus_damage.observe(fresh):
                 # Regeneration can hide continuous cactus damage at 20 HP.
                 # An unresolved cleanup is not a safe hover. Use the existing
