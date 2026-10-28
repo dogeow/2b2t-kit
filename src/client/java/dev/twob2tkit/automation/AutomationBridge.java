@@ -1628,6 +1628,9 @@ public final class AutomationBridge {
         if(c.gui.screen()!=null){c.options.keyUp.setDown(false);c.options.keyJump.setDown(false);c.options.keyAttack.setDown(false);return true;}
         if(op.equals("mine_block")){
             try{guard(c,active);}catch(Exception e){finish(c,"stopped",e.getMessage());return true;}
+            if(ProjectedWetTerrainGuard.requested(active))try{
+                ProjectedWetTerrainGuard.require(c,active,singleBlockTarget(active),currentMaterialRequest(c,active)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),mineStarted);
+            }catch(Exception changed){finish(c,"waiting",changed.getMessage());return true;}
             if(BelowFlowMiningGuard.requested(active))try{
                 BelowFlowMiningGuard.require(c,active,singleBlockTarget(active),currentMaterialRequest(c,active)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),silk(c.player.getMainHandItem()),mineStarted);
             }catch(Exception changed){finish(c,"waiting",changed.getMessage());return true;}
@@ -2834,7 +2837,13 @@ public final class AutomationBridge {
                     throw new IllegalArgumentException("Below-flow glass removal cannot combine excavation exceptions");
                 BelowFlowMiningGuard.require(c,r,pos,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),silk(c.player.getMainHandItem()),false);
             }
-            if(!underwater&&!dryRoof&&!controlledRelease&&!belowFlow)for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
+            boolean projectedWet=ProjectedWetTerrainGuard.requested(r);
+            if(projectedWet){
+                if(!command.equals("mine_block")||underwater||dryRoof||controlledRelease||belowFlow||recovery||furnaceRecovery||lecternReset||dryPaving||terrainReplace)
+                    throw new IllegalArgumentException("Projected wet terrain cannot combine excavation exceptions");
+                ProjectedWetTerrainGuard.require(c,r,pos,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),false);
+            }
+            if(!underwater&&!dryRoof&&!controlledRelease&&!belowFlow&&!projectedWet)for(Direction d:Direction.values())if(!c.level.getFluidState(pos.relative(d)).isEmpty())throw new IllegalStateException("Fluid next to target is protected");
             if(c.player.getEyePosition().distanceTo(blockAim(pos,r))>c.player.blockInteractionRange()-.2)throw new IllegalStateException("Mining target out of reach");
             if(furnaceRecovery)EmptyFurnaceRecovery.prepare(c,r,pos,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy
                 &&c.player.getHealth()>=19&&c.player.getFoodData().getFoodLevel()>=18&&!KitKeys.manualMovementDown(c));
@@ -3107,6 +3116,7 @@ public final class AutomationBridge {
         proof.addProperty("requested_confirmation_scope",ordinaryMiningConfirmation.scope());
         proof.addProperty("outcome_pending",sequence>=0&&!confirmed);
         proof.addProperty("controlled_water_release",ControlledWaterReleaseGuard.requested(request));
+        proof.addProperty("projected_wet_terrain",ProjectedWetTerrainGuard.requested(request));
         proof.addProperty("server_update_seen",ordinaryMiningConfirmation.serverUpdateSeen(c,world,id,target));
         String observed=ordinaryMiningConfirmation.serverState(c,world,id,target);
         if(observed!=null)proof.addProperty("server_observed_state",observed);
@@ -4452,6 +4462,7 @@ public final class AutomationBridge {
         j.addProperty("fixed_tree_chop_protocol",1);
         j.addProperty("dry_roof_mining_protocol",1);
         j.addProperty("below_flow_glass_mining_protocol",1);
+        j.addProperty("projected_wet_terrain_mining_protocol",1);
         j.addProperty("below_source_glass_mining_protocol",1);
         j.addProperty("sapling_retention_chop_protocol",1);
         var gravelState=GravelCollector.snapshot();
