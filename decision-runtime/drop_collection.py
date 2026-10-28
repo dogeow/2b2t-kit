@@ -98,7 +98,8 @@ def collect_nearby_air(client,drop,before_count):
             '局部空气通道发生变化，未继续移动',
         }
         proof=getattr(client,'last_terminal_evidence',{})or{}
-        supported_amount=amount==1 or amount==4 and item=='minecraft:clay_ball'
+        from material_jobs.dry_hover_harvest import pickup_count_supported
+        supported_amount=pickup_count_supported(item,amount)
         if (str(error)not in known_planning or not supported_amount
                 or getattr(client,'native_inflight',None)is not None
                 or getattr(client,'unconfirmed_native_request',None)is not None

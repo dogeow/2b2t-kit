@@ -11,6 +11,15 @@ from .local_air_path import plan,move
 from .colored_sources import _protected
 ITEM='minecraft:dripstone_block'
 TERRACOTTA='minecraft:terracotta'
+MERGED_PICKUP_ITEMS=frozenset((ITEM,TERRACOTTA,'minecraft:pointed_dripstone',
+    'minecraft:bamboo','minecraft:honeycomb','minecraft:glow_ink_sac',
+    'minecraft:dirt','minecraft:cobblestone','minecraft:stone','minecraft:coal',
+    'minecraft:sand','minecraft:gravel'))
+
+def pickup_count_supported(item,count):
+    return (type(count)is int and 1<=count<=64
+            and(count==1 or item in MERGED_PICKUP_ITEMS or item=='minecraft:clay_ball'and count==4))
+
 KNOWN_DROP_OBSERVATION_FAILURES=frozenset((
     'No actual air body position near the current settled drop',
     'New normal-air item pickup unconfirmed; no remine',
@@ -107,8 +116,7 @@ def pickup_offers(rows,low,high,player,drop,*,allow_cone_edges=False,prefer_edge
 
 def pickup(c,drop,before,out,state,*,item=ITEM,expected_count=1,air_bounds=None,allow_cone_edges=False):
     """Separate normal air movement to current item geometry; no collect-item replay."""
-    if (type(expected_count)is not int or not 1<=expected_count<=64
-            or expected_count!=1 and not(item in(ITEM,TERRACOTTA,'minecraft:pointed_dripstone','minecraft:bamboo','minecraft:honeycomb','minecraft:glow_ink_sac')or item=='minecraft:clay_ball'and expected_count==4)
+    if (not pickup_count_supported(item,expected_count)
             or drop.get('stack',{}).get('item')!=item or drop['stack'].get('count')!=expected_count):
         raise ValueError('Exact observed original stack required; clay remains exactly four balls')
     out=Path(out);out.mkdir(parents=True,exist_ok=True);path=out/'pickup.json'

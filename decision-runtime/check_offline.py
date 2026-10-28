@@ -19,6 +19,7 @@ TESTS = (
     'test_direct_clay_refill', 'test_owned_grass_refill', 'test_registered_grass_bed',
     'test_construction_materials', 'test_construction_obstruction',
     'test_construction_obstruction_cli', 'test_goal_workflow', 'test_construction_breathing',
+    'test_fractional_air_pickup', 'test_drop_collection', 'test_dry_hover_harvest',
     'test_projection_material_plan', 'test_projection_stock_plan', 'test_projection_patch_plan', 'test_projection_advice', 'test_material_jobs', 'test_material_processing',
     'test_material_jobs_backend', 'test_projection_clearance_dispatch', 'test_shallow_pickup',
     'test_projection_ready_supply', 'test_targeted_supply',

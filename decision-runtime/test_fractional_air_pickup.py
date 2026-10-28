@@ -9,6 +9,26 @@ class Client:
   self.last_terminal_evidence={'op':'collect_item','phase':'waiting','detail':'Drop pickup not confirmed at the reached position','request_id':'r','world_session':'w','task_session':'t','revision_after':5,'params':{'expected_uuid':'d','expected_item':'minecraft:dirt','expected_count':1}}
  def status(self):return {'world_session':'w','control_revision':5,'health':20,'food':20,'flight':True,'guard_busy':False,'guard_armed':True,'guard_pve_only':True,'manual_movement':False,'screen':'','recent_hurt_at':1,'pos':[1.5,64.879,4.5],'entities':[copy.deepcopy(self.drop)]if self.present else [],'inventory':[{'slot':0,'item':'minecraft:dirt','count':self.count}]}
 class AirPickupTest(unittest.TestCase):
+ def test_merged_terrain_stack_uses_adjoining_air_after_known_pre_move_blockage(self):
+  for amount in (2,16,64):
+   with self.subTest(amount=amount),tempfile.TemporaryDirectory()as root:
+    c=Client(root);c.native_inflight=None;c.drop['stack']['count']=amount
+    c.last_terminal_evidence['params']['expected_count']=amount
+    def failed(*a,**k):
+     c.last='scan';c.last_terminal_evidence={'op':'scan','phase':'done','request_id':'scan','world_session':'w'}
+     raise RuntimeError('局部空气通道发生变化，未继续移动')
+    def pickup(client,current,before,*a,**kw):
+     self.assertEqual('d',current['uuid']);self.assertEqual(amount,kw['expected_count'])
+     client.count=before+amount;client.present=False;return True
+    with patch('material_jobs.local_air_path.move',side_effect=failed),patch('material_jobs.dry_hover_harvest.pickup',side_effect=pickup)as fallback:
+     self.assertTrue(collect_nearby_air(c,c.drop,13));fallback.assert_called_once()
+ def test_merged_pickup_count_policy_keeps_nonmaterial_and_clay_limits(self):
+  from material_jobs.dry_hover_harvest import pickup_count_supported
+  for item in ('minecraft:dirt','minecraft:cobblestone','minecraft:stone','minecraft:coal'):
+   self.assertTrue(pickup_count_supported(item,2));self.assertTrue(pickup_count_supported(item,64))
+  for item,count in [('minecraft:diamond_sword',2),('minecraft:clay_ball',2),
+                     ('minecraft:dirt',65),('minecraft:dirt',True),('minecraft:dirt',0)]:
+   self.assertFalse(pickup_count_supported(item,count))
  def test_falling_honeycomb_uses_current_air_geometry_without_another_collect(self):
   with tempfile.TemporaryDirectory()as root:
    c=Client(root);c.drop['pos'][1]=61.;c.drop['stack'].update(item='minecraft:honeycomb',count=3)
