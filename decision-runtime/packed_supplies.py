@@ -17,6 +17,23 @@ from container_hand import select_container_hand
 # Placing the box releases its slot; callers may then reserve the other two.
 REQUIRED_FREE_SLOTS=3
 
+DRY_PAD_SUPPORTS=frozenset({
+    'Block{minecraft:grass_block}[snowy=false]',
+    'Block{minecraft:grass_block}[snowy=true]',
+    'Block{minecraft:cobblestone}',
+    'Block{minecraft:stone}',
+    'Block{minecraft:cobblestone_slab}[type=top,waterlogged=false]',
+})
+
+def pad_support_allowed(observed,expected=None):
+    """Keep legacy grass admission; other dry surfaces require an exact explicit pin."""
+    if expected is None:
+        return observed in {
+            'Block{minecraft:grass_block}[snowy=false]',
+            'Block{minecraft:grass_block}[snowy=true]',
+        }
+    return expected in DRY_PAD_SUPPORTS and observed==expected
+
 def workspace_requirement(state):
     """Read-only admission check shared by planning and the actual box action."""
     rows=[v for v in state.get('inventory',[]) if 0<=v.get('slot',-1)<36]
@@ -260,7 +277,7 @@ def recover_and_return(client,record,ender,journal):
     with (client.out/'packed-transfers.jsonl').open('a') as stream:stream.write(json.dumps(record,ensure_ascii=False)+'\n')
     print('PACKED_RETURNED',slot,record.get('taken',{}),flush=True)
 
-def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None,exact_stacks=None):
+def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,minimum_durability=None,required_enchantments=None,exact_stacks=None,*,expected_pad_support=None):
     journal=client.out/'packed-transfer-active.json'
     if journal.exists() and json.loads(journal.read_text()).get('stage')!='returned':
         raise RuntimeError('An earlier portable box needs inspected recovery before another withdrawal')
@@ -276,13 +293,14 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
     space=workspace_requirement(state)
     if space:raise PackedWorkspaceRequired(space)
     ground=[pad[0],pad[1]-1,pad[2]];ground_state=block(client,ground)
-    if block(client,pad) or block(client,[pad[0],pad[1]+1,pad[2]]) or not ground_state or 'minecraft:grass_block' not in ground_state:
-        raise RuntimeError('Temporary shulker pad is no longer empty grass')
+    if block(client,pad) or block(client,[pad[0],pad[1]+1,pad[2]]) or not pad_support_allowed(ground_state,expected_pad_support):
+        raise RuntimeError('Temporary shulker pad is not empty or its verified dry support changed')
     s=open_box(client,ender,'ChestMenu');source=s['menu']['slots'][slot];item=source['item'];initial=contents(source.get('contains',[]))
     if source['count']!=1 or not item.endswith('shulker_box') or not initial:raise RuntimeError('Observed source box changed')
     wanted={i:n for i,n in targets.items() if n>inventory_counts(s)[i] and initial.get(i,0)>0}
     if not wanted:client.checked('close_menu');return None
     record={'slot':slot,'item':item,'initial_counts':initial,'requested':wanted,'temporary_position':pad,'stage':'prepared',
+            'pad_support_state':ground_state,'explicit_pad_support':expected_pad_support,
             'world_session':state.get('world_session'),
             'ownership_preflight':{'world_session':state.get('world_session'),'cursor_clean':_clean_cursor(state),
                 'inventory':[{key:v.get(key) for key in ('slot','item','count')} for v in state['inventory']]},
