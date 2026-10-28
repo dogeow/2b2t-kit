@@ -6,6 +6,19 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 class PrinterStateConfirmationTest {
+ @Test void dryWaterloggablePlacementIsAnIntermediateWithoutCompletingTheWetGoal(){
+  var dry=Blocks.SPRUCE_TRAPDOOR.defaultBlockState();
+  var wet=dry.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED,true);
+  assertEquals(dry,PrinterStateConfirmation.placementExpectation(wet,dry));
+  assertFalse(PrinterStateConfirmation.matches(wet,dry));
+  assertTrue(PrinterStateConfirmation.matches(dry,dry));
+  var wrongFacing=dry.setValue(TrapDoorBlock.FACING,Direction.EAST);
+  assertEquals(wet,PrinterStateConfirmation.placementExpectation(wet,wrongFacing));
+  assertEquals(dry,PrinterStateConfirmation.placementExpectation(dry,wet));
+  var batch=new PrinterBatchCompletion<String,net.minecraft.world.level.block.state.BlockState>();
+  batch.begin(java.util.List.of("cell"));batch.acknowledge("cell",wet,true,true,false);
+  assertFalse(batch.complete(java.util.Set.of("cell")));
+ }
  @Test void doubleSlabFirstHalfIsOnlyAnIntermediatePlacementAck(){
   var goal=Blocks.COBBLESTONE_SLAB.defaultBlockState().setValue(SlabBlock.TYPE,net.minecraft.world.level.block.state.properties.SlabType.DOUBLE);
   for(var half:java.util.List.of(net.minecraft.world.level.block.state.properties.SlabType.BOTTOM,net.minecraft.world.level.block.state.properties.SlabType.TOP)){

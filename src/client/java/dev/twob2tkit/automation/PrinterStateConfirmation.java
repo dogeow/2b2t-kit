@@ -44,6 +44,11 @@ public final class PrinterStateConfirmation {
         if(goal.getBlock()!=predicted.getBlock()&&!stripping)return goal;
         for(var property:goal.getProperties()){
             String name=property.getName();
+            // Placing a waterloggable block into dry air cannot provide its
+            // later water source. Accept only that dry intermediate; final
+            // matches() and projection audits still require WATERLOGGED=true.
+            if(name.equals("waterlogged")&&Boolean.TRUE.equals(goal.getValue(property))
+                    &&predicted.hasProperty(property)&&Boolean.FALSE.equals(predicted.getValue(property)))continue;
             if(name.equals("open")&&(goal.getBlock() instanceof DoorBlock||goal.getBlock() instanceof TrapDoorBlock||goal.getBlock() instanceof FenceGateBlock))continue;
             if(name.equals("lit")&&(goal.getBlock() instanceof CampfireBlock||goal.getBlock() instanceof CandleBlock||passiveTorchTransition(goal,predicted)))continue;
             if(!predicted.hasProperty(property)||!Objects.equals(goal.getValue(property),predicted.getValue(property)))return goal;
