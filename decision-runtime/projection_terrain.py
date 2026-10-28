@@ -25,6 +25,24 @@ NO_ACCESS = {'No visible collision-free depot approach',
              'No loaded collision-free route to this depot; no ceiling is broken'}
 
 
+def unsafe_nearby_fluid(rows, target):
+    """Admit only flowing water strictly below and diagonally offset from the target.
+
+    The native miner independently rejects fluid on all six adjacent faces.
+    Sources, lava, same-height and overhead water remain protected here.
+    """
+    import re
+    for row in rows:
+        if not row.get('fluid'):
+            continue
+        pos=row.get('pos');state=row.get('state','')
+        if (not isinstance(pos,list) or len(pos)!=3 or pos[1]!=target[1]-1
+                or (pos[0]==target[0] and pos[2]==target[2])
+                or re.fullmatch(r'Block\{minecraft:water\}\[level=(?:[1-9]|1[0-5])\]',state) is None):
+            return True
+    return False
+
+
 def candidates(audit, state, reserved=None):
     selection = state['projection_selection']
     plan = repair_plan(audit, selection)
@@ -127,7 +145,7 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
             raise RuntimeError('Terrain changed after audit; do not replace player edits')
         # Audit adjacency covers faces; the mining admission protects the entire
         # local volume, including diagonal water. Defer wet cells before moving.
-        if any(r.get('fluid') for r in region):
+        if unsafe_nearby_fluid(region,pos):
             deferred.add(tuple(pos)); continue
         block, _ = block_state(row['actual'])
         tool = 'minecraft:diamond_shovel' if block in ('minecraft:dirt', 'minecraft:grass_block') else 'minecraft:diamond_pickaxe'
@@ -141,7 +159,7 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
         current=next((r for r in near if r['pos']==pos),None)
         if (fresh.get('world_session')!=world or fresh['projection_selection']['key']!=key
                 or not current or current['state']!=row['actual'] or current.get('block_entity')
-                or any(r.get('fluid') for r in near)
+                or unsafe_nearby_fluid(near,pos)
                 or (row['expected']!='Block{minecraft:air}' and inventory_counts(fresh).get(block_state(row['expected'])[0],0)-reserved.get(block_state(row['expected'])[0],0)<=0)
                 or fresh.get('on_ground') and pos==[math.floor(fresh['pos'][0]),math.floor(fresh['pos'][1])-1,math.floor(fresh['pos'][2])]):
             raise RuntimeError('Terrain or nearby water changed after access; no mining sent')
