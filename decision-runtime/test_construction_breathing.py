@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from material_jobs.construction_breathing import interrupt_submerged, vertical_air_target
+from material_jobs.construction_breathing import interrupt_submerged, vertical_air_target, lift_surface_feet
 from material_jobs.protocol import JobBlocked, JobPaused
 
 
@@ -93,6 +93,51 @@ class BreathingTest(unittest.TestCase):
         # At x=1.8 the body also spans x=2, so first breathable row is 65.
         scan['blocks'].append({'pos':[2,66,3],'state':'Block{minecraft:stone}','solid':True})
         self.assertIsNone(vertical_air_target([1.8,59.,3.5],scan,'w'))
+
+
+class SurfaceFeetTest(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.c=Client(self.temp.name);self.c.state.update(under_water=False,air_supply=300)
+    def test_head_above_water_still_gets_one_real_upward_move_before_dry_routing(self):
+        result=lift_surface_feet(self.c,self.c.status())
+        self.assertEqual([1.5,64.5,3.5],result['pos'])
+        self.assertEqual(['scan','navigate'],[op for op,_ in self.c.calls])
+        self.assertNotIn('air_only',self.c.calls[-1][1])
+        proof=json.loads((self.c.out/'surface-feet-lift.json').read_text())
+        self.assertTrue(proof['complete']);self.assertFalse(proof['resource_actions_replayed'])
+    def test_extra_headroom_is_checked_for_the_dry_foot_margin(self):
+        self.c.scan['blocks'].append({'pos':[1,66,3],'state':'Block{minecraft:stone}','solid':True})
+        with self.assertRaisesRegex(JobBlocked,'顶棚'):lift_surface_feet(self.c,self.c.status())
+        self.assertEqual(['scan'],[op for op,_ in self.c.calls])
+    def test_unknown_move_is_retained_without_retry_or_dry_claim(self):
+        self.c.bad_move=True
+        with self.assertRaises(JobBlocked):lift_surface_feet(self.c,self.c.status())
+        self.assertEqual(1,sum(op=='navigate'for op,_ in self.c.calls))
+        proof=json.loads((self.c.out/'surface-feet-lift.json').read_text())
+        self.assertFalse(proof['complete']);self.assertTrue(proof['pending'])
+    def test_foreign_control_or_submersion_never_starts_surface_only_recovery(self):
+        for change in ({'manual_movement':True},{'under_water':True},{'screen':'InventoryScreen'}):
+            with self.assertRaises(JobPaused):lift_surface_feet(self.c,{**self.c.status(),**change})
+        self.assertEqual([],self.c.calls)
+    def test_real_projection_exit_lifts_wet_feet_then_rescans_before_open_sky_ascent(self):
+        from material_jobs.navigation import leave_projection
+        self.c.state['projection_selection']={'key':'k','min':[0,55,0],'max':[3,68,5]}
+        self.c.state['air_only_navigation_protocol']=2
+        original=self.c.request
+        def request(op,**kw):
+            if op!='scan':return original(op,**kw)
+            self.c.calls.append((op,kw))
+            return {'phase':'done','world_session':'w',
+                    'scan_cells_read':__import__('math').prod(b-a+1 for a,b in zip(kw['min'],kw['max'])),
+                    'blocks':[r for r in self.c.scan['blocks']if all(kw['min'][i]<=r['pos'][i]<=kw['max'][i]for i in range(3))]}
+        self.c.request=request
+        leave_projection(self.c)
+        moves=[kw for op,kw in self.c.calls if op=='navigate']
+        self.assertEqual(2,len(moves));self.assertEqual([1.5,64.5,3.5],moves[0]['target'])
+        self.assertNotIn('air_only',moves[0]);self.assertTrue(moves[1]['air_only'])
+        self.assertGreater(self.c.state['pos'][1],70)
+        self.assertEqual(['scan','scan','navigate','scan','navigate'],[op for op,_ in self.c.calls])
 
 
 if __name__=='__main__':unittest.main()

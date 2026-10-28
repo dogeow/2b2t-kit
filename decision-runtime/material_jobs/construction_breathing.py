@@ -100,3 +100,44 @@ def interrupt_submerged(c, state, out):
     proof.update(dry_return_confirmed=True,actual_pos=actual['pos'],actual_air=actual['air_supply'])
     write_json(out/'construction-breathing.json',proof)
     raise JobBlocked('已退回干燥位置；本批水下站位需重新规划，未重放放置')
+
+
+def lift_surface_feet(c, state):
+    """Lift out of observed foot-level water before planning a dry air route."""
+    if (not _owned(c,state) or state.get('under_water') or state.get('health',0)<19
+            or state.get('air_supply',0)<285 or not state.get('flight')
+            or state.get('guard_busy') or state.get('navigating')):
+        raise JobPaused('水面抬升的当前控制、氧气或防护未确认')
+    x,y,z=state['pos'];low=[math.floor(x-.31),math.floor(y),math.floor(z-.31)]
+    high=[math.floor(x+.31),math.floor(y)+13,math.floor(z+.31)]
+    reply=c.request('scan',min=low,max=high,details=True)
+    # Reuse complete-column validation, then require the extra head cell for
+    # a .5-block dry-foot margin. No adjacent water or roof voxel is ignored.
+    target=vertical_air_target(state['pos'],reply,c.world)
+    if target is None:raise JobBlocked('水面上方没有已确认的普通水/空气退路')
+    floor=math.floor(target[1]);water={'Block{minecraft:water}[level='+str(n)+']' for n in range(16)}
+    rows=reply['blocks']
+    if not any(row['pos'][1]==low[1] and row.get('state')in water for row in rows):
+        raise JobBlocked('当前脚部未观察到普通流水，不执行水面抬升')
+    if floor+2>high[1] or any(row['pos'][1]==floor+2 and row.get('state')!='Block{minecraft:air}'for row in rows):
+        raise JobBlocked('抬升后的完整身体净空不足，不穿过顶棚')
+    target=[x,floor+.5,z];fresh=c.status()
+    if not _owned(c,fresh) or math.dist(fresh['pos'],state['pos'])>.15:
+        raise JobPaused('水面扫描后角色或控制改变，不沿旧列移动')
+    out=Path(c.out)/'surface-feet-lift.json';book={'world_session':c.world,'task_session':c.task,
+        'from':state['pos'],'target':target,'pending':True,'complete':False,
+        'resource_actions_replayed':False,'goal_completion_credit':0}
+    write_json(out,book)
+    try:
+        # Air-only navigation rejects the water at the starting feet. Ordinary
+        # native navigation still checks real collisions and makes no block edits.
+        result=c.request('navigate',target=target,arrival=.15,seconds=15)
+    finally:
+        book['request_id']=getattr(c,'last',None);write_json(out,book)
+    actual=c.status()
+    if (result.get('phase')!='done' or not _owned(c,actual) or actual.get('under_water')
+            or actual.get('air_supply',0)<260 or actual.get('health',0)<19
+            or actual['pos'][1]<floor+.1 or math.dist(actual['pos'],target)>.7):
+        raise JobBlocked('脚部抬升未得到实际干燥站位确认，保留原动作不重试')
+    book.update(pending=None,complete=True,actual=actual['pos']);write_json(out,book)
+    return actual

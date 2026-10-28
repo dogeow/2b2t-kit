@@ -324,6 +324,13 @@ def leave_projection(client):
                     raise JobBlocked('露天退出核验期间位置或投影改变，保持当前位置')
                 continue
             p=actual
+            water_states={'Block{minecraft:water}[level='+str(n)+']' for n in range(16)}
+            if any(row['pos'][1]==math.floor(p[1]) and row.get('state')in water_states for row in column):
+                from .construction_breathing import lift_surface_feet
+                lift_surface_feet(client,fresh)
+                # The new actual pose gets a fresh exit scan. The old wet
+                # voxel is never reclassified as air for a horizontal route.
+                return leave_projection(client)
             if not any(not _below_vertical_start(row,p) for row in column):
                 target=[actual[0],max(actual[1]+1,high[1]+3.0),actual[2]]
                 _air_move(client,target,90)
