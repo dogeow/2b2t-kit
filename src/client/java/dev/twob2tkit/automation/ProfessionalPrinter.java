@@ -89,6 +89,7 @@ public final class ProfessionalPrinter {
     public static boolean observeCandidate(Object source){
         try{candidateTarget=((net.minecraft.core.BlockPos)source.getClass().getField("blockPos").get(source)).immutable();candidateState=(net.minecraft.world.level.block.state.BlockState)source.getClass().getField("targetState").get(source);}
         catch(ReflectiveOperationException|RuntimeException e){fail(Minecraft.getInstance(),"无法读取打印器的原始目标");return false;}
+        if(!PrinterLiquidPolicy.allowed(owned,candidateState))return false;
         if(travelling){
             var world=dev.twob2tkit.builder.LitematicaAccess.schematicWorld();
             if(world==null||!ConfirmedPlacementPacer.safeSimple(candidateState.getProperties().isEmpty(),
@@ -143,7 +144,10 @@ public final class ProfessionalPrinter {
                 Object raw=prepare.getClass().getField("context").get(prepare);
                 if(raw instanceof net.minecraft.world.item.context.BlockPlaceContext context){
                     placementSneak=raw.getClass().getField("shouldSneak").getBoolean(raw);expectedHand=context.getItemInHand().getItem();
-                    var target=candidateTarget;var world=dev.twob2tkit.builder.LitematicaAccess.schematicWorld();
+                        var target=candidateTarget;var world=dev.twob2tkit.builder.LitematicaAccess.schematicWorld();
+                        if(!PrinterLiquidPolicy.allowed(owned,candidateState)
+                                ||context.getItemInHand().getItem() instanceof net.minecraft.world.item.BucketItem)
+                            throw new IllegalStateException("Liquid placement requires a verified fluid workflow");
                     if(world!=null&&target!=null&&candidateState!=null){
                         var selection=dev.twob2tkit.builder.LitematicaAccess.buildSelection();
                         if(!selection.contains(target)||!dev.twob2tkit.builder.LitematicaAccess.inVisibleLayer(target)||!AutomationBridge.projectionBatchAllows(c,target))throw new IllegalStateException("Printer proposed a target outside the selected projection");

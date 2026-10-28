@@ -241,7 +241,7 @@ public final class ProjectionBuildJob {
     private List<BlockPos> available(Minecraft c){
         var inv=inventory(c);var result=new ArrayList<BlockPos>();
         for(var e:expected.entrySet()){
-            var p=e.getKey();if(!AutomationBridge.projectionBatchAllows(c,p)||e.getValue().equals(actual.get(p))||inv.getOrDefault(e.getValue().getBlock().asItem(),0)==0)continue;
+            var p=e.getKey();if(!automaticPlacementAllowed(e.getValue())||!AutomationBridge.projectionBatchAllows(c,p)||e.getValue().equals(actual.get(p))||inv.getOrDefault(e.getValue().getBlock().asItem(),0)==0)continue;
             if(!LitematicaAccess.inVisibleLayer(p)||!liveTargetReady(e.getValue(),c.level,p))continue;
             boolean support=false;for(Direction d:Direction.values()){var s=c.level.getBlockState(p.relative(d));if(!s.isAir()&&!s.canBeReplaced()&&s.getFluidState().isEmpty()){support=true;break;}}
             if(support)result.add(p);
@@ -256,6 +256,13 @@ public final class ProjectionBuildJob {
     }
     static boolean cropSoilReady(BlockState wanted,BlockState below){
         return !(wanted.getBlock() instanceof CropBlock)||below.is(Blocks.FARMLAND)||below.is(BlockTags.SUPPORTS_CROPS);
+    }
+    static boolean automaticPlacementAllowed(BlockState wanted){
+        // A bucket can flood the station and its escape path. Liquid cells
+        // require the dedicated, bounded fluid workflow rather than ordinary
+        // walk-and-print station selection. Waterlogged solid parts remain
+        // ordinary block targets; their fluid phase is verified separately.
+        return dev.twob2tkit.automation.PrinterLiquidPolicy.allowed(true,wanted);
     }
     private int reachable(Minecraft c,Vec3 feet,List<BlockPos> targets,boolean stopAtFirst){
         int count=0;var eye=feet.add(0,c.player.getEyeHeight(),0);
