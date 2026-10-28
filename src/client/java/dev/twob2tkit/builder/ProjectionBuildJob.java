@@ -224,14 +224,20 @@ public final class ProjectionBuildJob {
         recount(c);initial=matched;lastMatched=matched;lastGain=tick;
     }
     private Map<Item,Integer> inventory(Minecraft c){var result=new HashMap<Item,Integer>();for(int i=0;i<36;i++){var s=c.player.getInventory().getItem(i);if(!s.isEmpty())result.merge(s.getItem(),s.getCount(),Integer::sum);}return result;}
+    static int materialUnits(BlockState wanted,BlockState current){
+        if(wanted.getBlock().asItem()==Items.AIR||wanted.toString().contains("half=upper")||wanted.toString().contains("part=head"))return 0;
+        if(current!=null&&wanted.getBlock()==current.getBlock())
+            return dev.twob2tkit.automation.PrinterSlabPlacement.incompleteDouble(wanted,current)?1:0;
+        return 1;
+    }
     private void recount(Minecraft c){
         matched=blockedBlocks=0;var needs=new HashMap<Item,Integer>();var inv=inventory(c);
         for(var e:expected.entrySet()){
             var state=actual.get(e.getKey());if(e.getValue().equals(state)){matched++;continue;}
             if(state!=null&&!state.canBeReplaced()&&!state.isAir())blockedBlocks++;
             if(!AutomationBridge.projectionBatchAllows(c,e.getKey()))continue;
-            var item=e.getValue().getBlock().asItem();String s=e.getValue().toString();
-            if(item!=Items.AIR&&!s.contains("half=upper")&&!s.contains("part=head"))needs.merge(item,1,Integer::sum);
+            var item=e.getValue().getBlock().asItem();int units=materialUnits(e.getValue(),state);
+            if(units>0)needs.merge(item,units,Integer::sum);
         }
         materialNeeds.clear();needs.forEach((item,count)->materialNeeds.put(BuiltInRegistries.ITEM.getKey(item).toString(),count));
         materialDeficits.clear();needs.forEach((item,count)->{int n=count-inv.getOrDefault(item,0);if(n>0)materialDeficits.put(BuiltInRegistries.ITEM.getKey(item).toString(),n);});
