@@ -398,6 +398,11 @@ class Client:
   raise RuntimeError('Chest was not opened')
 class MaterialClient(Client):
  PARK_RADIUS_SQR=8*8
+ def collect_shallow(self,support,item,target_total,out=None,*,return_y=64.3,wait_seconds=4):
+  """Reuse this sole owner for witnessed shallow pickup and mandatory dry return."""
+  from material_jobs.shallow_pickup import collect
+  destination=Path(out)if out is not None else self.out/('shallow-pickup-'+str(time.time_ns()))
+  return collect(self,support,item,target_total,destination,return_y=return_y,wait_seconds=wait_seconds)
  def park_near(self,state):
   pos=state.get('pos')
   return bool(pos and abs(pos[1]-self.park_target[1])<=2 and
