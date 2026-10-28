@@ -1927,15 +1927,38 @@ class Backend:
                        'confirmed':False,'reason':str(error),'action':'yield_to_native_guard'})
             raise
 
+    def has_projection_clearance(self, state):
+        from material_jobs.projection_clearance import possible
+        audit=state.get('projection_audit') or getattr(self,'audit',None) or {}
+        return possible(audit,state,self.root)
+
     def build(self, projection_key):
         with self.action('build') as (c,out):
             from goal_workflow import build_phase
-            self.prepare_travel()
             state=c.status()
             require_scope(state,self.request['context'])
             selection=state.get('projection_selection',{})
             if selection.get('key')!=projection_key:
                 raise JobBlocked('投影已改变')
+            from material_jobs.projection_clearance import pending_positions
+            hint=dict(state,projection_audit=getattr(self,'audit',None) or {})
+            if self.has_projection_clearance(hint):
+                from projection_terrain import candidates,clear_batch
+                from material_jobs.construction_access import recover_pending
+                recover_pending(self)
+                fresh=self.refresh_audit()
+                protected=pending_positions(self.root,projection_key,c.status())
+                c.uncertain_terrain_positions=set(getattr(c,'uncertain_terrain_positions',set()))|protected
+                rows=[row for row in candidates(fresh,c.status()) if tuple(row['pos'])not in protected]
+                if rows:
+                    clearance=clear_batch(c,limit=8,positions=[row['pos']for row in rows[:32]])
+                    if clearance['removed']:
+                        after=self.refresh_audit()
+                        return {'phase':'done','detail':'已核验一批占位清障，任务器将自动继续打印与复查',
+                                'placed':max(0,after['matched']-fresh['matched']),
+                                'clearance_confirmations':clearance['confirmed_removals'],
+                                'removed':clearance['removed'],'requires_reaudit_and_build':True}
+            self.prepare_travel()
             from material_jobs.acquisition import _travel
             low,high=selection['min'],selection['max'];actual=c.status()['pos']
             staging=[high[0]+4.5,max(actual[1],high[1]+4),(low[2]+high[2]+1)/2]

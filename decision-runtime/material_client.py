@@ -396,6 +396,11 @@ class Client:
     self.owned_material_menu=s['menu']['id'];return
    time.sleep(.2)
   raise RuntimeError('Chest was not opened')
+def formal_worker_allows_controller(state, job_id=None):
+ task=state.get('material_task')or{}
+ busy=any(task.get(k)is True for k in ('occupied','process_alive','cancelling'))
+ return not busy or isinstance(job_id,str)and bool(job_id)and task.get('id')==job_id
+
 class MaterialClient(Client):
  PARK_RADIUS_SQR=8*8
  def collect_shallow(self,support,item,target_total,out=None,*,return_y=64.3,wait_seconds=4):
@@ -585,6 +590,10 @@ class MaterialClient(Client):
     from safety_interlock import require_unlocked
     from idle_priority import request_foreground
     state=read_fresh(Path(root));require_unlocked(root,state)
+    request=getattr(getattr(self,'owner',None),'request',None)
+    job_id=request.get('id')if isinstance(request,dict)else None
+    if not formal_worker_allows_controller(state,job_id):
+     raise Handoff('Kit material worker already owns this task; observe its job instead of starting another controller')
     self.foreground_token=request_foreground(root,'material-controller',state['world_session'])
    self._init_material(root,out,server,allow_empty_inventory,record_experience,experience_state,remote_finish,park_target)
   except BaseException:

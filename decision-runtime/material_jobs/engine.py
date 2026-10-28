@@ -202,6 +202,9 @@ class MaterialJob:
             return all(self.held.get(item, 0) >= count for item, count in targets.items())
         audit = self.snapshot['projection_audit']
         if not targets and audit['matched']==audit['total'] and audit.get('enclosed_air_conflicts'):
+            clearance=getattr(self.backend,'has_projection_clearance',None)
+            if callable(clearance) and clearance(self.snapshot) is True:
+                return False
             raise JobBlocked('目标方块已齐，但投影内部仍有占位冲突；保留已有建筑，不宣告完成')
         return not targets and audit['matched'] == audit['total']
 
@@ -366,6 +369,10 @@ class MaterialJob:
         return len(rows) == 36 and sum(not row.get('count') for row in rows) <= 1
 
     def _projection_batch(self, targets):
+        clearance=getattr(self.backend,'has_projection_clearance',None)
+        if callable(clearance) and clearance(self.snapshot) is True:
+            self._build_batch()
+            return None
         carried_ready = getattr(self.backend, 'has_ready_projection_output', None)
         if callable(carried_ready) and carried_ready(self.snapshot) is True:
             self._build_batch()
@@ -558,6 +565,9 @@ class MaterialJob:
                   'matched': self.snapshot.get('projection_audit', {}).get('matched'),
                   'free_slots':sum(not row.get('count') for row in self.snapshot.get('inventory',[])
                                    if 0<=row.get('slot',-1)<36)}
+        if operation=='build':
+            from .projection_clearance import capture
+            before['clearance_before']=capture(self.snapshot.get('projection_audit',{}))
         pending = {'job_id': self.request['id'], 'sequence': self.steps, 'operation': operation,
                    'args': args, 'before': before, 'output_targets': output_targets or {}}
         write_json(self.out / 'inflight.json', pending)
@@ -661,7 +671,10 @@ class MaterialJob:
         if operation == 'build':
             # Eating, moving a spare tool, or changing depot hints is not
             # construction progress and must not reset the stuck-build guard.
-            progressed = self.snapshot.get('projection_audit', {}).get('matched', 0) > before['matched']
+            from .projection_clearance import verified_progress
+            progressed = (self.snapshot.get('projection_audit', {}).get('matched', 0) > before['matched']
+                          or verified_progress(before['clearance_before'],self.snapshot.get('projection_audit',{}),
+                                               receipt,self.context['world_session']))
         # Pipeline directories identify individual transactions; they must not
         # make an unchanged item/scope/target look like fresh production work.
         progress_args = args[:3] if operation == 'run_pipeline' else args
@@ -764,6 +777,10 @@ class MaterialJob:
             item, count = next(iter(self.prerequisites.items()))
             targets = {item: self._fit_batch(item, count)}
         elif self.request['mode'] == 'projection':
+            clearance=getattr(self.backend,'has_projection_clearance',None)
+            if not targets and callable(clearance) and clearance(self.snapshot) is True:
+                self._build_batch()
+                return
             if not targets:
                 raise JobBlocked('投影仍有未匹配方块，但差料为空，需要原生核验处理')
             targets = self._projection_batch(targets)

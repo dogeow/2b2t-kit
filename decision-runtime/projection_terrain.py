@@ -120,6 +120,7 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
     allowed=None if positions is None else {tuple(p)for p in positions}
     initial=client.status();key=initial['projection_selection']['key'];world=client.world
     removed, deferred = [], set()
+    confirmations = []
     uncertain=set(getattr(client,'uncertain_terrain_positions',set()))
     reserved = Counter()
     while len(removed) < limit:
@@ -216,6 +217,10 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
                       mining_request_id=reply['id'],server_removal_confirmed=True)
         write_json(journal,intent)
         removed.append({'pos': pos, 'old_state': row['actual'], 'expected': row['expected']})
+        confirmations.append({'pos':pos,'old_state':row['actual'],'request_id':reply['id'],
+                              'world_session':world,'server_confirmed':True,
+                              'native_sequence':reply['native_sequence'],
+                              'server_ack_sequence':reply['server_ack_sequence']})
         expected = replacement_stock_item(row['expected'])
         if expected is not None:
             reserved[expected] += 1
@@ -233,6 +238,7 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
             raise RuntimeError('Excavation drop is not recovered; inspect before continuing')
         pickups.append(drop['uuid'])
     result = {'removed': removed, 'deferred': [list(p) for p in deferred], 'picked_up_entities': pickups,
+              'confirmed_removals': confirmations,
               'replacement_reservations': dict(reserved), 'requires_reaudit_and_build': True}
     (client.out/'terrain-batch-latest.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
     return result
