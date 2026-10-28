@@ -43,6 +43,19 @@ def unsafe_nearby_fluid(rows, target):
     return False
 
 
+def replacement_stock_item(expected_state):
+    """Flowing water is a later world update, not a carried placement item.
+
+    This only plans excavation. Source water still needs separate review and
+    no removal is credited as a completed water channel.
+    """
+    item,properties=block_state(expected_state)
+    if item=='minecraft:air':return None
+    if item=='minecraft:water' and properties.get('level') in {str(i)for i in range(1,16)}:
+        return None
+    return item
+
+
 def candidates(audit, state, reserved=None):
     selection = state['projection_selection']
     plan = repair_plan(audit, selection)
@@ -56,8 +69,8 @@ def candidates(audit, state, reserved=None):
     for row in plan['groups'].get('terrain_clear_candidate', []):
         if row.get('block_entity') or row.get('fluid') or row.get('adjacent_fluid') is not False or not row.get('neighbors_loaded'):
             continue
-        expected, _ = block_state(row['expected'])
-        if expected != 'minecraft:air' and stock[expected] - reserved.get(expected, 0) <= 0:
+        expected = replacement_stock_item(row['expected'])
+        if expected is not None and stock[expected] - reserved.get(expected, 0) <= 0:
             continue
         if state.get('on_ground') and row['pos'] == [math.floor(state['pos'][0]), math.floor(state['pos'][1])-1, math.floor(state['pos'][2])]:
             continue
@@ -160,7 +173,7 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
         if (fresh.get('world_session')!=world or fresh['projection_selection']['key']!=key
                 or not current or current['state']!=row['actual'] or current.get('block_entity')
                 or unsafe_nearby_fluid(near,pos)
-                or (row['expected']!='Block{minecraft:air}' and inventory_counts(fresh).get(block_state(row['expected'])[0],0)-reserved.get(block_state(row['expected'])[0],0)<=0)
+                or (replacement_stock_item(row['expected']) is not None and inventory_counts(fresh).get(replacement_stock_item(row['expected']),0)-reserved.get(replacement_stock_item(row['expected']),0)<=0)
                 or fresh.get('on_ground') and pos==[math.floor(fresh['pos'][0]),math.floor(fresh['pos'][1])-1,math.floor(fresh['pos'][2])]):
             raise RuntimeError('Terrain or nearby water changed after access; no mining sent')
         scope={'server':server_key(fresh.get('server')),'dimension':fresh.get('dimension'),
@@ -203,8 +216,8 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
                       mining_request_id=reply['id'],server_removal_confirmed=True)
         write_json(journal,intent)
         removed.append({'pos': pos, 'old_state': row['actual'], 'expected': row['expected']})
-        expected, _ = block_state(row['expected'])
-        if expected != 'minecraft:air':
+        expected = replacement_stock_item(row['expected'])
+        if expected is not None:
             reserved[expected] += 1
         with (client.out/'terrain-removals.jsonl').open('a') as stream:
             stream.write(json.dumps(removed[-1])+'\n')
