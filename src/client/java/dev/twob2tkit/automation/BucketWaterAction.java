@@ -43,10 +43,14 @@ final class BucketWaterAction {
     private int emptyAfter,waterAfter;
     private boolean retired;
     private String sourceEffect="unobserved";
+    private final ProjectedWaterFlowGuard projectedColumn;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
         mode=switch(text(request,"op")){case "bucket_fill"->BucketWaterPolicy.Mode.FILL;case "bucket_place"->BucketWaterPolicy.Mode.PLACE;default->throw new IllegalArgumentException("Only water bucket fill/place are supported");};
         target=position(request,"pos");expectedState=text(request,"expected_state");
+        boolean column=ProjectedWaterFlowGuard.requested(request);
+        if(column&&mode!=BucketWaterPolicy.Mode.PLACE)throw new IllegalArgumentException("Projected water column is place-only");
+        projectedColumn=column?new ProjectedWaterFlowGuard(request,target):null;
         if(expectedState.isBlank())throw new IllegalArgumentException("An exact fresh target state is required");
         support=mode==BucketWaterPolicy.Mode.PLACE?position(request,"support"):target;
         face=mode==BucketWaterPolicy.Mode.PLACE?Direction.valueOf(text(request,"face").toUpperCase(java.util.Locale.ROOT)):null;
@@ -102,6 +106,7 @@ final class BucketWaterAction {
             &&c.level.getBlockState(pos).isCollisionShapeFullBlock(c.level,pos);
     }
     private boolean boundedHole(Minecraft c,boolean airRequired) {
+        if(projectedColumn!=null){projectedColumn.require(c,airRequired);return true;}
         int sides=0;for(Direction d:Direction.Plane.HORIZONTAL)if(dryFullBlock(c,target.relative(d)))sides++;
         var state=c.level.getBlockState(target);
         return (!airRequired||state.isAir())&&BucketWaterPolicy.boundedHole(true,airRequired?state.getFluidState().isEmpty():true,
@@ -202,6 +207,7 @@ final class BucketWaterAction {
         out.addProperty("confirmed",confirmed&&retired);out.addProperty("unknown_outcome",receipt.sent()&&!retired);
         out.addProperty("confirmation_scope","post_single_normal_use_current_connection_target_block_and_selected_bucket_slot_server_packets_plus_vanilla_prediction_settled_and_exact_inventory_delta_after_8_ticks");
         out.addProperty("expected_state_before",expectedState);
+        out.addProperty("projected_water_column",projectedColumn!=null);
         if(mode==BucketWaterPolicy.Mode.FILL){
             out.addProperty("source_effect",sourceEffect);
             out.addProperty("source_observation_scope","matched_current_connection_source_cell_packet_may_show_preserved_or_regenerated_source_does_not_prove_source_removal");

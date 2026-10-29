@@ -4567,6 +4567,7 @@ public final class AutomationBridge {
         if(lastBucketWater!=null)j.add("last_bucket_water",lastBucketWater.deepCopy());
         if(mapCreationTask!=null)j.add("map_creation",mapCreationTask.snapshot(false));
         if(lastMapCreation!=null)j.add("last_map_creation",lastMapCreation.deepCopy());
+        j.addProperty("projected_water_column_protocol",1);
         if(airSeedTask!=null)j.add("projection_air_seed",airSeedTask.snapshot(false));
         if(lastAirSeed!=null)j.add("last_projection_air_seed",lastAirSeed.deepCopy());
         if(scaffoldFillTask!=null)j.add("projection_scaffold_fill",scaffoldFillTask.snapshot());
