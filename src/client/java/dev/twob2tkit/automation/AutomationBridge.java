@@ -2491,6 +2491,30 @@ public final class AutomationBridge {
             long expiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
             if(expiry<0 || expiry>15000)throw new IllegalStateException("Build decision expired");
             KitClient.buildJob().supervise(c,str(r,"action"),str(r,"job_session"));phase="done";detail="build supervision applied; verify subsequent progress";
+        }else if(command.equals("printer_mode")){
+            long expiry=r.has("expires_at")?r.get("expires_at").getAsLong()-System.currentTimeMillis():-1;
+            if(expiry<0||expiry>15000||!str(r,"world_session").equals(session(c))
+                    ||!r.has("expected_revision")||r.get("expected_revision").getAsLong()!=controlRevision)
+                throw new IllegalStateException("Printer handoff scope changed");
+            if(active!=null||nativeMaterialOwner!=null||supervisionLease!=null||pendingScan!=null||guardBusy
+                    ||KitClient.anyAfkAuto()||KitClient.buildJob().isActive()||ProfessionalPrinter.owned()||projectionBatch.active()
+                    ||c.gui.screen()!=null||KitKeys.manualMovementDown(c)||c.player.getHealth()<19
+                    ||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty()
+                    ||c.player.isUsingItem())throw new IllegalStateException("Idle healthy printer handoff required");
+            if(!dev.twob2tkit.builder.LitematicaAccess.buildSelection().key().equals(str(r,"placement_key")))
+                throw new IllegalStateException("Printer handoff projection changed");
+            for(String name:List.of("enabled","expected_enabled"))
+                if(!r.has(name)||!r.get(name).isJsonPrimitive()||!r.get(name).getAsJsonPrimitive().isBoolean())
+                    throw new IllegalArgumentException("Exact boolean printer modes required");
+            if(!r.has("expected_external_revision")||!r.get("expected_external_revision").isJsonPrimitive()
+                    ||!r.get("expected_external_revision").getAsJsonPrimitive().isNumber())
+                throw new IllegalArgumentException("Observed external printer revision required");
+            long revision=r.get("expected_external_revision").getAsBigDecimal().longValueExact();
+            if(revision<0)throw new IllegalArgumentException("Invalid external printer revision");
+            ProfessionalPrinter.externalMode(c,r.get("expected_enabled").getAsBoolean(),r.get("enabled").getAsBoolean(),revision);
+            phase="done";op=command;detail="printer mode handoff applied; guard and inventory unchanged";
+            var reply=snapshot(c);reply.addProperty("id",lastId);reply.addProperty("phase",phase);
+            save(root(c).resolve("reply-"+safeId(lastId)+".json"),reply);
         }else if(command.equals("professional_print")){
             startOwnedProfessionalPrinter(c,r);
         }else if(command.equals("planter_wheat_batch")){
@@ -4586,6 +4610,7 @@ public final class AutomationBridge {
         j.addProperty("projection_air_seed_protocol",1);j.addProperty("projection_air_seed_axis_protocol",1);j.addProperty("air_place",MeteorModules.isActive(MeteorModules.AIR_PLACE));j.addProperty("controlled_water_release_protocol",1);
         j.addProperty("projection_scaffold_fill_protocol",1);
         j.addProperty("safe_residual_fire_wait_protocol",1);
+        j.addProperty("printer_mode_handoff_protocol",1);
         j.add("residual_fire_wait",dev.twob2tkit.combat.ResidualFireRecovery.snapshot());
         j.addProperty("bucket_water_protocol",1);
         j.addProperty("bottle_water_protocol",1);

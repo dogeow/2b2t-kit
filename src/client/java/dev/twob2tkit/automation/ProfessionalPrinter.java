@@ -8,6 +8,7 @@ import net.minecraft.client.Minecraft;
 public final class ProfessionalPrinter {
     private static final String CONFIG="me.aleksilassila.litematica.printer.config.Configs";
     private static final String AIR=MeteorModules.AIR_PLACE;
+    private static final PrinterExternalModeHistory externalModeHistory=new PrinterExternalModeHistory();
     private static boolean owned, paused,placementSneak,recheck,travelling,travelActionSafe;
     private static net.minecraft.world.phys.Vec3 pendingHit;
     private static net.minecraft.world.item.Item expectedHand;
@@ -221,10 +222,29 @@ public final class ProfessionalPrinter {
         return Class.forName(CONFIG).getField(name).get(null);
     }
     private static boolean get(String name)throws ReflectiveOperationException {
-        Object o=option(name);return (boolean)o.getClass().getMethod("getBooleanValue").invoke(o);
+        Object o=option(name);boolean value=(boolean)o.getClass().getMethod("getBooleanValue").invoke(o);
+        if(name.equals("PRINT_MODE")&&Minecraft.getInstance()!=null&&Minecraft.getInstance().isSameThread())externalModeHistory.observe(value);
+        return value;
     }
     private static void set(String name,boolean value)throws ReflectiveOperationException {
-        Object o=option(name);o.getClass().getMethod("setBooleanValue",boolean.class).invoke(o,value);
+        boolean mode=name.equals("PRINT_MODE");
+        if(mode){get(name);externalModeHistory.beginWrite();}
+        try{
+            Object o=option(name);o.getClass().getMethod("setBooleanValue",boolean.class).invoke(o,value);
+            if(mode)externalModeHistory.written(value);
+        }finally{if(mode)externalModeHistory.endWrite();}
+    }
+    public static void externalMode(Minecraft c,boolean expected,boolean value,long expectedExternalRevision){
+        if(owned)throw new IllegalStateException("Native task still owns printing");
+        try{
+            if(get("PRINT_MODE")!=expected||externalModeHistory.revision()!=expectedExternalRevision)
+                throw new IllegalStateException("User printer mode changed; preserve the newer choice");
+            if(expected!=value){
+                if(value)set("PRINT_MODE",true);
+                else stop(c,true); // Discard unsent external rotations/placements before inventory work.
+            }
+            if(get("PRINT_MODE")!=value)throw new IllegalStateException("Printer did not accept requested mode");
+        }catch(ReflectiveOperationException failure){throw new IllegalStateException("Printer mode unavailable",failure);}
     }
     public static JsonObject status(){
         JsonObject j=new JsonObject();
@@ -232,6 +252,8 @@ public final class ProfessionalPrinter {
         j.addProperty("passive_torch_protocol",1);
         try{j.addProperty("available",true);j.addProperty("enabled",get("PRINT_MODE"));j.addProperty("rotate",get("ROTATE"));j.addProperty("in_air",get("PRINT_IN_AIR"));Object i=option("PRINTING_INTERVAL");j.addProperty("interval",(int)i.getClass().getMethod("getIntegerValue").invoke(i));}
         catch(ReflectiveOperationException e){j.addProperty("available",false);j.addProperty("error",e.toString());}
+        j.addProperty("external_mode_revision",externalModeHistory.revision());
+        if(externalModeHistory.lastExternal()!=null)j.addProperty("last_external_enabled",externalModeHistory.lastExternal());
         j.addProperty("printing_while_travelling",owned&&travelling&&!paused);j.addProperty("travel_action_safe",travelActionSafe);
         j.add("last_proposal",lastProposal.deepCopy());j.addProperty("last_hand_mismatch",lastHandMismatch);j.addProperty("action_interval_unit","client_ticks");j.addProperty("owned_menu_recoveries",recoveredMenus);j.addProperty("placement_sneak",placementSneak);j.addProperty("air_place",MeteorModules.isActive(AIR));j.addProperty("owned",owned);j.addProperty("proposal_period_ticks",fastEnabled?8:20);j.addProperty("fast_proposals",fastProposals);j.addProperty("complex_proposals",complexProposals);j.addProperty("server_confirmed",confirmedPlacements);j.addProperty("waiting_for_server",owned&&pacing.awaiting());j.addProperty("travel_pending",travel.pendingCount());j.addProperty("ready_for_travel",owned&&readyForTravel());j.addProperty("failure",failure);j.add("confirmation_seconds",new com.google.gson.Gson().toJsonTree(confirmationSeconds));return j;
     }
@@ -255,6 +277,7 @@ public final class ProfessionalPrinter {
         }catch(ReflectiveOperationException e){throw new IllegalStateException("Installed Litematica Printer is not compatible",e);}
     }
     public static void tick(Minecraft c){
+        try{get("PRINT_MODE");}catch(ReflectiveOperationException ignored){/* Optional printer. */}
         if(!owned)return;
         if(!failure.isEmpty()){stop(c,true);return;}
         try{
