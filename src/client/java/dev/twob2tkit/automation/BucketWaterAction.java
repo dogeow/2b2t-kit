@@ -45,6 +45,7 @@ final class BucketWaterAction {
     private String sourceEffect="unobserved";
     private final ProjectedWaterFlowGuard projectedColumn;
     private final ProjectedWaterlogDrain projectedDrain;
+    private final ProjectedChannelWaterGuard projectedChannel;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
         mode=switch(text(request,"op")){case "bucket_fill"->BucketWaterPolicy.Mode.FILL;case "bucket_place"->BucketWaterPolicy.Mode.PLACE;default->throw new IllegalArgumentException("Only water bucket fill/place are supported");};
@@ -55,6 +56,10 @@ final class BucketWaterAction {
         boolean drain=ProjectedWaterlogDrain.requested(request);
         if(drain&&(mode!=BucketWaterPolicy.Mode.FILL||column))throw new IllegalArgumentException("Projected waterlogged drain is an explicit fill-only operation");
         projectedDrain=drain?new ProjectedWaterlogDrain(c,request,target):null;
+        boolean channel=ProjectedChannelWaterGuard.requested(request);
+        if(channel&&(mode!=BucketWaterPolicy.Mode.PLACE||column||drain))
+            throw new IllegalArgumentException("Projected channel is an exclusive place-only operation");
+        projectedChannel=channel?new ProjectedChannelWaterGuard(request,target):null;
         if(expectedState.isBlank())throw new IllegalArgumentException("An exact fresh target state is required");
         support=mode==BucketWaterPolicy.Mode.PLACE?position(request,"support"):target;
         face=mode==BucketWaterPolicy.Mode.PLACE?Direction.valueOf(text(request,"face").toUpperCase(java.util.Locale.ROOT)):null;
@@ -111,6 +116,7 @@ final class BucketWaterAction {
     }
     private boolean boundedHole(Minecraft c,boolean airRequired) {
         if(projectedColumn!=null){projectedColumn.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
+        if(projectedChannel!=null){projectedChannel.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         int sides=0;for(Direction d:Direction.Plane.HORIZONTAL)if(dryFullBlock(c,target.relative(d)))sides++;
         var state=c.level.getBlockState(target);
         return (!airRequired||state.isAir())&&BucketWaterPolicy.boundedHole(true,airRequired?state.getFluidState().isEmpty():true,
@@ -216,6 +222,11 @@ final class BucketWaterAction {
         out.addProperty("expected_state_before",expectedState);
         out.addProperty("projected_water_column",projectedColumn!=null);
         out.addProperty("projected_waterlog_drain",projectedDrain!=null);
+        out.addProperty("projected_water_channel",projectedChannel!=null);
+        if(projectedChannel!=null){
+            out.addProperty("channel_length",8);out.addProperty("channel_direction","west");
+            out.addProperty("channel_flow_observation_scope","source_and_bucket_only_downstream_requires_independent_scan");
+        }
         if(projectedDrain!=null)out.addProperty("expected_dry_state",projectedDrain.expectedDry());
         if(mode==BucketWaterPolicy.Mode.FILL){
             out.addProperty("source_effect",sourceEffect);
