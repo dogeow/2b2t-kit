@@ -2939,7 +2939,10 @@ public final class AutomationBridge {
             if(!bucketOwnerCurrent(c,r)||active!=null||bucketWaterTask!=null||KitClient.buildJob().isActive()
                 ||KitClient.borer().isActive()||KitClient.machines().isPlacing()||ProfessionalPrinter.owned()
                 ||KitClient.controller().isActive()||KitClient.chopper().isActive())
+            {
+                lastBucketAdmissionRejection=bucketAdmissionDiagnostics(c,r);
                 throw new IllegalStateException("Water bucket action requires the current healthy idle guarded material lease");
+            }
             checkSiteTarget(r,r.getAsJsonArray("pos"));
             if(command.equals("bucket_place"))checkSiteTarget(r,r.getAsJsonArray("support"));
             var plannedBucket=new BucketWaterAction(c,r,session(c),lastId,root(c),()->bucketOwnerCurrent(c,r));
@@ -3730,6 +3733,28 @@ public final class AutomationBridge {
             denied.addProperty("detail",detail);denied.add("slaughter_attack",rejected.deepCopy());
             save(root(c).resolve("reply-"+rejectedId+".json"),denied);
         }
+    }
+    private static JsonObject lastBucketAdmissionRejection;
+    private static JsonObject bucketAdmissionDiagnostics(Minecraft c,JsonObject request){
+        var out=new JsonObject();out.addProperty("protocol",1);out.addProperty("time",System.currentTimeMillis());
+        out.addProperty("request_id",str(request,"id"));out.addProperty("world_session",session(c));
+        out.addProperty("material_owner_current",currentMaterialRequest(c,request));
+        out.addProperty("heartbeat_age_ms",System.currentTimeMillis()-lastSupervisionHeartbeat);
+        out.addProperty("active_command",active==null?"":op);out.addProperty("active_request_id",active==null?"":str(active,"id"));
+        out.addProperty("bucket_task_active",bucketWaterTask!=null);out.addProperty("build_active",KitClient.buildJob().isActive());
+        out.addProperty("borer_active",KitClient.borer().isActive());out.addProperty("machine_placing",KitClient.machines().isPlacing());
+        out.addProperty("printer_owned",ProfessionalPrinter.owned());out.addProperty("navigation_active",KitClient.controller().isActive());
+        out.addProperty("chopper_active",KitClient.chopper().isActive());
+        var enemies=new com.google.gson.JsonArray();
+        if(c.player!=null&&c.level!=null)for(var entity:c.level.getEntities(c.player,c.player.getBoundingBox().inflate(16))){
+            if(!(entity instanceof net.minecraft.world.entity.monster.Enemy)||!entity.isAlive())continue;
+            var row=new JsonObject();row.addProperty("uuid",entity.getUUID().toString());
+            row.addProperty("type",BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
+            row.add("pos",JSON.toJsonTree(new double[]{entity.getX(),entity.getY(),entity.getZ()}));
+            row.addProperty("visible",c.player.hasLineOfSight(entity));enemies.add(row);
+            if(enemies.size()==32)break;
+        }
+        out.add("nearby_hostiles",enemies);return out;
     }
     private static boolean bucketOwnerCurrent(Minecraft c,JsonObject r){
         if(c.player==null||c.level==null||c.gameMode==null||!currentMaterialRequest(c,r)
@@ -4613,6 +4638,7 @@ public final class AutomationBridge {
         j.addProperty("printer_mode_handoff_protocol",1);
         j.add("residual_fire_wait",dev.twob2tkit.combat.ResidualFireRecovery.snapshot());
         j.addProperty("bucket_water_protocol",1);
+        if(lastBucketAdmissionRejection!=null)j.add("last_bucket_admission_rejection",lastBucketAdmissionRejection.deepCopy());
         j.addProperty("bottle_water_protocol",1);
         if(bottleWaterTask!=null)j.add("bottle_water",bottleWaterTask.snapshot(false));
         if(lastBottleWater!=null)j.add("last_bottle_water",lastBottleWater.deepCopy());
