@@ -14,6 +14,10 @@ final class ProjectionLoadPolicy {
     record Request(Path file,String relative,String name,BlockPos origin,String rotation,String mirror,List<String> regions){}
     private ProjectionLoadPolicy(){}
     static void envelope(JsonObject request,boolean rollback){
+        if(!rollback&&request.has("op")&&request.get("op").isJsonPrimitive()
+            &&request.getAsJsonPrimitive("op").isString()&&request.get("op").getAsString().equals("projection_select")){
+            ProjectionSelectionPolicy.envelope(request);return;
+        }
         if(!text(request,"id",96).matches("[A-Za-z0-9_-]{1,96}"))throw new IllegalArgumentException("Invalid projection import request id");
         if(!text(request,"op",40).equals(rollback?"projection_load_rollback":"projection_load"))throw new IllegalArgumentException("Projection import operation does not match schema");
         var allowed=new HashSet<>(COMMON);allowed.addAll(rollback?Set.of("rollback_id"):Set.of("file","name","origin","rotation","mirror","regions"));

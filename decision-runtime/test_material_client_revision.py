@@ -4,7 +4,7 @@ from unittest.mock import patch
 from material_client import Client,Handoff
 class RevisionTest(unittest.TestCase):
  def test_projection_switch_and_rollback_accept_the_native_success_revision(self):
-  for op in ('projection_load','projection_load_rollback'):
+  for op in ('projection_load','projection_load_rollback','projection_select'):
    with self.subTest(op=op),tempfile.TemporaryDirectory()as d:
     class Fake(Client):
      def __init__(self):self.root=self.out=Path(d);self.world='world';self.rev=40;self.anchor=[1,2,3];self.owned=False;self.last=None

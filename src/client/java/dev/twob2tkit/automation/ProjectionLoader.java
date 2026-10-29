@@ -22,6 +22,50 @@ final class ProjectionLoader {
     private static Undo lastUndo;
     private record Undo(String id,Object level,ProjectionLoadTransaction<Object> transaction,Access access,Object schematic,Object placement,Path journal){}
     private ProjectionLoader(){}
+    private static String hashText(String text)throws Exception{
+        return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
+    private static JsonObject registry(Access access)throws Exception{
+        var all=access.all();if(all.size()>1024)throw new IllegalStateException("Projection registry exceeds bounded selection listing");
+        var out=new JsonObject();var entries=new JsonArray();int selected=-1;
+        for(int i=0;i<all.size();i++){
+            var p=all.get(i);if(p==access.selected())selected=i;
+            var entry=new JsonObject();entry.addProperty("index",i);entry.addProperty("fingerprint",hashText(access.fingerprint(p)));
+            entry.add("placement",access.json(p));entries.add(entry);
+        }
+        out.add("placements",entries);out.addProperty("selected_index",selected);out.addProperty("count",all.size());
+        out.addProperty("registry_fingerprint",hashText(out.toString()));return out;
+    }
+    static JsonObject listExisting()throws Exception{return registry(new Access());}
+    static JsonObject selectExisting(Minecraft c,JsonObject raw,Runnable recheck)throws Exception{
+        ProjectionSelectionPolicy.envelope(raw);Access access=new Access();access.requireAllLayers();recheck.run();
+        var before=registry(access);int index=(int)ProjectionLoadPolicy.integer(raw,"placement_index");
+        if(!before.get("registry_fingerprint").getAsString().equals(raw.get("expected_registry").getAsString())
+            ||index>=before.getAsJsonArray("placements").size()
+            ||!before.getAsJsonArray("placements").get(index).getAsJsonObject().get("fingerprint").getAsString().equals(raw.get("expected_fingerprint").getAsString()))
+            throw new IllegalStateException("Projection registry changed since listing; selection not applied");
+        var target=access.all().get(index);var transaction=new ProjectionSelectionTransaction<Object>(access,target);
+        Path journal=c.gameDirectory.toPath().resolve("config/twob2tkit/automation/projection-selections").resolve(raw.get("id").getAsString()+".json");
+        if(Files.exists(journal))throw new IllegalStateException("Existing selection request already has a journal; do not replay");
+        var evidence=new JsonObject();evidence.addProperty("stage","prepared");evidence.addProperty("world_session",raw.get("world_session").getAsString());
+        evidence.add("request",raw.deepCopy());evidence.add("before",before);write(journal,evidence);
+        var result=new JsonObject();
+        try{
+            recheck.run();transaction.apply();var selected=LitematicaAccess.lockedBuildSelection();
+            result.addProperty("success",true);result.addProperty("placement_key",selected.key());
+            result.add("bounds",bounds(selected.min(),selected.max()));result.addProperty("placement_count",access.all().size());
+            result.addProperty("world_blocks_changed",false);result.addProperty("placements_added",0);result.addProperty("placements_removed",0);
+            evidence.addProperty("stage","committed");evidence.add("after",registry(access));evidence.add("result",result.deepCopy());write(journal,evidence);
+            access.save();result.addProperty("litematica_save_requested",true);return result;
+        }catch(Exception failure){
+            boolean restored=transaction.rollback();result.addProperty("success",false);result.addProperty("error",message(failure));
+            result.addProperty("rollback_confirmed",restored);result.addProperty("world_blocks_changed",false);
+            evidence.addProperty("stage",restored?"rolled_back":"rollback_incomplete");evidence.add("result",result.deepCopy());
+            try{write(journal,evidence);}catch(Exception logFailure){result.addProperty("journal_error",message(logFailure));}
+            if(restored)try{access.save();}catch(RuntimeException ignored){}
+            return result;
+        }
+    }
     static JsonObject load(Minecraft c,JsonObject raw,Runnable recheck)throws Exception{
         var request=ProjectionLoadPolicy.parse(c.gameDirectory.toPath(),raw);
         if(request.origin().getY()<c.level.getMinY()||request.origin().getY()>=c.level.getMaxY())throw new IllegalArgumentException("Projection origin Y is outside this world's build height");
@@ -86,7 +130,7 @@ final class ProjectionLoader {
         catch(ReflectiveOperationException e){throw new IllegalStateException("Litematica "+name+" failed: "+message(e),e);}
     }
     private static Object call(Object target,String name){return invoke(target,name,new Class<?>[0]);}
-    private static final class Access implements ProjectionLoadTransaction.Access<Object> {
+    private static final class Access implements ProjectionLoadTransaction.Access<Object>,ProjectionSelectionTransaction.Access<Object> {
         final Class<?> data,placementType,schematicType,messageType;
         final Object manager,holder,messages;
         Access()throws ReflectiveOperationException{
@@ -103,6 +147,7 @@ final class ProjectionLoader {
         public boolean enabled(Object p){return (boolean)call(p,"isEnabled");}
         JsonObject json(Object p){return ((JsonObject)call(p,"toJson")).deepCopy();}
         public String fingerprint(Object p){return json(p).toString();}
+        public String contentFingerprint(Object p){var state=json(p);state.remove("enabled");return state.toString();}
         String identifier(Object p){return call(p,"getHashId").toString();}
         public void add(Object p){
             Object schematic=call(p,"getSchematic");invoke(holder,"addSchematic",new Class<?>[]{schematicType,boolean.class},schematic,true);

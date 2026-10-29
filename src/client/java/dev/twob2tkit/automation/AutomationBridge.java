@@ -2226,7 +2226,7 @@ public final class AutomationBridge {
             });
             writeStatus(c);return;
         }
-        if(Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","map_audit").contains(command)){
+        if(Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","projection_list","map_audit").contains(command)){
             if(survival(r)){survivalArmed=true;survivalBackground=background(r);}
             if(command.equals("scan")){startScan(c,r);writeStatus(c);return;}
             JsonObject out=snapshot(c);out.addProperty("id",lastId);
@@ -2236,6 +2236,10 @@ public final class AutomationBridge {
             if(command.equals("scan_trees"))out.add("tree_survey",TreeSurvey.scan(c,r));
             if(command.equals("projection_audit"))out.add("projection_audit",ProjectionAudit.scan(c));
             if(command.equals("projection_model"))out.add("projection_model",ProjectionAudit.model(c));
+            if(command.equals("projection_list")){
+                out.add("projection_registry",ProjectionLoader.listExisting());out.addProperty("op",command);
+                out.addProperty("phase","done");out.addProperty("detail","existing projection registry read without importing or selecting");
+            }
             if(command.equals("map_audit")){
                 out.add("map_audit",MapAutomation.audit(c,r));out.addProperty("phase","done");
                 out.addProperty("detail","current loaded client map pixels read; geographic metadata and freshness are not server-verified");
@@ -2417,6 +2421,17 @@ public final class AutomationBridge {
             if(expiry<0 || expiry>15000 || str(r,"job_session").isEmpty())throw new IllegalStateException("Supervisor attachment expired or has no job");
             if(!r.has("expected_revision") || r.get("expected_revision").getAsLong()!=controlRevision || !str(r,"world_session").equals(session(c)))throw new IllegalStateException("Supervisor attachment scope changed");
             attachSupervision(c,r);phase="done";detail="native safety watchdog attached";
+        }else if(command.equals("projection_select")){
+            projectionLoadScope(c,r);
+            var selected=ProjectionLoader.selectExisting(c,r,()->projectionLoadScope(c,r));
+            if(selected.get("success").getAsBoolean()){
+                projectionBatch.reset();controlRevision++;
+                if(supervisionLease!=null&&str(supervisionLease,"kind").equals("parking"))supervisionLease.addProperty("revision",controlRevision);
+            }
+            op=command;phase=selected.get("success").getAsBoolean()?"done":"error";
+            detail=phase.equals("done")?"Existing projection selected; no placement added or removed; verify projection_model":str(selected,"error");
+            var reply=snapshot(c);reply.addProperty("id",lastId);reply.addProperty("phase",phase);reply.addProperty("detail",detail);reply.add("projection_select",selected);
+            save(root(c).resolve("reply-"+safeId(lastId)+".json"),reply);
         }else if(command.equals("projection_load")||command.equals("projection_load_rollback")){
             projectionLoadScope(c,r);
             JsonObject loaded=command.equals("projection_load")?ProjectionLoader.load(c,r,()->projectionLoadScope(c,r))
@@ -4568,6 +4583,7 @@ public final class AutomationBridge {
         if(mapCreationTask!=null)j.add("map_creation",mapCreationTask.snapshot(false));
         if(lastMapCreation!=null)j.add("last_map_creation",lastMapCreation.deepCopy());
         j.addProperty("projected_water_column_protocol",1);
+        j.addProperty("projection_registry_protocol",1);
         if(airSeedTask!=null)j.add("projection_air_seed",airSeedTask.snapshot(false));
         if(lastAirSeed!=null)j.add("last_projection_air_seed",lastAirSeed.deepCopy());
         if(scaffoldFillTask!=null)j.add("projection_scaffold_fill",scaffoldFillTask.snapshot());

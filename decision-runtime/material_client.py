@@ -99,7 +99,7 @@ def pending_request_state(request,last_request,owned_last,world):
  if request.get('id')==last_request:return 'clear'
  if request.get('id')==owned_last and request.get('world_session')==world:return 'wait_owned'
  return 'foreign'
-_REVISION_ADVANCING_OPS=frozenset(('navigate','chop','walk','walk_path','print','mine_block','recover_shulker','professional_print','projection_start','projection_load','projection_load_rollback','borer_start','planter_wheat_batch'))
+_REVISION_ADVANCING_OPS=frozenset(('navigate','chop','walk','walk_path','print','mine_block','recover_shulker','professional_print','projection_start','projection_load','projection_load_rollback','projection_select','borer_start','planter_wheat_batch'))
 def expected_native_revision(op,base):
  return base+(2 if op in ('stop','safe_logout') else 1 if op in _REVISION_ADVANCING_OPS else 0)
 def recovery_action_allowed(state,op,params):
