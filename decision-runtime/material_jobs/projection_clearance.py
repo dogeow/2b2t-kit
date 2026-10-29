@@ -39,6 +39,7 @@ def pending_positions(root, key, state):
     if len(files) > 2048:
         raise JobBlocked('清障旧回执需要整理，不能跳过检查')
     result = set()
+    legacy_cache = {}
     for path in files:
         try:
             if path.is_symlink() or path.stat().st_size > 16384:
@@ -53,7 +54,9 @@ def pending_positions(root, key, state):
             if not isinstance(pos, list) or len(pos) != 3 or any(type(n) is not int for n in pos):
                 raise ValueError('invalid position')
             if record.get('pending') is not None:
-                result.add(tuple(pos))
+                from legacy_glass_completion import resolved_legacy_glass
+                if not resolved_legacy_glass(record, scope, legacy_cache):
+                    result.add(tuple(pos))
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise JobBlocked('清障旧回执不可读，保留原动作不重放') from error
     return result
