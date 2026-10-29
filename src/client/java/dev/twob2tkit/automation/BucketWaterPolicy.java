@@ -5,6 +5,10 @@ final class BucketWaterPolicy {
     enum Mode { FILL, PLACE }
     private BucketWaterPolicy() {}
 
+    static boolean columnRequiresAir(boolean explicitPreflight,boolean useSent){
+        return explicitPreflight||!useSent;
+    }
+
     static boolean allowedHand(Mode mode,String item,int count) {
         return count==1 && (mode==Mode.FILL?"minecraft:bucket":"minecraft:water_bucket").equals(item);
     }

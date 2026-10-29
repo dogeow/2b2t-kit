@@ -4,6 +4,15 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BucketWaterPolicyTest {
+    @Test void queuedRotationStillExpectsAirUntilTheSingleUseIsActuallySent(){
+        var receipt=new BucketWaterPolicy.Receipt();
+        assertTrue(BucketWaterPolicy.columnRequiresAir(true,receipt.sent()));
+        assertTrue(BucketWaterPolicy.columnRequiresAir(false,receipt.sent()),"Poll before the deferred use callback must preserve air");
+        receipt.sendOnce();
+        assertFalse(BucketWaterPolicy.columnRequiresAir(false,receipt.sent()),"Post-use poll now verifies the new source");
+        assertTrue(BucketWaterPolicy.columnRequiresAir(true,receipt.sent()));
+        assertFalse(receipt.done(true,true,true,100),"State choice alone cannot synthesize server receipts");
+    }
     private static BucketWaterPolicy.Receipt ready() {
         var r=new BucketWaterPolicy.Receipt();r.sendOnce();
         r.block(true,true,true,"water0",true,10);r.inventory(true,true,true,true,11);return r;

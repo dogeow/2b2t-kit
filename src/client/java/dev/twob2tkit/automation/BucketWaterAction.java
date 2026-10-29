@@ -106,7 +106,7 @@ final class BucketWaterAction {
             &&c.level.getBlockState(pos).isCollisionShapeFullBlock(c.level,pos);
     }
     private boolean boundedHole(Minecraft c,boolean airRequired) {
-        if(projectedColumn!=null){projectedColumn.require(c,airRequired);return true;}
+        if(projectedColumn!=null){projectedColumn.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         int sides=0;for(Direction d:Direction.Plane.HORIZONTAL)if(dryFullBlock(c,target.relative(d)))sides++;
         var state=c.level.getBlockState(target);
         return (!airRequired||state.isAir())&&BucketWaterPolicy.boundedHole(true,airRequired?state.getFluidState().isEmpty():true,
