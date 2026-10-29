@@ -96,7 +96,8 @@ def _air_scan(client, low, high):
     # dangerous non-full blocks must still obstruct this conservative route.
     from .acquisition import block_id
     safe_noncolliding = {'minecraft:'+name for name in
-                        ('torch','wall_torch','lever','short_grass','tall_grass','fern','large_fern','bush')}
+                        ('torch','wall_torch','redstone_torch','redstone_wall_torch',
+                         'lever','short_grass','tall_grass','fern','large_fern','bush')}
     safe_noncolliding.update('minecraft:'+name+'_sapling'for name in
                             ('oak','spruce','birch','jungle','acacia','dark_oak','cherry','pale_oak'))
     # Vanilla buttons have no collision shape; retain them without pressing.

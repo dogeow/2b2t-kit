@@ -525,6 +525,19 @@ class QuarryExitTest(unittest.TestCase):
         self.assertTrue(leave_quarry(self.client,self.directory))
         self.assertEqual({'scan','navigate'},{op for op,_ in self.client.calls})
 
+    def test_redstone_lighting_is_preserved_but_only_verified_empty_collision_is_routable(self):
+        from material_jobs.navigation import _air_scan
+        for name in ('redstone_torch','redstone_wall_torch'):
+            row={'pos':[0,16,0],'state':'Block{minecraft:'+name+'}[lit=true]',
+                 'passable':True,'fluid':False,'block_entity':False}
+            for extras,expected in (({},[]),({'passable':False},None),
+                                    ({'fluid':True},None),({'block_entity':True},None)):
+                actual={**row,**extras}
+                client=SimpleNamespace(world='w',request=Mock(return_value={
+                    'phase':'done','world_session':'w','blocks':[actual]}))
+                self.assertEqual([] if expected==[] else [actual],_air_scan(client,[0,16,0],[0,17,0]))
+                self.assertEqual(['scan'],[call.args[0] for call in client.request.call_args_list])
+
     def test_noncolliding_hazards_and_unconfirmed_grass_remain_blocking(self):
         for name,extras in (('fire',{}),('wither_rose',{}),('water',{'fluid':True}),
                             ('tall_grass',{'passable':False}),('tall_grass',{'block_entity':True})):
