@@ -1286,9 +1286,25 @@ public final class AutomationBridge {
 			rebaseParkingGuard(c);guard(c,guardScope);rebaseSnowExpeditionGuard(c);
 		}catch(Exception changed){guardScope=null;enabled=false;releaseGuardFood();}
         try{dev.twob2tkit.combat.GuardFoodLease.tickRecovery(c,enabled&&pveOnly()
-                &&c.player!=null&&!dev.twob2tkit.combat.EmergencyExit.held(c));}
+                &&c.player!=null&&!dev.twob2tkit.combat.EmergencyExit.held(c)
+                &&!dev.twob2tkit.combat.ResidualFireRecovery.burning());}
         catch(RuntimeException failure){long now=System.currentTimeMillis();if(now-lastFoodRecoveryWarning>30000){
             lastFoodRecoveryWarning=now;KitClient.LOGGER.warn("Guard food recovery coordination deferred: {}",failure.getClass().getSimpleName());}}
+        if(enabled&&dev.twob2tkit.combat.ResidualFireRecovery.active()){
+            // Repeat the existing handoff pause so retained combat budgets do
+            // not expire while waiting/eating. Guard ownership remains armed.
+            boolean paused=KitClient.borer().suspendStandaloneCombatForAirReturn(c);
+            if(paused){
+                guardBusy=true;ProfessionalPrinter.pause();
+                if(materialAirNavigation!=null)materialAirNavigation.pause(c);
+                if(active!=null&&!interfacePaused(c))deadline++;
+                for(var key:new net.minecraft.client.KeyMapping[]{c.options.keyUp,c.options.keyDown,c.options.keyLeft,
+                        c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint,c.options.keyAttack})key.setDown(false);
+                if(c.gameMode!=null)c.gameMode.stopDestroyBlock();
+                return true;
+            }
+            dev.twob2tkit.combat.ResidualFireRecovery.suspensionUnavailable();
+        }
         if(active!=null&&op.equals("navigate")&&materialAirScope(c))
             materialAirRoute.observeAscent(c,str(active,"id"));
         if(enabled&&materialAirScope(c)&&c.player.isUnderWater()){
@@ -4569,6 +4585,8 @@ public final class AutomationBridge {
         j.addProperty("boat_food_animal_recovery_protocol",1);
         j.addProperty("projection_air_seed_protocol",1);j.addProperty("projection_air_seed_axis_protocol",1);j.addProperty("air_place",MeteorModules.isActive(MeteorModules.AIR_PLACE));j.addProperty("controlled_water_release_protocol",1);
         j.addProperty("projection_scaffold_fill_protocol",1);
+        j.addProperty("safe_residual_fire_wait_protocol",1);
+        j.add("residual_fire_wait",dev.twob2tkit.combat.ResidualFireRecovery.snapshot());
         j.addProperty("bucket_water_protocol",1);
         j.addProperty("bottle_water_protocol",1);
         if(bottleWaterTask!=null)j.add("bottle_water",bottleWaterTask.snapshot(false));
@@ -4603,6 +4621,7 @@ public final class AutomationBridge {
             if(e.distanceToSqr(c.player)>256)continue;
             JsonObject v=new JsonObject();v.addProperty("id",e.getId());v.addProperty("uuid",e.getUUID().toString());v.addProperty("type",BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString());v.addProperty("name",e.getName().getString());v.addProperty("hostile",e instanceof net.minecraft.world.entity.monster.Enemy);v.addProperty("visible",c.player.hasLineOfSight(e));if(e instanceof net.minecraft.world.entity.LivingEntity living){v.addProperty("health",living.getHealth());v.addProperty("has_custom_name",living.hasCustomName());v.addProperty("is_baby",living.isBaby());}if(e instanceof net.minecraft.world.entity.item.ItemEntity drop)v.add("stack",stack(drop.getItem()));v.add("pos",JSON.toJsonTree(new double[]{e.getX(),e.getY(),e.getZ()}));nearby.add(v);
         }j.add("entities",nearby);
+        if(dev.twob2tkit.combat.ResidualFireRecovery.active())j.addProperty("guard_status",dev.twob2tkit.combat.ResidualFireRecovery.status());
         j.addProperty("kill_aura",MeteorModules.isActive(MeteorModules.KILL_AURA));j.addProperty("auto_log",MeteorModules.isActive(MeteorModules.AUTO_LOG));j.addProperty("flight",MeteorModules.isActive(MeteorModules.FLIGHT));return j;
     }
     private static JsonObject snapshotStack(String key,ItemStack item){return stackSnapshots.cached(key,item,AutomationBridge::stack);}

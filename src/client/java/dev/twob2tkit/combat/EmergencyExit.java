@@ -87,6 +87,7 @@ public final class EmergencyExit {
         start(c,why,false);
     }
     private static void start(Minecraft c,String why,boolean immediate){
+        ResidualFireRecovery.cancel();
         if(escaping||c.player==null||c.level==null)return;
         memoryHold=true;reason=why;
         var j=new JsonObject();j.addProperty("active",true);j.addProperty("reason",why);j.addProperty("time",System.currentTimeMillis());j.addProperty("health",c.player.getHealth());
@@ -126,10 +127,13 @@ public final class EmergencyExit {
         if(!c.isSameThread())return;
         if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c)||nativeHeld(c)||escaping
                 ||c.player==null||c.level==null||c.player.isDeadOrDying()){
-            environmentalDamage.reset();return;
+            ResidualFireRecovery.cancel();environmentalDamage.reset();return;
         }
         boolean automated=AutomationBridge.guardArmed()||KitClient.anyAfkAuto();
         if(automated&&c.player.getHealth()<14){begin(c,"低血量紧急撤离");return;}
+        if(ResidualFireRecovery.observe(c,automated,System.currentTimeMillis())){
+            environmentalDamage.reset();return;
+        }
         boolean watching=automated&&c.gui.screen()==null&&!KitKeys.manualMovementDown(c);
         if(environmentalDamage.observe(c.level,c.player,c.getConnection(),System.currentTimeMillis(),
                 c.player.getHealth(),c.player.position(),watching,
