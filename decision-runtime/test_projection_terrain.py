@@ -7,6 +7,19 @@ from projection_terrain import candidates,exposed_faces,accessible_room_order,fo
 from projection_terrain import clear_batch
 
 class Tests(unittest.TestCase):
+ def test_paths_stay_protected_without_opt_in_and_still_require_stock_and_dry_neighbors(self):
+  audit,state,row=self.fixture();row['actual']='Block{minecraft:dirt_path}'
+  self.assertEqual([],candidates(audit,state))
+  self.assertEqual([row['pos']],[r['pos']for r in candidates(audit,state,allow_paths=True)])
+  for field in ('fluid','adjacent_fluid','block_entity'):
+   row[field]=True;self.assertEqual([],candidates(audit,state,allow_paths=True));row[field]=False
+  state['inventory']=[];self.assertEqual([],candidates(audit,state,allow_paths=True))
+ def test_global_path_clearance_is_rejected_before_observing_or_touching_the_world(self):
+  from unittest.mock import Mock
+  c=Mock()
+  for value in (True,1,None):
+   with self.assertRaises(ValueError):clear_batch(c,allow_paths=value)
+  c.status.assert_not_called()
  def fixture(self):
   row={'pos':[1,2,3],'actual':'Block{minecraft:dirt}','expected':'Block{minecraft:stone_bricks}',
        'kind':'occupied','block_entity':False,'fluid':False,'adjacent_fluid':False,'neighbors_loaded':True}
@@ -64,6 +77,22 @@ class FooterAccessTests(unittest.TestCase):
   self.assertFalse(footer_headroom([1,60,3],{(1,62,3):cell}))
 
 class JournaledTerrainTests(unittest.TestCase):
+ def test_only_exact_opted_in_path_is_mined_with_shovel_and_durable_intent(self):
+  with tempfile.TemporaryDirectory()as d:
+   c,row=self.fake(Path(d));row['actual']='Block{minecraft:dirt_path}';original=c.request;selections=[]
+   def request(op,**kw):
+    reply=original(op,**kw)
+    if op=='scan' and reply['blocks']:reply['blocks'][0]['state']=row['actual']
+    return reply
+   def select(op,**kw):
+    self.assertEqual('select_item',op);selections.append(kw['item']);c.status()['hand']['item']=kw['item'];return {'phase':'done'}
+   c.request=request;c.checked=select
+   with patch('projection_terrain.require_unlocked'),patch('projection_terrain.approach_faces',return_value='up'),patch('projection_terrain.time.sleep'):
+    result=clear_batch(c,1,positions=[[2,2,3]],allow_paths=True)
+    self.assertEqual([],result['removed']);self.assertEqual(0,c.mines)
+    result=clear_batch(c,1,positions=[row['pos']],allow_paths=True)
+   self.assertEqual(1,c.mines);self.assertEqual(1,len(result['removed']));self.assertEqual(['minecraft:diamond_shovel'],selections)
+   intent=json.loads(next((Path(d)/'projection-terrain-intents').glob('*.json')).read_text());self.assertTrue(intent['explicit_path_clearance']);self.assertIsNone(intent['pending'])
  def fake(self,root,confirmed=True):
   audit,state,row=Tests().fixture();row['actual']='Block{minecraft:stone}'
   actual={'pos':row['pos'],'state':row['actual'],'fluid':False,'block_entity':False,'solid':True,'passable':False}

@@ -56,7 +56,8 @@ def replacement_stock_item(expected_state):
     return item
 
 
-def candidates(audit, state, reserved=None):
+def candidates(audit, state, reserved=None, *, allow_paths=False):
+    if type(allow_paths)is not bool:raise ValueError('Path clearance needs an explicit boolean')
     selection = state['projection_selection']
     plan = repair_plan(audit, selection)
     if not plan['interior_air_checked'] or abs(state['time'] - audit.get('observed_at', 0)) > 5000:
@@ -66,7 +67,11 @@ def candidates(audit, state, reserved=None):
     stock = inventory_counts(state)
     reserved = reserved or {}
     result = []
-    for row in plan['groups'].get('terrain_clear_candidate', []):
+    eligible=list(plan['groups'].get('terrain_clear_candidate', []))
+    if allow_paths:
+        eligible.extend(row for row in plan['groups'].get('specific_block_repair', [])
+                        if row.get('actual')=='Block{minecraft:dirt_path}' and row.get('kind')=='occupied')
+    for row in eligible:
         if row.get('block_entity') or row.get('fluid') or row.get('adjacent_fluid') is not False or not row.get('neighbors_loaded'):
             continue
         expected = replacement_stock_item(row['expected'])
@@ -108,7 +113,9 @@ def footer_headroom(pos,cells):
     return True
 
 
-def clear_batch(client, limit=8, *, expected_item=None, positions=None):
+def clear_batch(client, limit=8, *, expected_item=None, positions=None, allow_paths=False):
+    if type(allow_paths)is not bool or allow_paths and positions is None:
+        raise ValueError('Path clearance requires an explicit boolean and exact bounded positions')
     if not 1 <= limit <= 16:
         raise ValueError('Terrain batch must contain 1 to 16 blocks')
     if expected_item is not None and (not isinstance(expected_item,str) or not expected_item.startswith('minecraft:')):
@@ -133,7 +140,7 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
             break
         audit = client.request('projection_audit')['projection_audit']
         state = client.status()
-        rows = [r for r in candidates(audit, state, reserved) if tuple(r['pos']) not in deferred|uncertain]
+        rows = [r for r in candidates(audit, state, reserved,allow_paths=allow_paths) if tuple(r['pos']) not in deferred|uncertain]
         rows=[r for r in rows if (allowed is None or tuple(r['pos'])in allowed)
               and (expected_item is None or block_state(r['expected'])[0]==expected_item)]
         if not rows:
@@ -162,7 +169,7 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
         if unsafe_nearby_fluid(region,pos):
             deferred.add(tuple(pos)); continue
         block, _ = block_state(row['actual'])
-        tool = 'minecraft:diamond_shovel' if block in ('minecraft:dirt', 'minecraft:grass_block') else 'minecraft:diamond_pickaxe'
+        tool = 'minecraft:diamond_shovel' if block in ('minecraft:dirt', 'minecraft:grass_block','minecraft:dirt_path') else 'minecraft:diamond_pickaxe'
         if client.status().get('hand',{}).get('item')!=tool:
             client.checked('select_item',item=tool)
         try:face=approach_faces(client,pos,row['actual'],exposed_faces(pos,region))
@@ -187,7 +194,8 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None):
             old=json.loads(journal.read_text())
             if old.get('scope')!=scope or old.get('pending'):
                 raise RuntimeError('Original terrain action unresolved; no mining replay')
-        intent={'scope':scope,'world_session':world,'pending':{'actual':row['actual'],'expected':row['expected']},'inventory_credit':0}
+        intent={'scope':scope,'world_session':world,'pending':{'actual':row['actual'],'expected':row['expected']},'inventory_credit':0,
+                'explicit_path_clearance':allow_paths and block=='minecraft:dirt_path'}
         write_json(journal,intent)
         try:
             reply = client.request('mine_block', pos=pos, face=face, expected_state=row['actual'], seconds=20)
