@@ -138,6 +138,22 @@ class Client:
     self.last_owned_ground_walk=None
     self.last_owned_idle_ground_read=None
     raise Handoff('Control or world changed; no more commands')
+   expected_printer=getattr(self,'printer_handoff_revision',None)
+   if (wait_interface and type(expected_printer)is int
+       and s.get('professional_printer',{}).get('external_mode_revision')!=expected_printer):
+    raise Handoff('User changed printer mode; preserve the new choice')
+   from native_recovery_pause import waiting_for_residual_fire
+   now=time.monotonic();since=getattr(self,'_native_fire_wait_started',None)
+   waiting=wait_interface and waiting_for_residual_fire(s)
+   if since is not None:
+    accounted=getattr(self,'_native_fire_wait_accounted',since)
+    self.native_recovery_pause_seconds=getattr(self,'native_recovery_pause_seconds',0.)+max(0.,now-accounted)
+   if waiting:
+    if since is None:self._native_fire_wait_started=now;since=now
+    self._native_fire_wait_accounted=now
+    if now-since>25:raise RuntimeError('Native residual fire wait exceeded its bound; no action dispatched')
+    time.sleep(.15);continue
+   self._native_fire_wait_started=None;self._native_fire_wait_accounted=None
    paused=s.get('interface_pause_protocol')==1 and s.get('interface_paused') is True
    if paused:
     from manual_idle_resume import maybe_release_interface

@@ -67,7 +67,7 @@ def place(c,source,placement_key,out):
     if not source_receipt(reply,c.last,c.world,source):
         raise RuntimeError('Original source use unconfirmed; preserve identity and never repeat')
     book.update(pending=None,source_confirmed=True);write_json(out/'progress.json',book)
-    stamps=[];end=time.monotonic()+10
+    stamps=[];started=time.monotonic();pause_before=getattr(c,'native_recovery_pause_seconds',0.)
     while len(stamps)<2:
         frame=c.checked('scan',min=[source[0]-7,source[1],source[2]],max=source,details=True)
         state=c.status();counts=inventory_counts(state)
@@ -82,7 +82,8 @@ def place(c,source,placement_key,out):
         if good and type(stamp)is int and (not stamps or stamp>stamps[-1]):
             stamps.append(stamp);write_json(out/f'flow-frame-{len(stamps)}.json',frame)
         elif not good:stamps=[]
-        if time.monotonic()>end:raise RuntimeError('Source confirmed but downstream incomplete; never replace the source')
+        paused=max(0.,getattr(c,'native_recovery_pause_seconds',0.)-pause_before)
+        if time.monotonic()-started-paused>10:raise RuntimeError('Source confirmed but downstream incomplete; never replace the source')
         time.sleep(.2)
     book.update(flow_confirmed=True,complete=True,flow_observations=stamps)
     write_json(out/'progress.json',book)

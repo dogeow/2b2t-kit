@@ -84,6 +84,16 @@ class ProjectedChannelWaterTests(unittest.TestCase):
              self.assertRaisesRegex(RuntimeError,'downstream incomplete'):
             place(c,SOURCE,'key',Path(d)/'run')
         self.assertEqual(1,sum(op=='bucket_place'for op,_ in c.calls))
+    def test_native_recovery_time_does_not_expire_the_downstream_observation(self):
+        c=Client();c.native_recovery_pause_seconds=0;original=c.status
+        def status():
+            if any(op=='scan'for op,_ in c.calls):c.native_recovery_pause_seconds=20
+            return original()
+        c.status=status
+        with tempfile.TemporaryDirectory()as d,patch('projected_channel_water.time.sleep'),\
+             patch('projected_channel_water.time.monotonic',side_effect=[0,21,21.1]):
+            self.assertTrue(place(c,SOURCE,'key',Path(d)/'run')['complete'])
+        self.assertEqual(1,sum(op=='bucket_place'for op,_ in c.calls))
 
 
 if __name__=='__main__':unittest.main()
