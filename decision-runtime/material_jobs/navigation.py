@@ -84,14 +84,13 @@ def shaft_path(rows, position, shaft, low, high):
 
 
 def _air_scan(client, low, high):
-    if math.prod(high[i]-low[i]+1 for i in range(3))>50000:raise JobBlocked('采坑出口扫描超出范围')
-    reply=client.request('scan',min=low,max=high,details=True)
+    from kit_runtime.volume_scan import complete_blocks,IncompleteVolumeScan
+    try:blocks=complete_blocks(client,low,high)
+    except IncompleteVolumeScan as error:raise JobBlocked(str(error)) from error
     # The native scan checks every covered chunk and omits only actual air.
     # An empty partial/error response must never become a navigable corridor.
     # Native read-only scan replies have id/world/blocks but no action phase.
     # Chunk failure instead has an explicit error phase and no complete blocks.
-    if reply.get('phase') not in (None,'done') or reply.get('world_session')!=client.world or not isinstance(reply.get('blocks'),list):
-        raise JobBlocked('采坑出口扫描尚未完整确认')
     # Retained lighting and safe, collision-free grass do not close a shaft.
     # A generic passable flag alone is insufficient: fire, fluids and other
     # dangerous non-full blocks must still obstruct this conservative route.
@@ -104,7 +103,7 @@ def _air_scan(client, low, high):
     safe_noncolliding.update('minecraft:'+name+'_button'for name in
                             ('oak','spruce','birch','jungle','acacia','dark_oak','mangrove','cherry',
                              'pale_oak','bamboo','crimson','warped','stone','polished_blackstone'))
-    return [row for row in reply['blocks'] if not (
+    return [row for row in blocks if not (
         block_id(row) in safe_noncolliding and row.get('passable') is True
         and row.get('fluid') is False and row.get('block_entity') is False)]
 

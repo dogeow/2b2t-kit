@@ -26,13 +26,9 @@ HOSTILES = {'minecraft:'+name for name in (
 
 
 def _scan(c, low, high):
-    if math.prod(high[i]-low[i]+1 for i in range(3)) > 50000:
-        raise JobBlocked('临时入口核验范围过大，不能用不完整扫描施工')
-    reply = c.request('scan', min=low, max=high, details=True)
-    if (reply.get('phase') not in (None,'done') or reply.get('world_session') != c.world
-            or not isinstance(reply.get('blocks'), list)):
-        raise JobBlocked('临时入口扫描未完整确认')
-    return reply['blocks']
+    from kit_runtime.volume_scan import complete_blocks,IncompleteVolumeScan
+    try:return complete_blocks(c,low,high)
+    except IncompleteVolumeScan as error:raise JobBlocked(str(error)) from error
 
 
 def _model(c):

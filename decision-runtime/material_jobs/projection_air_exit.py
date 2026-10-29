@@ -72,7 +72,7 @@ def leave(client, state, *, max_straight=8):
         return False
     scan_low = [low[0]-4,max(-64,low[1]-2),low[2]-4]
     scan_high = [high[0]+4,min(319,high[1]+6),high[2]+4]
-    if math.prod(b-a+1 for a,b in zip(scan_low,scan_high)) > 50000:
+    if math.prod(b-a+1 for a,b in zip(scan_low,scan_high)) > 100000:
         return False
     scope = (state.get('world_session'),copy.deepcopy(selection))
     def current():
