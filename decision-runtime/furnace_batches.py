@@ -154,8 +154,9 @@ def wait_loading_balance(client,state,source,output,loaded_source,loaded_fuel,me
 
 
 def load(client,positions,source,output,amount,journal,*,keep=None,recipe_jar=None,fuel_allow_items=None):
-    if (source,output) not in [('minecraft:cobblestone','minecraft:stone'),('minecraft:stone','minecraft:smooth_stone')]:
-        raise ValueError('Only ordinary construction stone smelting is enabled')
+    if (source,output) not in [('minecraft:cobblestone','minecraft:stone'),('minecraft:stone','minecraft:smooth_stone'),
+                               ('minecraft:sand','minecraft:glass')]:
+        raise ValueError('Only ordinary construction stone or sand-to-glass smelting is enabled')
     if not 1<=amount<=len(positions)*64:raise ValueError('Batch does not fit the supplied furnace bank')
     journal=Path(journal)
     if journal.exists():raise RuntimeError('An existing furnace batch must be reconciled, not overwritten')

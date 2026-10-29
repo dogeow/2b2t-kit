@@ -48,7 +48,38 @@ class FurnaceBankClient(LoadingClient):
   return self.status()
 
 
+class GlassBankClient(FurnaceBankClient):
+ def checked(self,op,**args):
+  if op=='slot_click'and args.get('kind')=='quick_move':
+   source=self.state['menu']['slots'][args['slot']];assert source['item']==args['expected_item']and source['count']==args['expected_count']and self.state['menu']['cursor']['count']==0
+   destination=next(row for row in self.state['menu']['slots'][3:]if row['count']==0)
+   self.calls.append(args);destination.update(item=source['item'],count=source['count']);source.update(item='minecraft:air',count=0);return self.status()
+  return super().checked(op,**args)
+
+
 class FurnaceBatchTest(unittest.TestCase):
+ def test_sand_to_glass_loads_once_preserves_partial_output_and_collects_exact_batch(self):
+  with tempfile.TemporaryDirectory() as d:
+   client=GlassBankClient(raw=(8,),coal=(1,));path=Path(d)/'glass.json';pos=[1,2,3]
+   client.state['menu']['slots'][3]['item']='minecraft:sand'
+   with patch('furnace_batches.snapshot',side_effect=lambda c,p:c.open(p)):
+    job=load(client,[pos],'minecraft:sand','minecraft:glass',8,path)
+    self.assertEqual((8,1,'loaded'),tuple(job['furnaces'][0][k]for k in ('loaded_source','loaded_fuel','stage')))
+    self.assertEqual(0,sum(v['count']for v in client.state['menu']['slots'][3:]if v['item']in ('minecraft:sand','minecraft:coal')))
+    furnace=client.furnaces[tuple(pos)]
+    furnace[0].update(item='minecraft:sand',count=4);furnace[1].update(item='minecraft:air',count=0);furnace[2].update(item='minecraft:glass',count=4)
+    self.assertFalse(collect(client,path));self.assertEqual(4,client.furnaces[tuple(pos)][2]['count'])
+    furnace=client.furnaces[tuple(pos)];furnace[0].update(item='minecraft:air',count=0);furnace[2].update(item='minecraft:glass',count=8)
+    self.assertTrue(collect(client,path));self.assertEqual(8,sum(v['count']for v in client.state['menu']['slots'][3:]if v['item']=='minecraft:glass'))
+    self.assertTrue(json.loads(path.read_text())['complete']);self.assertEqual(0,client.state['menu']['cursor']['count'])
+    with self.assertRaisesRegex(RuntimeError,'reconciled'):
+     load(client,[pos],'minecraft:sand','minecraft:glass',8,path)
+ def test_unapproved_smelting_pair_rejected_before_opening_or_journal(self):
+  with tempfile.TemporaryDirectory()as d:
+   path=Path(d)/'unknown.json'
+   with patch('furnace_batches.snapshot')as opened:
+    with self.assertRaises(ValueError):load(FurnaceBankClient(),[[1,2,3]],'minecraft:raw_iron','minecraft:iron_ingot',8,path)
+    opened.assert_not_called();self.assertFalse(path.exists())
  def test_parallel_distribution_preserves_total(self):
   self.assertEqual([20,20,20,20,19,19],distribution(118,6))
   self.assertEqual([28,28,28,28,27,27],distribution(166,6))
