@@ -57,6 +57,7 @@ final class BucketWaterAction {
         if(drain&&(mode!=BucketWaterPolicy.Mode.FILL||column))throw new IllegalArgumentException("Projected waterlogged drain is an explicit fill-only operation");
         projectedDrain=drain?new ProjectedWaterlogDrain(c,request,target):null;
         boolean channel=ProjectedChannelWaterGuard.requested(request);
+        if(!channel&&request.has("channel_service_ceiling"))throw new IllegalArgumentException("A service ceiling requires explicit projected channel mode");
         if(channel&&(mode!=BucketWaterPolicy.Mode.PLACE||column||drain))
             throw new IllegalArgumentException("Projected channel is an exclusive place-only operation");
         projectedChannel=channel?new ProjectedChannelWaterGuard(request,target):null;
@@ -225,6 +226,7 @@ final class BucketWaterAction {
         out.addProperty("projected_water_channel",projectedChannel!=null);
         if(projectedChannel!=null){
             out.addProperty("channel_length",8);out.addProperty("channel_direction","west");
+            BlockPos service=projectedChannel.serviceCeiling();var ceiling=new JsonArray();ceiling.add(service.getX());ceiling.add(service.getY());ceiling.add(service.getZ());out.add("channel_service_ceiling",ceiling);
             out.addProperty("channel_flow_observation_scope","source_and_bucket_only_downstream_requires_independent_scan");
         }
         if(projectedDrain!=null)out.addProperty("expected_dry_state",projectedDrain.expectedDry());

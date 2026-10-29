@@ -26,13 +26,24 @@ class ProjectedChannelWaterGuardTest {
             "{\"placement_key\":\"p\",\"channel_direction\":\"west\",\"channel_length\":\"8\"}"})
             assertThrows(RuntimeException.class,()->new ProjectedChannelWaterGuard(JsonParser.parseString(value).getAsJsonObject(),BlockPos.ZERO));
     }
+    @Test void exactOptionalWestCeilingIsValidatedAndLegacySourceRemainsDefault(){
+        var r=JsonParser.parseString("{\"placement_key\":\"p\",\"channel_direction\":\"west\",\"channel_length\":8}").getAsJsonObject();
+        var source=new BlockPos(20,63,30);
+        assertEquals(source.above(),new ProjectedChannelWaterGuard(r,source).serviceCeiling());
+        r.add("channel_service_ceiling",JsonParser.parseString("[19,64,30]"));
+        assertEquals(new BlockPos(19,64,30),new ProjectedChannelWaterGuard(r,source).serviceCeiling());
+        for(String bad:new String[]{"null","{}","[19,64]","[19.5,64,30]","[\"19\",64,30]","[18,64,30]","[21,64,30]","[19,63,30]","[19,64,31]","[2147483648,64,30]"}){
+            r.add("channel_service_ceiling",JsonParser.parseString(bad));
+            assertThrows(RuntimeException.class,()->new ProjectedChannelWaterGuard(r,source));
+        }
+    }
     @Test void newGeometryUsesOriginalBucketReceiptsAndNeverChangesTheWorldDirectly()throws Exception{
         var base=Path.of("src/client/java/dev/twob2tkit/automation");
         var guard=Files.readString(base.resolve("ProjectedChannelWaterGuard.java"));
         assertTrue(guard.contains("LoadedServerChunkEvidence.isServerChunk"));
         assertTrue(guard.contains("model.getBlockState(floor).equals(c.level.getBlockState(floor))"));
         assertTrue(guard.contains("TrapDoorBlock.WATERLOGGED"));
-        assertTrue(guard.contains("i==0&&actualRoof.isAir()"));
+        assertTrue(guard.contains("ProjectedChannelCeilingPolicy.roof"));
         assertFalse(guard.contains("setBlock("));assertFalse(guard.contains("useItem("));
         var action=Files.readString(base.resolve("BucketWaterAction.java"));
         assertTrue(action.contains("projectedChannel.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()))"));

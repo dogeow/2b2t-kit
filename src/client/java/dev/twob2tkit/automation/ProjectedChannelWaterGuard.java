@@ -22,6 +22,7 @@ import java.util.ArrayList;
 /** Exact original one-wide channel, using the ordinary bucket and receipt path. */
 final class ProjectedChannelWaterGuard {
     private final BlockPos source;
+    private final BlockPos serviceCeiling;
     private final String placement;
     static boolean requested(JsonObject r){
         if(!r.has("projected_water_channel"))return false;
@@ -38,7 +39,28 @@ final class ProjectedChannelWaterGuard {
                 ||r.get("channel_length").getAsBigDecimal().intValueExact()!=8)
             throw new IllegalArgumentException("An explicit locked eight-cell west-flowing channel required");
         this.source=source.immutable();
+        BlockPos declared=source.above();
+        if(r.has("channel_service_ceiling")){
+            var raw=r.get("channel_service_ceiling");
+            if(!raw.isJsonArray()||raw.getAsJsonArray().size()!=3)
+                throw new IllegalArgumentException("Channel service ceiling needs integer XYZ");
+            int[] xyz=new int[3];
+            for(int i=0;i<3;i++){
+                var v=raw.getAsJsonArray().get(i);
+                if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isNumber())
+                    throw new IllegalArgumentException("Channel service ceiling needs integer XYZ");
+                try{xyz[i]=v.getAsBigDecimal().intValueExact();}
+                catch(ArithmeticException invalid){throw new IllegalArgumentException("Channel service ceiling needs integer XYZ",invalid);}
+            }
+            declared=new BlockPos(xyz[0],xyz[1],xyz[2]);
+        }
+        if(!ProjectedChannelCeilingPolicy.allowedOffset((long)declared.getX()-source.getX(),
+                (long)declared.getY()-source.getY(),(long)declared.getZ()-source.getZ()))
+            throw new IllegalArgumentException("Only the source or its immediate west ceiling can be the one service opening");
+        serviceCeiling=declared.immutable();
     }
+    BlockPos serviceCeiling(){return serviceCeiling;}
+
     private static boolean loaded(Minecraft c,BlockPos p){
         var chunk=c.level.getChunkSource().getChunk(p.getX()>>4,p.getZ()>>4,ChunkStatus.FULL,false);
         return c.level.getWorldBorder().isWithinBounds(p)&&!c.level.isOutsideBuildHeight(p)
@@ -76,10 +98,11 @@ final class ProjectedChannelWaterGuard {
                 &&Block.isFaceFull(c.level.getBlockState(north).getCollisionShape(c.level,north),Direction.SOUTH);
             boolean s=model.getBlockState(south).is(Blocks.GLASS)&&model.getBlockState(south).equals(c.level.getBlockState(south));
             var actualRoof=c.level.getBlockState(ceiling);
-            // Only the source's one original cobblestone ceiling cell may
-            // be a temporary AIR service opening. Water cannot rise into it.
-            boolean roof=model.getBlockState(ceiling).is(Blocks.COBBLESTONE)
-                &&(actualRoof.equals(model.getBlockState(ceiling))||i==0&&actualRoof.isAir());
+            // Only the one declared original ceiling may be AIR. Choosing
+            // the west access keeps the source ceiling closed and its cell free of drops.
+            boolean roof=ProjectedChannelCeilingPolicy.roof(model.getBlockState(ceiling).is(Blocks.COBBLESTONE),
+                actualRoof.equals(model.getBlockState(ceiling)),actualRoof.isAir(),i,
+                source.getX()-serviceCeiling.getX());
             cells.add(new ProjectedChannelWaterPolicy.Cell(level(goal),level(c.level.getBlockState(p)),bottom,n,s,roof));
         }
         boolean ends=true;

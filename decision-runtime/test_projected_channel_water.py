@@ -45,6 +45,36 @@ class Client:
 
 
 class ProjectedChannelWaterTests(unittest.TestCase):
+    def test_optional_service_access_requires_native_capability_before_input(self):
+        c=Client()
+        with tempfile.TemporaryDirectory()as d,self.assertRaisesRegex(RuntimeError,'protocol required'):
+            place(c,SOURCE,'key',Path(d)/'run',service_ceiling=[19,64,30])
+        self.assertEqual([],c.calls)
+    def test_optional_service_access_rejects_wrong_or_fractional_cells_before_input(self):
+        for point in [[18,64,30],[21,64,30],[19,63,30],[19,64,31],[19.0,64,30]]:
+            c=Client()
+            with self.subTest(point=point),tempfile.TemporaryDirectory()as d,self.assertRaises(ValueError):
+                place(c,SOURCE,'key',Path(d)/'run',service_ceiling=point)
+            self.assertEqual([],c.calls)
+    def test_optional_service_access_must_be_echoed_by_the_same_source_receipt(self):
+        class SideClient(Client):
+            def request(self,op,**kwargs):
+                r=super().request(op,**kwargs)
+                if op=='bucket_place':r['bucket_water']['channel_service_ceiling']=kwargs['channel_service_ceiling']
+                return r
+        c=SideClient();c.state['projected_channel_service_ceiling_protocol']=1
+        with tempfile.TemporaryDirectory()as d,patch('projected_channel_water.time.sleep'):
+            self.assertTrue(place(c,SOURCE,'key',Path(d)/'run',service_ceiling=[19,64,30])['complete'])
+        self.assertEqual([19,64,30],next(params for op,params in c.calls if op=='bucket_place')['channel_service_ceiling'])
+        r=receipt();self.assertFalse(source_receipt(r,'bucket-once','w',SOURCE,service_ceiling=[19,64,30]))
+        r['bucket_water']['channel_service_ceiling']=[20,64,30]
+        self.assertFalse(source_receipt(r,'bucket-once','w',SOURCE,service_ceiling=[19,64,30]))
+    def test_missing_service_echo_after_use_is_not_retried(self):
+        c=Client();c.state['projected_channel_service_ceiling_protocol']=1
+        with tempfile.TemporaryDirectory()as d,self.assertRaisesRegex(RuntimeError,'never repeat'):
+            place(c,SOURCE,'key',Path(d)/'run',service_ceiling=[19,64,30])
+        self.assertEqual(1,sum(op=='bucket_place'for op,_ in c.calls))
+        self.assertFalse(any(op=='scan'for op,_ in c.calls))
     def test_source_receipt_alone_is_not_downstream_completion(self):
         self.assertTrue(source_receipt(receipt(),'bucket-once','w',SOURCE))
         self.assertFalse(flow_frame(receipt(),SOURCE,'w'))

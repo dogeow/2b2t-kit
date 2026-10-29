@@ -4627,6 +4627,7 @@ public final class AutomationBridge {
         if(lastMapCreation!=null)j.add("last_map_creation",lastMapCreation.deepCopy());
         j.addProperty("projected_water_column_protocol",1);
         j.addProperty("projected_water_channel_protocol",1);
+        j.addProperty("projected_channel_service_ceiling_protocol",1);
         j.addProperty("projected_waterlog_drain_protocol",1);
         j.addProperty("projection_registry_protocol",1);
         if(airSeedTask!=null)j.add("projection_air_seed",airSeedTask.snapshot(false));
