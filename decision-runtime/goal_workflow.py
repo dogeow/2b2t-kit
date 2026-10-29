@@ -119,6 +119,8 @@ def prepare_build_material(client,state):
 def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None,max_station_repositions=0,background=False,navigation_grace_seconds=15,max_material_refills=32,air_seed_limit=8):
     s=client.status()
     if s['projection_selection'].get('key')!=selection_key:raise Handoff('Selected projection changed')
+    from planned_station_guard import require_safe_planned_station,UnsafePlannedStation
+    require_safe_planned_station(s,complete_cells)
     if background and not protected_background(client,s):
         raise RuntimeError('Background construction requires the current protected material lease')
     if not s.get('window_active') and not background:
@@ -141,6 +143,10 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             if b.get('active'):client.checked('build_control',job_session=b['session'],action='pause_and_report')
             raise RuntimeError('Minecraft left foreground during construction')
         interrupt_submerged(client,s,client.out)
+        try:require_safe_planned_station(s,complete_cells)
+        except UnsafePlannedStation:
+            if b.get('active'):client.checked('build_control',job_session=b['session'],action='pause_and_report')
+            raise
         now=time.monotonic()
         if b.get('matched',0)>best:best=b['matched'];last_gain=now
         if verified_build_navigation(navigation_anchor,s):
