@@ -111,17 +111,19 @@ def lift_surface_feet(c, state):
     x,y,z=state['pos'];low=[math.floor(x-.31),math.floor(y),math.floor(z-.31)]
     high=[math.floor(x+.31),math.floor(y)+13,math.floor(z+.31)]
     reply=c.request('scan',min=low,max=high,details=True)
-    # Reuse complete-column validation, then require the extra head cell for
-    # a .5-block dry-foot margin. No adjacent water or roof voxel is ignored.
+    # Ordinary native cruise accepts a vertical error of .7 blocks. A .5
+    # dry-foot target can therefore report DONE while feet remain in water.
+    # Reserve 1.5 blocks, proving every extra head cell before the single move.
     target=vertical_air_target(state['pos'],reply,c.world)
     if target is None:raise JobBlocked('水面上方没有已确认的普通水/空气退路')
     floor=math.floor(target[1]);water={'Block{minecraft:water}[level='+str(n)+']' for n in range(16)}
     rows=reply['blocks']
     if not any(row['pos'][1]==low[1] and row.get('state')in water for row in rows):
         raise JobBlocked('当前脚部未观察到普通流水，不执行水面抬升')
-    if floor+2>high[1] or any(row['pos'][1]==floor+2 and row.get('state')!='Block{minecraft:air}'for row in rows):
+    if floor+3>high[1] or any(floor<=row['pos'][1]<=floor+3
+                            and row.get('state')!='Block{minecraft:air}'for row in rows):
         raise JobBlocked('抬升后的完整身体净空不足，不穿过顶棚')
-    target=[x,floor+.5,z];fresh=c.status()
+    target=[x,floor+1.5,z];fresh=c.status()
     if not _owned(c,fresh) or math.dist(fresh['pos'],state['pos'])>.15:
         raise JobPaused('水面扫描后角色或控制改变，不沿旧列移动')
     out=Path(c.out)/'surface-feet-lift.json';book={'world_session':c.world,'task_session':c.task,

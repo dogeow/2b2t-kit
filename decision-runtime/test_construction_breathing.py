@@ -101,13 +101,41 @@ class SurfaceFeetTest(unittest.TestCase):
         self.c=Client(self.temp.name);self.c.state.update(under_water=False,air_supply=300)
     def test_head_above_water_still_gets_one_real_upward_move_before_dry_routing(self):
         result=lift_surface_feet(self.c,self.c.status())
-        self.assertEqual([1.5,64.5,3.5],result['pos'])
+        self.assertEqual([1.5,65.5,3.5],result['pos'])
         self.assertEqual(['scan','navigate'],[op for op,_ in self.c.calls])
         self.assertNotIn('air_only',self.c.calls[-1][1])
         proof=json.loads((self.c.out/'surface-feet-lift.json').read_text())
         self.assertTrue(proof['complete']);self.assertFalse(proof['resource_actions_replayed'])
     def test_extra_headroom_is_checked_for_the_dry_foot_margin(self):
         self.c.scan['blocks'].append({'pos':[1,66,3],'state':'Block{minecraft:stone}','solid':True})
+        with self.assertRaisesRegex(JobBlocked,'顶棚'):lift_surface_feet(self.c,self.c.status())
+        self.assertEqual(['scan'],[op for op,_ in self.c.calls])
+    def test_coarse_native_arrival_still_leaves_observed_feet_above_water(self):
+        self.c.state['pos']=[1.5,62.9875,3.5]
+        self.c.scan['blocks']=[{'pos':[1,62,3],'state':'Block{minecraft:water}[level=1]',
+                                'solid':False,'block_entity':False}]
+        original=self.c.request
+        def coarse(op,**kw):
+            result=original(op,**kw)
+            if op=='navigate':self.c.state['pos'][1]-=.65
+            return result
+        self.c.request=coarse
+        result=lift_surface_feet(self.c,self.c.status())
+        self.assertGreater(result['pos'][1],63.5)
+        self.assertEqual(1,sum(op=='navigate'for op,_ in self.c.calls))
+    def test_done_without_actual_ascent_is_not_completion_and_is_never_replayed(self):
+        original=self.c.request
+        def no_movement(op,**kw):
+            if op=='navigate':
+                self.c.calls.append((op,kw));return {'phase':'done'}
+            return original(op,**kw)
+        self.c.request=no_movement
+        with self.assertRaises(JobBlocked):lift_surface_feet(self.c,self.c.status())
+        self.assertEqual(1,sum(op=='navigate'for op,_ in self.c.calls))
+        self.assertFalse(json.loads((self.c.out/'surface-feet-lift.json').read_text())['complete'])
+    def test_new_margin_cannot_cross_a_higher_roof(self):
+        self.c.scan['blocks'].append({'pos':[1,67,3],'state':'Block{minecraft:stone}',
+                                      'solid':True,'block_entity':False})
         with self.assertRaisesRegex(JobBlocked,'顶棚'):lift_surface_feet(self.c,self.c.status())
         self.assertEqual(['scan'],[op for op,_ in self.c.calls])
     def test_unknown_move_is_retained_without_retry_or_dry_claim(self):
@@ -134,7 +162,7 @@ class SurfaceFeetTest(unittest.TestCase):
         self.c.request=request
         leave_projection(self.c)
         moves=[kw for op,kw in self.c.calls if op=='navigate']
-        self.assertEqual(2,len(moves));self.assertEqual([1.5,64.5,3.5],moves[0]['target'])
+        self.assertEqual(2,len(moves));self.assertEqual([1.5,65.5,3.5],moves[0]['target'])
         self.assertNotIn('air_only',moves[0]);self.assertTrue(moves[1]['air_only'])
         self.assertGreater(self.c.state['pos'][1],70)
         self.assertEqual(['scan','scan','navigate','scan','navigate'],[op for op,_ in self.c.calls])

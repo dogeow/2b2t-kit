@@ -82,10 +82,11 @@ def plan(rows, start, target, low, high, *, max_straight=16, foot_offset=0):
 
 
 def move(client,target,out,*,max_straight=16,foot_offset=0,max_horizontal=12,exact_target=False,scan_bounds=None,
-         allow_dry_cone_edge=False):
+         allow_dry_cone_edge=False,allow_surface_lift=True):
     out=Path(out);out.mkdir(parents=True,exist_ok=True)
     start=client.status()['pos']
-    if (type(exact_target)is not bool or type(allow_dry_cone_edge)is not bool or allow_dry_cone_edge and not exact_target
+    if (type(exact_target)is not bool or type(allow_dry_cone_edge)is not bool
+            or type(allow_surface_lift)is not bool or allow_dry_cone_edge and not exact_target
             or type(max_horizontal)not in(int,float)or not math.isfinite(max_horizontal)or not 1<=max_horizontal<=24
             or not isinstance(target,list)or len(target)!=3
             or any(type(v)not in(int,float)or not math.isfinite(v)for v in target)
@@ -134,6 +135,30 @@ def move(client,target,out,*,max_straight=16,foot_offset=0,max_horizontal=12,exa
         if occupied and not cone_probe:
             book['blocked_before_next_move']={'target':point,'actual':actual,'blocks':occupied}
             write_json(file,book)
+            # A known pre-send foot-water blockage is different from an
+            # uncertain movement. Recover through the separately checked
+            # water-capable primitive, then scan a new dry route once. Never
+            # relabel the observed water as AIR or relax collision checks.
+            water={'Block{minecraft:water}[level='+str(n)+']'for n in range(16)}
+            dry_floor=math.floor(actual[1])+1
+            if (allow_surface_lift and target[1]>=dry_floor+.5
+                    and math.hypot(target[0]-actual[0],target[2]-actual[2])<=.15
+                    and point[1]>actual[1]
+                    and all(r.get('state')in water and r.get('fluid')is True
+                            and r.get('block_entity')is False
+                            and r['pos'][1]==math.floor(actual[1])for r in occupied)
+                    and getattr(client,'native_inflight',None)is None
+                    and getattr(client,'unconfirmed_native_request',None)is None):
+                from .construction_breathing import lift_surface_feet
+                lift_surface_feet(client,client.status())
+                child=Path(out)/'after-surface-lift'
+                result=move(client,target,child,max_straight=max_straight,foot_offset=foot_offset,
+                            max_horizontal=max_horizontal,exact_target=exact_target,scan_bounds=scan_bounds,
+                            allow_dry_cone_edge=allow_dry_cone_edge,allow_surface_lift=False)
+                book.update(complete=result['complete'],actual=result['actual'],
+                            replaced_after_verified_surface_lift=True,replacement_route=str(child/'local-air-path.json'))
+                write_json(file,book)
+                return book
             raise ObservedAirPathBlocked(file)
         book['pending']={'target':point};write_json(file,book)
         if cone_probe:

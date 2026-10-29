@@ -222,4 +222,43 @@ class LocalAirPathTests(unittest.TestCase):
                 plan([], [.5,62,.5],[2.5,62,.5],[0,62,0],[3,64,0],foot_offset=margin)
 
 
+class SurfaceLiftRouteTests(unittest.TestCase):
+    def run_case(self, *, unknown=False, enabled=True, target_y=64.15, liquid='water'):
+        position=[1.5,62.9875,3.5]
+        row={'pos':[1,62,3],'state':'Block{minecraft:'+liquid+'}[level=1]',
+             'fluid':True,'solid':False,'block_entity':False}
+        # Match the real flowing surface above its falling-water cell.
+        rows=[row,{**row,'pos':[1,61,3]}]
+        client=SimpleNamespace(world='w',last='scan',status=lambda:{'pos':list(position)},
+                               unconfirmed_native_request='original'if unknown else None)
+        scans=[];moves=[]
+        def scan(c,low,high):
+            scans.append((list(position),low,high))
+            return [r for r in rows if all(low[i]<=r['pos'][i]<=high[i]for i in range(3))]
+        def navigate(c,target,*args,**kwargs):
+            self.assertGreaterEqual(position[1],63.5,'Air-only routing must follow the verified water exit')
+            moves.append(target);position[:]=target
+        def lift(c,state):position[:]=[1.5,64.1,3.5]
+        with tempfile.TemporaryDirectory()as d,patch('material_jobs.local_air_path._air_scan',side_effect=scan),\
+             patch('material_jobs.local_air_path._air_move',side_effect=navigate),\
+             patch('material_jobs.construction_breathing.lift_surface_feet',side_effect=lift)as recover:
+            if unknown or not enabled or target_y<63.5 or liquid!='water':
+                with self.assertRaises(JobBlocked):
+                    move(client,[1.5,target_y,3.5],d,exact_target=True,foot_offset=.15,allow_surface_lift=enabled)
+                recover.assert_not_called();self.assertEqual([],moves)
+                return
+            result=move(client,[1.5,target_y,3.5],d,exact_target=True,foot_offset=.15)
+            recover.assert_called_once()
+            self.assertTrue(result['complete']);self.assertTrue(result['replaced_after_verified_surface_lift'])
+            self.assertTrue(any(p[0][1]>=63.5 for p in scans))
+            self.assertTrue(json.loads(Path(result['replacement_route']).read_text())['complete'])
+            self.assertEqual([1.5,target_y,3.5],position)
+
+    def test_pre_send_foot_water_uses_one_verified_lift_then_rescans(self):self.run_case()
+    def test_unknown_request_is_not_recovered_or_replayed(self):self.run_case(unknown=True)
+    def test_water_recovery_can_be_disabled_without_weakening_air_checks(self):self.run_case(enabled=False)
+    def test_original_target_without_dry_margin_is_not_silently_changed(self):self.run_case(target_y=63.15)
+    def test_lava_is_never_admitted_as_water(self):self.run_case(liquid='lava')
+
+
 if __name__=='__main__':unittest.main()
