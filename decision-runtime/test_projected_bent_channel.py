@@ -26,6 +26,19 @@ class BentFlowTest(unittest.TestCase):
     def test_lost_seal_and_roof_obstruction(self):
         for pos,state in [([9,63,20],AIR),([12,69,20],'Block{minecraft:glass}')]:
             f,p,b=self.scene();change(f,pos,state);self.assertFalse(flow_after(f,WORLD,LOW,HIGH,p,b))
+    def test_seed_gradient_is_distinct_from_final_gradient(self):
+        f,p,b=self.scene()
+        for i,pos in enumerate(path_for(LOW,HIGH)):change(f,pos,f'Block{{minecraft:water}}[level={i if i<2 else i-2}]')
+        self.assertTrue(flow_after(f,WORLD,LOW,HIGH,p,b,seed=True));self.assertFalse(flow_after(f,WORLD,LOW,HIGH,p,b))
+    def test_wet_overflow_planning_keeps_regular_repair_dry_and_requires_27_sources(self):
+        m,f=fixture()
+        for y in range(59,68):
+            for x in range(10,13):change(f,[x,y,20],SOURCE)
+        change(f,[12,68,20],SOURCE)
+        with self.assertRaises(RuntimeError):geometry(m,f,LOW,HIGH,WORLD)
+        self.assertEqual(len(geometry(m,f,LOW,HIGH,WORLD,completed_overflow=True)['preserved_sources']),27)
+        change(f,[11,63,20],AIR)
+        with self.assertRaises(RuntimeError):geometry(m,f,LOW,HIGH,WORLD,completed_overflow=True)
     def test_bad_frame(self):
         for key,value in [('world_session','old'),('scan_coherent',False),('scan_cells_read',503)]:
             f,p,b=self.scene();f[key]=value;self.assertFalse(flow_after(f,WORLD,LOW,HIGH,p,b))

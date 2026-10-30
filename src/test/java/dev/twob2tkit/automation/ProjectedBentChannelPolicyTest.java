@@ -29,10 +29,17 @@ final class ProjectedBentChannelPolicyTest {
         assertFalse(ProjectedBentChannelPolicy.exclusive(false,false,false,false,false,false));
         for(int i=0;i<5;i++){boolean[] v=new boolean[5];v[i]=true;assertFalse(ProjectedBentChannelPolicy.exclusive(true,v[0],v[1],v[2],v[3],v[4]));}
     }
+    @Test void temporarySeedOnlyAdmitsTheThirdCellAfterTheOriginalSourceExists(){
+        assertTrue(ProjectedBentChannelPolicy.seedLevels(goal(),List.of(0,1,-1,-1,-1,-1,-1,-1),true));
+        assertFalse(ProjectedBentChannelPolicy.seedLevels(goal(),Collections.nCopies(8,-1),true));
+        assertFalse(ProjectedBentChannelPolicy.seedLevels(goal(),goal(),true));
+        assertTrue(ProjectedBentChannelPolicy.seedLevels(goal(),List.of(0,1,0,1,2,3,4,5),false));
+        assertFalse(ProjectedBentChannelPolicy.seedLevels(goal(),goal(),false));
+    }
     @Test void realGuardRevalidatesCompletedChamberAndOriginalFlowModel() throws Exception {
         var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/ProjectedBentChannelGuard.class")){assertNotNull(in);new ClassReader(in).accept(node,0);}
         var require=node.methods.stream().filter(v->v.name.equals("require")).findFirst().orElseThrow();
         var calls=java.util.stream.StreamSupport.stream(require.instructions.spliterator(),false).filter(i->i instanceof MethodInsnNode).map(i->((MethodInsnNode)i).name).toList();
-        for(String name:List.of("requireCompleted","levels","getBlockState","getBlockEntity","getEntities","inVisibleLayer","loaded"))assertTrue(calls.contains(name),name);
+        for(String name:List.of("requireCompleted","levels","seedLevels","getBlockState","getBlockEntity","getEntities","inVisibleLayer","loaded"))assertTrue(calls.contains(name),name);
     }
 }

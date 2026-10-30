@@ -7,6 +7,9 @@ final class ProjectedBentChannelPolicy {
     static boolean exclusive(boolean place,boolean column,boolean drain,boolean channel,boolean sources,boolean supply){
         return place&&!column&&!drain&&!channel&&!sources&&!supply;
     }
+    static boolean seedLevels(List<Integer> goal,List<Integer> actual,boolean before){
+        return levels(goal,actual,false)&&(before?actual.get(2)==-1:actual.get(2)==0);
+    }
     static boolean levels(List<Integer> goal,List<Integer> actual,boolean before){
         if(goal==null||actual==null||goal.size()!=8||actual.size()!=8)return false;
         for(int i=0;i<8;i++){

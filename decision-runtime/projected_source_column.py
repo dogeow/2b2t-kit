@@ -47,7 +47,7 @@ def coherent(frame,world,low,high):
             and prediction.get('complete')is True and prediction.get('pending_count')==0)
 
 
-def geometry(model,frame,low,high,world):
+def geometry(model,frame,low,high,world,*,completed_overflow=False):
     lo,hi=envelope(low,high)
     if not coherent(frame,world,lo,hi):raise RuntimeError('Coherent loaded envelope with no pending predictions required')
     goal={tuple(v['pos']):v['state']for v in model['expected']}
@@ -79,8 +79,9 @@ def geometry(model,frame,low,high,world):
             pins.append({'pos':list(p),'expected_state':row['state']})
     for x in range(low[0],high[0]+1):
         p=(x,high[1]+1,low[2])
-        if goal.get(p)!=f'Block{{minecraft:water}}[level={high[0]-x}]'or p in actual:
+        if goal.get(p)!=f'Block{{minecraft:water}}[level={high[0]-x}]'or (actual.get(p,{}).get('state',AIR)!=AIR and not(completed_overflow and WATER.fullmatch(actual[p]['state']))):
             raise RuntimeError('Separate top overflow must have its original model and remain dry')
+    if completed_overflow and len(sources)!=27:raise RuntimeError('Wet overflow planning requires all27 chamber sources')
     return {'source_column_bounds':{'min':low,'max':high},'column_boundary_pins':pins,
             'preserved_sources':sources,'source_cells':cells}
 

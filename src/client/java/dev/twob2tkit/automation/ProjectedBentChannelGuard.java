@@ -14,6 +14,8 @@ import java.util.*;
 final class ProjectedBentChannelGuard {
     private final BlockPos source;
     private final String placement;
+    private final boolean seed;
+    boolean seed(){return seed;}
     private final ProjectedSourceColumnGuard chamber;
     static boolean requested(JsonObject r){
         if(!r.has("projected_bent_channel"))return false;
@@ -25,8 +27,12 @@ final class ProjectedBentChannelGuard {
         var b=r.getAsJsonObject("source_column_bounds");
         if(b==null)throw new IllegalArgumentException("Completed source chamber bounds required");
         var low=ProjectedSourceColumnGuard.point(b.get("min"));var high=ProjectedSourceColumnGuard.point(b.get("max"));
-        if(!source.equals(new BlockPos(high.getX(),high.getY()+1,low.getZ())))throw new IllegalArgumentException("Only the original upper overflow source is supported");
-        this.source=source.immutable();placement=ProjectionLoadPolicy.text(r,"placement_key",8192);
+        var flag=r.get("projected_bent_channel_seed");
+        if(flag!=null&&(!flag.isJsonPrimitive()||!flag.getAsJsonPrimitive().isBoolean()))throw new IllegalArgumentException("Bent seed flag must be boolean");
+        seed=flag!=null&&flag.getAsBoolean();
+        var origin=new BlockPos(high.getX(),high.getY()+1,low.getZ());
+        if(!source.equals(seed?origin.west(2):origin))throw new IllegalArgumentException("Only the original upper overflow source is supported");
+        this.source=origin.immutable();placement=ProjectionLoadPolicy.text(r,"placement_key",8192);
         chamber=new ProjectedSourceColumnGuard(c,r,low);
     }
     private static int level(BlockState s){return s.isAir()?-1:s.is(Blocks.WATER)?s.getValue(LiquidBlock.LEVEL):-2;}
@@ -65,6 +71,6 @@ final class ProjectedBentChannelGuard {
                     &&!(e instanceof net.minecraft.world.entity.item.ItemEntity)&&!(e instanceof net.minecraft.world.entity.ExperienceOrb)).isEmpty())
                 throw new IllegalStateException("Overflow has an entity in its water cells");
         }
-        if(!ProjectedBentChannelPolicy.levels(goals,actual,before))throw new IllegalStateException("Exact dry L-shaped eight-cell overflow required before use");
+        if(!(seed?ProjectedBentChannelPolicy.seedLevels(goals,actual,before):ProjectedBentChannelPolicy.levels(goals,actual,before)))throw new IllegalStateException("Exact dry L-shaped eight-cell overflow required before use");
     }
 }

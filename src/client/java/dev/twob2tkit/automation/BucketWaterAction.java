@@ -75,6 +75,7 @@ final class BucketWaterAction {
         boolean bent=ProjectedBentChannelGuard.requested(request);
         if(bent&&!ProjectedBentChannelPolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply))
             throw new IllegalArgumentException("Bent overflow is an exclusive place-only operation");
+        if(!bent&&request.has("projected_bent_channel_seed"))throw new IllegalArgumentException("Seed requires explicit bent-channel mode");
         projectedBent=bent?new ProjectedBentChannelGuard(c,request,target):null;
         if(expectedState.isBlank())throw new IllegalArgumentException("An exact fresh target state is required");
         support=mode==BucketWaterPolicy.Mode.PLACE?position(request,"support"):target;
@@ -241,6 +242,7 @@ final class BucketWaterAction {
         out.addProperty("confirmation_scope","post_single_normal_use_current_connection_target_block_and_selected_bucket_slot_server_packets_plus_vanilla_prediction_settled_and_exact_inventory_delta_after_8_ticks");
         out.addProperty("expected_state_before",expectedState);
         out.addProperty("projected_bent_channel",projectedBent!=null);
+        out.addProperty("projected_bent_channel_seed",projectedBent!=null&&projectedBent.seed());
         out.addProperty("projected_water_column",projectedColumn!=null);
         out.addProperty("projected_source_column",projectedSources!=null);
         out.addProperty("projected_source_column_supply",projectedSupply!=null);

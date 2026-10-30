@@ -82,3 +82,11 @@ After all27 chamber sources are confirmed, the separate `projected_bent_channel_
 `projected_bent_channel.place(client,low,high,key,out)` journals one normal use, requires current-connection block and inventory confirmations, then three coherent504-cell frames with exact0..7 downstream flow, all27 prior sources, unchanged boundaries and no new external fluid. Dynamic dropper trigger phases are compared without treating a clock transition as damage. An unknown use is retained without replay. A source-confirmed but incomplete-flow result is not a completed channel.
 
 Relevant candidate verification:131 Java and36 Python tests passed. These do not substitute for live downstream flow or whole-farm production acceptance.
+
+### Staged third-cell source (31.7)
+
+Live31.6 confirmed the original top source and preserved all27 chamber sources, but water stopped at level1:26.2 FlowingFluid.spread skips lateral spreading from a non-source over the same fluid below (`isWaterHole`). Therefore the initial pour is not complete downstream acceptance. Preserve its original receipt; do not pour it again.
+
+`projected_bent_channel_seed_protocol=1` admits a separate single placement only at original path index2, with original index0 source present, index2 still AIR, all27 chamber sources and75 seals intact. The phase observes levels0,1,0,1,2,3,4,5. A subsequent ordinary singleton empty-bucket fill collects only that temporary index2 source; three coherent frames must then show the original0..7 gradient, preserved27 sources, unchanged boundaries and no new external fluid. The executor retains source-confirmed or fill-confirmed receipts even if later flow verification fails. No implicit retry, dismantling or original-source removal is involved.
+
+A renewable bucket can first be taken from completed center67 using the ordinary fill path from a dry pose above the level1 top cell, with both native acknowledgements and independent regenerated-source observations. This is separate from the source-only dry-top supply extension. Relevant candidate tests:132 Java and38 Python passed; staging still requires live verification.
