@@ -46,6 +46,7 @@ final class BucketWaterAction {
     private final ProjectedWaterFlowGuard projectedColumn;
     private final ProjectedWaterlogDrain projectedDrain;
     private final ProjectedChannelWaterGuard projectedChannel;
+    private final ProjectedSourceColumnGuard projectedSources;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
         mode=switch(text(request,"op")){case "bucket_fill"->BucketWaterPolicy.Mode.FILL;case "bucket_place"->BucketWaterPolicy.Mode.PLACE;default->throw new IllegalArgumentException("Only water bucket fill/place are supported");};
@@ -61,6 +62,10 @@ final class BucketWaterAction {
         if(channel&&(mode!=BucketWaterPolicy.Mode.PLACE||column||drain))
             throw new IllegalArgumentException("Projected channel is an exclusive place-only operation");
         projectedChannel=channel?new ProjectedChannelWaterGuard(request,target):null;
+        boolean sources=ProjectedSourceColumnGuard.requested(request);
+        if(sources&&!ProjectedSourceColumnPolicy.exclusivePlace(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel))
+            throw new IllegalArgumentException("Source-column repair is an exclusive place-only operation");
+        projectedSources=sources?new ProjectedSourceColumnGuard(c,request,target):null;
         if(expectedState.isBlank())throw new IllegalArgumentException("An exact fresh target state is required");
         support=mode==BucketWaterPolicy.Mode.PLACE?position(request,"support"):target;
         face=mode==BucketWaterPolicy.Mode.PLACE?Direction.valueOf(text(request,"face").toUpperCase(java.util.Locale.ROOT)):null;
@@ -116,6 +121,7 @@ final class BucketWaterAction {
             &&c.level.getBlockState(pos).isCollisionShapeFullBlock(c.level,pos);
     }
     private boolean boundedHole(Minecraft c,boolean airRequired) {
+        if(projectedSources!=null){projectedSources.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         if(projectedColumn!=null){projectedColumn.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         if(projectedChannel!=null){projectedChannel.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         int sides=0;for(Direction d:Direction.Plane.HORIZONTAL)if(dryFullBlock(c,target.relative(d)))sides++;
@@ -222,6 +228,7 @@ final class BucketWaterAction {
         out.addProperty("confirmation_scope","post_single_normal_use_current_connection_target_block_and_selected_bucket_slot_server_packets_plus_vanilla_prediction_settled_and_exact_inventory_delta_after_8_ticks");
         out.addProperty("expected_state_before",expectedState);
         out.addProperty("projected_water_column",projectedColumn!=null);
+        out.addProperty("projected_source_column",projectedSources!=null);
         out.addProperty("projected_waterlog_drain",projectedDrain!=null);
         out.addProperty("projected_water_channel",projectedChannel!=null);
         if(projectedChannel!=null){
