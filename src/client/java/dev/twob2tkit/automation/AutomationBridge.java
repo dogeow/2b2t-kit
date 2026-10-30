@@ -2757,13 +2757,20 @@ public final class AutomationBridge {
             if(visible==null&&c.player.getMainHandItem().is(net.minecraft.world.item.Items.DIAMOND_SWORD))visible=BlockFaceTarget.visible(c,c.player.getEyePosition(),pos,null,c.player.blockInteractionRange());
             if(visible==null)throw new IllegalStateException("Target interaction face is occluded or out of reach");
             Vec3 aim=BlockFaceTarget.inside(visible);Direction usedFace=visible.getDirection();
-            var level=c.level;RotationAim.Look look=RotationAim.lookAt(c.player,aim);active=r.deepCopy();op="rotation";phase="running";deadline=ticks+40;
+            boolean projectedObserver=ProjectedObserverPlacementGuard.requested(r);
+            if(projectedObserver&&(dryPaving||terrainReplace))throw new IllegalArgumentException("Observer placement cannot combine terrain operations");
+            boolean observerOwned=currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c);
+            var level=c.level;RotationAim.Look look=projectedObserver
+                ?ProjectedObserverPlacementGuard.require(c,r,pos,usedFace,observerOwned,null):RotationAim.lookAt(c.player,aim);
+            active=r.deepCopy();op="rotation";phase="running";deadline=ticks+40;
             PlacementRotation.after(c,look.yaw(),look.pitch(),()->{
                 try{
                     if(active==null || !str(active,"id").equals(str(r,"id")))return;guard(c,r);if(c.level!=level || !state(c,pos).equals(str(r,"expected_state")) || !itemId(c.player.getMainHandItem()).equals(str(r,"expected_hand")))throw new IllegalStateException("Placement context changed while rotating");
                     if(c.player.getEyePosition().distanceTo(aim)>c.player.blockInteractionRange())throw new IllegalStateException("Target moved out of reach");
                     var checkedHit=c.level.clip(new ClipContext(c.player.getEyePosition(),aim,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,c.player));
                     if(!BlockFaceTarget.matches(checkedHit,pos,usedFace))throw new IllegalStateException("Interaction became occluded while rotating");
+                    if(projectedObserver)ProjectedObserverPlacementGuard.require(c,r,pos,usedFace,
+                        currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),checkedHit);
                     if(dryPaving){dryPavingRequestGuard(c,r);dryPavingPlacementGuard(c,pos,usedFace);}
                     if(terrainReplace)terrainReplacementGuard(c,r);
                     if(terrainReplace){
@@ -2793,7 +2800,7 @@ public final class AutomationBridge {
                             throw new IllegalStateException("Boat placement requires the healthy owned material controller");
                         c.gameMode.useItem(c.player,InteractionHand.MAIN_HAND);
                     }else c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,checkedHit);
-                    settle(r,processing?400:terrainReplace||dryPaving?80:8);
+                    settle(r,processing?400:terrainReplace||dryPaving?80:projectedObserver?40:8);
                 }catch(Exception e){finish(c,"error",e.getMessage());}
             });
         }else if(command.equals("mine_block") || command.equals("recover_shulker")){
@@ -4662,6 +4669,7 @@ public final class AutomationBridge {
         j.addProperty("projected_source_column_supply_protocol",1);
         j.addProperty("projected_bent_channel_protocol",1);
         j.addProperty("projected_bent_channel_seed_protocol",1);
+        j.addProperty("projected_observer_place_protocol",1);
         j.addProperty("projected_water_channel_protocol",1);
         j.addProperty("projected_channel_service_ceiling_protocol",1);
         j.addProperty("projected_waterlog_drain_protocol",1);
