@@ -76,7 +76,8 @@ class ProjectedSourceColumnWiringTest {
         assertTrue(calls("BucketWaterAction","poll").contains("dev/twob2tkit/automation/ProjectedSourceColumnSupplyGuard.current"));
     }
     @Test void sourceGuardChecksPlayerReserveAndLoadedWorldAndNeverAcknowledgesSafety()throws Exception{
-        var require=calls("ProjectedSourceColumnGuard","require");
+        var require=calls("ProjectedSourceColumnGuard","requireWorkspace");
+        assertTrue(calls("ProjectedSourceColumnGuard","require").contains("dev/twob2tkit/automation/ProjectedSourceColumnGuard.requireWorkspace"));
         assertTrue(require.contains("dev/twob2tkit/automation/ProjectedSourceColumnPolicy.actorReady"));
         assertTrue(require.contains("dev/twob2tkit/automation/ProjectedSourceColumnPolicy.rejection"));
         assertTrue(require.contains("dev/twob2tkit/automation/ProjectedSourceColumnGuard.loaded"));

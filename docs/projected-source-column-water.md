@@ -74,3 +74,11 @@ Build rows bottom-up. At each row verify the end sources and then the center; ob
 - 96 Java tests passed, including existing bucket receipt/store, falling-column, channel, waterlog-drain and new source-chamber policy/wiring regressions.
 - 17 Python source-chamber tests and 12 existing channel-wrapper tests passed, including rejection on old hosts/missing floors and retention of an uncertain request without retry.
 - These are local artifact/logic tests. They do **not** establish installation, live bucket acceptance, repaired water, successful downstream flow or whole-farm completion. Recheck the native protocol and field prerequisites after deployment.
+
+## Original bent overflow (2026.10.31.6)
+
+After all27 chamber sources are confirmed, the separate `projected_bent_channel_protocol=1` supports exactly eight original open-top cells: source at the upper east corner, three steps west then four south, model water levels0..7. This is an exclusive place-only bucket mode. Native validation retains all27 source cells and75 seals, requires original glass floors after the turn, every original dry glass side wall and the exact closed dry spruce terminal trapdoor. All cells must be visible/server-loaded and contain no interfering entities. Existing source repair and supply modes still require their dry top; this does not relax their admission.
+
+`projected_bent_channel.place(client,low,high,key,out)` journals one normal use, requires current-connection block and inventory confirmations, then three coherent504-cell frames with exact0..7 downstream flow, all27 prior sources, unchanged boundaries and no new external fluid. Dynamic dropper trigger phases are compared without treating a clock transition as damage. An unknown use is retained without replay. A source-confirmed but incomplete-flow result is not a completed channel.
+
+Relevant candidate verification:131 Java and36 Python tests passed. These do not substitute for live downstream flow or whole-farm production acceptance.

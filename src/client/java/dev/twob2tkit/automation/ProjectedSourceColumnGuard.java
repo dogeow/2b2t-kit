@@ -120,7 +120,9 @@ final class ProjectedSourceColumnGuard {
     private static boolean upDropper(BlockState s){return s.is(Blocks.DROPPER)&&s.getValue(DispenserBlock.FACING)==Direction.UP;}
     private static boolean dryStair(BlockState s){return s.is(Blocks.COBBLESTONE_STAIRS)&&s.getValue(StairBlock.FACING)==Direction.SOUTH
         &&s.getValue(StairBlock.HALF)==Half.BOTTOM&&s.getValue(StairBlock.SHAPE)==StairsShape.STRAIGHT&&!s.getValue(StairBlock.WATERLOGGED);}
-    void require(Minecraft c,boolean before){
+    void require(Minecraft c,boolean before){requireWorkspace(c,before,false);}
+    void requireCompleted(Minecraft c){requireWorkspace(c,false,true);}
+    private void requireWorkspace(Minecraft c,boolean before,boolean completedOverflow){
         var selection=LitematicaAccess.lockedBuildSelection();var model=LitematicaAccess.schematicWorld();
         if(model==null||!selection.key().equals(placement)||!LitematicaAccess.loadingReason(selection).isEmpty()
                 ||c.level.environmentAttributes().getValue(net.minecraft.world.attribute.EnvironmentAttributes.WATER_EVAPORATES,target))
@@ -151,8 +153,11 @@ final class ProjectedSourceColumnGuard {
         boolean topDry=true;
         for(int x=bounds.minX();x<=bounds.maxX();x++){
             var p=new BlockPos(x,bounds.maxY()+1,bounds.minZ());
-            topDry&=c.level.getBlockState(p).isAir()&&level(model.getBlockState(p))==bounds.maxX()-x;
+            topDry&=(completedOverflow?level(c.level.getBlockState(p))>=-1:c.level.getBlockState(p).isAir())
+                &&level(model.getBlockState(p))==bounds.maxX()-x;
         }
+        if(completedOverflow&&cells.stream().anyMatch(cell->cell.actualLevel()!=0))
+            throw new IllegalStateException("Overflow requires every chamber source to remain complete");
         var volume=new AABB(bounds.minX(),bounds.minY(),bounds.minZ(),bounds.maxX()+1,bounds.maxY()+1,bounds.minZ()+1);
         boolean other=!c.level.getEntities(c.player,volume,e->e instanceof LivingEntity&&e.isAlive()).isEmpty();
         var p=c.player;boolean ready=p!=null&&ProjectedSourceColumnPolicy.actorReady(p.getHealth(),p.getFoodData().getFoodLevel(),p.getAirSupply(),p.getMaxAirSupply(),p.isInLava(),!p.isDeadOrDying());
