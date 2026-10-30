@@ -1,6 +1,6 @@
 package dev.twob2tkit.combat;
 
-/** Regenerable campfire/magma contact is work, not an unknown stuck-damage incident. */
+/** Regenerable known heat damage can remain work instead of an unknown stuck-damage incident. */
 public final class MinorThermalWorkPolicy {
     private MinorThermalWorkPolicy() {}
     public static boolean allow(boolean knownContact, double health, int food, boolean foodAvailable,

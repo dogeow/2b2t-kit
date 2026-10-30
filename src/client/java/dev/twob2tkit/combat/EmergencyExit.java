@@ -126,7 +126,9 @@ public final class EmergencyExit {
         if(c.player==null||c.level==null||c.player.isDeadOrDying())return false;
         var p=c.player;var source=p.getLastDamageSource();
         boolean contact=source!=null&&(source.is(net.minecraft.world.damagesource.DamageTypes.CAMPFIRE)
-            ||source.is(net.minecraft.world.damagesource.DamageTypes.HOT_FLOOR));
+            ||source.is(net.minecraft.world.damagesource.DamageTypes.HOT_FLOOR)
+            ||source.is(net.minecraft.world.damagesource.DamageTypes.ON_FIRE)
+            ||source.is(net.minecraft.world.damagesource.DamageTypes.IN_FIRE));
         boolean food=false;
         for(int slot=0;slot<36;slot++){
             var stack=p.getInventory().getItem(slot);
@@ -147,8 +149,8 @@ public final class EmergencyExit {
         }
         boolean automated=AutomationBridge.guardArmed()||KitClient.anyAfkAuto();
         if(automated&&c.player.getHealth()<14){begin(c,"低血量紧急撤离");return;}
-        // Critical health remains above this branch. Only known campfire or
-        // magma contact at high health with food reserve may continue working.
+        // Critical health remains above this branch. Only known minor thermal damage at high health
+        // with food reserve may continue working, including residual burning.
         if(automated&&minorThermalWorkAllowed(c)){
             environmentalDamage.reset();return;
         }

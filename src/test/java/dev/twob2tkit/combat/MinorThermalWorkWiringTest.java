@@ -18,6 +18,19 @@ class MinorThermalWorkWiringTest {
         assertTrue(gate.contains("dev/twob2tkit/combat/MinorThermalWorkPolicy.allow"));
         assertFalse(gate.stream().anyMatch(x->x.contains("clear")||x.contains("acknowledge")));
     }
+    @Test void heatClassificationIncludesResidualBurningAndDirectFireButNotLava()throws Exception{
+        var node=new ClassNode();
+        try(var in=getClass().getResourceAsStream("/dev/twob2tkit/combat/EmergencyExit.class")){
+            assertNotNull(in);new ClassReader(in).accept(node,0);
+        }
+        var method=node.methods.stream().filter(m->m.name.equals("minorThermalWorkAllowed")).findFirst().orElseThrow();
+        var types=new HashSet<String>();
+        for(var instruction:method.instructions)if(instruction instanceof FieldInsnNode field
+                &&field.owner.equals("net/minecraft/world/damagesource/DamageTypes"))types.add(field.name);
+        assertEquals(Set.of("CAMPFIRE","HOT_FLOOR","ON_FIRE","IN_FIRE"),types);
+        assertTrue(calls("combat/EmergencyExit","minorThermalWorkAllowed").contains("net/minecraft/client/player/LocalPlayer.isInLava")
+            ||calls("combat/EmergencyExit","minorThermalWorkAllowed").stream().anyMatch(c->c.endsWith(".isInLava")));
+    }
     @Test void humanRecoveryRetainsGrantValidationAndUsesSameLiveThermalEvidence()throws Exception{
         var c=calls("automation/AutomationBridge","confirmExplicitRecovery");
         assertTrue(c.contains("dev/twob2tkit/combat/EmergencyExit.minorThermalWorkAllowed"));
