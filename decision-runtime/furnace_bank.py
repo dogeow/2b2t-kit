@@ -113,6 +113,25 @@ def inspect_bank(client, positions, journal):
     return record
 
 
+def _clear_player_from_placement(client, pos):
+    """A close top-face approach may settle slightly below the future block top."""
+    def overlaps(point):
+        return (abs(point[0]-pos[0]-.5)<.81 and abs(point[2]-pos[2]-.5)<.81
+                and point[1]<pos[1]+1 and point[1]+1.8>pos[1])
+    state=client.status()
+    if not overlaps(state['pos']):return
+    if (state.get('flight') is True and state.get('health',0)>=19
+            and not state.get('manual_movement') and not state.get('under_water')
+            and pos[1]<=state['pos'][1]<pos[1]+1):
+        point=state['pos']
+        # Only rise within the already scanned empty pad column. The native
+        # air navigator verifies the body sweep; a failure is never a placement.
+        client.checked('navigate',target=[point[0],pos[1]+1.25,point[2]],
+                       arrival=.05,seconds=10,air_only=True)
+        state=client.status()
+    if overlaps(state['pos']):raise RuntimeError('Do not place furnace through the player')
+
+
 def build(client, positions, journal, *, resume=False):
     positions = _positions(positions)
     journal = Path(journal)
@@ -140,10 +159,8 @@ def build(client, positions, journal, *, resume=False):
         before = stocks(client.status()).get('minecraft:furnace', 0)
 
         def before_use():
-            current = client.status()['pos']
-            if (abs(current[0] - pos[0] - .5) < .81 and abs(current[2] - pos[2] - .5) < .81
-                    and current[1] < pos[1] + 1 and current[1] + 1.8 > pos[1]):
-                raise RuntimeError('Do not place furnace through the player')
+            _scan_pad(client, pos)
+            _clear_player_from_placement(client, pos)
             _scan_pad(client, pos)
             record['pending'] = {'pos': pos, 'inventory_before': before}
             write_json(journal, record)

@@ -32,6 +32,37 @@ class FurnaceResumeTest(unittest.TestCase):
   before_use();pos=[floor[0],floor[1]+1,floor[2]]
   c.blocks[tuple(pos)]={'pos':pos,'state':'Block{minecraft:furnace}[facing=north,lit=false]','solid':True,'block_entity':True}
   c.stock-=1;c.actions.append(('place',pos))
+ def test_close_hover_rises_clear_before_one_placement(self):
+  from unittest.mock import patch
+  from furnace_bank import build
+  base=self.client.status;pose={'pos':[.5,64.96,.5],'flight':True,'health':20}
+  self.client.status=lambda:{**base(),**pose}
+  old=self.client.checked
+  def checked(op,**args):
+   if op=='navigate':pose['pos']=args['target']
+   return old(op,**args)
+  self.client.checked=checked
+  with patch('furnace_bank.use_with_margin',side_effect=self.place):result=build(self.client,[self.positions[0]],self.path)
+  self.assertTrue(result['complete']);moves=[a for a in self.client.actions if a[0]=='navigate'];self.assertEqual(1,len(moves));self.assertEqual([.5,65.25,.5],moves[0][1]['target']);self.assertTrue(moves[0][1]['air_only']);self.assertEqual(1,len([a for a in self.client.actions if a[0]=='place']))
+ def test_grounded_or_manual_player_is_not_lifted_or_placed_through(self):
+  import json
+  from unittest.mock import patch
+  from furnace_bank import build
+  for extra in [{'flight':False},{'flight':True,'manual_movement':True}]:
+   with self.subTest(extra=extra):
+    self.client.actions=[]
+    self.client.status=lambda:{'inventory':[{'slot':0,'item':'minecraft:furnace','count':3}],'pos':[.5,64.96,.5],'time':123,'health':20,**extra}
+    with patch('furnace_bank.use_with_margin',side_effect=self.place):
+     with self.assertRaisesRegex(RuntimeError,'through the player'):build(self.client,[self.positions[0]],self.path,resume=self.path.exists())
+    self.assertFalse(any(a[0]in('navigate','place')for a in self.client.actions));self.assertIsNone(json.loads(self.path.read_text())['pending'])
+ def test_lift_that_does_not_clear_body_cannot_place_or_claim_uncertain_interaction(self):
+  import json
+  from unittest.mock import patch
+  from furnace_bank import build
+  self.client.status=lambda:{'inventory':[{'slot':0,'item':'minecraft:furnace','count':3}],'pos':[.5,64.96,.5],'time':123,'flight':True,'health':20}
+  with patch('furnace_bank.use_with_margin',side_effect=self.place):
+   with self.assertRaisesRegex(RuntimeError,'through the player'):build(self.client,[self.positions[0]],self.path)
+  self.assertEqual(1,len([a for a in self.client.actions if a[0]=='navigate']));self.assertFalse(any(a[0]=='place'for a in self.client.actions));self.assertIsNone(json.loads(self.path.read_text())['pending'])
  def test_interrupted_approach_resumes_only_unplaced_furnaces(self):
   import json
   from unittest.mock import patch
