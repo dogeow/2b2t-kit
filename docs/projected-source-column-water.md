@@ -52,6 +52,14 @@ Native request extension to `bucket_place`:
 
 Ordinary `pos`, `expected_state`, singleton `expected_hand`, `support`, `face`, `expected_support_state` and current world/revision/material-lease fields remain required. This mode is place-only and exclusive with `projected_water_column`, `projected_water_channel` and `projected_waterlog_drain`.
 
+## Explicit center-source supply (2026.10.31.4)
+
+`projected_source_column_supply_protocol=1` enables a separate **fill-only** operation inside the same pinned chamber. It is exclusive with every placement/drain/other water mode. The chosen source must be the middle X cell of a currently complete three-source row, supported by source water below or the verified full dropper floor. The two outer seed sources cannot be selected.
+
+The native guard retains every other captured source and all 75 seals through the fill. Only the selected center is omitted from that preservation set, because a normal fill may temporarily remove it. The ordinary singleton-bucket use, durable claim, current-connection block/slot acknowledgements and exact inventory delta remain mandatory. Only this verified supply FILL may target water containing the local player; all other entities, ordinary fills and every placement retain the existing entity exclusion.
+
+The new `projected_source_column.refill(client,low,high,source,key,out)` executor expects a prepared singleton empty bucket and valid service pose. It requires both native confirmations and two further scans proving the center and the whole former source set have remained or regenerated as level-0 water, with no seal change or new external fluid. An actual fill that is acknowledged but does not regenerate is recorded as **restore required**; it is not retried or called a successful renewable supply. Existing original endpoints remain untouched. This removes the need for repeated hazardous trips to an external pond.
+
 ## Evidence and recovery
 
 There is exactly one normal vanilla bucket use. The existing durable `BucketUseStore` claim, current-connection target block update, selected-slot inventory update, exact inventory delta and prediction-settling window remain unchanged. A receipt additionally identifies `bucket_water.projected_source_column=true`.
@@ -63,6 +71,6 @@ Build rows bottom-up. At each row verify the end sources and then the center; ob
 ## Validation
 
 - Candidate host compiled against the installed 30.5 host, engine 1.8.40 and the actual 26.2 version-manifest dependencies.
-- 92 Java tests passed, including existing bucket receipt/store, falling-column, channel, waterlog-drain and new source-chamber policy/wiring regressions.
-- 13 Python source-chamber tests and 12 existing channel-wrapper tests passed, including rejection on old hosts/missing floors and retention of an uncertain request without retry.
+- 96 Java tests passed, including existing bucket receipt/store, falling-column, channel, waterlog-drain and new source-chamber policy/wiring regressions.
+- 17 Python source-chamber tests and 12 existing channel-wrapper tests passed, including rejection on old hosts/missing floors and retention of an uncertain request without retry.
 - These are local artifact/logic tests. They do **not** establish installation, live bucket acceptance, repaired water, successful downstream flow or whole-farm completion. Recheck the native protocol and field prerequisites after deployment.

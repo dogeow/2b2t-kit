@@ -23,7 +23,7 @@ class ProjectedSourceColumnWiringTest {
         var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/AutomationBridge.class")){
             assertNotNull(in);new ClassReader(in).accept(node,0);
         }
-        for(String protocol:List.of("projected_source_column_protocol","projected_source_column_shielded_work_protocol"))
+        for(String protocol:List.of("projected_source_column_protocol","projected_source_column_shielded_work_protocol","projected_source_column_supply_protocol"))
             assertTrue(node.methods.stream().filter(m->m.name.equals("snapshot")).anyMatch(m->{
                 for(var instruction:m.instructions)if(instruction instanceof LdcInsnNode ldc&&protocol.equals(ldc.cst))return true;
                 return false;
@@ -35,9 +35,11 @@ class ProjectedSourceColumnWiringTest {
         assertTrue(owner.contains("dev/twob2tkit/automation/ProjectedSourceColumnGuard.shieldedWorkspace"));
         var shield=calls("ProjectedSourceColumnGuard","shieldedWorkspace");
         assertTrue(shield.contains("dev/twob2tkit/automation/ProjectedSourceColumnGuard.require"));
-        assertTrue(shield.contains("dev/twob2tkit/automation/SourceColumnThreatPolicy.permit"));
-        assertTrue(shield.contains("dev/twob2tkit/automation/SourceColumnThreatPolicy.remoteCreeper"));
-        assertTrue(shield.indexOf("dev/twob2tkit/automation/ProjectedSourceColumnGuard.require")<shield.indexOf("dev/twob2tkit/automation/SourceColumnThreatPolicy.remoteCreeper"));
+        assertTrue(shield.contains("dev/twob2tkit/automation/ProjectedSourceColumnGuard.shieldedActor"));
+        var actor=calls("ProjectedSourceColumnGuard","shieldedActor");
+        assertTrue(actor.contains("dev/twob2tkit/automation/SourceColumnThreatPolicy.permit"));
+        assertTrue(actor.contains("dev/twob2tkit/automation/SourceColumnThreatPolicy.remoteCreeper"));
+        assertTrue(shield.indexOf("dev/twob2tkit/automation/ProjectedSourceColumnGuard.require")<shield.indexOf("dev/twob2tkit/automation/ProjectedSourceColumnGuard.shieldedActor"));
         assertFalse(shield.stream().anyMatch(v->v.contains("acknowledge")||v.endsWith(".setBlock")));
     }
     @Test void ordinaryFillAndUnscopedPlacementNeverReceiveTheShieldedException(){
@@ -50,7 +52,7 @@ class ProjectedSourceColumnWiringTest {
         var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/ProjectedSourceColumnGuard.class")){
             assertNotNull(in);new ClassReader(in).accept(node,0);
         }
-        var method=node.methods.stream().filter(m->m.name.equals("shieldedWorkspace")).findFirst().orElseThrow();var types=new HashSet<String>();
+        var method=node.methods.stream().filter(m->m.name.equals("shieldedActor")).findFirst().orElseThrow();var types=new HashSet<String>();
         for(var instruction:method.instructions)if(instruction instanceof LdcInsnNode ldc&&ldc.cst instanceof String text&&text.startsWith("minecraft:"))types.add(text);
         assertEquals(Set.of("minecraft:zombie","minecraft:skeleton","minecraft:slime"),types);
         var host=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/AutomationBridge.class")){
@@ -60,6 +62,18 @@ class ProjectedSourceColumnWiringTest {
             for(var instruction:m.instructions)if(instruction instanceof LdcInsnNode ldc&&"input_sent".equals(ldc.cst))return true;
             return false;
         }));
+    }
+    @Test void supplyRequiresTheColumnProofBeforeUsingItsShieldedActor()throws Exception{
+        var before=calls("ProjectedSourceColumnSupplyGuard","requireBefore");
+        assertTrue(before.contains("dev/twob2tkit/automation/ProjectedSourceColumnSupplyGuard.requireWorkspace"));
+        assertTrue(before.contains("dev/twob2tkit/automation/SourceColumnSupplyPolicy.ready"));
+        var ctor=calls("ProjectedSourceColumnSupplyGuard","<init>");
+        assertTrue(ctor.contains("dev/twob2tkit/automation/ProjectedSourceColumnGuard.excludeRefillTarget"));
+        var shield=calls("ProjectedSourceColumnSupplyGuard","shieldedWorkspace");
+        assertTrue(shield.indexOf("dev/twob2tkit/automation/ProjectedSourceColumnSupplyGuard.requireWorkspace")
+            <shield.indexOf("dev/twob2tkit/automation/ProjectedSourceColumnGuard.shieldedActor"));
+        assertTrue(calls("BucketWaterAction","validateBeforeSend").contains("dev/twob2tkit/automation/ProjectedSourceColumnSupplyGuard.requireBefore"));
+        assertTrue(calls("BucketWaterAction","poll").contains("dev/twob2tkit/automation/ProjectedSourceColumnSupplyGuard.current"));
     }
     @Test void sourceGuardChecksPlayerReserveAndLoadedWorldAndNeverAcknowledgesSafety()throws Exception{
         var require=calls("ProjectedSourceColumnGuard","require");

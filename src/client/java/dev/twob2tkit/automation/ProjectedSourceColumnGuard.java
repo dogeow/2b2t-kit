@@ -31,7 +31,7 @@ final class ProjectedSourceColumnGuard {
         if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("Source-column mode must be boolean");
         return v.getAsBoolean();
     }
-    private static BlockPos point(JsonElement value){
+    static BlockPos point(JsonElement value){
         if(value==null||!value.isJsonArray()||value.getAsJsonArray().size()!=3)throw new IllegalArgumentException("Integer source-column XYZ required");
         int[] p=new int[3];
         for(int i=0;i<3;i++){
@@ -76,7 +76,16 @@ final class ProjectedSourceColumnGuard {
                     ||c.player==null||c.level==null)return false;
             var target=point(request.get("pos"));var guard=new ProjectedSourceColumnGuard(c,request,target);
             guard.require(c,level(c.level.getBlockState(target))!=0);
-            var p=c.player;var body=p.getBoundingBox();var b=guard.bounds;
+            return guard.shieldedActor(c);
+        }catch(RuntimeException unproved){return false;}
+    }
+    void excludeRefillTarget(BlockPos refill){
+        if(!bounds.contains(refill.getX(),refill.getY(),refill.getZ())||refill.getX()!=bounds.minX()+1)
+            throw new IllegalArgumentException("Only the middle source of this chamber can supply buckets");
+        originalSources.remove(refill);
+    }
+    boolean shieldedActor(Minecraft c){
+            var p=c.player;var body=p.getBoundingBox();var b=bounds;
             boolean horizontal=body.minX>=b.minX()&&body.maxX<=b.maxX()+1.0
                 &&body.minZ>=b.minZ()&&body.maxZ<=b.minZ()+1.0;
             long now=System.currentTimeMillis(),hurt=dev.twob2tkit.KitClient.config().lastAttackTimeEpochMillis;
@@ -102,7 +111,6 @@ final class ProjectedSourceColumnGuard {
                     visible,enemy.maxY<=b.minY(),body.minY-enemy.maxY));
             }
             return SourceColumnThreatPolicy.permit(work,threats);
-        }catch(RuntimeException unproved){return false;}
     }
     private static int level(BlockState s){return s.isAir()?-1:s.is(Blocks.WATER)?s.getValue(LiquidBlock.LEVEL):-2;}
     private static boolean loaded(Minecraft c,BlockPos p){

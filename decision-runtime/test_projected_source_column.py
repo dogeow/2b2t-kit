@@ -127,4 +127,51 @@ class SourceColumnTest(unittest.TestCase):
             p=json.loads((out/'progress.json').read_text());self.assertEqual(p['request_id'],'one');self.assertIsNotNone(p['pending'])
         self.assertEqual(c.uses,1)
 
+
+class SupplyFake(Fake):
+    supply_protocol=1
+    def __init__(self,model,frame):super().__init__(model,frame);self.fills=0
+    def status(self):
+        s=super().status();s['projected_source_column_supply_protocol']=self.supply_protocol;s['hand']={'item':'minecraft:bucket','count':1}
+        s['inventory']=[{'slot':0,'item':'minecraft:bucket','count':1-self.fills},{'slot':1,'item':'minecraft:water_bucket','count':self.fills}];return s
+    def request(self,op,**kw):
+        if op=='bucket_fill':
+            self.calls.append(op);self.last='supply-one';self.fills+=1;r=receipt(self.last,kw['pos']);r['bucket_water']['operation']='bucket_fill';r['bucket_water'].pop('projected_source_column');r['bucket_water']['projected_source_column_supply']=True;return r
+        return super().request(op,**kw)
+
+class SourceSupplyTest(unittest.TestCase):
+    def prepared(self):
+        m,f=fixture()
+        for x in range(10,13):change(f,[x,59,20],SOURCE)
+        return m,f
+    def test_old_host_rejects_supply_before_any_input(self):
+        from projected_source_column import refill
+        m,f=self.prepared();c=SupplyFake(m,f);c.supply_protocol=0
+        with tempfile.TemporaryDirectory()as d:
+            with self.assertRaises(RuntimeError):refill(c,LOW,HIGH,[11,59,20],KEY,Path(d)/'one')
+        self.assertEqual(c.calls,[])
+    def test_edge_sources_and_incomplete_rows_are_not_supply(self):
+        from projected_source_column import refill
+        for target in [[10,59,20],[12,59,20]]:
+            m,f=self.prepared();c=SupplyFake(m,f)
+            with tempfile.TemporaryDirectory()as d:
+                with self.assertRaises(ValueError):refill(c,LOW,HIGH,target,KEY,Path(d)/'one')
+            self.assertEqual(c.fills,0)
+        m,f=self.prepared();change(f,[10,59,20],'Block{minecraft:water}[level=1]');c=SupplyFake(m,f)
+        with tempfile.TemporaryDirectory()as d:
+            with self.assertRaisesRegex(RuntimeError,'three-source'):refill(c,LOW,HIGH,[11,59,20],KEY,Path(d)/'one')
+        self.assertEqual(c.fills,0)
+    def test_one_supply_fill_preserves_the_row_and_gets_two_fresh_observations(self):
+        from projected_source_column import refill
+        m,f=self.prepared();c=SupplyFake(m,f)
+        with tempfile.TemporaryDirectory()as d:
+            result=refill(c,LOW,HIGH,[11,59,20],KEY,Path(d)/'one');self.assertTrue(result['source_preservation_observed']);self.assertEqual(len(result['observations']),2)
+        self.assertEqual(c.fills,1)
+    def test_supply_receipt_needs_its_own_mode_and_both_native_confirmations(self):
+        from projected_source_column import supply_receipt
+        r=receipt('s',[11,59,20]);r['bucket_water']['operation']='bucket_fill';r['bucket_water']['projected_source_column_supply']=True
+        self.assertTrue(supply_receipt(r,'s',WORLD,[11,59,20]))
+        for key,value in [('projected_source_column_supply',False),('operation','bucket_place'),('server_inventory_confirmed',False),('unknown_outcome',True),('use_count',2)]:
+            bad=copy.deepcopy(r);bad['bucket_water'][key]=value;self.assertFalse(supply_receipt(bad,'s',WORLD,[11,59,20]))
+
 if __name__=='__main__':unittest.main()

@@ -47,6 +47,7 @@ final class BucketWaterAction {
     private final ProjectedWaterlogDrain projectedDrain;
     private final ProjectedChannelWaterGuard projectedChannel;
     private final ProjectedSourceColumnGuard projectedSources;
+    private final ProjectedSourceColumnSupplyGuard projectedSupply;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
         mode=switch(text(request,"op")){case "bucket_fill"->BucketWaterPolicy.Mode.FILL;case "bucket_place"->BucketWaterPolicy.Mode.PLACE;default->throw new IllegalArgumentException("Only water bucket fill/place are supported");};
@@ -66,6 +67,10 @@ final class BucketWaterAction {
         if(sources&&!ProjectedSourceColumnPolicy.exclusivePlace(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel))
             throw new IllegalArgumentException("Source-column repair is an exclusive place-only operation");
         projectedSources=sources?new ProjectedSourceColumnGuard(c,request,target):null;
+        boolean supply=ProjectedSourceColumnSupplyGuard.requested(request);
+        if(supply&&!SourceColumnSupplyPolicy.exclusiveFill(mode==BucketWaterPolicy.Mode.FILL,column,drain,channel,sources))
+            throw new IllegalArgumentException("Source-column supply is an exclusive fill-only operation");
+        projectedSupply=supply?new ProjectedSourceColumnSupplyGuard(c,request,target):null;
         if(expectedState.isBlank())throw new IllegalArgumentException("An exact fresh target state is required");
         support=mode==BucketWaterPolicy.Mode.PLACE?position(request,"support"):target;
         face=mode==BucketWaterPolicy.Mode.PLACE?Direction.valueOf(text(request,"face").toUpperCase(java.util.Locale.ROOT)):null;
@@ -139,13 +144,15 @@ final class BucketWaterAction {
         if(!BucketWaterPolicy.allowedHand(mode,id,held.getCount())||c.player.getCooldowns().isOnCooldown(held))
             throw new IllegalStateException("A selected singleton water-only bucket without cooldown is required");
         if(mode==BucketWaterPolicy.Mode.FILL){
+            if(projectedSupply!=null)projectedSupply.requireBefore(c);
             if(projectedDrain!=null)projectedDrain.requireBefore(c);
             else if(!plainSource(c.level.getBlockState(target))||c.level.getBlockEntity(target)!=null)
                 throw new IllegalStateException("Bucket fill requires a plain level-0 water source, never flowing water, waterlogged blocks or lava");
         }else if(!boundedHole(c,true)||!serverChunk(c,support)||!c.level.getBlockState(support).toString().equals(expectedSupport)
                 ||c.level.getBlockState(support).getBlock() instanceof LiquidBlockContainer)
             throw new IllegalStateException("Bucket place needs actual air in a dry full-block basin with bottom and four sides, and the exact non-waterloggable support");
-        if(!c.level.getEntities((Entity)null,new AABB(target),Entity::isAlive).isEmpty())
+        if(!c.level.getEntities((Entity)null,new AABB(target),e->e.isAlive()
+                &&SourceColumnSupplyPolicy.entityBlocks(mode==BucketWaterPolicy.Mode.FILL,projectedSupply!=null,e==c.player)).isEmpty())
             throw new IllegalStateException("Bucket target contains a currently loaded entity");
     }
     Vec3 aim(Minecraft c) {
@@ -202,7 +209,7 @@ final class BucketWaterAction {
     Outcome poll(Minecraft c,long tick,boolean timedOut) throws java.io.IOException {
         if(!idle(c)||!ownerCurrent.getAsBoolean()||!serverChunk(c,target)
                 ||mode==BucketWaterPolicy.Mode.PLACE&&!boundedHole(c,false)
-                ||projectedDrain!=null&&!projectedDrain.current(c))return Outcome.WAITING;
+                ||projectedDrain!=null&&!projectedDrain.current(c)||projectedSupply!=null&&!projectedSupply.current(c))return Outcome.WAITING;
         emptyAfter=count(c,Items.BUCKET);waterAfter=count(c,Items.WATER_BUCKET);
         boolean delta=BucketWaterPolicy.exactDelta(mode,emptyBefore,waterBefore,emptyAfter,waterAfter)&&inventoryUnchanged(c,true);
         if(receipt.done(!predictions.pending(c.level,target),delta,c.level.getBlockState(target).toString().equals(receipt.blockState()),tick)){
@@ -229,6 +236,7 @@ final class BucketWaterAction {
         out.addProperty("expected_state_before",expectedState);
         out.addProperty("projected_water_column",projectedColumn!=null);
         out.addProperty("projected_source_column",projectedSources!=null);
+        out.addProperty("projected_source_column_supply",projectedSupply!=null);
         out.addProperty("projected_waterlog_drain",projectedDrain!=null);
         out.addProperty("projected_water_channel",projectedChannel!=null);
         if(projectedChannel!=null){

@@ -162,3 +162,60 @@ def place(c,low,high,target,support,face,placement_key,out):
         if time.monotonic()>deadline:raise RuntimeError('Source use confirmed but boundary/flow evidence incomplete; do not retry')
         time.sleep(.2)
     book.update(complete=True,observations=stamps);write_json(out/'progress.json',book);return book
+
+
+def supply_receipt(reply,request,world,source):
+    ack=reply.get('bucket_water')or{}
+    return (reply.get('id')==request and reply.get('world_session')==world and reply.get('phase')=='done'
+            and ack.get('request_id')==request and ack.get('world_session')==world and ack.get('pos')==source
+            and ack.get('operation')=='bucket_fill'and ack.get('projected_source_column_supply')is True
+            and ack.get('confirmed')is True and ack.get('unknown_outcome')is False and ack.get('use_count')==1
+            and ack.get('server_block_confirmed')is True and ack.get('server_inventory_confirmed')is True)
+
+
+def refill(c,low,high,source,placement_key,out):
+    """Refill once from a completed center; prove source preservation/regeneration before advancing."""
+    lo,hi=envelope(low,high);out=Path(out);out.mkdir(parents=True,exist_ok=False);state=c.status();lease=state.get('supervision_lease')or{}
+    if (state.get('projected_source_column_supply_protocol')!=1 or state.get('health')!=20
+            or state.get('air_supply',0)<270 or state.get('food',0)<16 or state.get('screen')or state.get('manual_movement')
+            or state.get('guard_busy')or not state.get('guard_armed')or lease.get('kind')!='materials'or lease.get('job_session')!=c.task
+            or state.get('projection_selection',{}).get('key')!=placement_key):raise RuntimeError('Installed source supply protocol and healthy guarded owner required')
+    if (not isinstance(source,list)or len(source)!=3 or any(type(v)is not int for v in source)
+            or source[0]!=low[0]+1 or source[2]!=low[2]or not low[1]<=source[1]<=high[1]):raise ValueError('Only a completed center source may supply buckets')
+    model=c.request('projection_model')['projection_model'];frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True)
+    if model.get('placement_key')!=placement_key:raise RuntimeError('Projection changed')
+    plan=geometry(model,frame,low,high,c.world);rows={tuple(v['pos']):v['state']for v in frame['blocks']}
+    if any(rows.get((x,source[1],source[2]))!=SOURCE for x in range(low[0],high[0]+1)):
+        raise RuntimeError('Complete three-source row required before refill')
+    if source[1]>low[1]and rows.get((source[0],source[1]-1,source[2]))!=SOURCE:raise RuntimeError('Completed source support below the refill row required')
+    singleton=next((v for v in state.get('inventory',[])if v.get('slot',99)<36 and v.get('item')=='minecraft:bucket'and v.get('count')==1),None)
+    if singleton is None:raise RuntimeError('Prepare one singleton empty bucket before refill')
+    write_json(out/'geometry-before.json',{'model_hash':model['content_hash'],'scan':frame,'plan':plan})
+    c.checked('select_item',item='minecraft:bucket',slot=singleton['slot']);before=c.status();stock=inventory_counts(before)
+    if before.get('hand',{}).get('item')!='minecraft:bucket'or before.get('hand',{}).get('count')!=1:raise RuntimeError('Selected singleton empty bucket required')
+    book={'pending':'one_source_supply_fill','source':source,'world_session':c.world,'complete':False,'automatic_retry_allowed':False};write_json(out/'progress.json',book)
+    try:
+        reply=c.request('bucket_fill',pos=source,expected_state=SOURCE,expected_hand='minecraft:bucket',projected_source_column_supply=True,
+                        placement_key=placement_key,source_column_bounds=plan['source_column_bounds'],column_boundary_pins=plan['column_boundary_pins'])
+    finally:
+        book['request_id']=c.last;write_json(out/'progress.json',book)
+    write_json(out/'native-reply.json',reply)
+    if admission_rejected_before_use(reply,c.last,c.world):
+        book.update(pending=None,rejected_before_use=True,admission_diagnostic=reply['last_bucket_admission_rejection']);write_json(out/'progress.json',book)
+        raise SourceAdmissionRejected(reply.get('detail','Supply rejected before input'))
+    if not supply_receipt(reply,c.last,c.world,source):raise RuntimeError('Original supply fill unconfirmed; retain identity and never resend')
+    book.update(pending=None,fill_confirmed=True,source_preservation_observed=False);write_json(out/'progress.json',book);stamps=[];deadline=time.monotonic()+8
+    while len(stamps)<2:
+        frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True);state=c.status();counts=inventory_counts(state)
+        if state.get('world_session')!=c.world or state.get('manual_movement')or state.get('screen'):raise RuntimeError('Control changed after confirmed fill; no replay')
+        if (observed_after(frame,c.world,lo,hi,plan,source,rows)
+                and counts.get('minecraft:bucket',0)==stock.get('minecraft:bucket',0)-1
+                and counts.get('minecraft:water_bucket',0)==stock.get('minecraft:water_bucket',0)+1):
+            stamp=frame.get('scan_ended_at',frame.get('time'))
+            if type(stamp)is int and(not stamps or stamp>stamps[-1]):stamps.append(stamp);write_json(out/f'supply-frame-{len(stamps)}.json',frame)
+        else:stamps=[]
+        if time.monotonic()>deadline:
+            book['restore_required']=True;write_json(out/'progress.json',book)
+            raise RuntimeError('Fill confirmed but source/perimeter not restored; no further refill allowed')
+        time.sleep(.2)
+    book.update(complete=True,source_preservation_observed=True,observations=stamps);write_json(out/'progress.json',book);return book
