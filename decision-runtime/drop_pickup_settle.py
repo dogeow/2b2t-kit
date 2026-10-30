@@ -22,10 +22,22 @@ def poses(origin, drop, rows):
 
 
 def settle(client, drop, before):
-    state = client.status()
-    current = next((e for e in state.get('entities',[])if e.get('uuid')==drop['uuid']), None)
-    if not current or current.get('stack') != drop.get('stack'):
-        return False
+    item=drop['stack']['item'];amount=drop['stack']['count']
+    # The entity-removal packet and inventory packet can arrive in different
+    # client ticks. An absent drop is not a failed pickup or permission to move
+    # again: first observe the exact quantity delta without issuing input.
+    observed_until=time.monotonic()+3
+    while True:
+        state=client.status()
+        current=next((e for e in state.get('entities',[])if e.get('uuid')==drop['uuid']),None)
+        count=inventory_counts(state).get(item,0)
+        if current is None and count==before+amount:return True
+        if count not in (before,before+amount):return False
+        if current is not None:
+            if current.get('stack')!=drop.get('stack'):return False
+            if count==before:break
+        if time.monotonic()>=observed_until:return False
+        time.sleep(.15)
     lo=[math.floor(min(a,b))-2 for a,b in zip(state['pos'],current['pos'])]
     hi=[math.ceil(max(a,b))+3 for a,b in zip(state['pos'],current['pos'])]
     scan=client.request('scan',min=lo,max=hi,details=True)
