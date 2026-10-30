@@ -40,12 +40,18 @@ def plan(rows, start, target, low, high, *, max_straight=16, foot_offset=0):
     for row in rows:
         if block_id(row).endswith(('_fence','_fence_gate','_wall')):
             x,y,z=row['pos'];blocked.add((x,y+1,z))
-    # A short hover above magma has produced real HOT_FLOOR damage with the
+    # Low flight over magma and lit campfires has produced real damage with the
     # current flight setup. Keep low air routes out of that column, unless an
     # observed full block shields the player from the magma below it.
     observed={tuple(r['pos']):r for r in rows}
     for row in rows:
-        if block_id(row)!='minecraft:magma_block':continue
+        name=block_id(row)
+        heat=name=='minecraft:magma_block'
+        if name in('minecraft:campfire','minecraft:soul_campfire'):
+            from projection_completion import block_state
+            _,properties=block_state(row['state'])
+            heat=properties.get('lit')!='false' and properties.get('waterlogged')!='true'
+        if not heat:continue
         x,y,z=row['pos']
         for dy in range(1,4):
             point=(x,y+dy,z);above=observed.get(point)

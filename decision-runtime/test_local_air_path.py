@@ -11,6 +11,18 @@ from material_jobs.protocol import JobBlocked
 
 
 class LocalAirPathTests(unittest.TestCase):
+    def test_lit_campfire_low_column_is_avoided_even_without_printing(self):
+        for name in ['campfire','soul_campfire']:
+            rows=[{'pos':[1,59,0],'state':'Block{minecraft:'+name+'}[lit=true,waterlogged=false]','solid':False,'fluid':False}]
+            route=plan(rows,[.5,61.1,.5],[2.5,61.1,.5],[0,58,0],[2,67,0],foot_offset=.1)
+            self.assertTrue(any(p[1]>=63 for p in route))
+            with self.assertRaises(JobBlocked):plan(rows,[.5,61.1,.5],[1.5,61.1,.5],[0,58,0],[2,67,0],foot_offset=.1)
+    def test_unlit_campfire_and_full_shield_leave_safe_low_route_available(self):
+        base={'pos':[1,59,0],'state':'Block{minecraft:soul_campfire}[lit=false,waterlogged=false]','solid':False,'fluid':False}
+        for rows in [[base],[{**base,'state':'Block{minecraft:soul_campfire}[lit=true,waterlogged=false]'},
+                             {'pos':[1,60,0],'state':'Block{minecraft:cobblestone}','solid':True,'fluid':False}]]:
+            route=plan(rows,[.5,61.1,.5],[2.5,61.1,.5],[0,58,0],[2,67,0],foot_offset=.1)
+            self.assertTrue(all(p[1]==61.1 for p in route))
     def test_low_air_route_rises_before_crossing_magma_column(self):
         rows=[{'pos':[1,61,0],'state':'Block{minecraft:magma_block}','solid':True,'fluid':False}]
         route=plan(rows,[.5,63.1,.5],[2.5,63.1,.5],[0,60,0],[2,69,0],foot_offset=.1)
