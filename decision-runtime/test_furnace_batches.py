@@ -74,11 +74,28 @@ class FurnaceBatchTest(unittest.TestCase):
     self.assertTrue(json.loads(path.read_text())['complete']);self.assertEqual(0,client.state['menu']['cursor']['count'])
     with self.assertRaisesRegex(RuntimeError,'reconciled'):
      load(client,[pos],'minecraft:sand','minecraft:glass',8,path)
+ def test_raw_iron_batch_requires_conservation_and_collects_once(self):
+  with tempfile.TemporaryDirectory() as d:
+   client=GlassBankClient(raw=(8,),coal=(1,));path=Path(d)/'iron.json';pos=[1,2,3]
+   client.state['menu']['slots'][3]['item']='minecraft:raw_iron'
+   with patch('furnace_batches.snapshot',side_effect=lambda c,p:c.open(p)):
+    job=load(client,[pos],'minecraft:raw_iron','minecraft:iron_ingot',8,path)
+    self.assertEqual((8,1,'loaded'),tuple(job['furnaces'][0][k]for k in ('loaded_source','loaded_fuel','stage')))
+    furnace=client.furnaces[tuple(pos)]
+    furnace[0].update(item='minecraft:raw_iron',count=4);furnace[1].update(item='minecraft:air',count=0);furnace[2].update(item='minecraft:iron_ingot',count=4)
+    self.assertFalse(collect(client,path))
+    furnace=client.furnaces[tuple(pos)];furnace[0].update(item='minecraft:air',count=0);furnace[2].update(item='minecraft:iron_ingot',count=7)
+    with self.assertRaisesRegex(RuntimeError,'balance|changed|conserv'):
+     collect(client,path)
+    furnace=client.furnaces[tuple(pos)];furnace[2].update(count=8)
+    self.assertTrue(collect(client,path));self.assertEqual(8,sum(v['count']for v in client.state['menu']['slots'][3:]if v['item']=='minecraft:iron_ingot'))
+    self.assertTrue(collect(client,path));self.assertEqual(8,sum(v['count']for v in client.state['menu']['slots'][3:]if v['item']=='minecraft:iron_ingot'))
+    self.assertTrue(json.loads(path.read_text())['complete'])
  def test_unapproved_smelting_pair_rejected_before_opening_or_journal(self):
   with tempfile.TemporaryDirectory()as d:
    path=Path(d)/'unknown.json'
    with patch('furnace_batches.snapshot')as opened:
-    with self.assertRaises(ValueError):load(FurnaceBankClient(),[[1,2,3]],'minecraft:raw_iron','minecraft:iron_ingot',8,path)
+    with self.assertRaises(ValueError):load(FurnaceBankClient(),[[1,2,3]],'minecraft:raw_gold','minecraft:gold_ingot',8,path)
     opened.assert_not_called();self.assertFalse(path.exists())
  def test_parallel_distribution_preserves_total(self):
   self.assertEqual([20,20,20,20,19,19],distribution(118,6))
