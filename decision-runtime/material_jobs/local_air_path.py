@@ -40,6 +40,17 @@ def plan(rows, start, target, low, high, *, max_straight=16, foot_offset=0):
     for row in rows:
         if block_id(row).endswith(('_fence','_fence_gate','_wall')):
             x,y,z=row['pos'];blocked.add((x,y+1,z))
+    # A short hover above magma has produced real HOT_FLOOR damage with the
+    # current flight setup. Keep low air routes out of that column, unless an
+    # observed full block shields the player from the magma below it.
+    observed={tuple(r['pos']):r for r in rows}
+    for row in rows:
+        if block_id(row)!='minecraft:magma_block':continue
+        x,y,z=row['pos']
+        for dy in range(1,4):
+            point=(x,y+dy,z);above=observed.get(point)
+            if above and above.get('solid')is True and not above.get('fluid') and block_id(above)!='minecraft:magma_block':break
+            blocked.add(point)
     first=tuple(math.floor(v)for v in start);last=tuple(math.floor(v)for v in target)
     # Standing on a verified partial collision surface is not standing inside
     # its full voxel. Start above that surface; do not lower feet to grid+.2.
@@ -92,7 +103,7 @@ def move(client,target,out,*,max_straight=16,foot_offset=0,max_horizontal=12,exa
             or any(type(v)not in(int,float)or not math.isfinite(v)for v in target)
             or math.hypot(target[0]-start[0],target[2]-start[2])>max_horizontal
             or abs(target[1]-start[1])>64):raise JobBlocked('局部空气接近点超出有界范围')
-    low=[math.floor(min(start[0],target[0]))-3,max(-64,math.floor(min(start[1],target[1]))-2),math.floor(min(start[2],target[2]))-3]
+    low=[math.floor(min(start[0],target[0]))-3,max(-64,math.floor(min(start[1],target[1]))-3),math.floor(min(start[2],target[2]))-3]
     high=[math.floor(max(start[0],target[0]))+3,min(319,math.floor(max(start[1],target[1]))+3),math.floor(max(start[2],target[2]))+3]
     if scan_bounds is not None:
         if (not isinstance(scan_bounds,dict) or set(scan_bounds)!={'min','max'}

@@ -11,6 +11,20 @@ from material_jobs.protocol import JobBlocked
 
 
 class LocalAirPathTests(unittest.TestCase):
+    def test_low_air_route_rises_before_crossing_magma_column(self):
+        rows=[{'pos':[1,61,0],'state':'Block{minecraft:magma_block}','solid':True,'fluid':False}]
+        route=plan(rows,[.5,63.1,.5],[2.5,63.1,.5],[0,60,0],[2,69,0],foot_offset=.1)
+        self.assertTrue(any(p[1]>=65 for p in route))
+        for a,b in zip(route,route[1:]):
+            if min(a[0],b[0])<=1.5<=max(a[0],b[0]):self.assertGreaterEqual(min(a[1],b[1]),65)
+    def test_current_recorded_magma_column_is_not_an_air_destination(self):
+        rows=[{'pos':[1,61,0],'state':'Block{minecraft:magma_block}','solid':True,'fluid':False}]
+        with self.assertRaises(JobBlocked):plan(rows,[.5,63.1,.5],[1.5,63.1,.5],[0,60,0],[2,69,0],foot_offset=.1)
+    def test_completed_full_floor_shields_air_route_from_deeper_magma(self):
+        rows=[{'pos':[1,61,0],'state':'Block{minecraft:magma_block}','solid':True,'fluid':False},
+              {'pos':[1,62,0],'state':'Block{minecraft:cobblestone}','solid':True,'fluid':False}]
+        route=plan(rows,[.5,63.1,.5],[2.5,63.1,.5],[0,60,0],[2,69,0],foot_offset=.1)
+        self.assertTrue(all(p[1]==63.1 for p in route))
     def test_high_hover_recenters_before_entering_two_block_ceiling(self):
         position=[.5,.25,.5];ceiling=[{'pos':[x,2,0],'state':'Block{minecraft:stone}'}for x in(1,2)]
         c=SimpleNamespace(world='w',last='nav',status=lambda:{'pos':list(position)})
