@@ -27,6 +27,14 @@ def place(c,target,support,face,key,out):
     try:reply=c.request('interact',pos=support,face=face,expected_state=expected_support,expected_hand='minecraft:observer',projected_observer_place=True,place_pos=target,placement_key=key)
     finally:book['request_id']=c.last;write_json(out/'progress.json',book)
     write_json(out/'native-reply.json',reply)
+    # Protocol1's unique visible-face rejection precedes active rotation and every useItemOn.
+    # It is a known no-input terminal, not a timeout or a failed post-input prediction.
+    if (reply.get('id')==c.last and reply.get('world_session')==c.world and reply.get('phase')=='error'
+            and reply.get('projected_observer_place_protocol')==1
+            and reply.get('detail')=='Target interaction face is occluded or out of reach'):
+        book.update(pending=None,rejected_before_use=True,admission_scope='protocol1_native_visible_face_precheck_before_rotation_and_use')
+        write_json(out/'progress.json',book)
+        raise RuntimeError('Observer support is not visible; no use dispatched and no automatic retry')
     if reply.get('id')!=c.last or reply.get('world_session')!=c.world or reply.get('phase')!='done':raise RuntimeError('Original observer use unresolved; preserve identity without replay')
     end=time.monotonic()+12;frames=[]
     while len(frames)<3:
