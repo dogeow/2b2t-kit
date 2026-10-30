@@ -38,7 +38,14 @@ def plan(rows, start, target, low, high, *, max_straight=16, foot_offset=0):
     # inside the voxel above the stored block; sparse air there is not clear.
     from .acquisition import block_id
     for row in rows:
-        if block_id(row).endswith(('_fence','_fence_gate','_wall')):
+        name=block_id(row)
+        tall=name.endswith(('_fence','_wall'))
+        if name.endswith('_fence_gate'):
+            from projection_completion import block_state
+            # An open gate has no collision shape. Keep its stored voxel as an
+            # obstacle, but do not invent a collider in the AIR cell above it.
+            tall=block_state(row.get('state',''))[1].get('open')!='true'
+        if tall:
             x,y,z=row['pos'];blocked.add((x,y+1,z))
     # Low flight over magma and lit campfires has produced real damage with the
     # current flight setup. Keep low air routes out of that column, unless an
