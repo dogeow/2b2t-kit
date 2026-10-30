@@ -4670,6 +4670,7 @@ public final class AutomationBridge {
         j.addProperty("projected_bent_channel_protocol",1);
         j.addProperty("projected_bent_channel_seed_protocol",1);
         j.addProperty("projected_observer_place_protocol",1);
+        j.addProperty("projected_trapdoor_waterlog_protocol",1);
         j.addProperty("projected_water_channel_protocol",1);
         j.addProperty("projected_channel_service_ceiling_protocol",1);
         j.addProperty("projected_waterlog_drain_protocol",1);

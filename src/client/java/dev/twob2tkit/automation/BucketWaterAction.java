@@ -49,6 +49,7 @@ final class BucketWaterAction {
     private final ProjectedSourceColumnGuard projectedSources;
     private final ProjectedSourceColumnSupplyGuard projectedSupply;
     private final ProjectedBentChannelGuard projectedBent;
+    private final ProjectedTrapdoorWaterlog projectedWaterlog;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
         mode=switch(text(request,"op")){case "bucket_fill"->BucketWaterPolicy.Mode.FILL;case "bucket_place"->BucketWaterPolicy.Mode.PLACE;default->throw new IllegalArgumentException("Only water bucket fill/place are supported");};
@@ -77,11 +78,14 @@ final class BucketWaterAction {
             throw new IllegalArgumentException("Bent overflow is an exclusive place-only operation");
         if(!bent&&request.has("projected_bent_channel_seed"))throw new IllegalArgumentException("Seed requires explicit bent-channel mode");
         projectedBent=bent?new ProjectedBentChannelGuard(c,request,target):null;
+        boolean waterlog=ProjectedTrapdoorWaterlog.requested(request);
+        if(waterlog&&!ProjectedTrapdoorRowPolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent))throw new IllegalArgumentException("Trapdoor waterlogging is an exclusive place-only operation");
+        projectedWaterlog=waterlog?new ProjectedTrapdoorWaterlog(c,request,target):null;
         if(expectedState.isBlank())throw new IllegalArgumentException("An exact fresh target state is required");
         support=mode==BucketWaterPolicy.Mode.PLACE?position(request,"support"):target;
         face=mode==BucketWaterPolicy.Mode.PLACE?Direction.valueOf(text(request,"face").toUpperCase(java.util.Locale.ROOT)):null;
         expectedSupport=mode==BucketWaterPolicy.Mode.PLACE?text(request,"expected_support_state"):"";
-        if(mode==BucketWaterPolicy.Mode.PLACE&&(!support.relative(face).equals(target)||expectedSupport.isBlank()))
+        if(mode==BucketWaterPolicy.Mode.PLACE&&((projectedWaterlog!=null?!support.equals(target)||face!=Direction.DOWN:!support.relative(face).equals(target))||expectedSupport.isBlank()))
             throw new IllegalArgumentException("Bucket placement needs the exact adjacent support and face");
         this.world=world;this.requestId=requestId;this.ownerCurrent=ownerCurrent;
         level=c.level;connection=c.getConnection();selected=c.player.getInventory().getSelectedSlot();health=c.player.getHealth();
@@ -132,6 +136,7 @@ final class BucketWaterAction {
             &&c.level.getBlockState(pos).isCollisionShapeFullBlock(c.level,pos);
     }
     private boolean boundedHole(Minecraft c,boolean airRequired) {
+        if(projectedWaterlog!=null){projectedWaterlog.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         if(projectedBent!=null){projectedBent.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         if(projectedSources!=null){projectedSources.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         if(projectedColumn!=null){projectedColumn.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
@@ -156,7 +161,7 @@ final class BucketWaterAction {
             else if(!plainSource(c.level.getBlockState(target))||c.level.getBlockEntity(target)!=null)
                 throw new IllegalStateException("Bucket fill requires a plain level-0 water source, never flowing water, waterlogged blocks or lava");
         }else if(!boundedHole(c,true)||!serverChunk(c,support)||!c.level.getBlockState(support).toString().equals(expectedSupport)
-                ||c.level.getBlockState(support).getBlock() instanceof LiquidBlockContainer)
+                ||projectedWaterlog==null&&c.level.getBlockState(support).getBlock() instanceof LiquidBlockContainer)
             throw new IllegalStateException("Bucket place needs actual air in a dry full-block basin with bottom and four sides, and the exact non-waterloggable support");
         if(!c.level.getEntities((Entity)null,new AABB(target),e->e.isAlive()
                 &&SourceColumnSupplyPolicy.entityBlocks(mode==BucketWaterPolicy.Mode.FILL,projectedSupply!=null,e==c.player)).isEmpty())
@@ -186,7 +191,7 @@ final class BucketWaterAction {
         Vec3 eye=c.player.getEyePosition();Vec3 end=eye.add(c.player.calculateViewVector(c.player.getXRot(),c.player.getYRot()).scale(c.player.blockInteractionRange()));
         BlockHitResult hit=c.level.clip(new ClipContext(eye,end,ClipContext.Block.OUTLINE,
             mode==BucketWaterPolicy.Mode.FILL?ClipContext.Fluid.SOURCE_ONLY:ClipContext.Fluid.NONE,c.player));
-        if(!BlockFaceTarget.matches(hit,support,face)||mode==BucketWaterPolicy.Mode.PLACE&&!hit.getBlockPos().relative(hit.getDirection()).equals(target))
+        if(!BlockFaceTarget.matches(hit,support,face)||mode==BucketWaterPolicy.Mode.PLACE&&(projectedWaterlog!=null?!hit.getBlockPos().equals(target):!hit.getBlockPos().relative(hit.getDirection()).equals(target)))
             throw new IllegalStateException("Fresh vanilla bucket ray no longer matches the selected target");
         entityRayClear(c,hit.getLocation());
         if(!c.level.mayInteract(c.player,hit.getBlockPos())||!c.player.mayUseItemAt(hit.getBlockPos().relative(hit.getDirection()),hit.getDirection(),c.player.getMainHandItem()))
@@ -199,7 +204,7 @@ final class BucketWaterAction {
             throw new IllegalStateException("One bucket use was sent but not accepted; outcome unknown, do not retry");
     }
     void serverBlock(Minecraft c,BlockPos pos,BlockState state,boolean applied,long tick) {
-        boolean expected=mode==BucketWaterPolicy.Mode.PLACE?plainSource(state):projectedDrain!=null?projectedDrain.expectedPacket(state):BucketWaterPolicy.fillResult(state.isAir(),state.is(Blocks.WATER));
+        boolean expected=mode==BucketWaterPolicy.Mode.PLACE?(projectedWaterlog!=null?projectedWaterlog.expectedPacket(state):plainSource(state)):projectedDrain!=null?projectedDrain.expectedPacket(state):BucketWaterPolicy.fillResult(state.isAir(),state.is(Blocks.WATER));
         if(mode==BucketWaterPolicy.Mode.FILL&&receipt.sent()&&sameContext(c)&&pos.equals(target))
             sourceEffect=projectedDrain!=null?(expected?"waterlogged_block_drained":"unexpected_or_refilled_waterlogged_block")
                 :state.isAir()?"removed":plainSource(state)?"preserved_or_regenerated":state.is(Blocks.WATER)?"changed_to_flowing":"unexpected_server_state";
@@ -243,6 +248,8 @@ final class BucketWaterAction {
         out.addProperty("expected_state_before",expectedState);
         out.addProperty("projected_bent_channel",projectedBent!=null);
         out.addProperty("projected_bent_channel_seed",projectedBent!=null&&projectedBent.seed());
+        out.addProperty("projected_trapdoor_waterlog",projectedWaterlog!=null);
+        if(projectedWaterlog!=null)out.addProperty("expected_wet_state",projectedWaterlog.expectedWet());
         out.addProperty("projected_water_column",projectedColumn!=null);
         out.addProperty("projected_source_column",projectedSources!=null);
         out.addProperty("projected_source_column_supply",projectedSupply!=null);
