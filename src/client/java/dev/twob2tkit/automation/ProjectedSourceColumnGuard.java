@@ -7,6 +7,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Half;
@@ -65,6 +67,33 @@ final class ProjectedSourceColumnGuard {
         for(int y=bounds.minY();y<=bounds.maxY();y++)for(int x=bounds.minX();x<=bounds.maxX();x++){
             var p=new BlockPos(x,y,bounds.minZ());if(level(c.level.getBlockState(p))==0)originalSources.add(p);
         }
+    }
+    /** Scope the existing hostile admission check only after re-proving the entire source chamber. */
+    static boolean shieldedWorkspace(Minecraft c,JsonObject request){
+        try{
+            if(!"bucket_place".equals(ProjectionLoadPolicy.text(request,"op",64))||!requested(request)
+                    ||c.player==null||c.level==null)return false;
+            var target=point(request.get("pos"));var guard=new ProjectedSourceColumnGuard(c,request,target);
+            guard.require(c,level(c.level.getBlockState(target))!=0);
+            var p=c.player;var body=p.getBoundingBox();var b=guard.bounds;
+            boolean horizontal=body.minX>=b.minX()&&body.maxX<=b.maxX()+1.0
+                &&body.minZ>=b.minZ()&&body.maxZ<=b.minZ()+1.0;
+            long now=System.currentTimeMillis(),hurt=dev.twob2tkit.KitClient.config().lastAttackTimeEpochMillis;
+            boolean quiet=hurt>=0&&hurt<=now&&(hurt==0||now-hurt>=5000);
+            boolean projectileFree=c.level.getEntities(p,body.inflate(24),e->e instanceof Projectile projectile
+                &&e.isAlive()&&projectile.getOwner()!=p&&e.getDeltaMovement().lengthSqr()>.0001).isEmpty();
+            var work=new SourceColumnThreatPolicy.Workspace(true,horizontal,body.minY>=b.minY(),
+                body.minY>=b.minY()&&body.maxY<=b.maxY()+1.0,quiet,projectileFree);
+            var threats=new ArrayList<SourceColumnThreatPolicy.Threat>();
+            for(var e:c.level.getEntities(p,body.inflate(16),e->e instanceof net.minecraft.world.entity.monster.Enemy&&e.isAlive())){
+                String type=BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString();
+                boolean supported=type.equals("minecraft:zombie")||type.equals("minecraft:skeleton")||type.equals("minecraft:slime");
+                boolean current=e.level()==c.level&&c.level.getEntity(e.getId())==e&&loaded(c,e.blockPosition());
+                threats.add(new SourceColumnThreatPolicy.Threat(current,supported,type.equals("minecraft:skeleton"),
+                    p.hasLineOfSight(e),e.getBoundingBox().maxY<=b.minY(),body.minY-e.getBoundingBox().maxY));
+            }
+            return SourceColumnThreatPolicy.permit(work,threats);
+        }catch(RuntimeException unproved){return false;}
     }
     private static int level(BlockState s){return s.isAir()?-1:s.is(Blocks.WATER)?s.getValue(LiquidBlock.LEVEL):-2;}
     private static boolean loaded(Minecraft c,BlockPos p){

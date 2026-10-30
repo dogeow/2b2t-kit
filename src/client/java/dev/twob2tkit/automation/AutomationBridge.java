@@ -3736,7 +3736,7 @@ public final class AutomationBridge {
     }
     private static JsonObject lastBucketAdmissionRejection;
     private static JsonObject bucketAdmissionDiagnostics(Minecraft c,JsonObject request){
-        var out=new JsonObject();out.addProperty("protocol",1);out.addProperty("time",System.currentTimeMillis());
+        var out=new JsonObject();out.addProperty("protocol",2);out.addProperty("input_sent",false);out.addProperty("time",System.currentTimeMillis());
         out.addProperty("request_id",str(request,"id"));out.addProperty("world_session",session(c));
         out.addProperty("material_owner_current",currentMaterialRequest(c,request));
         out.addProperty("heartbeat_age_ms",System.currentTimeMillis()-lastSupervisionHeartbeat);
@@ -3765,7 +3765,7 @@ public final class AutomationBridge {
             ||System.currentTimeMillis()-lastSupervisionHeartbeat>15000
             ||!guardArmed()||!pveOnly()||guardBusy||KitKeys.manualMovementDown(c)
             ||c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<8
-            ||loadedHostileNearby(c)||c.player.isDeadOrDying()
+            ||(loadedHostileNearby(c)&&!ProjectedSourceColumnGuard.shieldedWorkspace(c,r))||c.player.isDeadOrDying()
             ||dev.twob2tkit.combat.EmergencyExit.held(c)
             ||c.gameMode.getPlayerMode()!=net.minecraft.world.level.GameType.SURVIVAL)return false;
         try{guard(c,r);return true;}catch(RuntimeException changed){return false;}
@@ -4657,6 +4657,7 @@ public final class AutomationBridge {
         if(lastMapCreation!=null)j.add("last_map_creation",lastMapCreation.deepCopy());
         j.addProperty("projected_water_column_protocol",1);
         j.addProperty("projected_source_column_protocol",1);
+        j.addProperty("projected_source_column_shielded_work_protocol",1);
         j.addProperty("projected_water_channel_protocol",1);
         j.addProperty("projected_channel_service_ceiling_protocol",1);
         j.addProperty("projected_waterlog_drain_protocol",1);

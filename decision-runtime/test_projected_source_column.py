@@ -1,6 +1,6 @@
 import copy,json,tempfile,unittest
 from pathlib import Path
-from projected_source_column import AIR,SOURCE,geometry,envelope,source_receipt,observed_after,place
+from projected_source_column import AIR,SOURCE,geometry,envelope,source_receipt,observed_after,place,admission_rejected_before_use,SourceAdmissionRejected
 LOW=[10,59,20];HIGH=[12,67,20];WORLD='current-world';KEY='locked-fixture'
 UP='Block{minecraft:dropper}[facing=up,triggered=false]';GLASS='Block{minecraft:glass}'
 
@@ -40,6 +40,11 @@ class Fake:
         self.calls.append(op)
         if op=='projection_model':return {'projection_model':self.model}
         if op=='bucket_place':
+            if getattr(self,'reject_before_use',False):
+                self.last='one'
+                return {'id':'one','world_session':WORLD,'phase':'error','last_bucket_admission_rejection':{
+                    'protocol':2,'request_id':'one','world_session':WORLD,'input_sent':False,'material_owner_current':True,
+                    'bucket_task_active':False,'active_request_id':'','active_command':'','navigation_active':False}}
             self.uses+=1;self.last='one';change(self.frame,kw['pos'],SOURCE);r=receipt(self.last,kw['pos'])
             if self.uncertain:r['phase']='waiting'
             return r
@@ -95,6 +100,25 @@ class SourceColumnTest(unittest.TestCase):
         with tempfile.TemporaryDirectory()as d:
             p=place(c,LOW,HIGH,[10,59,20],[9,59,20],'east',KEY,Path(d)/'one');self.assertTrue(p['complete']);self.assertEqual(len(p['observations']),2)
         self.assertEqual(c.uses,1)
+    def test_exact_new_admission_refusal_is_not_an_unknown_bucket_use(self):
+        d={'protocol':2,'request_id':'one','world_session':WORLD,'input_sent':False,'material_owner_current':True,
+           'bucket_task_active':False,'active_request_id':'','active_command':'','navigation_active':False}
+        r={'id':'one','world_session':WORLD,'phase':'error','last_bucket_admission_rejection':d}
+        self.assertTrue(admission_rejected_before_use(r,'one',WORLD))
+        for key,value in [('request_id','old'),('world_session','old'),('input_sent',True),('protocol',1),('bucket_task_active',True),('material_owner_current',False)]:
+            bad=copy.deepcopy(r);bad['last_bucket_admission_rejection'][key]=value
+            self.assertFalse(admission_rejected_before_use(bad,'one',WORLD))
+        r['bucket_water']={'request_id':'old','use_count':1}
+        self.assertTrue(admission_rejected_before_use(r,'one',WORLD))
+        r['bucket_water']['request_id']='one'
+        self.assertFalse(admission_rejected_before_use(r,'one',WORLD))
+    def test_structured_no_input_refusal_clears_only_its_pending_use_and_never_retries(self):
+        m,f=fixture();c=Fake(m,f);c.reject_before_use=True
+        with tempfile.TemporaryDirectory()as d:
+            out=Path(d)/'one'
+            with self.assertRaises(SourceAdmissionRejected):place(c,LOW,HIGH,[10,59,20],[9,59,20],'east',KEY,out)
+            record=json.loads((out/'progress.json').read_text());self.assertIsNone(record['pending']);self.assertTrue(record['rejected_before_use'])
+        self.assertEqual(c.uses,0);self.assertEqual(c.calls.count('bucket_place'),1)
     def test_unknown_use_keeps_original_identity_and_is_never_repeated(self):
         m,f=fixture();c=Fake(m,f);c.uncertain=True
         with tempfile.TemporaryDirectory()as d:

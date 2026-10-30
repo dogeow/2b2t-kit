@@ -14,6 +14,22 @@ WATER=re.compile(r'Block\{minecraft:water\}\[level=([0-9]|1[0-5])\]')
 DROPPER=re.compile(r'Block\{minecraft:dropper\}\[facing=up,triggered=(true|false)\]')
 
 
+class SourceAdmissionRejected(RuntimeError):
+    """This exact new request was refused before input; not a missing use receipt."""
+
+
+def admission_rejected_before_use(reply,request,world):
+    diagnostic=reply.get('last_bucket_admission_rejection')or{}
+    ack=reply.get('bucket_water')or{}
+    return (reply.get('id')==request and reply.get('world_session')==world and reply.get('phase')=='error'
+            and diagnostic.get('request_id')==request and diagnostic.get('world_session')==world
+            and type(diagnostic.get('protocol'))is int and diagnostic['protocol']>=2
+            and diagnostic.get('input_sent')is False and diagnostic.get('material_owner_current')is True
+            and diagnostic.get('bucket_task_active')is False and diagnostic.get('active_request_id')==''
+            and diagnostic.get('active_command')=='' and diagnostic.get('navigation_active')is False
+            and not(ack.get('request_id')==request and ack.get('use_count',0)>0))
+
+
 def envelope(low,high):
     if (not isinstance(low,list)or not isinstance(high,list)or len(low)!=3 or len(high)!=3
             or any(type(x)is not int or abs(x)>=30000000 for x in low+high)
@@ -128,6 +144,10 @@ def place(c,low,high,target,support,face,placement_key,out):
     finally:
         book['request_id']=c.last;write_json(out/'progress.json',book)
     write_json(out/'native-reply.json',reply)
+    if admission_rejected_before_use(reply,c.last,c.world):
+        book.update(pending=None,rejected_before_use=True,admission_diagnostic=reply['last_bucket_admission_rejection'])
+        write_json(out/'progress.json',book)
+        raise SourceAdmissionRejected(reply.get('detail','Native admission refused before input'))
     if not source_receipt(reply,c.last,c.world,target):raise RuntimeError('Original water use unconfirmed; inspect it and never resend')
     book['pending']=None;book['source_confirmed']=True;write_json(out/'progress.json',book);stamps=[];deadline=time.monotonic()+10
     while len(stamps)<2:
