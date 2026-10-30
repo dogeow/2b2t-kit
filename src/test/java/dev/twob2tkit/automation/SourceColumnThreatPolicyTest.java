@@ -22,9 +22,15 @@ class SourceColumnThreatPolicyTest {
     @Test void creepersUnsupportedMobsVisibilityAndFloorLevelThreatsStillBlock(){
         for(var t:List.of(new SourceColumnThreatPolicy.Threat(true,false,false,false,true,12),
                 new SourceColumnThreatPolicy.Threat(true,true,false,true,true,12),
-                new SourceColumnThreatPolicy.Threat(true,true,true,false,false,12),
                 new SourceColumnThreatPolicy.Threat(false,true,true,false,true,12)))
             assertFalse(SourceColumnThreatPolicy.permit(work(true),List.of(t)));
+    }
+    @Test void recordedSameLevelZombieOutsideIntactGlassDoesNotBlockAFullyEnclosedActor(){
+        var zombie=new SourceColumnThreatPolicy.Threat(true,true,false,false,false,.90);
+        assertTrue(SourceColumnThreatPolicy.permit(work(true),List.of(zombie)));
+        assertFalse(SourceColumnThreatPolicy.permit(work(false),List.of(zombie)));
+        assertFalse(SourceColumnThreatPolicy.permit(work(true),List.of(new SourceColumnThreatPolicy.Threat(true,true,false,false,false,-.01))));
+        assertFalse(SourceColumnThreatPolicy.permit(work(true),List.of(new SourceColumnThreatPolicy.Threat(true,true,false,true,false,.90))));
     }
     @Test void anySingleUnprovedThreatBlocksTheEntireSet(){
         assertFalse(SourceColumnThreatPolicy.permit(work(true),List.of(below(false,6),new SourceColumnThreatPolicy.Threat(true,false,false,false,true,8))));

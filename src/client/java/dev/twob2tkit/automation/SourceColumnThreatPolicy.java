@@ -13,9 +13,9 @@ final class SourceColumnThreatPolicy {
         if(work==null||!work.shellVerified||!work.horizontalContained||!work.atOrAboveFloor
                 ||!work.quiet||!work.projectileFree||threats==null)return false;
         for(var threat:threats){
-            if(threat==null||!threat.current||!threat.supported||threat.visible||!threat.belowFloor
+            if(threat==null||!threat.current||!threat.supported||threat.visible
                     ||!Double.isFinite(threat.clearance)||threat.clearance<0)return false;
-            if(!work.verticallyEnclosed&&threat.clearance<(threat.ranged?12:6))return false;
+            if(!work.verticallyEnclosed&&(!threat.belowFloor||threat.clearance<(threat.ranged?12:6)))return false;
         }
         return true;
     }
