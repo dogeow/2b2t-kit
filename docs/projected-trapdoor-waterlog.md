@@ -22,3 +22,9 @@ The clicked cell itself receives its source water through vanilla SimpleWaterlog
 Preflight journals start with no pending use. Once dispatch begins, an uncertain identity remains pending without retry. Explicit protocol2 no-input admission rejection can be retired; confirmed native use with failed later state proof remains recorded as confirmed but not complete. Refill or later geometry changes invalidate current completion evidence without erasing the old receipt.
 
 Validation:144 Java tests against the candidate artifact and52 Python tests passed. These cover all seals/source/control flags, exclusive mode, native one-use/receipt wiring, wrong-shape/plain-water rejection, old-host and already-wet rejection, preserved unknown identities and new external water detection. Deployment and live water transfer are separate acceptance stages.
+
+## Live acceptance
+
+Host31.10 completed a closed-loop small batch: five original trapdoors waterlogged, three wrong wet top slabs drained and their water reused. Each transfer had the native independent packet receipts and three settled local frames. All three owned service hatches were restored to their original half-slab states. A later whole-machine audit confirmed169 trapdoors and191 wrong wet top slabs still remaining, so this is not full-row or whole-farm acceptance. The original27 source cells and0..7 bent channel were reverified unchanged.
+
+For a floor drain, use a dry adjacent stance outside the target cell's entity box, with a fresh unobstructed source ray. At a supported floor, the air-route primitive now handles1e-7 rounding contact consistently; it still rejects real liquid/solid penetration. Final related host/path/water regression set:164 Java and150 Python tests passed.
