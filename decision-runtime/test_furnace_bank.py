@@ -25,6 +25,9 @@ class FurnaceResumeTest(unittest.TestCase):
    def status(inner):return {'inventory':[{'slot':0,'item':'minecraft:furnace','count':inner.stock}], 'pos':[9.5,64,9.5],'time':123}
    def checked(inner,op,**args):inner.actions.append((op,args));return inner.status()
    def request(inner,op,**args):
+    if op=='interact':
+     floor=args['pos'];self.assertEqual('minecraft:furnace',args['expected_hand']);self.assertEqual('up',args['face']);self.assertEqual(inner.blocks[tuple(floor)]['state'],args['expected_state']);pos=[floor[0],floor[1]+1,floor[2]]
+     self.assertNotIn(tuple(pos),inner.blocks);inner.blocks[tuple(pos)]={'pos':pos,'state':'Block{minecraft:furnace}[facing=north,lit=false]','solid':True,'block_entity':True};inner.stock-=1;inner.actions.append(('place',pos));return {'phase':'done',**inner.status()}
     self.assertEqual('scan',op)
     return {'blocks':[r for p,r in inner.blocks.items() if all(a<=n<=b for a,n,b in zip(args['min'],p,args['max']))]}
   self.client=Client()
@@ -44,6 +47,19 @@ class FurnaceResumeTest(unittest.TestCase):
   self.client.checked=checked
   with patch('furnace_bank.use_with_margin',side_effect=self.place):result=build(self.client,[self.positions[0]],self.path)
   self.assertTrue(result['complete']);moves=[a for a in self.client.actions if a[0]=='navigate'];self.assertEqual(1,len(moves));self.assertEqual([.5,65.25,.5],moves[0][1]['target']);self.assertTrue(moves[0][1]['air_only']);self.assertEqual(1,len([a for a in self.client.actions if a[0]=='place']))
+ def test_already_over_scanned_column_places_once_without_redundant_depot_route(self):
+  from unittest.mock import patch
+  from furnace_bank import build
+  base=self.client.status;pose={'pos':[.5,67.1,.5],'flight':True,'health':20}
+  self.client.status=lambda:{**base(),**pose}
+  old=self.client.checked
+  def checked(op,**args):
+   if op=='navigate':pose['pos']=args['target']
+   return old(op,**args)
+  self.client.checked=checked
+  with patch('furnace_bank.use_with_margin',side_effect=AssertionError('No second depot planner'))as generic:
+   result=build(self.client,[self.positions[0]],self.path)
+  self.assertTrue(result['complete']);generic.assert_not_called();self.assertEqual(1,len([a for a in self.client.actions if a[0]=='navigate']));self.assertEqual(1,len([a for a in self.client.actions if a[0]=='place']));self.assertEqual(2,self.client.stock)
  def test_grounded_or_manual_player_is_not_lifted_or_placed_through(self):
   import json
   from unittest.mock import patch

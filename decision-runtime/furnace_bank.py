@@ -5,7 +5,7 @@ from pathlib import Path
 
 from build_supervisor import stocks
 from kit_runtime.journal import write_json
-from projection_wood import use_with_margin
+from projection_wood import use_with_margin, PRE_USE_ERRORS
 from work_access import ApproachUnavailable
 
 
@@ -166,7 +166,29 @@ def build(client, positions, journal, *, resume=False):
             write_json(journal, record)
 
         try:
-            use_with_margin(client, floor, ground['state'], 'minecraft:furnace', ('up',), before_use)
+            state=client.status();point=state['pos']
+            ready_column=(state.get('flight') is True and state.get('health',0)>=19
+                and not state.get('manual_movement') and not state.get('under_water')
+                and abs(point[0]-pos[0]-.5)<=.15 and abs(point[2]-pos[2]-.5)<=.15
+                and pos[1]<=point[1]<=pos[1]+4)
+            if ready_column:
+                # We are already over this fully scanned empty pad. Use its
+                # exact safe column instead of invoking a depot route again.
+                target=[pos[0]+.5,pos[1]+1.25,pos[2]+.5]
+                if any(abs(point[i]-target[i])>.05 for i in range(3)):
+                    client.checked('navigate',target=target,arrival=.05,seconds=10,air_only=True)
+                actual=client.status()['pos']
+                if any(abs(actual[i]-target[i])>.2 for i in range(3)) or actual[1]<pos[1]+1.05:
+                    raise RuntimeError('Do not place furnace through the player')
+                before_use()
+                reply=client.request('interact',pos=floor,face='up',
+                    expected_state=ground['state'],expected_hand='minecraft:furnace')
+                if reply.get('phase')!='done':
+                    if reply.get('phase')=='error' and reply.get('detail') in PRE_USE_ERRORS:
+                        raise ApproachUnavailable(reply['detail'])
+                    raise RuntimeError(reply.get('detail','Furnace use unconfirmed; never replay'))
+            else:
+                use_with_margin(client, floor, ground['state'], 'minecraft:furnace', ('up',), before_use)
         except ApproachUnavailable:
             # This helper raises ApproachUnavailable only when navigation or
             # explicit pre-use rejections prevented every interaction. All
