@@ -23,7 +23,7 @@ final class MaterialAirRoute {
         if(c.player==null||c.level==null||!c.player.isUnderWater()
                 ||c.player.getHealth()<19||currentWorld.isBlank()||currentJob.isBlank()
                 ||!Double.isFinite(target.x)||!Double.isFinite(target.y)||!Double.isFinite(target.z)
-                ||target.y<c.level.getSeaLevel()+1||target.y>c.level.getSeaLevel()+4
+                ||!MaterialAirReturnTargetPolicy.allowed(c.player.getY(),target.y,c.level.getMinY(),c.level.getMaxY())
                 ||Math.hypot(target.x-c.player.getX(),target.z-c.player.getZ())>.75)
             throw new IllegalStateException("Material air return requires a healthy submerged player and nearby open air");
         if(!sampleWorld.equals(currentWorld)||!sampleGear.equals(helmet)
