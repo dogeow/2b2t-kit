@@ -4,6 +4,15 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 class BorerCombatSeparationTest {
+    @Test void visibleTrackedZombieAtSafeHeightDoesNotOverrideAnAdditionalThreat(){
+        var tracked=new BorerCombatSeparation.Threat(true,false,true,false,14.15,12.2,false,true);
+        assertTrue(BorerCombatSeparation.safe(true,true,true,false,false,List.of(tracked)));
+        assertFalse(BorerCombatSeparation.safe(true,true,true,false,true,List.of(tracked)));
+        assertFalse(BorerCombatSeparation.safe(true,true,false,false,false,List.of(tracked)));
+        assertFalse(BorerCombatSeparation.safe(true,true,true,true,false,List.of(tracked)));
+        assertFalse(safe(new BorerCombatSeparation.Threat(true,false,true,false,4,1,false,true)));
+        assertFalse(safe(new BorerCombatSeparation.Threat(true,false,true,false,14.15,12.2,false,false)));
+    }
     @Test void currentDistantWaterCreeperStillRequiresQuietBodyScopeAndOtherThreatChecks(){
         var water=new BorerCombatSeparation.Threat(true,true,false,false,12.5,2.3,false,false,false,true);
         assertTrue(safe(water));

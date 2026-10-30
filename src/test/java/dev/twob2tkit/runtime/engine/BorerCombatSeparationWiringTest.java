@@ -5,6 +5,19 @@ import org.objectweb.asm.tree.*;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 class BorerCombatSeparationWiringTest {
+    @Test void additionalThreatPredicateExcludesAlreadyTrackedLiveUuid()throws Exception{
+        var c=calls("BorerRangedCombat","safeVerticalSeparation");
+        assertTrue(c.indexOf("contains")>=0&&c.indexOf("contains")<c.indexOf("eligible"));
+        var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/runtime/engine/BorerRangedCombat.class")){assertNotNull(in);new ClassReader(in).accept(node,0);}
+        boolean excluded=false;
+        for(var m:node.methods)if(m.name.startsWith("lambda$safeVerticalSeparation$"))for(var insn:m.instructions){
+            if(insn instanceof MethodInsnNode call&&call.owner.endsWith("/BorerCombatSession")&&call.name.equals("contains")){
+                var next=insn.getNext();while(next!=null&&next.getOpcode()<0)next=next.getNext();
+                assertInstanceOf(JumpInsnNode.class,next);assertEquals(Opcodes.IFNE,next.getOpcode());excluded=true;
+            }
+        }
+        assertTrue(excluded,"Tracked UUID must short-circuit the additional-threat predicate");
+    }
     @Test void waterCreeperExceptionReadsCurrentTrackedEntityWaterFuseLosAndDamage()throws Exception{
         assertTrue(calls("BorerRangedCombat","harmlessSubmergedCreeper").containsAll(List.of(
             "getEntity","isAlive","currentServerChunk","finiteBox","isPowered","isInWater",

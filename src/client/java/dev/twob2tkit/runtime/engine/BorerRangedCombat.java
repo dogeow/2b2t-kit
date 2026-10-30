@@ -760,7 +760,9 @@ final class BorerRangedCombat {
                 distance,clearance,false,unarmed,harmlessSubmergedMelee(c,e,projectedY),
                 harmlessSubmergedCreeper(c,e,projectedY));
         }).toList();
-        boolean otherThreat=nearby.stream().anyMatch(e->e.isAlive()&&!harmlessSubmergedMelee(c,e,projectedY)
+        // Tracked UUIDs already pass the live weapon, distance and clearance proof above.
+        // Counting them again as additional threats makes the reversible safe-height gate unreachable.
+        boolean otherThreat=nearby.stream().anyMatch(e->!session.contains(e.getUUID())&&e.isAlive()&&!harmlessSubmergedMelee(c,e,projectedY)
             &&!harmlessSubmergedCreeper(c,e,projectedY)&&(
             BorerDefensePolicy.eligible(true,true,p.hasLineOfSight(e),rank(p,e),p.distanceTo(e))||creeperAlert(c,e)));
         boolean healthyDryClear=p.getHealth()>=19&&p.hurtTime==0&&!BorerThreats.recentlyHurt(p)
