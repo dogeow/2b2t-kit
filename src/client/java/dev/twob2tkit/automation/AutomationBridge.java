@@ -3803,9 +3803,9 @@ public final class AutomationBridge {
                 ||y<c.level.getMinY()+2||y>c.level.getMaxY()+64)return false;
         var sweep=c.player.getBoundingBox().expandTowards(new Vec3(x-c.player.getX(),y-c.player.getY(),z-c.player.getZ()));
         if((sweep.maxX-sweep.minX+1)*(sweep.maxY-sweep.minY+1)*(sweep.maxZ-sweep.minZ+1)>8192
-                ||!c.level.noCollision(c.player,sweep))return false;
-        for(BlockPos p:BlockPos.betweenClosed(BlockPos.containing(sweep.minX,sweep.minY,sweep.minZ),
-                BlockPos.containing(sweep.maxX-1e-7,sweep.maxY-1e-7,sweep.maxZ-1e-7))){
+                ||!c.level.noCollision(c.player,sweep.deflate(MaterialAirContactPolicy.EPSILON)))return false;
+        for(BlockPos p:BlockPos.betweenClosed(new BlockPos(MaterialAirContactPolicy.minimumCell(sweep.minX),MaterialAirContactPolicy.minimumCell(sweep.minY),MaterialAirContactPolicy.minimumCell(sweep.minZ)),
+                new BlockPos(MaterialAirContactPolicy.maximumCell(sweep.maxX),MaterialAirContactPolicy.maximumCell(sweep.maxY),MaterialAirContactPolicy.maximumCell(sweep.maxZ)))){
             if(!c.level.hasChunkAt(p))return false;
             var state=c.level.getBlockState(p);
             if(!state.getFluidState().isEmpty()||state.is(net.minecraft.world.level.block.Blocks.FIRE)

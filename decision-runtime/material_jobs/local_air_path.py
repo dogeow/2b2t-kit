@@ -57,7 +57,7 @@ def plan(rows, start, target, low, high, *, max_straight=16, foot_offset=0):
             point=(x,y+dy,z);above=observed.get(point)
             if above and above.get('solid')is True and not above.get('fluid') and block_id(above)!='minecraft:magma_block':break
             blocked.add(point)
-    first=tuple(math.floor(v)for v in start);last=tuple(math.floor(v)for v in target)
+    first=(math.floor(start[0]),math.floor(start[1]+1e-7),math.floor(start[2]));last=(math.floor(target[0]),math.floor(target[1]+1e-7),math.floor(target[2]))
     # Standing on a verified partial collision surface is not standing inside
     # its full voxel. Start above that surface; do not lower feet to grid+.2.
     if any(tuple(r['pos'])==first and _below_vertical_start(r,start)for r in rows):

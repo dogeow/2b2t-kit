@@ -119,7 +119,7 @@ def _air_move(client, target, seconds=20, *, arrival=.25):
 
 
 def _body_sweep(start, end):
-    low=[math.floor(min(start[0],end[0])-.31),math.floor(min(start[1],end[1])),
+    low=[math.floor(min(start[0],end[0])-.31),math.floor(min(start[1],end[1])+1e-7),
          math.floor(min(start[2],end[2])-.31)]
     high=[math.floor(max(start[0],end[0])+.31),math.floor(max(start[1],end[1])+1.8-1e-7),
           math.floor(max(start[2],end[2])+.31)]
