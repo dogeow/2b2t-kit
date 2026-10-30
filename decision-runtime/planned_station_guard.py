@@ -1,13 +1,21 @@
-"""Read-only guard for a planned damaging block directly below a print station."""
+"""Read-only guard for planned magma and lit campfires below a print station."""
 import math
 
 class UnsafePlannedStation(RuntimeError):
     def __init__(self,position,target):
         self.position=position;self.target=target
-        super().__init__('施工站位与计划岩浆块同列且过近；已阻止继续打印，先换到安全侧面')
+        super().__init__('施工站位与计划发热方块同列且过近；已阻止继续打印，先换到安全侧面')
 
 def require_safe_planned_station(state,cells):
-    hazards=[r for r in(cells or [])if isinstance(r,dict)and r.get('expected')=='Block{minecraft:magma_block}']
+    def hazardous(expected):
+        if expected=='Block{minecraft:magma_block}':return True
+        if not isinstance(expected,str) or not expected.startswith((
+                'Block{minecraft:campfire}', 'Block{minecraft:soul_campfire}')):return False
+        from projection_completion import block_state
+        _,properties=block_state(expected)
+        # Missing properties are not evidence of an extinguished/waterlogged fire.
+        return properties.get('lit')!='false' and properties.get('waterlogged')!='true'
+    hazards=[r for r in(cells or [])if isinstance(r,dict)and hazardous(r.get('expected'))]
     if not hazards:return
     pos=state.get('pos')if isinstance(state,dict)else None
     if (not isinstance(pos,list)or len(pos)!=3

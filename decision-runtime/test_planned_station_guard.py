@@ -29,4 +29,25 @@ class StationTests(unittest.TestCase):
   c=Client()
   with self.assertRaises(UnsafePlannedStation):build_phase(c,'k',complete_cells=CELLS)
   self.assertEqual([],c.calls)
+ def test_recorded_campfire_hover_is_rejected_before_any_print_command(self):
+  cells=[{'pos':[761429,59,793982],'expected':'Block{minecraft:soul_campfire}[facing=west,lit=true,signal_fire=false,waterlogged=false]'}]
+  class Client:
+   def __init__(self):self.calls=[]
+   def status(self):return {'pos':[761429.5438381253,61.1,793982.5004957044],'projection_selection':{'key':'k'}}
+   def checked(self,op,**kw):self.calls.append(op);raise AssertionError('No game input may be sent')
+  c=Client()
+  with self.assertRaises(UnsafePlannedStation):build_phase(c,'k',complete_cells=cells)
+  self.assertEqual([],c.calls)
+ def test_both_lit_campfire_types_need_side_stations_and_allow_high_travel(self):
+  for kind in ['campfire','soul_campfire']:
+   cells=[{'pos':[10,59,20],'expected':'Block{minecraft:'+kind+'}[facing=west,lit=true,signal_fire=false,waterlogged=false]'}]
+   with self.subTest(kind=kind),self.assertRaises(UnsafePlannedStation):require_safe_planned_station({'pos':[10.5,61.1,20.5]},cells)
+   require_safe_planned_station({'pos':[11.5,60.1,20.5]},cells)
+   require_safe_planned_station({'pos':[10.5,98.15,20.5]},cells)
+   with self.assertRaises(UnsafePlannedStation):require_safe_planned_station({'pos':[10.9,61.1,20.5]},cells)
+ def test_extinguished_or_waterlogged_campfire_is_not_a_planned_heat_source(self):
+  for properties in ['lit=false,waterlogged=false','lit=true,waterlogged=true']:
+   require_safe_planned_station({'pos':[10.5,60.1,20.5]},[{'pos':[10,59,20],'expected':'Block{minecraft:campfire}['+properties+']'}])
+ def test_missing_campfire_heat_properties_fail_closed(self):
+  with self.assertRaises(UnsafePlannedStation):require_safe_planned_station({'pos':[10.5,61.1,20.5]},[{'pos':[10,59,20],'expected':'Block{minecraft:soul_campfire}'}])
 if __name__=='__main__':unittest.main()
