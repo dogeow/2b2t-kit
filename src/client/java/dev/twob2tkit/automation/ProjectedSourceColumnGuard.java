@@ -9,6 +9,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Half;
@@ -89,8 +90,16 @@ final class ProjectedSourceColumnGuard {
                 String type=BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString();
                 boolean supported=type.equals("minecraft:zombie")||type.equals("minecraft:skeleton")||type.equals("minecraft:slime");
                 boolean current=e.level()==c.level&&c.level.getEntity(e.getId())==e&&loaded(c,e.blockPosition());
+                boolean visible=p.hasLineOfSight(e);var enemy=e.getBoundingBox();
+                if(e instanceof Creeper creeper){
+                    double dx=Math.max(0,Math.max(body.minX-enemy.maxX,enemy.minX-body.maxX));
+                    double dy=Math.max(0,Math.max(body.minY-enemy.maxY,enemy.minY-body.maxY));
+                    double dz=Math.max(0,Math.max(body.minZ-enemy.maxZ,enemy.minZ-body.maxZ));
+                    if(SourceColumnThreatPolicy.remoteCreeper(work.verticallyEnclosed(),current,!creeper.isPowered(),visible,
+                            creeper.isIgnited()||creeper.getSwellDir()>0||creeper.getSwelling(1)>0,body.minY>=enemy.maxY,dx*dx+dy*dy+dz*dz))continue;
+                }
                 threats.add(new SourceColumnThreatPolicy.Threat(current,supported,type.equals("minecraft:skeleton"),
-                    p.hasLineOfSight(e),e.getBoundingBox().maxY<=b.minY(),body.minY-e.getBoundingBox().maxY));
+                    visible,enemy.maxY<=b.minY(),body.minY-enemy.maxY));
             }
             return SourceColumnThreatPolicy.permit(work,threats);
         }catch(RuntimeException unproved){return false;}

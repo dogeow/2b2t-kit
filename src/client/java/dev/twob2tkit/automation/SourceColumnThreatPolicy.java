@@ -9,6 +9,11 @@ final class SourceColumnThreatPolicy {
     record Threat(boolean current,boolean supported,boolean ranged,boolean visible,
                   boolean belowFloor,double clearance){}
     private SourceColumnThreatPolicy(){}
+    static boolean remoteCreeper(boolean enclosed,boolean current,boolean ordinary,boolean visible,
+                                 boolean swelling,boolean belowFeet,double boxDistanceSquared){
+        return enclosed&&current&&ordinary&&!visible&&!swelling&&belowFeet
+            &&Double.isFinite(boxDistanceSquared)&&boxDistanceSquared>16*16;
+    }
     static boolean permit(Workspace work,List<Threat> threats){
         if(work==null||!work.shellVerified||!work.horizontalContained||!work.atOrAboveFloor
                 ||!work.quiet||!work.projectileFree||threats==null)return false;

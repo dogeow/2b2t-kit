@@ -36,6 +36,8 @@ class ProjectedSourceColumnWiringTest {
         var shield=calls("ProjectedSourceColumnGuard","shieldedWorkspace");
         assertTrue(shield.contains("dev/twob2tkit/automation/ProjectedSourceColumnGuard.require"));
         assertTrue(shield.contains("dev/twob2tkit/automation/SourceColumnThreatPolicy.permit"));
+        assertTrue(shield.contains("dev/twob2tkit/automation/SourceColumnThreatPolicy.remoteCreeper"));
+        assertTrue(shield.indexOf("dev/twob2tkit/automation/ProjectedSourceColumnGuard.require")<shield.indexOf("dev/twob2tkit/automation/SourceColumnThreatPolicy.remoteCreeper"));
         assertFalse(shield.stream().anyMatch(v->v.contains("acknowledge")||v.endsWith(".setBlock")));
     }
     @Test void ordinaryFillAndUnscopedPlacementNeverReceiveTheShieldedException(){

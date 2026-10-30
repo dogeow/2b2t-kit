@@ -35,6 +35,20 @@ class SourceColumnThreatPolicyTest {
     @Test void anySingleUnprovedThreatBlocksTheEntireSet(){
         assertFalse(SourceColumnThreatPolicy.permit(work(true),List.of(below(false,6),new SourceColumnThreatPolicy.Threat(true,false,false,false,true,8))));
     }
+    @Test void recordedDiagonalCreeperOutside16ActualBlocksIsNotANearThreatToASealedActor(){
+        assertTrue(SourceColumnThreatPolicy.remoteCreeper(true,true,true,false,false,true,22.4*22.4));
+        assertFalse(SourceColumnThreatPolicy.remoteCreeper(true,true,true,false,false,true,16*16));
+    }
+    @Test void nearVisibleSwellingPoweredAboveOrUnobservedCreepersRemainBlocked(){
+        assertFalse(SourceColumnThreatPolicy.remoteCreeper(true,true,true,false,false,true,15.99*15.99));
+        assertFalse(SourceColumnThreatPolicy.remoteCreeper(false,true,true,false,false,true,500));
+        assertFalse(SourceColumnThreatPolicy.remoteCreeper(true,false,true,false,false,true,500));
+        assertFalse(SourceColumnThreatPolicy.remoteCreeper(true,true,false,false,false,true,500));
+        assertFalse(SourceColumnThreatPolicy.remoteCreeper(true,true,true,true,false,true,500));
+        assertFalse(SourceColumnThreatPolicy.remoteCreeper(true,true,true,false,true,true,500));
+        assertFalse(SourceColumnThreatPolicy.remoteCreeper(true,true,true,false,false,false,500));
+        assertFalse(SourceColumnThreatPolicy.remoteCreeper(true,true,true,false,false,true,Double.NaN));
+    }
     @Test void missingOrNonFiniteObservationsAreNeverSeparationProof(){
         assertFalse(SourceColumnThreatPolicy.permit(null,List.of()));assertFalse(SourceColumnThreatPolicy.permit(work(true),null));
         assertFalse(SourceColumnThreatPolicy.permit(work(true),Arrays.asList((SourceColumnThreatPolicy.Threat)null)));
