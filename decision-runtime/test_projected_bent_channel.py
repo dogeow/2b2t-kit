@@ -28,8 +28,12 @@ class BentFlowTest(unittest.TestCase):
             f,p,b=self.scene();change(f,pos,state);self.assertFalse(flow_after(f,WORLD,LOW,HIGH,p,b))
     def test_seed_gradient_is_distinct_from_final_gradient(self):
         f,p,b=self.scene()
-        for i,pos in enumerate(path_for(LOW,HIGH)):change(f,pos,f'Block{{minecraft:water}}[level={i if i<2 else i-2}]')
+        for i,pos in enumerate(path_for(LOW,HIGH)):change(f,pos,f'Block{{minecraft:water}}[level={0 if i<3 else i-2}]')
         self.assertTrue(flow_after(f,WORLD,LOW,HIGH,p,b,seed=True));self.assertFalse(flow_after(f,WORLD,LOW,HIGH,p,b))
+    def test_outer_seed_must_be_collected_before_regenerated_middle(self):
+        f,p,b=self.scene()
+        for i,pos in enumerate(path_for(LOW,HIGH)):change(f,pos,f'Block{{minecraft:water}}[level={0 if i<2 else i-1}]')
+        self.assertTrue(flow_after(f,WORLD,LOW,HIGH,p,b,middle_seed=True));self.assertFalse(flow_after(f,WORLD,LOW,HIGH,p,b,seed=True));self.assertFalse(flow_after(f,WORLD,LOW,HIGH,p,b))
     def test_wet_overflow_planning_keeps_regular_repair_dry_and_requires_27_sources(self):
         m,f=fixture()
         for y in range(59,68):

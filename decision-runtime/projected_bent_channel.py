@@ -10,11 +10,13 @@ def path_for(low,high):
     x,y,z=high[0],high[1]+1,low[2]
     return [[x-min(i,3),y,z+max(0,i-3)]for i in range(8)]
 
-def flow_after(frame,world,low,high,plan,before,*,seed=False):
+def flow_after(frame,world,low,high,plan,before,*,seed=False,middle_seed=False):
+    if seed and middle_seed:return False
+    levels=[0,0,0,1,2,3,4,5]if seed else[0,0,1,2,3,4,5,6]if middle_seed else list(range(8))
     lo=[low[0]-2,low[1]-1,low[2]-1];hi=[high[0]+1,high[1]+2,low[2]+5]
     if not coherent(frame,world,lo,hi):return False
     rows={tuple(v['pos']):v['state']for v in frame['blocks']};path=path_for(low,high)
-    if any(rows.get(tuple(p),AIR)!=f'Block{{minecraft:water}}[level={i if not seed or i<2 else i-2}]'for i,p in enumerate(path)):return False
+    if any(rows.get(tuple(p),AIR)!=f'Block{{minecraft:water}}[level={levels[i]}]'for i,p in enumerate(path)):return False
     if any(rows.get((x,y,low[2]))!=SOURCE for x in range(low[0],high[0]+1)for y in range(low[1],high[1]+1)):return False
     for pin in plan['column_boundary_pins']:
         actual=rows.get(tuple(pin['pos']),AIR);expected=pin['expected_state']
@@ -71,20 +73,21 @@ def place(c,low,high,key,out,*,seed=False):
         else:stamps=[]
         if time.monotonic()>end:raise RuntimeError('Pour confirmed but full downstream flow not verified; no replay')
         time.sleep(.3)
-    book.update(complete=True,temporary_seed=seed,flow_levels=[i if not seed or i<2 else i-2 for i in range(8)],source_cells_preserved=27,frames=stamps);write_json(out/'progress.json',book);return book
+    book.update(complete=True,temporary_seed=seed,flow_levels=[0,0,0,1,2,3,4,5]if seed else list(range(8)),source_cells_preserved=27,frames=stamps);write_json(out/'progress.json',book);return book
 
 
-def remove_seed(c,low,high,key,out):
-    """Take back only the explicitly staged third-cell source and observe the restored gradient."""
+def remove_seed(c,low,high,key,out,*,index=2):
+    """Collect index2 then the regenerated index1; never the original index0 source."""
+    if index not in (1,2):raise ValueError("Only the staged or regenerated source can be collected")
     out=Path(out);out.mkdir(parents=True,exist_ok=False);s=c.status();lease=s.get('supervision_lease')or{}
     if s.get('projected_bent_channel_seed_protocol')!=1 or s.get('health')!=20 or s.get('screen')or s.get('manual_movement')or s.get('guard_busy')or lease.get('job_session')!=c.task:raise RuntimeError('Current healthy seed owner required')
     model=c.request('projection_model')['projection_model'];a,b=envelope(low,high);plan=geometry(model,c.checked('scan',min=a,max=b,details=True,include_predictions=True),low,high,c.world,completed_overflow=True)
     lo=[low[0]-2,low[1]-1,low[2]-1];hi=[high[0]+1,high[1]+2,low[2]+5]
     frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True);before={tuple(v['pos']):v['state']for v in frame['blocks']}
-    if model.get('placement_key')!=key or not flow_after(frame,c.world,low,high,plan,before,seed=True):raise RuntimeError('Complete staged gradient required before collecting temporary source')
+    if model.get('placement_key')!=key or not flow_after(frame,c.world,low,high,plan,before,seed=index==2,middle_seed=index==1):raise RuntimeError('Complete staged gradient required before collecting temporary source')
     bucket=next((v for v in s.get('inventory',[])if v.get('slot',99)<36 and v.get('item')=='minecraft:bucket'and v.get('count')==1),None)
     if not bucket:raise RuntimeError('Singleton empty bucket required')
-    c.checked('select_item',item='minecraft:bucket',slot=bucket['slot']);stock=inventory_counts(c.status());target=path_for(low,high)[2]
+    c.checked('select_item',item='minecraft:bucket',slot=bucket['slot']);stock=inventory_counts(c.status());target=path_for(low,high)[index]
     book={'pending':'one_seed_collection','complete':False,'automatic_retry_allowed':False};write_json(out/'progress.json',book)
     try:reply=c.request('bucket_fill',pos=target,expected_state=SOURCE,expected_hand='minecraft:bucket')
     finally:book['request_id']=c.last;write_json(out/'progress.json',book)
@@ -97,10 +100,10 @@ def remove_seed(c,low,high,key,out):
     while len(stamps)<3:
         frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True);write_json(out/'latest-flow-frame.json',frame);state=c.status();counts=inventory_counts(state)
         if state.get('world_session')!=c.world or state.get('screen')or state.get('manual_movement'):raise RuntimeError('Control changed after seed collection')
-        if flow_after(frame,c.world,low,high,plan,before)and counts.get('minecraft:bucket',0)==stock.get('minecraft:bucket',0)-1 and counts.get('minecraft:water_bucket',0)==stock.get('minecraft:water_bucket',0)+1:
+        if flow_after(frame,c.world,low,high,plan,before,middle_seed=index==2)and counts.get('minecraft:bucket',0)==stock.get('minecraft:bucket',0)-1 and counts.get('minecraft:water_bucket',0)==stock.get('minecraft:water_bucket',0)+1:
             stamp=frame.get('time')
             if not stamps or stamp>stamps[-1]:stamps.append(stamp);write_json(out/f'restored-flow-frame-{len(stamps)}.json',frame)
         else:stamps=[]
         if time.monotonic()>end:raise RuntimeError('Temporary source collected but restored flow unverified; no replay')
         time.sleep(.3)
-    book.update(complete=True,flow_levels=list(range(8)),source_cells_preserved=27,frames=stamps);write_json(out/'progress.json',book);return book
+    book.update(complete=True,collected_index=index,flow_levels=[0,0,1,2,3,4,5,6]if index==2 else list(range(8)),source_cells_preserved=27,frames=stamps);write_json(out/'progress.json',book);return book
