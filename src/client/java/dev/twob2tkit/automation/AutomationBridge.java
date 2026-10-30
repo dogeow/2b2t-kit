@@ -4542,6 +4542,7 @@ public final class AutomationBridge {
         j.addProperty("fixed_tree_chop_protocol",1);
         j.addProperty("dry_roof_mining_protocol",1);
         j.addProperty("below_flow_glass_mining_protocol",1);
+        j.addProperty("projected_component_correction_protocol",1);
         j.addProperty("projected_wet_terrain_mining_protocol",1);
         j.addProperty("below_source_glass_mining_protocol",1);
         j.addProperty("sapling_retention_chop_protocol",1);

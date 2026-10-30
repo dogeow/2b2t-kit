@@ -19,6 +19,13 @@ final class ProjectedWetTerrainGuard {
         if(!flag.isJsonPrimitive()||!flag.getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("Projected wet terrain flag must be boolean");
         return flag.getAsBoolean();
     }
+    static boolean componentCorrection(JsonObject r){
+        if(!r.has("projected_component_correction"))return false;
+        var flag=r.get("projected_component_correction");
+        if(!flag.isJsonPrimitive()||!flag.getAsJsonPrimitive().isBoolean())
+            throw new IllegalArgumentException("Projected component correction flag must be boolean");
+        return flag.getAsBoolean();
+    }
     private static String text(JsonObject r,String key){
         var v=r.get(key);return v!=null&&v.isJsonPrimitive()&&v.getAsJsonPrimitive().isString()?v.getAsString():"";
     }
@@ -31,14 +38,18 @@ final class ProjectedWetTerrainGuard {
             &&LitematicaAccess.inVisibleLayer(target)&&LitematicaAccess.loadingReason(selection).isEmpty()
             &&schematic.getBlockState(target).toString().equals(text(r,"expected_goal_state"));
         String goal=schematic==null?"":BuiltInRegistries.BLOCK.getKey(schematic.getBlockState(target).getBlock()).toString();
-        boolean natural=ProjectedWetTerrainPolicy.obstruction(initialId,goal)
+        boolean correction=componentCorrection(r);
+        boolean eligible=correction
+            ?ProjectedComponentCorrectionPolicy.observerCorrection(initial,text(r,"expected_goal_state"))
+            :ProjectedWetTerrainPolicy.obstruction(initialId,goal);
+        boolean natural=eligible
             &&(actual.toString().equals(initial)&&actual.getFluidState().isEmpty()||removed)
             &&c.level.getBlockEntity(target)==null;
         var held=c.player.getMainHandItem();var slot=r.get("expected_tool_slot");
         boolean pinned=false;
         try{pinned=slot!=null&&slot.isJsonPrimitive()&&slot.getAsJsonPrimitive().isNumber()
             &&slot.getAsBigDecimal().intValueExact()==c.player.getInventory().getSelectedSlot();}catch(ArithmeticException ignored){}
-        boolean tool=pinned&&held.is(initialId.equals("minecraft:stone")?ItemTags.PICKAXES:ItemTags.SHOVELS)
+        boolean tool=pinned&&held.is(correction||initialId.equals("minecraft:stone")?ItemTags.PICKAXES:ItemTags.SHOVELS)
             &&held.isDamageableItem()&&held.getMaxDamage()-held.getDamageValue()>=(started?1:33);
         boolean healthy=c.player.getHealth()>=19&&c.player.getFoodData().getFoodLevel()>=18
             &&!c.player.hasInfiniteMaterials()&&!c.player.isInWater()&&!c.player.isInLava()&&!c.player.isOnFire()
