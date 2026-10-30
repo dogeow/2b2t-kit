@@ -60,9 +60,28 @@ class PrinterModeHandoff:
             if path.exists():
                 reply=json.loads(path.read_text());write_json(self.out/(label+'-reply.json'),reply)
                 if reply.get('phase')!='done':raise RuntimeError('Native printer handoff rejected: '+str(reply.get('detail')))
-                if reply.get('professional_printer',{}).get('enabled')is not enabled:
+                if (reply.get('id')!=r['id'] or reply.get('world_session')!=r['world_session']
+                        or reply.get('professional_printer',{}).get('enabled')is not enabled):
                     raise RuntimeError('Printer mode not confirmed; no repeat')
-                self.pending=False;return reply
+                self.pending=False
+                # A reply can precede the periodic status file. The next material
+                # client checks that mailbox against status.last_request; wait for
+                # this exact acknowledged mode change instead of sending it again.
+                mirrored_until=time.monotonic()+3
+                while time.monotonic()<mirrored_until:
+                    fresh=read_fresh(self.root,wait_seconds=.5)
+                    current=fresh.get('professional_printer')or{}
+                    if (fresh.get('world_session')!=r['world_session']
+                            or fresh.get('control_revision')!=r['expected_revision']
+                            or current.get('external_mode_revision')!=r['expected_external_revision']
+                            or not idle_for_mode(fresh,self.key)):
+                        write_json(self.out/(label+'-status-changed.json'),fresh)
+                        raise RuntimeError('Control changed after acknowledged printer mode; no new owner or repeated request')
+                    if fresh.get('last_request')==r['id'] and current.get('enabled')is enabled:
+                        write_json(self.out/(label+'-status-synced.json'),fresh)
+                        return reply
+                    time.sleep(.05)
+                raise RuntimeError('Printer mode acknowledged but status not synchronized; preserve receipt, do not repeat')
             time.sleep(.05)
         raise RuntimeError('Original printer mode request unknown; preserve identity')
 
