@@ -116,6 +116,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	final CaptureTargetProtection captureProtection = new CaptureTargetProtection();
     final EmptyBoatRecovery emptyBoatRecovery=new EmptyBoatRecovery();
     final ChannelWaterPlacement channelWaterPlacement=new ChannelWaterPlacement();
+    final GuardMagmaSneak guardMagmaSneak=new GuardMagmaSneak();
 	private final SceneryExplorer scenery = new SceneryExplorer(this);
 	final BorerLoot loot = new BorerLoot(this);
 	final BorerWalkRoute walkRoute = new BorerWalkRoute(this);
@@ -411,6 +412,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 停止盾构并松开所有按键。 */
 	@Override
 	public void stop(Minecraft client, String reason) {
+        guardMagmaSneak.close(client);
 		hudFrames.clear();
 		captureProtection.close();
 		loadedVillagerEvents.workStopped(reason);
@@ -908,6 +910,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
         // The host explicitly sends false when emergency/manual control disarms
         // the guard. Do this before the active-miner early return, without reason-text heuristics.
         if(standaloneGuardEnabled&&!enabled)rangedCombat.end(c);
+        guardMagmaSneak.tick(c,enabled&&!active);
         emptyBoatRecovery.tick(c,enabled&&!active);
         channelWaterPlacement.tick(c,enabled&&!active);
         captureProtection.tick(c,enabled&&!active);
