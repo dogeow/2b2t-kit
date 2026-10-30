@@ -121,6 +121,22 @@ public final class EmergencyExit {
             c.player.sendSystemMessage(net.minecraft.network.chat.Component.literal("[保护] 血量不足：先沿已确认的安全路线升高撤离，再离线锁定，等你手动回来。"));
         }catch(Exception e){finish(c,"飞行不可用");}
     }
+    /** Read-only evidence; never acknowledges or clears a safety incident. */
+    public static boolean minorThermalWorkAllowed(Minecraft c){
+        if(c.player==null||c.level==null||c.player.isDeadOrDying())return false;
+        var p=c.player;var source=p.getLastDamageSource();
+        boolean contact=source!=null&&(source.is(net.minecraft.world.damagesource.DamageTypes.CAMPFIRE)
+            ||source.is(net.minecraft.world.damagesource.DamageTypes.HOT_FLOOR));
+        boolean food=false;
+        for(int slot=0;slot<36;slot++){
+            var stack=p.getInventory().getItem(slot);
+            if(!stack.isEmpty()&&stack.has(net.minecraft.core.component.DataComponents.FOOD)){
+                food=true;break;
+            }
+        }
+        return MinorThermalWorkPolicy.allow(contact,p.getHealth(),p.getFoodData().getFoodLevel(),food,
+            p.isInLava(),p.isUnderWater());
+    }
     public static void observeHealth(Minecraft c){
         // The normal client tick also observes health; a network callback must
         // not mutate controls, inventory or the disconnect screen off-thread.
@@ -131,6 +147,11 @@ public final class EmergencyExit {
         }
         boolean automated=AutomationBridge.guardArmed()||KitClient.anyAfkAuto();
         if(automated&&c.player.getHealth()<14){begin(c,"低血量紧急撤离");return;}
+        // Critical health remains above this branch. Only known campfire or
+        // magma contact at high health with food reserve may continue working.
+        if(automated&&minorThermalWorkAllowed(c)){
+            environmentalDamage.reset();return;
+        }
         if(ResidualFireRecovery.observe(c,automated,System.currentTimeMillis())){
             environmentalDamage.reset();return;
         }

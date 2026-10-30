@@ -4499,7 +4499,8 @@ public final class AutomationBridge {
             &&transientEmpty&&!c.player.isUsingItem()&&!dev.twob2tkit.combat.EmergencyExit.active();
         dev.twob2tkit.combat.RecoveryConfirmationPolicy.require(request,now,incident,session(c),controlRevision,
             alive,alive?c.player.getHealth():0,alive?c.player.getFoodData().getFoodLevel():0,idle,screen,
-            KitClient.config().lastAttackTimeEpochMillis<=now-5000);
+            KitClient.config().lastAttackTimeEpochMillis<=now-5000
+                ||dev.twob2tkit.combat.EmergencyExit.minorThermalWorkAllowed(c));
         dev.twob2tkit.combat.EmergencyExit.acknowledgeExplicitChat(c,request,now);
         armPveGuard(c);
         if(!guardArmed()||!pveOnly()){
@@ -4636,6 +4637,8 @@ public final class AutomationBridge {
         j.addProperty("projection_air_seed_protocol",1);j.addProperty("projection_air_seed_axis_protocol",1);j.addProperty("air_place",MeteorModules.isActive(MeteorModules.AIR_PLACE));j.addProperty("controlled_water_release_protocol",1);
         j.addProperty("projection_scaffold_fill_protocol",1);
         j.addProperty("safe_residual_fire_wait_protocol",1);
+        j.addProperty("minor_thermal_work_protocol",1);
+        j.addProperty("minor_thermal_work_allowed",dev.twob2tkit.combat.EmergencyExit.minorThermalWorkAllowed(c));
         j.addProperty("printer_mode_handoff_protocol",1);
         j.add("residual_fire_wait",dev.twob2tkit.combat.ResidualFireRecovery.snapshot());
         j.addProperty("bucket_water_protocol",1);
