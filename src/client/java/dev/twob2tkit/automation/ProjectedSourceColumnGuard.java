@@ -115,11 +115,29 @@ final class ProjectedSourceColumnGuard {
                     double dz=Math.max(0,Math.max(body.minZ-enemy.maxZ,enemy.minZ-body.maxZ));
                     if(SourceColumnThreatPolicy.remoteCreeper(work.verticallyEnclosed(),current,!creeper.isPowered(),visible,
                             creeper.isIgnited()||creeper.getSwellDir()>0||creeper.getSwelling(1)>0,body.minY>=enemy.maxY,dx*dx+dy*dy+dz*dz))continue;
+                    if(rows==4&&SourceColumnThreatPolicy.shortRemoteCreeper(true,work,current,!creeper.isPowered(),visible,
+                            creeper.isIgnited()||creeper.getSwellDir()>0||creeper.getSwelling(1)>0,enemy.maxY<=b.minY(),
+                            dx*dx+dy*dy+dz*dz,shortProtectedDistanceSquared(enemy,b)))continue;
                 }
                 threats.add(new SourceColumnThreatPolicy.Threat(current,supported,type.equals("minecraft:skeleton"),
                     visible,enemy.maxY<=b.minY(),body.minY-enemy.maxY));
             }
             return SourceColumnThreatPolicy.permit(work,threats);
+    }
+    static double boxDistanceSquared(AABB a,AABB b){
+        double x=Math.max(0,Math.max(a.minX-b.maxX,b.minX-a.maxX));
+        double y=Math.max(0,Math.max(a.minY-b.maxY,b.minY-a.maxY));
+        double z=Math.max(0,Math.max(a.minZ-b.maxZ,b.minZ-a.maxZ));return x*x+y*y+z*z;
+    }
+    static double shortProtectedDistanceSquared(AABB enemy,ProjectedSourceColumnPolicy.Bounds b){
+        if(!b.validRows(4))return 0;
+        double distance=boxDistanceSquared(enemy,new AABB(b.minX()-1,b.minY()-1,b.minZ()-1,b.maxX()+2,b.maxY()+3,b.minZ()+2));
+        for(int i=0;i<8;i++){
+            var p=new BlockPos(b.maxX()+ProjectedBentChannelPolicy.dx(i,4),b.maxY()+1,b.minZ()+ProjectedBentChannelPolicy.dz(i,4));
+            distance=Math.min(distance,boxDistanceSquared(enemy,new AABB(p)));
+            for(var direction:Direction.values())distance=Math.min(distance,boxDistanceSquared(enemy,new AABB(p.relative(direction))));
+        }
+        return distance;
     }
     private static int level(BlockState s){return s.isAir()?-1:s.is(Blocks.WATER)?s.getValue(LiquidBlock.LEVEL):-2;}
     private static boolean loaded(Minecraft c,BlockPos p){

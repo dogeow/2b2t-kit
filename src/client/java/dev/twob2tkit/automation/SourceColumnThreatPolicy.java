@@ -14,6 +14,14 @@ final class SourceColumnThreatPolicy {
         return enclosed&&current&&ordinary&&!visible&&!swelling&&belowFeet
             &&Double.isFinite(boxDistanceSquared)&&boxDistanceSquared>16*16;
     }
+    static boolean shortRemoteCreeper(boolean fourRows,Workspace work,boolean current,boolean ordinary,
+                                     boolean visible,boolean swelling,boolean belowFloor,
+                                     double playerDistanceSquared,double structureDistanceSquared){
+        return fourRows&&work!=null&&work.shellVerified&&work.horizontalContained&&work.atOrAboveFloor
+            &&work.quiet&&work.projectileFree&&current&&ordinary&&!visible&&!swelling&&belowFloor
+            &&Double.isFinite(playerDistanceSquared)&&Double.isFinite(structureDistanceSquared)
+            &&playerDistanceSquared>8*8&&structureDistanceSquared>7*7;
+    }
     static boolean permit(Workspace work,List<Threat> threats){
         if(work==null||!work.shellVerified||!work.horizontalContained||!work.atOrAboveFloor
                 ||!work.quiet||!work.projectileFree||threats==null)return false;

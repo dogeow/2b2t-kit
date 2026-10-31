@@ -39,6 +39,10 @@ final class BlockFaceTarget {
         return List.copyOf(points);
     }
     static BlockHitResult visible(Minecraft c,Vec3 eye,BlockPos pos,Direction requested,double reach){
+        return visible(c,eye,pos,requested,reach,hit->true);
+    }
+    static BlockHitResult visible(Minecraft c,Vec3 eye,BlockPos pos,Direction requested,double reach,
+            java.util.function.Predicate<BlockHitResult> allowed){
         var shape=c.level.getBlockState(pos).getShape(c.level,pos);
         var centres=new ArrayList<Vec3>();var edges=new ArrayList<Vec3>();
         for(var face:requested==null?Direction.values():new Direction[]{requested}){
@@ -50,7 +54,7 @@ final class BlockFaceTarget {
         for(var point:centres){
             if(eye.distanceTo(point)>reach)continue;
             var hit=c.level.clip(new ClipContext(eye,point,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,c.player));
-            if(matches(hit,pos,requested))return hit;
+            if(matches(hit,pos,requested)&&allowed.test(hit))return hit;
         }
         return null;
     }

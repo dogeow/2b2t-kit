@@ -2751,7 +2751,10 @@ public final class AutomationBridge {
             if(dryPaving&&terrainReplace)throw new IllegalArgumentException("Only one terrain guard may own an interaction");
             if(dryPaving){dryPavingRequestGuard(c,r);dryPavingPlacementGuard(c,pos,face);dryPavingAckExpected(r);}
             if(terrainReplace)terrainReplacementGuard(c,r);
-            var visible=BlockFaceTarget.visible(c,c.player.getEyePosition(),pos,face,c.player.blockInteractionRange());
+            boolean projectedSlab=ProjectedSlabPlacementGuard.requested(r);
+            boolean slabOwned=currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c);
+            var visible=projectedSlab?ProjectedSlabPlacementGuard.visible(c,r,pos,face,slabOwned)
+                :BlockFaceTarget.visible(c,c.player.getEyePosition(),pos,face,c.player.blockInteractionRange());
             // The material client opens containers with a sword. That empty-hand-like
             // block use can target any visible face; placements still require the requested face.
             if(visible==null&&c.player.getMainHandItem().is(net.minecraft.world.item.Items.DIAMOND_SWORD))visible=BlockFaceTarget.visible(c,c.player.getEyePosition(),pos,null,c.player.blockInteractionRange());
@@ -2770,6 +2773,8 @@ public final class AutomationBridge {
                     var checkedHit=c.level.clip(new ClipContext(c.player.getEyePosition(),aim,ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,c.player));
                     if(!BlockFaceTarget.matches(checkedHit,pos,usedFace))throw new IllegalStateException("Interaction became occluded while rotating");
                     if(projectedObserver)ProjectedObserverPlacementGuard.require(c,r,pos,usedFace,
+                        currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),checkedHit);
+                    if(projectedSlab)ProjectedSlabPlacementGuard.require(c,r,pos,usedFace,
                         currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),checkedHit);
                     if(dryPaving){dryPavingRequestGuard(c,r);dryPavingPlacementGuard(c,pos,usedFace);}
                     if(terrainReplace)terrainReplacementGuard(c,r);
@@ -2800,7 +2805,7 @@ public final class AutomationBridge {
                             throw new IllegalStateException("Boat placement requires the healthy owned material controller");
                         c.gameMode.useItem(c.player,InteractionHand.MAIN_HAND);
                     }else c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,checkedHit);
-                    settle(r,processing?400:terrainReplace||dryPaving?80:projectedObserver?40:8);
+                    settle(r,processing?400:terrainReplace||dryPaving?80:projectedObserver||projectedSlab?40:8);
                 }catch(Exception e){finish(c,"error",e.getMessage());}
             });
         }else if(command.equals("mine_block") || command.equals("recover_shulker")){
@@ -4672,12 +4677,14 @@ public final class AutomationBridge {
         j.addProperty("projected_bent_channel_protocol",1);
         j.addProperty("projected_bent_channel_seed_protocol",1);
         j.addProperty("projected_observer_place_protocol",1);
+        j.addProperty("projected_slab_place_protocol",1);
         j.addProperty("projected_trapdoor_waterlog_protocol",1);
         j.addProperty("projected_floor_water_shield_protocol",1);
         j.addProperty("bucket_passive_observation_protocol",1);
         j.addProperty("projected_short_source_profile_protocol",1);
         j.addProperty("projected_bent_collection_protocol",1);
         j.addProperty("projected_bent_middle_service_protocol",1);
+        j.addProperty("projected_short_remote_creeper_protocol",1);
         j.addProperty("projected_water_channel_protocol",1);
         j.addProperty("projected_channel_service_ceiling_protocol",1);
         j.addProperty("projected_waterlog_drain_protocol",1);
