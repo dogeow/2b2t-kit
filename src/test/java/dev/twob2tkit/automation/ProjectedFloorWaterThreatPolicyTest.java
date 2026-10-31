@@ -16,6 +16,12 @@ class ProjectedFloorWaterThreatPolicyTest {
         assertFalse(ProjectedFloorWaterGuard.floorSeal(net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(),null,net.minecraft.core.BlockPos.ZERO));
     }
     private static ProjectedFloorWaterThreatPolicy.Threat below(){return new ProjectedFloorWaterThreatPolicy.Threat(true,true,false,57.95);}
+    @Test void ordinarySpidersRemainSubjectToTheSamePhysicalFloorProof(){
+        assertTrue(ProjectedFloorWaterGuard.supportedGroundMob("minecraft:spider"));
+        assertTrue(ProjectedFloorWaterGuard.supportedGroundMob("minecraft:cave_spider"));
+        for(String type:List.of("minecraft:creeper","minecraft:enderman","minecraft:blaze","minecraft:ghast","minecraft:wither"))assertFalse(ProjectedFloorWaterGuard.supportedGroundMob(type));
+        assertFalse(ProjectedFloorWaterThreatPolicy.permit(true,false,true,true,true,65,List.of(below())));
+    }
     @Test void recordedUndergroundZombiesAreSeparatedByTheActualFloor(){assertTrue(ProjectedFloorWaterThreatPolicy.permit(true,true,true,true,true,62,List.of(below(),new ProjectedFloorWaterThreatPolicy.Threat(true,true,false,48.74))));}
     @Test void noPhysicalProofMayBeMissing(){for(int i=0;i<5;i++){boolean[] a={true,true,true,true,true};a[i]=false;assertFalse(ProjectedFloorWaterThreatPolicy.permit(a[0],a[1],a[2],a[3],a[4],62,List.of(below())));}}
     @Test void sameFloorVisibleCreeperUnknownOrStaleEnemyAlwaysBlocks(){for(var t:List.of(new ProjectedFloorWaterThreatPolicy.Threat(true,true,false,62.01),new ProjectedFloorWaterThreatPolicy.Threat(true,true,true,56),new ProjectedFloorWaterThreatPolicy.Threat(true,false,false,56),new ProjectedFloorWaterThreatPolicy.Threat(false,true,false,56),new ProjectedFloorWaterThreatPolicy.Threat(true,true,false,Double.NaN)))assertFalse(ProjectedFloorWaterThreatPolicy.permit(true,true,true,true,true,62,List.of(below(),t)));}

@@ -14,6 +14,9 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
 import java.util.ArrayList;
 /** Re-prove local floor and the original water operation on every ownership check. */
 final class ProjectedFloorWaterGuard {
+    static boolean supportedGroundMob(String type){
+        return java.util.Set.of("minecraft:zombie","minecraft:skeleton","minecraft:slime","minecraft:spider","minecraft:cave_spider").contains(type);
+    }
     private static boolean loaded(Minecraft c,BlockPos p){
         return !c.level.isOutsideBuildHeight(p)&&c.level.getWorldBorder().isWithinBounds(p)
             &&LoadedServerChunkEvidence.isServerChunk(c.level,c.level.getChunkSource().getChunk(p.getX()>>4,p.getZ()>>4,ChunkStatus.FULL,false));
@@ -47,7 +50,7 @@ final class ProjectedFloorWaterGuard {
             var threats=new ArrayList<ProjectedFloorWaterThreatPolicy.Threat>();
             for(var e:c.level.getEntities(p,body.inflate(16),e->e instanceof Enemy&&e.isAlive())){
                 var type=BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString();
-                boolean supported=type.equals("minecraft:zombie")||type.equals("minecraft:skeleton")||type.equals("minecraft:slime");
+                boolean supported=supportedGroundMob(type);
                 threats.add(new ProjectedFloorWaterThreatPolicy.Threat(e.level()==c.level&&c.level.getEntity(e.getId())==e&&loaded(c,e.blockPosition()),
                     supported,p.hasLineOfSight(e),e.getBoundingBox().maxY));
             }
