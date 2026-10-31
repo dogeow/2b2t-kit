@@ -150,6 +150,29 @@ class SourceSupplyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory()as d:
             with self.assertRaises(RuntimeError):refill(c,LOW,HIGH,[11,59,20],KEY,Path(d)/'one')
         self.assertEqual(c.calls,[])
+    def test_supply_preflight_failure_has_an_explicit_undispatched_journal(self):
+        from projected_source_column import refill
+        m,f=self.prepared();c=SupplyFake(m,f);c.supply_protocol=0
+        with tempfile.TemporaryDirectory()as d:
+            out=Path(d)/'one'
+            with self.assertRaises(RuntimeError):refill(c,LOW,HIGH,[11,59,20],KEY,out)
+            book=json.loads((out/'progress.json').read_text())
+            self.assertIs(book['dispatch_started'],False);self.assertIsNone(book['pending'])
+        self.assertEqual(c.fills,0);self.assertEqual(c.calls,[])
+    def test_uncertain_dispatched_supply_never_looks_like_preflight_failure(self):
+        from projected_source_column import refill
+        class Unconfirmed(SupplyFake):
+            def request(self,op,**params):
+                result=super().request(op,**params)
+                if op=='bucket_fill':result['phase']='waiting'
+                return result
+        m,f=self.prepared();c=Unconfirmed(m,f)
+        with tempfile.TemporaryDirectory()as d:
+            out=Path(d)/'one'
+            with self.assertRaisesRegex(RuntimeError,'unconfirmed'):refill(c,LOW,HIGH,[11,59,20],KEY,out)
+            book=json.loads((out/'progress.json').read_text())
+            self.assertIs(book['dispatch_started'],True);self.assertEqual(book['pending'],'one_source_supply_fill');self.assertEqual(book['request_id'],'supply-one')
+        self.assertEqual(c.fills,1)
     def test_edge_sources_and_incomplete_rows_are_not_supply(self):
         from projected_source_column import refill
         for target in [[10,59,20],[12,59,20]]:

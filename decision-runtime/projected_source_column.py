@@ -177,7 +177,9 @@ def supply_receipt(reply,request,world,source,*,completed_overflow=False):
 
 def refill(c,low,high,source,placement_key,out,*,completed_overflow=False):
     """Refill once from a completed center; prove source preservation/regeneration before advancing."""
-    lo,hi=envelope(low,high);out=Path(out);out.mkdir(parents=True,exist_ok=False);state=c.status();lease=state.get('supervision_lease')or{}
+    lo,hi=envelope(low,high);out=Path(out);out.mkdir(parents=True,exist_ok=False)
+    book={'pending':None,'dispatch_started':False,'complete':False,'automatic_retry_allowed':False}
+    write_json(out/'progress.json',book);state=c.status();lease=state.get('supervision_lease')or{}
     if (state.get('projected_source_column_supply_protocol')!=1 or state.get('health')!=20
             or state.get('air_supply',0)<270 or state.get('food',0)<16 or state.get('screen')or state.get('manual_movement')
             or state.get('guard_busy')or not state.get('guard_armed')or lease.get('kind')!='materials'or lease.get('job_session')!=c.task
@@ -196,7 +198,7 @@ def refill(c,low,high,source,placement_key,out,*,completed_overflow=False):
     write_json(out/'geometry-before.json',{'model_hash':model['content_hash'],'scan':frame,'plan':plan})
     c.checked('select_item',item='minecraft:bucket',slot=singleton['slot']);before=c.status();stock=inventory_counts(before)
     if before.get('hand',{}).get('item')!='minecraft:bucket'or before.get('hand',{}).get('count')!=1:raise RuntimeError('Selected singleton empty bucket required')
-    book={'pending':'one_source_supply_fill','source':source,'world_session':c.world,'complete':False,'automatic_retry_allowed':False};write_json(out/'progress.json',book)
+    book.update(pending='one_source_supply_fill',source=source,world_session=c.world,dispatch_started=True);write_json(out/'progress.json',book)
     try:
         reply=c.request('bucket_fill',pos=source,expected_state=SOURCE,expected_hand='minecraft:bucket',projected_source_column_supply=True,source_supply_completed_overflow=completed_overflow,
                         placement_key=placement_key,source_column_bounds=plan['source_column_bounds'],column_boundary_pins=plan['column_boundary_pins'])
