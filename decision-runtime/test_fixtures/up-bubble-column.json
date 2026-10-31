@@ -1,0 +1,1014 @@
+{
+  "synthetic_fixture": true,
+  "model": {
+    "placement_key": "unit-bubble",
+    "expected": [
+      {
+        "pos": [
+          13,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          13,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          14,
+          68,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          14,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          14,
+          69,
+          28
+        ],
+        "state": "Block{minecraft:glass_pane}[east=true,north=true,south=false,waterlogged=false,west=true]"
+      },
+      {
+        "pos": [
+          14,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:water}[level=7]"
+      },
+      {
+        "pos": [
+          14,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:water}[level=6]"
+      },
+      {
+        "pos": [
+          14,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          14,
+          70,
+          29
+        ],
+        "state": "Block{minecraft:air}"
+      },
+      {
+        "pos": [
+          14,
+          70,
+          30
+        ],
+        "state": "Block{minecraft:air}"
+      },
+      {
+        "pos": [
+          15,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          15,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          15,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:water}[level=5]"
+      },
+      {
+        "pos": [
+          15,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          15,
+          70,
+          30
+        ],
+        "state": "Block{minecraft:air}"
+      },
+      {
+        "pos": [
+          16,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          16,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          16,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:water}[level=4]"
+      },
+      {
+        "pos": [
+          16,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          16,
+          70,
+          30
+        ],
+        "state": "Block{minecraft:air}"
+      },
+      {
+        "pos": [
+          17,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          17,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          17,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:water}[level=3]"
+      },
+      {
+        "pos": [
+          17,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          17,
+          70,
+          30
+        ],
+        "state": "Block{minecraft:air}"
+      },
+      {
+        "pos": [
+          18,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          18,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          18,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:water}[level=2]"
+      },
+      {
+        "pos": [
+          18,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          18,
+          70,
+          30
+        ],
+        "state": "Block{minecraft:air}"
+      },
+      {
+        "pos": [
+          19,
+          63,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          19,
+          64,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          19,
+          65,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          19,
+          66,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          19,
+          67,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          19,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          19,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          19,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:water}[level=1]"
+      },
+      {
+        "pos": [
+          19,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          19,
+          70,
+          30
+        ],
+        "state": "Block{minecraft:air}"
+      },
+      {
+        "pos": [
+          20,
+          62,
+          30
+        ],
+        "state": "Block{minecraft:soul_sand}"
+      },
+      {
+        "pos": [
+          20,
+          63,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          63,
+          30
+        ],
+        "state": "Block{minecraft:bubble_column}[drag=false]"
+      },
+      {
+        "pos": [
+          20,
+          63,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          64,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          64,
+          30
+        ],
+        "state": "Block{minecraft:bubble_column}[drag=false]"
+      },
+      {
+        "pos": [
+          20,
+          64,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          65,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          65,
+          30
+        ],
+        "state": "Block{minecraft:bubble_column}[drag=false]"
+      },
+      {
+        "pos": [
+          20,
+          65,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          66,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          66,
+          30
+        ],
+        "state": "Block{minecraft:bubble_column}[drag=false]"
+      },
+      {
+        "pos": [
+          20,
+          66,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          67,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          67,
+          30
+        ],
+        "state": "Block{minecraft:bubble_column}[drag=false]"
+      },
+      {
+        "pos": [
+          20,
+          67,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          68,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:bubble_column}[drag=false]"
+      },
+      {
+        "pos": [
+          20,
+          68,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:bubble_column}[drag=false]"
+      },
+      {
+        "pos": [
+          20,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          20,
+          70,
+          30
+        ],
+        "state": "Block{minecraft:glass}"
+      },
+      {
+        "pos": [
+          21,
+          63,
+          30
+        ],
+        "state": "Block{minecraft:spruce_trapdoor}[facing=south,half=top,open=false,powered=false,waterlogged=false]"
+      },
+      {
+        "pos": [
+          21,
+          64,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}"
+      },
+      {
+        "pos": [
+          21,
+          65,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}"
+      },
+      {
+        "pos": [
+          21,
+          66,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}"
+      },
+      {
+        "pos": [
+          21,
+          67,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}"
+      },
+      {
+        "pos": [
+          21,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}"
+      },
+      {
+        "pos": [
+          21,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}"
+      }
+    ]
+  },
+  "frame": {
+    "phase": "done",
+    "world_session": "unit-world",
+    "blocks": [
+      {
+        "pos": [
+          13,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          13,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          14,
+          68,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          14,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          14,
+          69,
+          28
+        ],
+        "state": "Block{minecraft:glass_pane}[east=true,north=true,south=false,waterlogged=false,west=true]",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          14,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          15,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          15,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          15,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          16,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          16,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          16,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          17,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          17,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          17,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          18,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          18,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          18,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          19,
+          63,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          19,
+          64,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          19,
+          65,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          19,
+          66,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          19,
+          67,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          19,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          19,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          19,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          62,
+          30
+        ],
+        "state": "Block{minecraft:soul_sand}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          63,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          63,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          64,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          64,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          65,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          65,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          66,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          66,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          67,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          67,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          68,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          68,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          69,
+          29
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          20,
+          69,
+          31
+        ],
+        "state": "Block{minecraft:glass}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          21,
+          63,
+          30
+        ],
+        "state": "Block{minecraft:spruce_trapdoor}[facing=south,half=top,open=false,powered=false,waterlogged=false]",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          21,
+          64,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          21,
+          65,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          21,
+          66,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          21,
+          67,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          21,
+          68,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}",
+        "block_entity": false
+      },
+      {
+        "pos": [
+          21,
+          69,
+          30
+        ],
+        "state": "Block{minecraft:cobblestone}",
+        "block_entity": false
+      }
+    ],
+    "scan_cells_read": 324,
+    "scan_total_cells": 324,
+    "scan_coherent": true,
+    "scan_predictions": {
+      "complete": true,
+      "pending_count": 0
+    },
+    "unloaded_chunks": []
+  }
+}

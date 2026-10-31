@@ -4682,6 +4682,7 @@ public final class AutomationBridge {
         j.addProperty("projected_observer_place_protocol",1);
         j.addProperty("projected_slab_place_protocol",1);
         j.addProperty("projected_source_roof_protocol",1);
+        j.addProperty("projected_bubble_column_protocol",1);
         j.addProperty("projected_trapdoor_waterlog_protocol",1);
         j.addProperty("projected_floor_water_shield_protocol",1);
         j.addProperty("bucket_passive_observation_protocol",1);
