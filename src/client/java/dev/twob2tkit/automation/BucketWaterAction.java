@@ -56,6 +56,7 @@ final class BucketWaterAction {
     private final ProjectedTrapdoorWaterlog projectedWaterlog;
     private final ProjectedBubbleColumnGuard projectedBubble;
     private final ProjectedSourceReturnGuard projectedReturn;
+    private final ProjectedModelWaterGuard projectedModelWater;
     private boolean sourceReturnProbeSent;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
@@ -102,6 +103,10 @@ final class BucketWaterAction {
         projectedBubble=bubble?new ProjectedBubbleColumnGuard(request,target):null;
         if(sourceReturn&&!ProjectedBubblePolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent,collect,waterlog,bubble))throw new IllegalArgumentException("Source return is an exclusive place-only operation");
         projectedReturn=sourceReturn?new ProjectedSourceReturnGuard(c,request,target):null;
+        boolean modelWater=ProjectedModelWaterGuard.requested(request);
+        if(!modelWater&&request.has("model_water_bounds"))throw new IllegalArgumentException("Model bounds require explicit source mode");
+        if(modelWater&&!ProjectedBubblePolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent,collect,waterlog,bubble,sourceReturn))throw new IllegalArgumentException("Model source mode is exclusive place-only");
+        projectedModelWater=modelWater?new ProjectedModelWaterGuard(request,target):null;
         if(expectedState.isBlank())throw new IllegalArgumentException("An exact fresh target state is required");
         support=mode==BucketWaterPolicy.Mode.PLACE?position(request,"support"):target;
         face=mode==BucketWaterPolicy.Mode.PLACE?Direction.valueOf(text(request,"face").toUpperCase(java.util.Locale.ROOT)):null;
@@ -157,6 +162,7 @@ final class BucketWaterAction {
             &&c.level.getBlockState(pos).isCollisionShapeFullBlock(c.level,pos);
     }
     private boolean boundedHole(Minecraft c,boolean airRequired) {
+        if(projectedModelWater!=null){projectedModelWater.require(c,airRequired);return true;}
         if(projectedReturn!=null){projectedReturn.require(c);return true;}
         if(projectedBubble!=null){projectedBubble.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         if(projectedWaterlog!=null){projectedWaterlog.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
@@ -304,7 +310,7 @@ final class BucketWaterAction {
         out.addProperty("confirmed",confirmed&&retired);out.addProperty("unknown_outcome",receipt.sent()&&!retired);
         out.addProperty("confirmation_scope","post_single_normal_use_current_connection_target_block_and_selected_bucket_slot_server_packets_plus_vanilla_prediction_settled_and_exact_inventory_delta_after_8_ticks");
         out.addProperty("expected_state_before",expectedState);
-        out.addProperty("projected_source_return",projectedReturn!=null);
+        out.addProperty("projected_source_return",projectedReturn!=null);out.addProperty("projected_model_water_source",projectedModelWater!=null);
         out.addProperty("source_return_block_probe_count",sourceReturnProbeSent?1:0);
         out.addProperty("projected_bubble_column",projectedBubble!=null);
         if(projectedBubble!=null)out.addProperty("expected_bubble_state",projectedBubble.expectedState());
