@@ -35,4 +35,16 @@ final class MaterialAirContactPolicyTest {
         for(String name:new String[]{"minimumCell","maximumCell","deflate","noCollision","getFluidState","getBlockState"})assertTrue(calls.contains(name),name);
         assertFalse(calls.contains("setBlock"));
     }
+    @org.junit.jupiter.api.Test void dryFeetAboveActualWaterSurfaceCanRiseWithoutEnteringTheFluidVoxel(){
+        org.junit.jupiter.api.Assertions.assertFalse(MaterialAirContactPolicy.fluidIntersects(62.94375,65.2,62,8d/9));
+        org.junit.jupiter.api.Assertions.assertFalse(MaterialAirContactPolicy.fluidIntersects(62.8,65.2,62,7d/9));
+        org.junit.jupiter.api.Assertions.assertTrue(MaterialAirContactPolicy.fluidIntersects(62.94375,65.2,62,1));
+        org.junit.jupiter.api.Assertions.assertTrue(MaterialAirContactPolicy.fluidIntersects(62.88,65.2,62,8d/9));
+        org.junit.jupiter.api.Assertions.assertFalse(MaterialAirContactPolicy.fluidIntersects(63,64.8,62,1));
+    }
+    @org.junit.jupiter.api.Test void invalidSurfaceAndBodyEvidenceNeverCertifiesDryAir(){
+        for(double h:new double[]{Double.NaN,Double.POSITIVE_INFINITY,-1,0,1.01})org.junit.jupiter.api.Assertions.assertTrue(MaterialAirContactPolicy.fluidIntersects(64,65,62,h));
+        org.junit.jupiter.api.Assertions.assertTrue(MaterialAirContactPolicy.fluidIntersects(Double.NaN,65,62,8d/9));
+        org.junit.jupiter.api.Assertions.assertTrue(MaterialAirContactPolicy.fluidIntersects(65,64,62,8d/9));
+    }
 }

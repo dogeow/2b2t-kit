@@ -3832,7 +3832,9 @@ public final class AutomationBridge {
                 new BlockPos(MaterialAirContactPolicy.maximumCell(sweep.maxX),MaterialAirContactPolicy.maximumCell(sweep.maxY),MaterialAirContactPolicy.maximumCell(sweep.maxZ)))){
             if(!c.level.hasChunkAt(p))return false;
             var state=c.level.getBlockState(p);
-            if(!state.getFluidState().isEmpty()||state.is(net.minecraft.world.level.block.Blocks.FIRE)
+            var fluid=state.getFluidState();
+            if(!fluid.isEmpty()&&(!(fluid.is(net.minecraft.tags.FluidTags.WATER)||fluid.is(net.minecraft.tags.FluidTags.LAVA))
+                    ||MaterialAirContactPolicy.fluidIntersects(sweep.minY,sweep.maxY,p.getY(),fluid.getHeight(c.level,p)))||state.is(net.minecraft.world.level.block.Blocks.FIRE)
                     ||state.is(net.minecraft.world.level.block.Blocks.SOUL_FIRE)||state.is(net.minecraft.world.level.block.Blocks.COBWEB)
                     ||state.is(net.minecraft.world.level.block.Blocks.POWDER_SNOW))return false;
         }
