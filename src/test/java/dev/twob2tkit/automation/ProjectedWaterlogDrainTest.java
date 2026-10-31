@@ -47,4 +47,15 @@ class ProjectedWaterlogDrainTest {
         receipt.inventory(true,true,true,true,11);assertTrue(receipt.done(true,true,true,19));
         receipt.block(true,true,true,wet.toString(),false,20);assertFalse(receipt.done(true,true,true,100),"Refilled waterlogging invalidates earlier dry proof");
     }
+    @Test void stairDrainPreservesEveryFacingHalfAndCornerShape(){
+        for(var dry:Blocks.COBBLESTONE_STAIRS.getStateDefinition().getPossibleStates()){
+            if(dry.getValue(BlockStateProperties.WATERLOGGED))continue;
+            var wet=dry.setValue(BlockStateProperties.WATERLOGGED,true);
+            assertTrue(ProjectedWaterlogDrain.pair(wet,dry,false));
+            assertFalse(ProjectedWaterlogDrain.pair(wet,dry.cycle(BlockStateProperties.HORIZONTAL_FACING),false));
+            assertFalse(ProjectedWaterlogDrain.pair(wet,dry.cycle(BlockStateProperties.HALF),false));
+            assertFalse(ProjectedWaterlogDrain.pair(wet,dry.cycle(BlockStateProperties.STAIRS_SHAPE),false));
+            assertFalse(ProjectedWaterlogDrain.pair(wet,dry,true));
+        }
+    }
 }

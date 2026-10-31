@@ -90,7 +90,7 @@ def drain(c,target,key,model,out):
     out,book=_begin(out);s=_owner(c,key,model)
     if s.get('projected_waterlog_drain_protocol')!=1:raise RuntimeError('Native original waterlog drain protocol required')
     dry=_goal(model,target);block,props=block_state(dry)
-    if block not in('minecraft:cobblestone_slab','minecraft:spruce_trapdoor')or props.get('waterlogged')!='false'or props.get('type')=='double':raise RuntimeError('Original dry single slab or trapdoor required')
+    if block not in('minecraft:cobblestone_slab','minecraft:spruce_trapdoor','minecraft:cobblestone_stairs')or props.get('waterlogged')!='false'or props.get('type')=='double':raise RuntimeError('Original dry single slab, trapdoor or stair required')
     wet=dry.replace('waterlogged=false','waterlogged=true');r=c.checked('scan',min=target,max=target,details=True,include_predictions=True)
     if not coherent(r,c.world,target,target)or len(r['blocks'])!=1 or r['blocks'][0]['state']!=wet:raise RuntimeError('Only the wrong water bit may be removed; no shape or material correction')
     bucket=next((v for v in s.get('inventory',[])if v.get('slot',99)<36 and v.get('item')=='minecraft:bucket'and v.get('count')==1),None)

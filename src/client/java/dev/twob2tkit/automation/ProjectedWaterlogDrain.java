@@ -5,6 +5,7 @@ import dev.twob2tkit.builder.LitematicaAccess;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.SimpleWaterloggedBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -28,7 +29,7 @@ final class ProjectedWaterlogDrain {
         if(blockEntity||!wet.hasProperty(property)||!dry.hasProperty(property)
             ||!wet.getValue(property)||dry.getValue(property)||wet.getBlock()!=dry.getBlock()
             ||!(wet.getBlock() instanceof SimpleWaterloggedBlock)
-            ||!(wet.getBlock() instanceof SlabBlock||wet.getBlock() instanceof TrapDoorBlock))return false;
+            ||!(wet.getBlock() instanceof SlabBlock||wet.getBlock() instanceof TrapDoorBlock||wet.getBlock() instanceof StairBlock))return false;
         if(wet.getBlock() instanceof SlabBlock&&wet.getValue(BlockStateProperties.SLAB_TYPE)==SlabType.DOUBLE)return false;
         return wet.setValue(property,false).equals(dry)&&wet.getFluidState().is(Fluids.WATER)
             &&wet.getFluidState().isSource()&&dry.getFluidState().isEmpty();
@@ -43,7 +44,7 @@ final class ProjectedWaterlogDrain {
         wet=observeCompleted&&actual.equals(dry)&&actual.hasProperty(BlockStateProperties.WATERLOGGED)?actual.setValue(BlockStateProperties.WATERLOGGED,true):actual;
         if(!ProjectionLoadPolicy.text(r,"expected_dry_state",2048).equals(dry.toString())
             ||!pair(wet,dry,c.level.getBlockEntity(target)!=null))
-            throw new IllegalStateException("Projected drain only changes waterlogged=true to the otherwise identical dry slab or trapdoor in the schematic");
+            throw new IllegalStateException("Projected drain only changes waterlogged=true to the otherwise identical dry slab, trapdoor or stair in the schematic");
     }
     boolean context(Minecraft c){
         var selected=LitematicaAccess.lockedBuildSelection();var model=LitematicaAccess.schematicWorld();
