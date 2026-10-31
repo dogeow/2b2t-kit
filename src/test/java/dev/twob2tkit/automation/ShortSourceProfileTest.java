@@ -80,6 +80,6 @@ class ShortSourceProfileTest {
         var owner=n.methods.stream().filter(m->m.name.equals("bucketOwnerCurrent")).findFirst().orElseThrow();
         assertTrue(java.util.stream.StreamSupport.stream(owner.instructions.spliterator(),false).anyMatch(i->i instanceof MethodInsnNode c&&c.owner.endsWith("ProjectedBentChannelGuard")&&c.name.equals("shieldedWorkspace")));
         var snapshot=n.methods.stream().filter(m->m.name.equals("snapshot")).findFirst().orElseThrow();
-        for(String protocol:List.of("projected_short_source_profile_protocol","projected_bent_collection_protocol"))assertTrue(java.util.stream.StreamSupport.stream(snapshot.instructions.spliterator(),false).anyMatch(i->i instanceof LdcInsnNode c&&protocol.equals(c.cst)));
+        for(String protocol:List.of("projected_short_source_profile_protocol","projected_bent_collection_protocol","projected_bent_middle_service_protocol"))assertTrue(java.util.stream.StreamSupport.stream(snapshot.instructions.spliterator(),false).anyMatch(i->i instanceof LdcInsnNode c&&protocol.equals(c.cst)));
     }
 }

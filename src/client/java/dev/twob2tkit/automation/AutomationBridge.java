@@ -4677,6 +4677,7 @@ public final class AutomationBridge {
         j.addProperty("bucket_passive_observation_protocol",1);
         j.addProperty("projected_short_source_profile_protocol",1);
         j.addProperty("projected_bent_collection_protocol",1);
+        j.addProperty("projected_bent_middle_service_protocol",1);
         j.addProperty("projected_water_channel_protocol",1);
         j.addProperty("projected_channel_service_ceiling_protocol",1);
         j.addProperty("projected_waterlog_drain_protocol",1);
