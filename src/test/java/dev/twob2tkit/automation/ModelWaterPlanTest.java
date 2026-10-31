@@ -92,4 +92,15 @@ class ModelWaterPlanTest {
   var bucket=new org.objectweb.asm.tree.ClassNode();new org.objectweb.asm.ClassReader(BucketWaterAction.class.getResourceAsStream("BucketWaterAction.class")).accept(bucket,0);
   boolean checked=false;for(var m:bucket.methods)if(m.name.equals("validateBeforeSend"))for(var i:m.instructions)if(i instanceof org.objectweb.asm.tree.MethodInsnNode call)checked|=call.owner.endsWith("ProjectedFlowCorrectionGuard")&&call.name.equals("require");assertTrue(checked);
  }
+ @Test void removalOnlyCalmCreeperProofKeepsBlastAndProtectedCellMargins(){
+  assertTrue(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,true,false,false,true,100,70));
+  assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,true,false,false,true,64,70));
+  assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,true,false,false,true,100,49));
+  assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(false,true,false,false,true,100,70));
+  assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,false,false,false,true,100,70));
+  assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,true,true,false,true,100,70));
+  assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,true,false,true,true,100,70));
+  assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,true,false,false,false,100,70));
+  assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,true,false,false,true,Double.NaN,70));
+ }
 }

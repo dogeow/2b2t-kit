@@ -10,6 +10,7 @@ import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.projectile.Projectile;
 /** Water removal only: an explicit extra source or the exact original waterlogging bit. */
 final class ProjectedFlowCorrectionGuard {
@@ -28,6 +29,9 @@ final class ProjectedFlowCorrectionGuard {
   for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++)for(int z=-1;z<=1;z++)if(!ProjectedModelWaterGuard.loaded(c,target.offset(x,y,z)))throw new IllegalStateException("Water correction needs current server chunks");
  }
  boolean current(Minecraft c){try{require(c,false);return true;}catch(RuntimeException changed){return false;}}
+ static boolean remoteCalmCreeper(boolean current,boolean ordinary,boolean visible,boolean igniting,boolean below,double playerDistanceSquared,double targetDistanceSquared){
+  return current&&ordinary&&!visible&&!igniting&&below&&Double.isFinite(playerDistanceSquared)&&Double.isFinite(targetDistanceSquared)&&playerDistanceSquared>64&&targetDistanceSquared>49;
+ }
  static boolean shieldedWorkspace(Minecraft c,JsonObject r){
   try{
    if(c.player==null||c.level==null||!"bucket_fill".equals(ProjectionLoadPolicy.text(r,"op",64)))return false;
@@ -41,6 +45,7 @@ final class ProjectedFlowCorrectionGuard {
    var p=c.player;var body=p.getBoundingBox();
    if(!c.level.getEntities(p,body.inflate(24),e->e instanceof Projectile a&&e.isAlive()&&a.getOwner()!=p&&e.getDeltaMovement().lengthSqr()>.0001).isEmpty())return false;
    for(var e:c.level.getEntities(p,body.inflate(16),e->e instanceof Enemy&&e.isAlive())){
+    if(e instanceof Creeper a&&remoteCalmCreeper(e.level()==c.level&&c.level.getEntity(e.getId())==e&&ProjectedModelWaterGuard.loaded(c,e.blockPosition()),!a.isPowered(),p.hasLineOfSight(e),a.isIgnited()||a.getSwellDir()>0||a.getSwelling(1)>0,e.getBoundingBox().maxY<=target.getY()-1,ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),ProjectedSourceColumnGuard.boxDistanceSquared(new net.minecraft.world.phys.AABB(target),e.getBoundingBox())))continue;
     if(!ModelWaterThreatPolicy.permit(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(),e.level()==c.level&&c.level.getEntity(e.getId())==e&&ProjectedModelWaterGuard.loaded(c,e.blockPosition()),p.hasLineOfSight(e),ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),e instanceof EnderMan a&&!a.isCreepy()))return false;
    }return true;
   }catch(RuntimeException unproved){return false;}
