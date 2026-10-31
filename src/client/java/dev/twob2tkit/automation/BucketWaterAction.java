@@ -57,6 +57,7 @@ final class BucketWaterAction {
     private final ProjectedBubbleColumnGuard projectedBubble;
     private final ProjectedSourceReturnGuard projectedReturn;
     private final ProjectedModelWaterGuard projectedModelWater;
+    private final ProjectedFlowCorrectionGuard flowCorrection;
     private boolean sourceReturnProbeSent;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
@@ -107,6 +108,9 @@ final class BucketWaterAction {
         if(!modelWater&&request.has("model_water_bounds"))throw new IllegalArgumentException("Model bounds require explicit source mode");
         if(modelWater&&!ProjectedBubblePolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent,collect,waterlog,bubble,sourceReturn))throw new IllegalArgumentException("Model source mode is exclusive place-only");
         projectedModelWater=modelWater?new ProjectedModelWaterGuard(request,target):null;
+        boolean flowDrain=ProjectedFlowCorrectionGuard.requested(request);
+        if(flowDrain&&(mode!=BucketWaterPolicy.Mode.FILL||column||drain||channel||sources||supply||bent||collect||waterlog||bubble||sourceReturn||modelWater))throw new IllegalArgumentException("Extra flow source drain is an exclusive fill-only operation");
+        flowCorrection=flowDrain?new ProjectedFlowCorrectionGuard(request,target):null;
         if(expectedState.isBlank())throw new IllegalArgumentException("An exact fresh target state is required");
         support=mode==BucketWaterPolicy.Mode.PLACE?position(request,"support"):target;
         face=mode==BucketWaterPolicy.Mode.PLACE?Direction.valueOf(text(request,"face").toUpperCase(java.util.Locale.ROOT)):null;
@@ -185,6 +189,7 @@ final class BucketWaterAction {
         if(!BucketWaterPolicy.allowedHand(mode,id,held.getCount())||c.player.getCooldowns().isOnCooldown(held))
             throw new IllegalStateException("A selected singleton water-only bucket without cooldown is required");
         if(mode==BucketWaterPolicy.Mode.FILL){
+            if(flowCorrection!=null)flowCorrection.require(c,true);
             if(projectedSupply!=null)projectedSupply.requireBefore(c);
             if(projectedBentCollect!=null)projectedBentCollect.require(c,true);
             if(projectedDrain!=null)projectedDrain.requireBefore(c);
@@ -273,6 +278,7 @@ final class BucketWaterAction {
             else if(!ownerCurrent.getAsBoolean())observationGate="owner_or_protection_changed";
             else if(!serverChunk(c,target))observationGate="target_chunk_changed";
             else if(mode==BucketWaterPolicy.Mode.PLACE&&!boundedHole(c,false))observationGate="placement_geometry_changed";
+            else if(flowCorrection!=null&&!flowCorrection.current(c))observationGate="original_flow_target_changed";
             else if(projectedDrain!=null&&!projectedDrain.current(c))observationGate="drain_geometry_changed";
             else if(projectedSupply!=null&&!projectedSupply.current(c))observationGate="supply_geometry_changed";
             else if(projectedBentCollect!=null){projectedBentCollect.require(c,false);stable=true;observationGate="ready";}
@@ -310,7 +316,7 @@ final class BucketWaterAction {
         out.addProperty("confirmed",confirmed&&retired);out.addProperty("unknown_outcome",receipt.sent()&&!retired);
         out.addProperty("confirmation_scope","post_single_normal_use_current_connection_target_block_and_selected_bucket_slot_server_packets_plus_vanilla_prediction_settled_and_exact_inventory_delta_after_8_ticks");
         out.addProperty("expected_state_before",expectedState);
-        out.addProperty("projected_source_return",projectedReturn!=null);out.addProperty("projected_model_water_source",projectedModelWater!=null);
+        out.addProperty("projected_flow_source_drain",flowCorrection!=null);out.addProperty("projected_source_return",projectedReturn!=null);out.addProperty("projected_model_water_source",projectedModelWater!=null);
         out.addProperty("source_return_block_probe_count",sourceReturnProbeSent?1:0);
         out.addProperty("projected_bubble_column",projectedBubble!=null);
         if(projectedBubble!=null)out.addProperty("expected_bubble_state",projectedBubble.expectedState());

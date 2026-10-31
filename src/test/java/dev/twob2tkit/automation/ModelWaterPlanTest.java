@@ -74,4 +74,22 @@ class ModelWaterPlanTest {
    assertTrue(source.contains("projectedModelWater.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()))"));
   });
  }
+ @Test void flowCorrectionIsExplicitAndCannotTargetLegitimateSourcesOrBlocks(){
+  assertFalse(ProjectedFlowCorrectionGuard.requested(new com.google.gson.JsonObject()));
+  assertThrows(IllegalArgumentException.class,()->ProjectedFlowCorrectionGuard.requested(com.google.gson.JsonParser.parseString("{\"projected_flow_source_drain\":1}").getAsJsonObject()));
+  for(int i=1;i<=7;i++)assertTrue(ProjectedFlowCorrectionGuard.originalFlow(Blocks.WATER.defaultBlockState().setValue(LiquidBlock.LEVEL,i)));
+  assertFalse(ProjectedFlowCorrectionGuard.originalFlow(Blocks.WATER.defaultBlockState()));
+  assertFalse(ProjectedFlowCorrectionGuard.originalFlow(Blocks.AIR.defaultBlockState()));
+  assertFalse(ProjectedFlowCorrectionGuard.originalFlow(Blocks.BUBBLE_COLUMN.defaultBlockState()));
+  assertFalse(ProjectedFlowCorrectionGuard.originalFlow(Blocks.WATER.defaultBlockState().setValue(LiquidBlock.LEVEL,8)));
+  assertTrue(ProjectedFlowCorrectionGuard.currentFlowOrAir(Blocks.AIR.defaultBlockState()));
+  assertFalse(ProjectedFlowCorrectionGuard.currentFlowOrAir(Blocks.LAVA.defaultBlockState()));
+  assertFalse(ProjectedFlowCorrectionGuard.currentFlowOrAir(Blocks.CHEST.defaultBlockState()));
+ }
+ @Test void correctionGuardIsWiredIntoOwnershipAndBucketPreflight()throws Exception{
+  var bridge=new org.objectweb.asm.tree.ClassNode();new org.objectweb.asm.ClassReader(AutomationBridge.class.getResourceAsStream("AutomationBridge.class")).accept(bridge,0);
+  boolean owner=false,protocol=false;for(var m:bridge.methods)for(var i:m.instructions){if(i instanceof org.objectweb.asm.tree.MethodInsnNode call&&m.name.equals("bucketOwnerCurrent"))owner|=call.owner.endsWith("ProjectedFlowCorrectionGuard")&&call.name.equals("shieldedWorkspace");if(i instanceof org.objectweb.asm.tree.LdcInsnNode value)protocol|="projected_flow_source_drain_protocol".equals(value.cst);}assertTrue(owner);assertTrue(protocol);
+  var bucket=new org.objectweb.asm.tree.ClassNode();new org.objectweb.asm.ClassReader(BucketWaterAction.class.getResourceAsStream("BucketWaterAction.class")).accept(bucket,0);
+  boolean checked=false;for(var m:bucket.methods)if(m.name.equals("validateBeforeSend"))for(var i:m.instructions)if(i instanceof org.objectweb.asm.tree.MethodInsnNode call)checked|=call.owner.endsWith("ProjectedFlowCorrectionGuard")&&call.name.equals("require");assertTrue(checked);
+ }
 }
