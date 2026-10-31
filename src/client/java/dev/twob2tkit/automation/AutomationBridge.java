@@ -2816,7 +2816,10 @@ public final class AutomationBridge {
                             throw new IllegalStateException("Boat placement requires the healthy owned material controller");
                         interactionResult=c.gameMode.useItem(c.player,InteractionHand.MAIN_HAND);
                     }else interactionResult=c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,checkedHit);
+                    boolean clientSwing=VanillaInteractionPolicy.clientSwingRequired(interactionResult)&&c.player!=null&&session(c).equals(interactionInput.worldSession());
+                    if(clientSwing)c.player.swing(InteractionHand.MAIN_HAND);
                     lastBlockInteractionObservation=BlockInteractionObservation.snapshot(interactionInput,interactionResult,c.level==null?"unavailable":state(c,pos));
+                    lastBlockInteractionObservation.addProperty("client_swing_requested",clientSwing);
                     settle(r,processing?400:terrainReplace||dryPaving?80:projectedObserver||projectedSlab?40:8);
                 }catch(Exception e){finish(c,"error",e.getMessage());}
             });
@@ -4556,7 +4559,7 @@ public final class AutomationBridge {
     }
     private static JsonObject snapshot(Minecraft c){
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
-        j.addProperty("block_interaction_observation_protocol",BlockInteractionObservation.PROTOCOL);
+        j.addProperty("block_interaction_observation_protocol",BlockInteractionObservation.PROTOCOL);j.addProperty("vanilla_interaction_swing_protocol",VanillaInteractionPolicy.PROTOCOL);
         if(lastBlockInteractionObservation!=null&&str(lastBlockInteractionObservation,"world_session").equals(session(c)))j.add("last_block_interaction",lastBlockInteractionObservation.deepCopy());
         j.addProperty("client_connection_protocol",1);j.addProperty("account_name",c.getUser().getName());
         j.addProperty("explicit_recovery_confirmation_protocol",1);
