@@ -21,7 +21,7 @@ then verifies three coherent frames, preserved earlier bubbles, original seals,
 exact inventory delta and the final outlet. Unknown requests are never replayed;
 pre-input admission refusals are distinguished explicitly.
 
-Validation: 214 related Java and 8 new Python tests passed against the isolated
+Validation: 214 related Java and 11 Python tests passed against the isolated
 31.19 candidate. The Python fixture is explicitly synthetic with a unit world;
 it is not a game acceptance record. Actual construction, cap/roof restoration and
 production acceptance are recorded separately under the farm work directory.
@@ -29,3 +29,8 @@ production acceptance are recorded separately under the farm work directory.
 The Python receipt regressions also cover the successful native join plus three
 independent current-state frames, a missing inventory receipt that stays pending,
 and explicit protocol-2 no-input refusal. None of these paths retries a use.
+
+The full seven-stage Python replay checks the preserved bubble prefix and final
+seven-cell outlet. Corrected plain water, new fluid outside the allowed path and
+a wrong final outlet fail completion without another use. Existing sources or
+bubbles are rejected before dispatch, keeping prior action identities untouched.
