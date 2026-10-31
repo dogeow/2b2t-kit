@@ -60,6 +60,14 @@ def plan(rows, start, target, low, high, *, max_straight=16, foot_offset=0):
             heat=properties.get('lit')!='false' and properties.get('waterlogged')!='true'
         if not heat:continue
         x,y,z=row['pos']
+        cover=observed.get((x,y+1,z))
+        # The water voxel itself remains blocked. With a positive feet margin,
+        # its two-air-cell route is above the water and cannot touch magma.
+        # Keep the old padding for zero-margin routes and unknown/other fluids.
+        if (name=='minecraft:magma_block' and foot_offset>=.1 and cover
+                and cover.get('fluid')is True and cover.get('block_entity')is False
+                and block_id(cover)in('minecraft:water','minecraft:bubble_column')):
+            continue
         for dy in range(1,4):
             point=(x,y+dy,z);above=observed.get(point)
             if above and above.get('solid')is True and not above.get('fluid') and block_id(above)!='minecraft:magma_block':break

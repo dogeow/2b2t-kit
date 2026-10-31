@@ -11,6 +11,23 @@ from material_jobs.protocol import JobBlocked
 
 
 class LocalAirPathTests(unittest.TestCase):
+    def test_observed_water_cover_allows_only_the_dry_positive_margin_route(self):
+        magma={'pos':[1,0,1],'state':'Block{minecraft:magma_block}','solid':True,'fluid':False,'block_entity':False}
+        for state in ['Block{minecraft:water}[level=4]','Block{minecraft:bubble_column}[drag=true]']:
+            water={'pos':[1,1,1],'state':state,'solid':False,'fluid':True,'block_entity':False}
+            route=plan([magma,water],[.5,2.1,1.5],[2.5,2.1,1.5],[0,0,1],[2,4,1],foot_offset=.1)
+            self.assertEqual(route,[[.5,2.1,1.5],[2.5,2.1,1.5]])
+            with self.assertRaises(JobBlocked):plan([magma,water],[.5,2.1,1.5],[1.5,1.1,1.5],[0,0,1],[2,4,1],foot_offset=.1)
+    def test_absent_unknown_lava_or_zero_margin_cover_does_not_relax_heat_padding(self):
+        magma={'pos':[1,0,1],'state':'Block{minecraft:magma_block}','solid':True,'fluid':False,'block_entity':False}
+        candidates=[None,{'state':'Block{minecraft:lava}[level=0]','fluid':True,'block_entity':False},
+                    {'state':'Block{minecraft:water}[level=4]','fluid':False,'block_entity':False},
+                    {'state':'Block{minecraft:water}[level=4]','fluid':True,'block_entity':True}]
+        for cover in candidates:
+            rows=[magma]+([{**cover,'pos':[1,1,1]}]if cover else[])
+            with self.assertRaises(JobBlocked):plan(rows,[.5,2.1,1.5],[2.5,2.1,1.5],[0,0,1],[2,4,1],foot_offset=.1)
+        water={'pos':[1,1,1],'state':'Block{minecraft:water}[level=4]','fluid':True,'block_entity':False}
+        with self.assertRaises(JobBlocked):plan([magma,water],[.5,2,1.5],[2.5,2,1.5],[0,0,1],[2,4,1])
     def test_lit_campfire_low_column_is_avoided_even_without_printing(self):
         for name in ['campfire','soul_campfire']:
             rows=[{'pos':[1,59,0],'state':'Block{minecraft:'+name+'}[lit=true,waterlogged=false]','solid':False,'fluid':False}]
