@@ -17,6 +17,8 @@ final class ProjectedBentChannelGuard {
     private final boolean seed;
     private final int collectIndex;
     private final BlockPos serviceRoof;
+    private final BlockPos middleRoof;
+    BlockPos middleRoof(){return middleRoof;}
     int collectIndex(){return collectIndex;}
     BlockPos serviceRoof(){return serviceRoof;}
     boolean seed(){return seed;}
@@ -57,6 +59,8 @@ final class ProjectedBentChannelGuard {
         chamber=new ProjectedSourceColumnGuard(c,r,low);
         serviceRoof=r.has("bent_service_ceiling")?ProjectedSourceColumnGuard.point(r.get("bent_service_ceiling")):null;
         if(serviceRoof!=null&&(chamber.rows()!=4||!serviceRoof.equals(source.above())))throw new IllegalArgumentException("Only this short-profile action's exact original roof may be temporarily open");
+        middleRoof=r.has("bent_middle_ceiling")?ProjectedSourceColumnGuard.point(r.get("bent_middle_ceiling")):null;
+        if(middleRoof!=null&&!middleServiceAllowed(chamber.rows(),middleRoof,origin,serviceRoof))throw new IllegalArgumentException("Only the distinct original middle roof may remain as a shared service opening");
     }
     private static int level(BlockState s){return s.isAir()?-1:s.is(Blocks.WATER)?s.getValue(LiquidBlock.LEVEL):-2;}
     private static void loaded(Minecraft c,BlockPos p){
@@ -82,7 +86,7 @@ final class ProjectedBentChannelGuard {
             var roof=p.above();loaded(c,roof);
             var roofGoal=model.getBlockState(roof);var roofNow=c.level.getBlockState(roof);
             if(chamber.rows()==4&&i<3){
-                if(!shortRoof(roofGoal,roofNow,roof.equals(serviceRoof)))throw new IllegalStateException("Short overflow needs all original bottom roofs except its one pinned service opening");
+                if(!shortRoof(roofGoal,roofNow,roof.equals(serviceRoof)||roof.equals(middleRoof)))throw new IllegalStateException("Short overflow needs all original bottom roofs except its one pinned service opening");
             }else if(!roofNow.isAir()||!roofGoal.isAir())throw new IllegalStateException("Overflow must retain its original open top");
             for(var side:Direction.Plane.HORIZONTAL){
                 var q=p.relative(side);if(path.contains(q))continue;loaded(c,q);var s=c.level.getBlockState(q);var goal=model.getBlockState(q);
@@ -109,6 +113,10 @@ final class ProjectedBentChannelGuard {
     static boolean shortRoof(BlockState original,BlockState actual,boolean service){
         return original.is(Blocks.COBBLESTONE_SLAB)&&original.getValue(SlabBlock.TYPE)==net.minecraft.world.level.block.state.properties.SlabType.BOTTOM
             &&!original.getValue(SlabBlock.WATERLOGGED)&&(service?actual.isAir():actual.equals(original));
+    }
+
+    static boolean middleServiceAllowed(int rows,BlockPos middle,BlockPos origin,BlockPos active){
+        return rows==4&&active!=null&&middle!=null&&middle.equals(origin.west().above())&&!middle.equals(active);
     }
 
 }

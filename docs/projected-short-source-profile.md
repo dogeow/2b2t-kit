@@ -23,3 +23,9 @@ Intent journals separate preflight (`dispatch_started=false,pending=null`) from 
 ## Validation boundary
 
 188 candidate Java tests and47 related Python tests passed before installation. They cover default-versus-explicit dimensions, all35 seals and source preservation, real stair/roof collision geometry, exact5+2 path, staged collection phase/index restrictions, protocol/receipt wiring, old-host rejection, wrong roof metadata and unknown-use retention. Candidate class entries are checked against the installed31.13 baseline; engine/Mixin files and unrelated worktree changes are excluded. Live acceptance, roof restoration and whole-farm production are separate required evidence.
+
+## Shared middle service roof (host31.15)
+
+`projected_bent_middle_service_protocol=1` additionally supports `bent_middle_ceiling`, only when the active service roof is present and distinct. The shared point must be exactly path index1's original bottom-slab roof. Both declared openings must be AIR, with every other original roof unchanged. The receipt returns both opening positions; Python requires the shared-position echo. This lets entry roof429 stay open through the staged pour/collections, while only the active outer roof changes; no roof above newly placed water needs to be mined. The ordinary fluid-neighbour mining prohibition stays intact.
+
+For this profile the seed at path index2 uses the southern GLASS support and its NORTH face. The northern wall is a waterloggable stair and must not be clicked with a bucket as though it were glass. Legacy seed support remains unchanged. The follow-up candidate passed189 Java and49 Python tests, including the shared-roof restriction and the real north-stair/south-glass distinction. These are candidate tests, not live acceptance.

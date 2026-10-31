@@ -49,10 +49,10 @@ def scene(kind='dry',service_index=0):
         else:rows[tuple(p)]={'pos':list(p),'state':state,'solid':solid,'fluid':state.startswith('Block{minecraft:water}'),'block_entity':entity}
     for y in range(59,63):
         for x in range(10,13):put([x,y,20],SOURCE)
-    path=path_for(LOW,HIGH,profile=PROFILE);levels=None if kind=='dry'else[0,0,0,1,2,3,4,5]if kind=='seed'else[0,0,1,2,3,4,5,6]if kind=='middle'else list(range(8))
+    path=path_for(LOW,HIGH,profile=PROFILE);levels=None if kind=='dry'else[0,1,-1,-1,-1,-1,-1,-1]if kind=='partial'else[0,0,0,1,2,3,4,5]if kind=='seed'else[0,0,1,2,3,4,5,6]if kind=='middle'else list(range(8))
     for i,p in enumerate(path):
         x,y,z=p;goals[tuple(p)]=f'Block{{minecraft:water}}[level={i}]'
-        if levels:rows[tuple(p)]={'pos':p,'state':f'Block{{minecraft:water}}[level={levels[i]}]','solid':False,'fluid':True,'block_entity':False}
+        if levels and levels[i]>=0:rows[tuple(p)]={'pos':p,'state':f'Block{{minecraft:water}}[level={levels[i]}]','solid':False,'fluid':True,'block_entity':False}
         else:rows.pop(tuple(p),None)
         if i>=3:put([x,y-1,z],'Block{minecraft:cobblestone}',True)
         put([x,y+1,z],BOTTOM if i<3 else AIR)
@@ -65,7 +65,7 @@ class ChannelFake:
     task='owner';world=WORLD;last='';uncertain=False;short_protocol=1;collection_protocol=1
     def __init__(self,m,f,mode='place'):self.model=m;self.frame=f;self.mode=mode;self.uses=0;self.tick=1;self.water=1 if mode=='place'else 0;self.empty=1-self.water;self.params={}
     def status(self):
-        return {'projected_bent_channel_protocol':1,'projected_bent_channel_seed_protocol':1,'projected_short_source_profile_protocol':self.short_protocol,'projected_bent_collection_protocol':self.collection_protocol,'health':20,'air_supply':300,'screen':'','manual_movement':False,'guard_busy':False,'guard_armed':True,'supervision_lease':{'job_session':self.task},'world_session':WORLD,'hand':{'item':'minecraft:water_bucket'if self.water else'minecraft:bucket','count':1},'inventory':[{'slot':0,'item':'minecraft:water_bucket','count':self.water},{'slot':1,'item':'minecraft:bucket','count':self.empty}]}
+        return {'projected_bent_channel_protocol':1,'projected_bent_channel_seed_protocol':1,'projected_short_source_profile_protocol':self.short_protocol,'projected_bent_collection_protocol':self.collection_protocol,'projected_bent_middle_service_protocol':1,'health':20,'air_supply':300,'screen':'','manual_movement':False,'guard_busy':False,'guard_armed':True,'supervision_lease':{'job_session':self.task},'world_session':WORLD,'hand':{'item':'minecraft:water_bucket'if self.water else'minecraft:bucket','count':1},'inventory':[{'slot':0,'item':'minecraft:water_bucket','count':self.water},{'slot':1,'item':'minecraft:bucket','count':self.empty}]}
     def request(self,op,**params):
         if op=='projection_model':return {'projection_model':self.model}
         self.params=params;self.uses+=1;self.last='use-'+str(self.uses);path=path_for(LOW,HIGH,profile=PROFILE);index=params.get('projected_bent_channel_collect_index',0)
@@ -74,6 +74,7 @@ class ChannelFake:
         for i,p in enumerate(path):change(self.frame,p,f'Block{{minecraft:water}}[level={levels[i]}]')
         self.water+=1 if op=='bucket_fill'else-1;self.empty+=-1 if op=='bucket_fill'else 1
         a={'request_id':self.last,'world_session':WORLD,'operation':op,'pos':params['pos'],'source_column_profile':params.get('source_column_profile'),'projected_bent_channel':op=='bucket_place','projected_bent_channel_seed':params.get('projected_bent_channel_seed',False),'projected_bent_channel_collect_index':index,'confirmed':not self.uncertain,'unknown_outcome':self.uncertain,'use_count':1,'server_block_confirmed':True,'server_inventory_confirmed':True}
+        if 'bent_middle_ceiling'in params:a['bent_middle_ceiling']=params['bent_middle_ceiling']
         return {'id':self.last,'world_session':WORLD,'phase':'waiting'if self.uncertain else'done','bucket_water':a}
     def checked(self,op,**params):
         if op=='select_item':return self.status()
@@ -94,6 +95,15 @@ class ShortChannelTest(unittest.TestCase):
             m,f,roof=scene(kind,index);c=ChannelFake(m,f,'fill')
             with tempfile.TemporaryDirectory()as d:r=remove_seed(c,LOW,HIGH,KEY,Path(d)/'one',index=index,profile=PROFILE,service_ceiling=roof);self.assertTrue(r['complete'])
             self.assertEqual(c.params['projected_bent_channel_collect_index'],index);self.assertEqual(c.params['bent_service_ceiling'],roof);self.assertEqual(c.uses,1)
+    def test_short_seed_uses_the_south_glass_instead_of_waterlogging_the_north_stair(self):
+        m,f,roof=scene('partial',2);middle=[11,64,20];change(f,middle,AIR);c=ChannelFake(m,f)
+        with tempfile.TemporaryDirectory()as d:r=overflow_place(c,LOW,HIGH,KEY,Path(d)/'one',seed=True,profile=PROFILE,service_ceiling=roof,middle_ceiling=middle);self.assertTrue(r['complete'])
+        self.assertEqual(c.params['support'],[10,63,21]);self.assertEqual(c.params['face'],'north');self.assertEqual(c.uses,1)
+    def test_shared_middle_roof_stays_open_without_wet_roof_demolition(self):
+        m,f,roof=scene();middle=[11,64,20];change(f,middle,AIR);c=ChannelFake(m,f)
+        with tempfile.TemporaryDirectory()as d:r=overflow_place(c,LOW,HIGH,KEY,Path(d)/'one',profile=PROFILE,service_ceiling=roof,middle_ceiling=middle);self.assertTrue(r['complete'])
+        self.assertEqual(c.params['bent_middle_ceiling'],middle);self.assertEqual(c.uses,1)
+        with self.assertRaises(ValueError):roof_payload(PROFILE,roof,[12,63,20],middle_ceiling=[10,64,20],source_origin=[12,63,20])
     def test_wrong_roof_is_a_local_preflight_failure_and_unknown_pour_is_not_retried(self):
         m,f,roof=scene();c=ChannelFake(m,f)
         with tempfile.TemporaryDirectory()as d:

@@ -67,6 +67,14 @@ class ShortSourceProfileTest {
         for(String v:List.of("0","3","1.5","\"2\"","null","true"))assertThrows(RuntimeException.class,()->ProjectedBentChannelGuard.collectionIndex(JsonParser.parseString("{\"projected_bent_channel_collect_index\":"+v+"}").getAsJsonObject()));
         assertEquals(2,ProjectedBentChannelGuard.collectionIndex(JsonParser.parseString("{\"projected_bent_channel_collect_index\":2}").getAsJsonObject()));
     }
+    @Test void sharedServiceIsOnlyTheDistinctOriginalMiddleRoofOfTheFourRowProfile(){
+        var origin=new BlockPos(12,63,20);var middle=new BlockPos(11,64,20);var active=new BlockPos(12,64,20);
+        assertTrue(ProjectedBentChannelGuard.middleServiceAllowed(4,middle,origin,active));
+        assertFalse(ProjectedBentChannelGuard.middleServiceAllowed(9,middle,origin,active));
+        assertFalse(ProjectedBentChannelGuard.middleServiceAllowed(4,middle,origin,middle));
+        assertFalse(ProjectedBentChannelGuard.middleServiceAllowed(4,middle,origin,null));
+        assertFalse(ProjectedBentChannelGuard.middleServiceAllowed(4,new BlockPos(10,64,20),origin,active));
+    }
     @Test void nativeOwnerPublishesAndUsesTheNarrowNewProof()throws Exception{
         var n=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/AutomationBridge.class")){new ClassReader(in).accept(n,0);}
         var owner=n.methods.stream().filter(m->m.name.equals("bucketOwnerCurrent")).findFirst().orElseThrow();

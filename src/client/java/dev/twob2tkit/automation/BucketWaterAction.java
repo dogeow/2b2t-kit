@@ -86,7 +86,7 @@ final class BucketWaterAction {
         boolean collect=ProjectedBentChannelGuard.collectRequested(request);
         if(collect&&(mode!=BucketWaterPolicy.Mode.FILL||column||drain||channel||sources||supply||bent||ProjectedTrapdoorWaterlog.requested(request)))throw new IllegalArgumentException("Bent seed collection is an exclusive fill operation");
         projectedBentCollect=collect?new ProjectedBentChannelGuard(c,request,target):null;
-        if(request.has("bent_service_ceiling")&&!bent&&!collect)throw new IllegalArgumentException("Bent service ceiling requires explicit bent operation");
+        if((request.has("bent_service_ceiling")||request.has("bent_middle_ceiling"))&&!bent&&!collect)throw new IllegalArgumentException("Bent service ceiling requires explicit bent operation");
         if(request.has("source_column_profile")&&!sources&&!supply&&!bent&&!collect)throw new IllegalArgumentException("Source profile needs an explicit source or overflow operation");
         sourceProfile=ProjectedSourceColumnGuard.profileRows(request)==4?"four_rows":"nine_rows";
         boolean waterlog=ProjectedTrapdoorWaterlog.requested(request);
@@ -278,6 +278,11 @@ final class BucketWaterAction {
         out.addProperty("projected_bent_channel",projectedBent!=null);
         out.addProperty("projected_bent_channel_seed",projectedBent!=null&&projectedBent.seed());
         out.addProperty("projected_bent_channel_collect_index",projectedBentCollect==null?0:projectedBentCollect.collectIndex());
+        var bend=projectedBent!=null?projectedBent:projectedBentCollect;
+        if(bend!=null){
+            if(bend.serviceRoof()!=null){var roof=new JsonArray();roof.add(bend.serviceRoof().getX());roof.add(bend.serviceRoof().getY());roof.add(bend.serviceRoof().getZ());out.add("bent_service_ceiling",roof);}
+            if(bend.middleRoof()!=null){var roof=new JsonArray();roof.add(bend.middleRoof().getX());roof.add(bend.middleRoof().getY());roof.add(bend.middleRoof().getZ());out.add("bent_middle_ceiling",roof);}
+        }
         if(projectedSources!=null||projectedSupply!=null||projectedBent!=null||projectedBentCollect!=null)out.addProperty("source_column_profile",sourceProfile);
         out.addProperty("projected_trapdoor_waterlog",projectedWaterlog!=null);
         if(projectedWaterlog!=null)out.addProperty("expected_wet_state",projectedWaterlog.expectedWet());
