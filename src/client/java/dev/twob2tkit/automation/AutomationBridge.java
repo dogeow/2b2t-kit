@@ -3406,7 +3406,7 @@ public final class AutomationBridge {
     private static void closeMaterialAirNavigation(Minecraft c,String outcome){
         materialDefensiveRise=false;
         if(materialAirNavigation==null)return;
-        lastMaterialAirNavigation=materialAirNavigation.snapshot(c);
+        lastMaterialAirNavigation=materialAirNavigation.terminalSnapshot(c);
         lastMaterialAirNavigation.addProperty("world_session",session(c));
         lastMaterialAirNavigation.addProperty("outcome",outcome);
         materialAirNavigation.close(c);materialAirNavigation=null;

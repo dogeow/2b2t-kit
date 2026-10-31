@@ -9,6 +9,7 @@ import net.minecraft.world.phys.Vec3;
 
 /** Brake and settle an owned air-only route using normal Meteor Flight and input. */
 final class MaterialAirNavigation {
+    private final MaterialAirTrace trace=new MaterialAirTrace();
     private final Vec3 target;
     private final double arrival;
     private final MaterialAirArrivalPolicy.Settlement settlement;
@@ -42,6 +43,7 @@ final class MaterialAirNavigation {
     }
     boolean input(Minecraft c){
         if(closed||settlement.done())return false;
+        trace.record(c,"input_head",settlement.restored(),settlement.restorations());
         var error=target.subtract(c.player.position());
         if(!precise){
             if(!MaterialAirArrivalPolicy.takeOver(error,c.player.getDeltaMovement(),KitClient.controller().isActive()))return false;
@@ -77,11 +79,14 @@ final class MaterialAirNavigation {
         }
         if(previous==null){previous=now;return;}
         displacement=now.subtract(previous);previous=now;
+        trace.record(c,"observed",settlement.restored(),settlement.restorations());
         switch(settlement.observe(error,displacement,c.player.getDeltaMovement())){
             case RESTORE -> {
+                trace.record(c,"before_restore",settlement.restored(),settlement.restorations());
                 release(c);look=null;flight.hover();flight.closeKeepingFlight();
+                trace.record(c,"after_restore",settlement.restored(),settlement.restorations());
             }
-            case REACQUIRE -> precision(c);
+            case REACQUIRE -> {trace.record(c,"reacquire",settlement.restored(),settlement.restorations());precision(c);}
             default -> {}
         }
     }
@@ -95,8 +100,11 @@ final class MaterialAirNavigation {
         RotationAim.apply(c.player,look);return true;
     }
     boolean done(){return settlement.done();}
+    JsonObject terminalSnapshot(Minecraft c){
+        var result=snapshot(c);result.add("trace",trace.snapshot());return result;
+    }
     JsonObject snapshot(Minecraft c){
-        var result=new JsonObject();result.addProperty("phase",settlement.done()?"confirmed":settlement.restored()?"checking_restored_flight":precise?"precise_braking":"cruising");
+        var result=new JsonObject();result.addProperty("trace_protocol",1);result.addProperty("phase",settlement.done()?"confirmed":settlement.restored()?"checking_restored_flight":precise?"precise_braking":"cruising");
         result.addProperty("starting_health",startingHealth);result.addProperty("starting_hurt_at",startingHurtAt);
         result.addProperty("injury_interrupted",injuryInterrupted);result.addProperty("arrival",arrival);result.addProperty("stable_ticks",settlement.stableTicks());
         result.addProperty("restored_ticks",settlement.restoredTicks());result.addProperty("restorations",settlement.restorations());
