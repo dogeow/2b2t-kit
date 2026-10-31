@@ -22,6 +22,8 @@ import java.util.*;
 final class ProjectedSourceColumnGuard {
     private final ProjectedSourceColumnPolicy.Bounds bounds;
     private final String placement;
+    private final int rows;
+    int rows(){return rows;}
     private final BlockPos target;
     private final Map<BlockPos,String> pins=new LinkedHashMap<>();
     private final Set<BlockPos> originalSources=new HashSet<>();
@@ -31,6 +33,12 @@ final class ProjectedSourceColumnGuard {
         var v=r.get("projected_source_column");
         if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("Source-column mode must be boolean");
         return v.getAsBoolean();
+    }
+    static int profileRows(JsonObject request){
+        var value=request.get("source_column_profile");
+        if(value==null)return 9;
+        if(!value.isJsonPrimitive()||!value.getAsJsonPrimitive().isString())throw new IllegalArgumentException("Source profile must be an explicit string");
+        return switch(value.getAsString()){case "nine_rows"->9;case "four_rows"->4;default->throw new IllegalArgumentException("Only exact four/nine row source profiles are supported");};
     }
     static BlockPos point(JsonElement value){
         if(value==null||!value.isJsonArray()||value.getAsJsonArray().size()!=3)throw new IllegalArgumentException("Integer source-column XYZ required");
@@ -46,8 +54,8 @@ final class ProjectedSourceColumnGuard {
     ProjectedSourceColumnGuard(Minecraft c,JsonObject r,BlockPos target){
         if(!r.has("source_column_bounds")||!r.get("source_column_bounds").isJsonObject())throw new IllegalArgumentException("Pinned source-column bounds required");
         var box=r.getAsJsonObject("source_column_bounds");var low=point(box.get("min"));var high=point(box.get("max"));
-        bounds=new ProjectedSourceColumnPolicy.Bounds(low.getX(),low.getY(),low.getZ(),high.getX(),high.getY(),high.getZ());
-        if(!bounds.contains(target.getX(),target.getY(),target.getZ()))throw new IllegalArgumentException("Only a source target inside the exact 3x1x9 chamber is supported");
+        rows=profileRows(r);bounds=new ProjectedSourceColumnPolicy.Bounds(low.getX(),low.getY(),low.getZ(),high.getX(),high.getY(),high.getZ());
+        if(!bounds.containsRows(target.getX(),target.getY(),target.getZ(),rows))throw new IllegalArgumentException("Only a source target inside the exact selected profile is supported");
         this.target=target.immutable();placement=ProjectionLoadPolicy.text(r,"placement_key",8192);
         if(placement.isBlank())throw new IllegalArgumentException("Locked source-column projection required");
         var required=new HashSet<BlockPos>();
@@ -59,7 +67,7 @@ final class ProjectedSourceColumnGuard {
             }
         }
         if(!r.has("column_boundary_pins")||!r.get("column_boundary_pins").isJsonArray()
-                ||r.getAsJsonArray("column_boundary_pins").size()!=75)throw new IllegalArgumentException("All 75 floor and wall pins are required");
+                ||r.getAsJsonArray("column_boundary_pins").size()!=3+8*rows)throw new IllegalArgumentException("All exact profiled floor and wall pins are required");
         for(var raw:r.getAsJsonArray("column_boundary_pins")){
             if(!raw.isJsonObject())throw new IllegalArgumentException("Source-column pin object required");
             var pin=raw.getAsJsonObject();var pos=point(pin.get("pos"));String state=ProjectionLoadPolicy.text(pin,"expected_state",512);
@@ -81,7 +89,7 @@ final class ProjectedSourceColumnGuard {
         }catch(RuntimeException unproved){return false;}
     }
     void excludeRefillTarget(BlockPos refill){
-        if(!bounds.contains(refill.getX(),refill.getY(),refill.getZ())||refill.getX()!=bounds.minX()+1)
+        if(!bounds.containsRows(refill.getX(),refill.getY(),refill.getZ(),rows)||refill.getX()!=bounds.minX()+1)
             throw new IllegalArgumentException("Only the middle source of this chamber can supply buckets");
         refillTarget=refill.immutable();originalSources.remove(refill);
     }
@@ -163,14 +171,14 @@ final class ProjectedSourceColumnGuard {
         }
         if(completedOverflow){
             int excluded=supplyException==null?-1:(supplyException.getY()-bounds.minY())*3+supplyException.getX()-bounds.minX();
-            if(!SourceColumnSupplyPolicy.completedChamber(cells.stream().map(ProjectedSourceColumnPolicy.Cell::actualLevel).toList(),excluded))
+            if(!SourceColumnSupplyPolicy.completedChamber(cells.stream().map(ProjectedSourceColumnPolicy.Cell::actualLevel).toList(),excluded,3*rows))
                 throw new IllegalStateException("Completed overflow requires all other chamber sources to remain complete");
         }
         var volume=new AABB(bounds.minX(),bounds.minY(),bounds.minZ(),bounds.maxX()+1,bounds.maxY()+1,bounds.minZ()+1);
         boolean other=!c.level.getEntities(c.player,volume,e->e instanceof LivingEntity&&e.isAlive()).isEmpty();
         var p=c.player;boolean ready=p!=null&&ProjectedSourceColumnPolicy.actorReady(p.getHealth(),p.getFoodData().getFoodLevel(),p.getAirSupply(),p.getMaxAirSupply(),p.isInLava(),!p.isDeadOrDying());
         int index=(target.getY()-bounds.minY())*3+target.getX()-bounds.minX();
-        String error=ProjectedSourceColumnPolicy.rejection(cells,index,before,floors,walls,topDry,ready,other);
+        String error=ProjectedSourceColumnPolicy.rejection(cells,index,before,floors,walls,topDry,ready,other,rows);
         if(error!=null)throw new IllegalStateException(error);
     }
 }

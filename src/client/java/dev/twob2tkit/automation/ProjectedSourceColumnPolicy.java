@@ -2,13 +2,16 @@ package dev.twob2tkit.automation;
 
 import java.util.List;
 
-/** One sealed 3x1x9 source chamber; never the separate overflow channel above it. */
+/** A sealed3x1x9 legacy or explicit3x1x4 source chamber; never the separate overflow channel above it. */
 final class ProjectedSourceColumnPolicy {
     record Bounds(int minX,int minY,int minZ,int maxX,int maxY,int maxZ) {
-        boolean valid(){return (long)maxX-minX==2&&(long)maxY-minY==8&&minZ==maxZ
+        boolean valid(){return validRows(9);}
+        boolean validRows(int rows){return (rows==4||rows==9)&&(long)maxX-minX==2&&(long)maxY-minY==rows-1&&minZ==maxZ
             &&minY>Integer.MIN_VALUE&&maxY<Integer.MAX_VALUE
             &&minX>-30000000&&maxX<30000000&&minZ>-30000000&&minZ<30000000;}
-        boolean contains(int x,int y,int z){return valid()&&x>=minX&&x<=maxX&&y>=minY&&y<=maxY&&z==minZ;}
+        boolean contains(int x,int y,int z){return containsRows(x,y,z,9);}
+        boolean containsRows(int x,int y,int z,int rows){return validRows(rows)&&x>=minX&&x<=maxX&&y>=minY&&y<=maxY&&z==minZ;}
+
     }
     record Cell(int goalLevel,int actualLevel,boolean originalSource){}
     private ProjectedSourceColumnPolicy(){}
@@ -26,8 +29,13 @@ final class ProjectedSourceColumnPolicy {
     }
     static String rejection(List<Cell> cells,int target,boolean before,int verifiedFloors,int verifiedWalls,
                             boolean dryTop,boolean actorReady,boolean otherLiving){
-        if(cells==null||cells.size()!=27||target<0||target>=27)return "Exact 27-cell source chamber required";
-        if(verifiedFloors!=3||verifiedWalls!=72)return "Source chamber floor or perimeter is not sealed";
+        return rejection(cells,target,before,verifiedFloors,verifiedWalls,dryTop,actorReady,otherLiving,9);
+    }
+    static String rejection(List<Cell> cells,int target,boolean before,int verifiedFloors,int verifiedWalls,
+                            boolean dryTop,boolean actorReady,boolean otherLiving,int rows){
+        int count=rows*3;
+        if((rows!=4&&rows!=9)||cells==null||cells.size()!=count||target<0||target>=count)return "Exact profiled source chamber required";
+        if(verifiedFloors!=3||verifiedWalls!=rows*8)return "Source chamber floor or perimeter is not sealed";
         if(!dryTop)return "Overflow above the chamber must remain dry during source repair";
         if(!actorReady||otherLiving)return "Source service needs healthy oxygen reserve and no other living entity";
         for(var cell:cells){

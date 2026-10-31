@@ -1,4 +1,4 @@
-"""One sealed 3x1x9 source-chamber use, with native admission and independent observations.
+"""One sealed, explicitly profiled source-chamber use, with native admission and independent observations.
 
 No movement, refilling, overflow placement, retry or safety-lock acknowledgement is implicit.
 """
@@ -30,11 +30,22 @@ def admission_rejected_before_use(reply,request,world):
             and not(ack.get('request_id')==request and ack.get('use_count',0)>0))
 
 
-def envelope(low,high):
+def profile_rows(profile):
+    if profile is None or profile=='nine_rows':return 9
+    if profile=='four_rows':return 4
+    raise ValueError('Only explicit four_rows or legacy nine_rows profiles are supported')
+
+
+def profile_payload(profile):
+    profile_rows(profile)
+    return {'source_column_profile':profile}if profile is not None else{}
+
+
+def envelope(low,high,*,profile=None):
     if (not isinstance(low,list)or not isinstance(high,list)or len(low)!=3 or len(high)!=3
             or any(type(x)is not int or abs(x)>=30000000 for x in low+high)
-            or [high[i]-low[i]for i in range(3)]!=[2,8,0]):
-        raise ValueError('Exact integer 3x1x9 chamber bounds required')
+            or [high[i]-low[i]for i in range(3)]!=[2,profile_rows(profile)-1,0]):
+        raise ValueError('Exact integer selected source chamber bounds required')
     return [low[0]-1,low[1]-1,low[2]-1],[high[0]+1,high[1]+1,high[2]+1]
 
 
@@ -47,8 +58,8 @@ def coherent(frame,world,low,high):
             and prediction.get('complete')is True and prediction.get('pending_count')==0)
 
 
-def geometry(model,frame,low,high,world,*,completed_overflow=False):
-    lo,hi=envelope(low,high)
+def geometry(model,frame,low,high,world,*,completed_overflow=False,profile=None):
+    lo,hi=envelope(low,high,profile=profile)
     if not coherent(frame,world,lo,hi):raise RuntimeError('Coherent loaded envelope with no pending predictions required')
     goal={tuple(v['pos']):v['state']for v in model['expected']}
     actual={tuple(v['pos']):v for v in frame['blocks']}
@@ -81,15 +92,16 @@ def geometry(model,frame,low,high,world,*,completed_overflow=False):
         p=(x,high[1]+1,low[2])
         if goal.get(p)!=f'Block{{minecraft:water}}[level={high[0]-x}]'or (actual.get(p,{}).get('state',AIR)!=AIR and not(completed_overflow and WATER.fullmatch(actual[p]['state']))):
             raise RuntimeError('Separate top overflow must have its original model and remain dry')
-    if completed_overflow and len(sources)!=27:raise RuntimeError('Wet overflow planning requires all27 chamber sources')
+    if completed_overflow and len(sources)!=3*profile_rows(profile):raise RuntimeError('Wet overflow planning requires every profiled chamber source')
     return {'source_column_bounds':{'min':low,'max':high},'column_boundary_pins':pins,
             'preserved_sources':sources,'source_cells':cells}
 
 
-def source_receipt(reply,request,world,target):
+def source_receipt(reply,request,world,target,*,profile=None):
     ack=reply.get('bucket_water')or{}
     return (reply.get('id')==request and reply.get('world_session')==world and reply.get('phase')=='done'
             and ack.get('request_id')==request and ack.get('world_session')==world and ack.get('pos')==target
+            and (profile in (None,'nine_rows')or profile=='four_rows'and ack.get('source_column_profile')==profile)
             and ack.get('operation')=='bucket_place' and ack.get('projected_source_column')is True and ack.get('confirmed')is True
             and ack.get('unknown_outcome')is False and ack.get('use_count')==1
             and ack.get('server_block_confirmed')is True and ack.get('server_inventory_confirmed')is True
@@ -115,9 +127,11 @@ def observed_after(frame,world,lo,hi,plan,target,before):
     return True
 
 
-def place(c,low,high,target,support,face,placement_key,out):
-    lo,hi=envelope(low,high);out=Path(out);out.mkdir(parents=True,exist_ok=False)
+def place(c,low,high,target,support,face,placement_key,out,*,profile=None):
+    lo,hi=envelope(low,high,profile=profile);out=Path(out);out.mkdir(parents=True,exist_ok=False)
+    book={'pending':None,'dispatch_started':False,'complete':False,'automatic_retry_allowed':False};write_json(out/'progress.json',book)
     state=c.status();lease=state.get('supervision_lease')or{}
+    if profile_rows(profile)==4 and state.get('projected_short_source_profile_protocol')!=1:raise RuntimeError('Native short source profile required')
     if (state.get('projected_source_column_protocol')!=1 or state.get('health')!=20
             or state.get('food',0)<16 or state.get('air_supply',0)<270
             or state.get('screen')or state.get('manual_movement')or state.get('guard_busy')
@@ -127,7 +141,7 @@ def place(c,low,high,target,support,face,placement_key,out):
     model=c.request('projection_model')['projection_model']
     if model.get('placement_key')!=placement_key:raise RuntimeError('Projection changed')
     frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True)
-    plan=geometry(model,frame,low,high,c.world);write_json(out/'geometry-before.json',{'model_hash':model['content_hash'],'scan':frame,'plan':plan})
+    plan=geometry(model,frame,low,high,c.world,profile=profile);write_json(out/'geometry-before.json',{'model_hash':model['content_hash'],'scan':frame,'plan':plan})
     if target not in plan['source_cells']or target in plan['preserved_sources']:raise RuntimeError('Exact unfinished source target required; existing sources are preserved')
     offsets={'up':[0,1,0],'down':[0,-1,0],'west':[-1,0,0],'east':[1,0,0],'north':[0,0,-1],'south':[0,0,1]}
     if (face not in offsets or not isinstance(support,list)or len(support)!=3
@@ -136,12 +150,12 @@ def place(c,low,high,target,support,face,placement_key,out):
     if support_state is None:raise RuntimeError('Fresh support state required')
     c.checked('select_item',item='minecraft:water_bucket');state=c.status();stock=inventory_counts(state)
     if state.get('hand',{}).get('item')!='minecraft:water_bucket'or state.get('hand',{}).get('count')!=1:raise RuntimeError('Singleton water bucket required')
-    book={'pending':'one_bucket_use','automatic_retry_allowed':False,'complete':False,'target':target,'world_session':c.world}
+    book.update(pending='one_bucket_use',dispatch_started=True,target=target,world_session=c.world)
     write_json(out/'progress.json',book)
     try:
         reply=c.request('bucket_place',pos=target,expected_state=rows.get(tuple(target),AIR),expected_hand='minecraft:water_bucket',
                         support=support,face=face,expected_support_state=support_state,projected_source_column=True,
-                        placement_key=placement_key,source_column_bounds=plan['source_column_bounds'],column_boundary_pins=plan['column_boundary_pins'])
+                        placement_key=placement_key,source_column_bounds=plan['source_column_bounds'],column_boundary_pins=plan['column_boundary_pins'],**profile_payload(profile))
     finally:
         book['request_id']=c.last;write_json(out/'progress.json',book)
     write_json(out/'native-reply.json',reply)
@@ -149,7 +163,7 @@ def place(c,low,high,target,support,face,placement_key,out):
         book.update(pending=None,rejected_before_use=True,admission_diagnostic=reply['last_bucket_admission_rejection'])
         write_json(out/'progress.json',book)
         raise SourceAdmissionRejected(reply.get('detail','Native admission refused before input'))
-    if not source_receipt(reply,c.last,c.world,target):raise RuntimeError('Original water use unconfirmed; inspect it and never resend')
+    if not source_receipt(reply,c.last,c.world,target,profile=profile):raise RuntimeError('Original water use unconfirmed; inspect it and never resend')
     book['pending']=None;book['source_confirmed']=True;write_json(out/'progress.json',book);stamps=[];deadline=time.monotonic()+10
     while len(stamps)<2:
         frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True);state=c.status();counts=inventory_counts(state)
@@ -165,21 +179,23 @@ def place(c,low,high,target,support,face,placement_key,out):
     book.update(complete=True,observations=stamps);write_json(out/'progress.json',book);return book
 
 
-def supply_receipt(reply,request,world,source,*,completed_overflow=False):
+def supply_receipt(reply,request,world,source,*,completed_overflow=False,profile=None):
     ack=reply.get('bucket_water')or{}
     return (reply.get('id')==request and reply.get('world_session')==world and reply.get('phase')=='done'
             and ack.get('request_id')==request and ack.get('world_session')==world and ack.get('pos')==source
+            and (profile in (None,'nine_rows')or profile=='four_rows'and ack.get('source_column_profile')==profile)
             and ack.get('operation')=='bucket_fill'and ack.get('projected_source_column_supply')is True
             and ack.get('source_supply_completed_overflow',False)is completed_overflow
             and ack.get('confirmed')is True and ack.get('unknown_outcome')is False and ack.get('use_count')==1
             and ack.get('server_block_confirmed')is True and ack.get('server_inventory_confirmed')is True)
 
 
-def refill(c,low,high,source,placement_key,out,*,completed_overflow=False):
+def refill(c,low,high,source,placement_key,out,*,completed_overflow=False,profile=None):
     """Refill once from a completed center; prove source preservation/regeneration before advancing."""
-    lo,hi=envelope(low,high);out=Path(out);out.mkdir(parents=True,exist_ok=False)
+    lo,hi=envelope(low,high,profile=profile);out=Path(out);out.mkdir(parents=True,exist_ok=False)
     book={'pending':None,'dispatch_started':False,'complete':False,'automatic_retry_allowed':False}
     write_json(out/'progress.json',book);state=c.status();lease=state.get('supervision_lease')or{}
+    if profile_rows(profile)==4 and state.get('projected_short_source_profile_protocol')!=1:raise RuntimeError('Native short source profile required')
     if (state.get('projected_source_column_supply_protocol')!=1 or state.get('health')!=20
             or state.get('air_supply',0)<270 or state.get('food',0)<16 or state.get('screen')or state.get('manual_movement')
             or state.get('guard_busy')or not state.get('guard_armed')or lease.get('kind')!='materials'or lease.get('job_session')!=c.task
@@ -189,7 +205,7 @@ def refill(c,low,high,source,placement_key,out,*,completed_overflow=False):
             or source[0]!=low[0]+1 or source[2]!=low[2]or not low[1]<=source[1]<=high[1]):raise ValueError('Only a completed center source may supply buckets')
     model=c.request('projection_model')['projection_model'];frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True)
     if model.get('placement_key')!=placement_key:raise RuntimeError('Projection changed')
-    plan=geometry(model,frame,low,high,c.world,completed_overflow=completed_overflow);rows={tuple(v['pos']):v['state']for v in frame['blocks']}
+    plan=geometry(model,frame,low,high,c.world,completed_overflow=completed_overflow,profile=profile);rows={tuple(v['pos']):v['state']for v in frame['blocks']}
     if any(rows.get((x,source[1],source[2]))!=SOURCE for x in range(low[0],high[0]+1)):
         raise RuntimeError('Complete three-source row required before refill')
     if source[1]>low[1]and rows.get((source[0],source[1]-1,source[2]))!=SOURCE:raise RuntimeError('Completed source support below the refill row required')
@@ -201,14 +217,14 @@ def refill(c,low,high,source,placement_key,out,*,completed_overflow=False):
     book.update(pending='one_source_supply_fill',source=source,world_session=c.world,dispatch_started=True);write_json(out/'progress.json',book)
     try:
         reply=c.request('bucket_fill',pos=source,expected_state=SOURCE,expected_hand='minecraft:bucket',projected_source_column_supply=True,source_supply_completed_overflow=completed_overflow,
-                        placement_key=placement_key,source_column_bounds=plan['source_column_bounds'],column_boundary_pins=plan['column_boundary_pins'])
+                        placement_key=placement_key,source_column_bounds=plan['source_column_bounds'],column_boundary_pins=plan['column_boundary_pins'],**profile_payload(profile))
     finally:
         book['request_id']=c.last;write_json(out/'progress.json',book)
     write_json(out/'native-reply.json',reply)
     if admission_rejected_before_use(reply,c.last,c.world):
         book.update(pending=None,rejected_before_use=True,admission_diagnostic=reply['last_bucket_admission_rejection']);write_json(out/'progress.json',book)
         raise SourceAdmissionRejected(reply.get('detail','Supply rejected before input'))
-    if not supply_receipt(reply,c.last,c.world,source,completed_overflow=completed_overflow):raise RuntimeError('Original supply fill unconfirmed; retain identity and never resend')
+    if not supply_receipt(reply,c.last,c.world,source,completed_overflow=completed_overflow,profile=profile):raise RuntimeError('Original supply fill unconfirmed; retain identity and never resend')
     book.update(pending=None,fill_confirmed=True,source_preservation_observed=False);write_json(out/'progress.json',book);stamps=[];deadline=time.monotonic()+8
     while len(stamps)<2:
         frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True);state=c.status();counts=inventory_counts(state)

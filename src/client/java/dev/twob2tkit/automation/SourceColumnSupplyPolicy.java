@@ -6,8 +6,11 @@ final class SourceColumnSupplyPolicy {
         return fill&&!falling&&!drain&&!channel&&!place;
     }
     static boolean completedChamber(java.util.List<Integer> levels,int excludedMiddle){
-        if(levels==null||levels.size()!=27||excludedMiddle< -1||excludedMiddle>=27||excludedMiddle>=0&&excludedMiddle%3!=1)return false;
-        for(int i=0;i<27;i++){
+        return completedChamber(levels,excludedMiddle,27);
+    }
+    static boolean completedChamber(java.util.List<Integer> levels,int excludedMiddle,int count){
+        if((count!=12&&count!=27)||levels==null||levels.size()!=count||excludedMiddle< -1||excludedMiddle>=count||excludedMiddle>=0&&excludedMiddle%3!=1)return false;
+        for(int i=0;i<count;i++){
             Integer value=levels.get(i);if(value==null||value< -1||value>15||i!=excludedMiddle&&value!=0)return false;
         }
         return true;

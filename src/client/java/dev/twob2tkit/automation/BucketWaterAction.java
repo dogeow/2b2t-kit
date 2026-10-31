@@ -51,6 +51,8 @@ final class BucketWaterAction {
     private final ProjectedSourceColumnGuard projectedSources;
     private final ProjectedSourceColumnSupplyGuard projectedSupply;
     private final ProjectedBentChannelGuard projectedBent;
+    private final ProjectedBentChannelGuard projectedBentCollect;
+    private final String sourceProfile;
     private final ProjectedTrapdoorWaterlog projectedWaterlog;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
@@ -81,6 +83,12 @@ final class BucketWaterAction {
             throw new IllegalArgumentException("Bent overflow is an exclusive place-only operation");
         if(!bent&&request.has("projected_bent_channel_seed"))throw new IllegalArgumentException("Seed requires explicit bent-channel mode");
         projectedBent=bent?new ProjectedBentChannelGuard(c,request,target):null;
+        boolean collect=ProjectedBentChannelGuard.collectRequested(request);
+        if(collect&&(mode!=BucketWaterPolicy.Mode.FILL||column||drain||channel||sources||supply||bent||ProjectedTrapdoorWaterlog.requested(request)))throw new IllegalArgumentException("Bent seed collection is an exclusive fill operation");
+        projectedBentCollect=collect?new ProjectedBentChannelGuard(c,request,target):null;
+        if(request.has("bent_service_ceiling")&&!bent&&!collect)throw new IllegalArgumentException("Bent service ceiling requires explicit bent operation");
+        if(request.has("source_column_profile")&&!sources&&!supply&&!bent&&!collect)throw new IllegalArgumentException("Source profile needs an explicit source or overflow operation");
+        sourceProfile=ProjectedSourceColumnGuard.profileRows(request)==4?"four_rows":"nine_rows";
         boolean waterlog=ProjectedTrapdoorWaterlog.requested(request);
         if(waterlog&&!ProjectedTrapdoorRowPolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent))throw new IllegalArgumentException("Trapdoor waterlogging is an exclusive place-only operation");
         projectedWaterlog=waterlog?new ProjectedTrapdoorWaterlog(c,request,target):null;
@@ -160,6 +168,7 @@ final class BucketWaterAction {
             throw new IllegalStateException("A selected singleton water-only bucket without cooldown is required");
         if(mode==BucketWaterPolicy.Mode.FILL){
             if(projectedSupply!=null)projectedSupply.requireBefore(c);
+            if(projectedBentCollect!=null)projectedBentCollect.require(c,true);
             if(projectedDrain!=null)projectedDrain.requireBefore(c);
             else if(!plainSource(c.level.getBlockState(target))||c.level.getBlockEntity(target)!=null)
                 throw new IllegalStateException("Bucket fill requires a plain level-0 water source, never flowing water, waterlogged blocks or lava");
@@ -231,6 +240,7 @@ final class BucketWaterAction {
             else if(mode==BucketWaterPolicy.Mode.PLACE&&!boundedHole(c,false))observationGate="placement_geometry_changed";
             else if(projectedDrain!=null&&!projectedDrain.current(c))observationGate="drain_geometry_changed";
             else if(projectedSupply!=null&&!projectedSupply.current(c))observationGate="supply_geometry_changed";
+            else if(projectedBentCollect!=null){projectedBentCollect.require(c,false);stable=true;observationGate="ready";}
             else {stable=true;observationGate="ready";}
         }catch(RuntimeException changed){observationGate="geometry_recheck_changed";}
         if(!stable){
@@ -267,6 +277,8 @@ final class BucketWaterAction {
         out.addProperty("expected_state_before",expectedState);
         out.addProperty("projected_bent_channel",projectedBent!=null);
         out.addProperty("projected_bent_channel_seed",projectedBent!=null&&projectedBent.seed());
+        out.addProperty("projected_bent_channel_collect_index",projectedBentCollect==null?0:projectedBentCollect.collectIndex());
+        if(projectedSources!=null||projectedSupply!=null||projectedBent!=null||projectedBentCollect!=null)out.addProperty("source_column_profile",sourceProfile);
         out.addProperty("projected_trapdoor_waterlog",projectedWaterlog!=null);
         if(projectedWaterlog!=null)out.addProperty("expected_wet_state",projectedWaterlog.expectedWet());
         out.addProperty("projected_water_column",projectedColumn!=null);
