@@ -28,3 +28,40 @@ class Tests(unittest.TestCase):
    out=Path(d)/'one'
    with self.assertRaises(RuntimeError):fill(Fake(),LOW,HIGH,LOW,'unit-bubble',out)
    q=json.loads((out/'progress.json').read_text());self.assertFalse(q['dispatch_started']);self.assertIsNone(q['pending'])
+
+class ReceiptTests(unittest.TestCase):
+ class Fake:
+  task='unit';world='unit-world';last=''
+  def __init__(self,mode='done'):
+   self.fixture=json.loads((Path(__file__).parent/'test_fixtures/up-bubble-column.json').read_text());self.mode=mode;self.sent=False;self.uses=0;self.stamp=0
+  def status(self):
+   return dict(projected_bubble_column_protocol=1,health=20,air_supply=300,screen='',manual_movement=False,guard_busy=False,guard_armed=True,world_session=self.world,supervision_lease={'job_session':self.task},hand={'item':'minecraft:water_bucket','count':1},inventory=[dict(item='minecraft:bucket'if self.sent else'minecraft:water_bucket',count=1,slot=0),dict(item='minecraft:water_bucket',count=1,slot=1),dict(item='minecraft:bucket',count=3,slot=2)])
+  def request(self,op,**params):
+   if op=='projection_model':return {'projection_model':self.fixture['model']}
+   assert op=='bucket_place';self.uses+=1;self.last='unit-native-water';self.sent=self.mode!='refused'
+   if self.mode=='refused':return dict(id=self.last,world_session=self.world,phase='error',last_bucket_admission_rejection=dict(protocol=2,input_sent=False,request_id=self.last,world_session=self.world,material_owner_current=True,bucket_task_active=False,active_request_id='',active_command='',navigation_active=False))
+   ack=dict(request_id=self.last,world_session=self.world,pos=LOW,operation='bucket_place',use_count=1,projected_bubble_column=True,expected_bubble_state=BUBBLE,confirmed=True,unknown_outcome=False,server_block_confirmed=True,server_inventory_confirmed=True)
+   if self.mode=='unknown':ack.update(confirmed=False,unknown_outcome=True,server_inventory_confirmed=False)
+   return dict(id=self.last,world_session=self.world,phase='done'if self.mode=='done'else'waiting',bucket_water=ack)
+  def checked(self,op,**params):
+   if op=='select_item':return {}
+   assert op=='scan';r=copy.deepcopy(self.fixture['frame']);self.stamp+=1;r['time']=self.stamp
+   if self.sent:r['blocks'].append(dict(pos=LOW,state=BUBBLE,block_entity=False))
+   return r
+ def test_confirmed_native_bubble_and_inventory_need_independent_three_frames(self):
+  c=self.Fake()
+  with tempfile.TemporaryDirectory()as d:
+   q=fill(c,LOW,HIGH,LOW,'unit-bubble',Path(d)/'one');self.assertTrue(q['complete']);self.assertEqual(3,len(set(q['frames'])));self.assertEqual(1,c.uses);self.assertIsNone(q['pending'])
+ def test_missing_inventory_receipt_stays_pending_and_is_never_replayed(self):
+  c=self.Fake('unknown')
+  with tempfile.TemporaryDirectory()as d:
+   out=Path(d)/'one'
+   with self.assertRaises(RuntimeError):fill(c,LOW,HIGH,LOW,'unit-bubble',out)
+   q=json.loads((out/'progress.json').read_text());self.assertEqual('one_upward_bubble_use',q['pending']);self.assertTrue(q['dispatch_started']);self.assertEqual(1,c.uses)
+ def test_explicit_no_input_refusal_is_not_an_unknown_bucket_use(self):
+  from projected_source_column import SourceAdmissionRejected
+  c=self.Fake('refused')
+  with tempfile.TemporaryDirectory()as d:
+   out=Path(d)/'one'
+   with self.assertRaises(SourceAdmissionRejected):fill(c,LOW,HIGH,LOW,'unit-bubble',out)
+   q=json.loads((out/'progress.json').read_text());self.assertIsNone(q['pending']);self.assertTrue(q['rejected_before_use']);self.assertEqual(1,c.uses);self.assertFalse(c.sent)
