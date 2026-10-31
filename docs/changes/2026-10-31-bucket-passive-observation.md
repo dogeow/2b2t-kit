@@ -1,0 +1,7 @@
+# Preserve original water receipts through transient post-use protection changes
+
+Host31.13 publishes `bucket_passive_observation_protocol=1`. Previously a changed owner/idle/protection/geometry predicate immediately ended the active bucket task, even after its only use had been sent. Current-connection callbacks then stopped recording the original block and selected-slot inventory packets. A live trapdoor use returned WAITING after330ms with use_count1 and predicted inventory delta but neither server callback recorded; a later independent three-frame scan found the target correctly wet. That current shape does not retroactively complete the unknown receipt.
+
+After one use, a temporarily failed predicate now keeps passive receipt observation active until the original deadline. No input, navigation, replacement request, retry or deadline extension is added. Completion still needs restored original admission, exact inventory delta, actual target matching, settled predictions and both original server packets held for8 ticks. Before-use rejection and world changes stop immediately; unrecovered protection and missing receipts remain unconfirmed at the deadline. Diagnostics expose whether observation was deferred and the last failed gate. Native health protection and manual takeover remain independent.
+
+Regression tests cover guard-change then delayed packets, missing inventory confirmation, single-use enforcement, unchanged-world scope, pre-use rejection and the original deadline. Real-game validation is separate from these artifact tests.

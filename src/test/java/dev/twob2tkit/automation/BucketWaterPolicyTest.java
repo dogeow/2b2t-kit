@@ -4,6 +4,24 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BucketWaterPolicyTest {
+    @Test void transientPostUseGuardChangeStillObservesOriginalPacketsWithoutRepeatingUse(){
+        var r=new BucketWaterPolicy.Receipt();r.sendOnce();
+        assertTrue(BucketWaterPolicy.awaitOriginalPackets(r.sent(),true,false));
+        r.block(true,true,true,"wet_trapdoor",true,2);r.inventory(true,true,true,true,3);
+        assertFalse(r.done(true,true,true,10));assertTrue(r.done(true,true,true,11));
+        assertThrows(IllegalStateException.class,r::sendOnce);
+    }
+    @Test void protectionWaitNeverInventsMissingPackets(){
+        var r=new BucketWaterPolicy.Receipt();r.sendOnce();
+        assertTrue(BucketWaterPolicy.awaitOriginalPackets(r.sent(),true,false));
+        assertFalse(r.done(true,true,true,100));
+        r.block(true,true,true,"wet_trapdoor",true,2);assertFalse(r.done(true,true,true,100));
+    }
+    @Test void protectionWaitEndsAtTheOriginalDeadline(){assertFalse(BucketWaterPolicy.awaitOriginalPackets(true,true,true));}
+    @Test void changedWorldAndPreUseProtectionNeverContinueTheQueuedUse(){
+        assertFalse(BucketWaterPolicy.awaitOriginalPackets(true,false,false));
+        assertFalse(BucketWaterPolicy.awaitOriginalPackets(false,true,false));
+    }
     @Test void queuedRotationStillExpectsAirUntilTheSingleUseIsActuallySent(){
         var receipt=new BucketWaterPolicy.Receipt();
         assertTrue(BucketWaterPolicy.columnRequiresAir(true,receipt.sent()));

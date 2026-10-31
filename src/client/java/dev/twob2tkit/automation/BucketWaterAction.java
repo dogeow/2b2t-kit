@@ -42,6 +42,8 @@ final class BucketWaterAction {
     private final float health;
     private int emptyAfter,waterAfter;
     private boolean retired;
+    private boolean observationDeferred;
+    private String observationGate="not_polled";
     private String sourceEffect="unobserved";
     private final ProjectedWaterFlowGuard projectedColumn;
     private final ProjectedWaterlogDrain projectedDrain;
@@ -220,9 +222,24 @@ final class BucketWaterAction {
             ItemStack.matches(packet,c.player.getInventory().getItem(selected)),correct,tick);
     }
     Outcome poll(Minecraft c,long tick,boolean timedOut) throws java.io.IOException {
-        if(!idle(c)||!ownerCurrent.getAsBoolean()||!serverChunk(c,target)
-                ||mode==BucketWaterPolicy.Mode.PLACE&&!boundedHole(c,false)
-                ||projectedDrain!=null&&!projectedDrain.current(c)||projectedSupply!=null&&!projectedSupply.current(c))return Outcome.WAITING;
+        boolean stable=false;
+        if(!sameContext(c))return Outcome.WAITING;
+        try{
+            if(!idle(c))observationGate="idle_changed";
+            else if(!ownerCurrent.getAsBoolean())observationGate="owner_or_protection_changed";
+            else if(!serverChunk(c,target))observationGate="target_chunk_changed";
+            else if(mode==BucketWaterPolicy.Mode.PLACE&&!boundedHole(c,false))observationGate="placement_geometry_changed";
+            else if(projectedDrain!=null&&!projectedDrain.current(c))observationGate="drain_geometry_changed";
+            else if(projectedSupply!=null&&!projectedSupply.current(c))observationGate="supply_geometry_changed";
+            else {stable=true;observationGate="ready";}
+        }catch(RuntimeException changed){observationGate="geometry_recheck_changed";}
+        if(!stable){
+            // No more input is sent. Keep the original callbacks alive within
+            // the existing deadline so a transient guard change cannot erase
+            // the two server receipts that arrive after this single use.
+            observationDeferred|=receipt.sent();
+            return BucketWaterPolicy.awaitOriginalPackets(receipt.sent(),sameContext(c),timedOut)?Outcome.RUNNING:Outcome.WAITING;
+        }
         emptyAfter=count(c,Items.BUCKET);waterAfter=count(c,Items.WATER_BUCKET);
         boolean delta=BucketWaterPolicy.exactDelta(mode,emptyBefore,waterBefore,emptyAfter,waterAfter)&&inventoryUnchanged(c,true);
         if(receipt.done(!predictions.pending(c.level,target),delta,c.level.getBlockState(target).toString().equals(receipt.blockState()),tick)){
@@ -240,6 +257,7 @@ final class BucketWaterAction {
     JsonObject snapshot(boolean confirmed) {
         var out=new JsonObject();out.addProperty("request_id",requestId);out.addProperty("world_session",world);out.addProperty("operation",mode==BucketWaterPolicy.Mode.FILL?"bucket_fill":"bucket_place");
         JsonArray p=new JsonArray();p.add(target.getX());p.add(target.getY());p.add(target.getZ());out.add("pos",p);
+        out.addProperty("post_use_observation_deferred",observationDeferred);out.addProperty("post_use_observation_gate",observationGate);
         out.addProperty("use_count",receipt.sent()?1:0);out.addProperty("empty_buckets_before",emptyBefore);out.addProperty("empty_buckets_after",emptyAfter);
         out.addProperty("water_buckets_before",waterBefore);out.addProperty("water_buckets_after",waterAfter);
         out.addProperty("server_block_update_seen",receipt.blockSeen());out.addProperty("server_block_confirmed",receipt.blockConfirmed());out.addProperty("server_observed_state",receipt.blockState());

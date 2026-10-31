@@ -5,6 +5,9 @@ final class BucketWaterPolicy {
     enum Mode { FILL, PLACE }
     private BucketWaterPolicy() {}
 
+    static boolean awaitOriginalPackets(boolean sent,boolean sameContext,boolean timedOut){
+        return sent&&sameContext&&!timedOut;
+    }
     static boolean columnRequiresAir(boolean explicitPreflight,boolean useSent){
         return explicitPreflight||!useSent;
     }
