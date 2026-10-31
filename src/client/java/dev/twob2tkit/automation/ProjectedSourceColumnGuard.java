@@ -139,6 +139,33 @@ final class ProjectedSourceColumnGuard {
         }
         return distance;
     }
+    static boolean roofRequested(JsonObject r){
+        if(r==null||!r.has("projected_source_roof"))return false;
+        var flag=r.get("projected_source_roof");
+        if(!flag.isJsonPrimitive()||!flag.getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("Projected source roof flag must be boolean");
+        return flag.getAsBoolean();
+    }
+    static boolean middleRoof(ProjectedSourceColumnPolicy.Bounds b,BlockPos p){
+        return b.validRows(4)&&p.equals(new BlockPos(b.minX()+1,b.maxY()+2,b.minZ()));
+    }
+    /** Reopen only the original middle dry half-slab above the completed short source chamber. */
+    static void requireRoofAccess(Minecraft c,JsonObject r,BlockPos target){
+        if(!roofRequested(r)||!"mine_block".equals(ProjectionLoadPolicy.text(r,"op",64))||profileRows(r)!=4)
+            throw new IllegalStateException("Explicit four-row middle-roof mining required");
+        var raw=r.getAsJsonObject("source_column_bounds");if(raw==null)throw new IllegalArgumentException("Source roof needs pinned chamber bounds");
+        var low=point(raw.get("min"));var chamber=new ProjectedSourceColumnGuard(c,r,low);
+        if(!middleRoof(chamber.bounds,target))throw new IllegalArgumentException("Only the original middle service roof may be reopened");
+        chamber.requireCompleted(c);var model=LitematicaAccess.schematicWorld();var goal=model.getBlockState(target);var now=c.level.getBlockState(target);
+        if(!(goal.getBlock() instanceof net.minecraft.world.level.block.SlabBlock)
+                ||goal.getValue(net.minecraft.world.level.block.SlabBlock.TYPE)!=net.minecraft.world.level.block.state.properties.SlabType.BOTTOM
+                ||!goal.getFluidState().isEmpty()||!now.equals(goal)||c.level.getBlockEntity(target)!=null
+                ||!loaded(c,target)||!LitematicaAccess.lockedBuildSelection().contains(target)||!LitematicaAccess.inVisibleLayer(target)
+                ||new AABB(target).intersects(c.player.getBoundingBox()))throw new IllegalStateException("Original loaded dry BOTTOM slab and external actor required");
+        var below=c.level.getBlockState(target.below());int water=level(below);
+        if(level(model.getBlockState(target.below()))!=1||water<0||water>1
+                ||!below.toString().equals(ProjectionLoadPolicy.text(r,"source_roof_below_state",512)))
+            throw new IllegalStateException("Exact unchanged original middle overflow water required");
+    }
     private static int level(BlockState s){return s.isAir()?-1:s.is(Blocks.WATER)?s.getValue(LiquidBlock.LEVEL):-2;}
     private static boolean loaded(Minecraft c,BlockPos p){
         var chunk=c.level.getChunkSource().getChunk(p.getX()>>4,p.getZ()>>4,ChunkStatus.FULL,false);

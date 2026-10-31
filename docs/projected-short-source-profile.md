@@ -41,3 +41,18 @@ The normal constructor and pre-send checks still enforce their exact stage,
 geometry, entity and owned-health requirements. No bucket use is retried.
 201 related Java tests pass, including the dry-first-pour regression and staged
 seed/collection shapes. Actual flow acceptance remains a separate game check.
+
+## Resuming a sealed middle service roof (31.18)
+
+`mine_block` may additionally opt into `dry_roof_water_below: true` and
+`projected_source_roof: true`, with four-row bounds, all 35 boundary pins, locked
+placement key, and exact `source_roof_below_state`. This only reopens the original
+middle BOTTOM dry slab at `(minX+1,maxY+2,minZ)` above an already completed source
+chamber. The original middle overflow is level 1; actual plain water must be the
+pinned level 0 or 1. Every original source, floor dropper and wall is revalidated.
+All other neighboring fluids, current footing, unstable neighbors, non-durable or
+Silk Touch tools, unhealthy/wet actors, and unowned operations remain rejected.
+The existing natural-rock dry-roof path is unchanged. This enables resuming after
+safe cleanup restored a service roof; it does not permit general wet excavation.
+208 related Java tests passed. Real source/flow and roof restoration are verified
+independently after normal server-acknowledged mining and bucket use.

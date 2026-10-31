@@ -2887,6 +2887,7 @@ public final class AutomationBridge {
                     throw new IllegalStateException("Current footing is protected");
             }
             boolean dryRoof=dryRoofRequested(r);
+            if(ProjectedSourceColumnGuard.roofRequested(r)&&!dryRoof)throw new IllegalArgumentException("Projected roof access needs the explicit dry-roof guard");
             if(dryRoof){
                 if(underwater||recovery||furnaceRecovery||dryPaving||terrainReplace)
                     throw new IllegalArgumentException("Dry roof mining cannot combine other excavation exceptions");
@@ -3124,8 +3125,10 @@ public final class AutomationBridge {
         boolean natural=Set.of("minecraft:stone","minecraft:granite","minecraft:diorite","minecraft:andesite",
             "minecraft:deepslate","minecraft:tuff","minecraft:calcite","minecraft:dripstone_block").contains(name)
             &&block.getFluidState().isEmpty()&&c.level.getBlockEntity(target)==null;
+        boolean projectedRoof=ProjectedSourceColumnGuard.roofRequested(request);
+        if(projectedRoof){ProjectedSourceColumnGuard.requireRoofAccess(c,request,target);natural=true;}
         var below=c.level.getFluidState(target.below());
-        boolean source=below.is(net.minecraft.tags.FluidTags.WATER)&&below.isSource();
+        boolean source=below.is(net.minecraft.tags.FluidTags.WATER)&&(projectedRoof||below.isSource());
         boolean otherFluid=false,unstable=false;
         for(Direction direction:Direction.values()){
             BlockPos neighbour=target.relative(direction);
@@ -4678,6 +4681,7 @@ public final class AutomationBridge {
         j.addProperty("projected_bent_channel_seed_protocol",1);
         j.addProperty("projected_observer_place_protocol",1);
         j.addProperty("projected_slab_place_protocol",1);
+        j.addProperty("projected_source_roof_protocol",1);
         j.addProperty("projected_trapdoor_waterlog_protocol",1);
         j.addProperty("projected_floor_water_shield_protocol",1);
         j.addProperty("bucket_passive_observation_protocol",1);
