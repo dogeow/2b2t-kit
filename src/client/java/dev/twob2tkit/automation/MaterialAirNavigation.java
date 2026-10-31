@@ -16,7 +16,7 @@ final class MaterialAirNavigation {
     private final BorerAreaFlightSession flight=new BorerAreaFlightSession();
     private Vec3 previous,displacement=Vec3.ZERO;
     private RotationAim.Look look;
-    private boolean precise,closed;
+    private boolean precise,closed,confined;
     private final float startingHealth;
     private final long startingHurtAt;
     private boolean injuryInterrupted;
@@ -53,7 +53,8 @@ final class MaterialAirNavigation {
         if(settlement.restored())return true;
         String failure=flight.acquire(c.player);
         if(failure!=null)throw new IllegalStateException(failure);
-        var motion=MaterialAirArrivalPolicy.motion(error);
+        confined=!c.level.noCollision(c.player,c.player.getBoundingBox().inflate(.35));
+        var motion=MaterialAirArrivalPolicy.motion(error,confined);
         if(!motion.moving()){flight.hover();return true;}
         flight.speed(motion.speed());
         if(motion.vertical()){c.options.keyJump.setDown(error.y>0);c.options.keyShift.setDown(error.y<0);}
@@ -108,7 +109,7 @@ final class MaterialAirNavigation {
         result.addProperty("starting_health",startingHealth);result.addProperty("starting_hurt_at",startingHurtAt);
         result.addProperty("injury_interrupted",injuryInterrupted);result.addProperty("arrival",arrival);result.addProperty("stable_ticks",settlement.stableTicks());
         result.addProperty("restored_ticks",settlement.restoredTicks());result.addProperty("restorations",settlement.restorations());
-        result.addProperty("observed_step",displacement.length());
+        result.addProperty("observed_step",displacement.length());result.addProperty("confined_motion",confined);
         if(c.player!=null){var error=target.subtract(c.player.position());
             result.addProperty("horizontal_error",Math.hypot(error.x,error.z));result.addProperty("vertical_error",Math.abs(error.y));
             var velocity=c.player.getDeltaMovement();result.addProperty("horizontal_velocity",Math.hypot(velocity.x,velocity.z));

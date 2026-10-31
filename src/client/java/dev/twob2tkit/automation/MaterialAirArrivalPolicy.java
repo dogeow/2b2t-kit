@@ -47,11 +47,12 @@ final class MaterialAirArrivalPolicy {
         double speed=Math.hypot(velocity.x,velocity.z);
         return !cruising||speed<=.001||Math.hypot(error.x,error.z)<=Math.max(3,speed*8+.5);
     }
-    static Motion motion(Vec3 error){
+    static Motion motion(Vec3 error){return motion(error,false);}
+    static Motion motion(Vec3 error,boolean confined){
         double horizontal=Math.hypot(error.x,error.z);double absY=Math.abs(error.y);
         // Meteor shares one speed between both axes. Align first so a large
         // altitude error cannot turn a tiny horizontal correction into an overshoot.
-        if(horizontal>.06)return new Motion(false,true,true,Math.min(.06,horizontal/20));
+        if(horizontal>.06)return new Motion(false,true,true,Math.min(confined?.025:.06,horizontal/20));
         if(absY>.06)return new Motion(true,false,true,Math.min(.08,absY/10));
         return new Motion(false,false,false,0);
     }
