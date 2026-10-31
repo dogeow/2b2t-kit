@@ -2000,8 +2000,14 @@ public final class AutomationBridge {
                     if(stopInjuredAirNavigation(c))return;
                     if(guardBusy&&!ownedDefensiveRise(c))materialAirNavigation.defensePause();
                     else{
-                        materialAirNavigation.observe(c);
-                        if(materialAirNavigation.done())finish(c,"done","air-only waypoint reached and stable after restoring Flight settings");
+                        try{
+                            materialAirNavigation.observe(c);
+                            if(materialAirNavigation.done())finish(c,"done","air-only waypoint reached and stable after restoring Flight settings");
+                        }catch(MaterialAirArrivalPolicy.RestoredFlightDrift drift){
+                            // A known motion terminal is not a new world/manual ownership event.
+                            // Stop normally; future work still needs its own fresh pose and native action checks.
+                            finish(c,"stopped",drift.getMessage());
+                        }
                     }
                 }else if(op.equals("navigate") && !KitClient.controller().isActive()){
                     JsonArray p=active.getAsJsonArray("target");double dx=c.player.getX()-p.get(0).getAsDouble(),dz=c.player.getZ()-p.get(2).getAsDouble();

@@ -4,6 +4,9 @@ import net.minecraft.world.phys.Vec3;
 
 /** Exact material waypoints require real stationary observations, not Cruise's broad arrival hint. */
 final class MaterialAirArrivalPolicy {
+    static final class RestoredFlightDrift extends IllegalStateException {
+        RestoredFlightDrift(){super("Restored Flight settings did not keep the precise waypoint stable");}
+    }
     static final int STABLE_TICKS=8;
     static final int RESTORED_TICKS=8;
     record Motion(boolean vertical,boolean horizontal,boolean moving,double speed) {}
@@ -23,7 +26,7 @@ final class MaterialAirArrivalPolicy {
             }else{
                 restoredTicks=inRange&&still?restoredTicks+1:0;
                 if(!inRange){
-                    if(restorations>=3)throw new IllegalStateException("Restored Flight settings did not keep the precise waypoint stable");
+                    if(restorations>=3)throw new RestoredFlightDrift();
                     precision();return Decision.REACQUIRE;
                 }
                 if(restoredTicks>=RESTORED_TICKS){done=true;return Decision.CONFIRMED;}
