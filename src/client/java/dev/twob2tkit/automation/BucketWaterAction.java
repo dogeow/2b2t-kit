@@ -55,6 +55,8 @@ final class BucketWaterAction {
     private final String sourceProfile;
     private final ProjectedTrapdoorWaterlog projectedWaterlog;
     private final ProjectedBubbleColumnGuard projectedBubble;
+    private final ProjectedSourceReturnGuard projectedReturn;
+    private boolean sourceReturnProbeSent;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
         mode=switch(text(request,"op")){case "bucket_fill"->BucketWaterPolicy.Mode.FILL;case "bucket_place"->BucketWaterPolicy.Mode.PLACE;default->throw new IllegalArgumentException("Only water bucket fill/place are supported");};
@@ -88,7 +90,8 @@ final class BucketWaterAction {
         if(collect&&(mode!=BucketWaterPolicy.Mode.FILL||column||drain||channel||sources||supply||bent||ProjectedTrapdoorWaterlog.requested(request)))throw new IllegalArgumentException("Bent seed collection is an exclusive fill operation");
         projectedBentCollect=collect?new ProjectedBentChannelGuard(c,request,target):null;
         if((request.has("bent_service_ceiling")||request.has("bent_middle_ceiling"))&&!bent&&!collect)throw new IllegalArgumentException("Bent service ceiling requires explicit bent operation");
-        if(request.has("source_column_profile")&&!sources&&!supply&&!bent&&!collect)throw new IllegalArgumentException("Source profile needs an explicit source or overflow operation");
+        boolean sourceReturn=ProjectedSourceReturnGuard.requested(request);
+        if(request.has("source_column_profile")&&!sources&&!supply&&!bent&&!collect&&!sourceReturn)throw new IllegalArgumentException("Source profile needs an explicit source or overflow operation");
         sourceProfile=ProjectedSourceColumnGuard.profileRows(request)==4?"four_rows":"nine_rows";
         boolean waterlog=ProjectedTrapdoorWaterlog.requested(request);
         if(waterlog&&!ProjectedTrapdoorRowPolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent))throw new IllegalArgumentException("Trapdoor waterlogging is an exclusive place-only operation");
@@ -97,6 +100,8 @@ final class BucketWaterAction {
         if(bubble&&!ProjectedBubblePolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent,collect,waterlog))throw new IllegalArgumentException("Bubble column is an exclusive place-only operation");
         if(!bubble&&(request.has("bubble_bounds")||request.has("bubble_service_cap")||request.has("bubble_boundary_pins")))throw new IllegalArgumentException("Bubble geometry requires explicit bubble mode");
         projectedBubble=bubble?new ProjectedBubbleColumnGuard(request,target):null;
+        if(sourceReturn&&!ProjectedBubblePolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent,collect,waterlog,bubble))throw new IllegalArgumentException("Source return is an exclusive place-only operation");
+        projectedReturn=sourceReturn?new ProjectedSourceReturnGuard(c,request,target):null;
         if(expectedState.isBlank())throw new IllegalArgumentException("An exact fresh target state is required");
         support=mode==BucketWaterPolicy.Mode.PLACE?position(request,"support"):target;
         face=mode==BucketWaterPolicy.Mode.PLACE?Direction.valueOf(text(request,"face").toUpperCase(java.util.Locale.ROOT)):null;
@@ -152,6 +157,7 @@ final class BucketWaterAction {
             &&c.level.getBlockState(pos).isCollisionShapeFullBlock(c.level,pos);
     }
     private boolean boundedHole(Minecraft c,boolean airRequired) {
+        if(projectedReturn!=null){projectedReturn.require(c);return true;}
         if(projectedBubble!=null){projectedBubble.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         if(projectedWaterlog!=null){projectedWaterlog.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
         if(projectedBent!=null){projectedBent.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()));return true;}
@@ -220,6 +226,17 @@ final class BucketWaterAction {
         // Vanilla BucketItem.use performs its own identical POV ray; useItemOn would not fill a bucket.
         if(!c.gameMode.useItem(c.player,InteractionHand.MAIN_HAND).consumesAction())
             throw new IllegalStateException("One bucket use was sent but not accepted; outcome unknown, do not retry");
+        if(projectedReturn!=null){
+            // One ordinary bucket use above may preserve a source without a block
+            // packet. One inert block interaction asks vanilla to send its real
+            // support and adjacent block updates. Never fall back to useItem.
+            projectedReturn.require(c);
+            if(!sameContext(c)||!ownerCurrent.getAsBoolean()||!c.player.getMainHandItem().is(Items.BUCKET)||c.player.getMainHandItem().getCount()!=1
+                    ||!c.level.getBlockState(support).toString().equals(expectedSupport))throw new IllegalStateException("Return verification context changed after the one use; do not retry");
+            sourceReturnProbeSent=true;var probeClaim=snapshot(false);probeClaim.addProperty("stage","before_single_inert_return_probe");BucketUseStore.update(claimPath,probeClaim);
+            projectedReturn.probe(c,hit);
+        }
+
     }
     void serverBlock(Minecraft c,BlockPos pos,BlockState state,boolean applied,long tick) {
         boolean expected=mode==BucketWaterPolicy.Mode.PLACE?(projectedBubble!=null?projectedBubble.expectedPacket(state):projectedWaterlog!=null?projectedWaterlog.expectedPacket(state):plainSource(state)):projectedDrain!=null?projectedDrain.expectedPacket(state):BucketWaterPolicy.fillResult(state.isAir(),state.is(Blocks.WATER));
@@ -281,6 +298,8 @@ final class BucketWaterAction {
         out.addProperty("confirmed",confirmed&&retired);out.addProperty("unknown_outcome",receipt.sent()&&!retired);
         out.addProperty("confirmation_scope","post_single_normal_use_current_connection_target_block_and_selected_bucket_slot_server_packets_plus_vanilla_prediction_settled_and_exact_inventory_delta_after_8_ticks");
         out.addProperty("expected_state_before",expectedState);
+        out.addProperty("projected_source_return",projectedReturn!=null);
+        out.addProperty("source_return_block_probe_count",sourceReturnProbeSent?1:0);
         out.addProperty("projected_bubble_column",projectedBubble!=null);
         if(projectedBubble!=null)out.addProperty("expected_bubble_state",projectedBubble.expectedState());
         out.addProperty("projected_bent_channel",projectedBent!=null);
@@ -291,7 +310,7 @@ final class BucketWaterAction {
             if(bend.serviceRoof()!=null){var roof=new JsonArray();roof.add(bend.serviceRoof().getX());roof.add(bend.serviceRoof().getY());roof.add(bend.serviceRoof().getZ());out.add("bent_service_ceiling",roof);}
             if(bend.middleRoof()!=null){var roof=new JsonArray();roof.add(bend.middleRoof().getX());roof.add(bend.middleRoof().getY());roof.add(bend.middleRoof().getZ());out.add("bent_middle_ceiling",roof);}
         }
-        if(projectedSources!=null||projectedSupply!=null||projectedBent!=null||projectedBentCollect!=null)out.addProperty("source_column_profile",sourceProfile);
+        if(projectedSources!=null||projectedSupply!=null||projectedBent!=null||projectedBentCollect!=null||projectedReturn!=null)out.addProperty("source_column_profile",sourceProfile);
         out.addProperty("projected_trapdoor_waterlog",projectedWaterlog!=null);
         if(projectedWaterlog!=null)out.addProperty("expected_wet_state",projectedWaterlog.expectedWet());
         out.addProperty("projected_water_column",projectedColumn!=null);

@@ -3782,7 +3782,7 @@ public final class AutomationBridge {
             ||c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<8
             ||(loadedHostileNearby(c)&&!ProjectedSourceColumnGuard.shieldedWorkspace(c,r)
                 &&!ProjectedSourceColumnSupplyGuard.shieldedWorkspace(c,r)
-                &&!ProjectedFloorWaterGuard.shieldedWorkspace(c,r)&&!ProjectedBentChannelGuard.shieldedWorkspace(c,r))||c.player.isDeadOrDying()
+                &&!ProjectedFloorWaterGuard.shieldedWorkspace(c,r)&&!ProjectedBentChannelGuard.shieldedWorkspace(c,r)&&!ProjectedSourceReturnGuard.shieldedWorkspace(c,r))||c.player.isDeadOrDying()
             ||dev.twob2tkit.combat.EmergencyExit.held(c)
             ||c.gameMode.getPlayerMode()!=net.minecraft.world.level.GameType.SURVIVAL)return false;
         try{guard(c,r);return true;}catch(RuntimeException changed){return false;}
@@ -4683,6 +4683,7 @@ public final class AutomationBridge {
         j.addProperty("projected_slab_place_protocol",1);
         j.addProperty("projected_source_roof_protocol",1);
         j.addProperty("projected_bubble_column_protocol",1);
+        j.addProperty("projected_source_return_protocol",1);
         j.addProperty("projected_trapdoor_waterlog_protocol",1);
         j.addProperty("projected_floor_water_shield_protocol",1);
         j.addProperty("bucket_passive_observation_protocol",1);
