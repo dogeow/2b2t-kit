@@ -2,6 +2,7 @@ package dev.twob2tkit.automation;
 import java.util.List;
 final class ProjectedBentChannelPolicy {
     private ProjectedBentChannelPolicy() {}
+    static boolean admissionBefore(boolean collect,int targetLevel){return collect?targetLevel==0:targetLevel!=0;}
     static int dx(int i){return -Math.min(i,3);}
     static int dz(int i){return Math.max(0,i-3);}
     static int dx(int i,int rows){if(rows!=4&&rows!=9||i<0||i>7)throw new IllegalArgumentException("Exact profiled path required");return -Math.min(i,rows==4?5:3);}

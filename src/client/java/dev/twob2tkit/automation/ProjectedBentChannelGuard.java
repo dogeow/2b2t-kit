@@ -42,7 +42,7 @@ final class ProjectedBentChannelGuard {
             if(fill?!collectRequested(r):!"bucket_place".equals(ProjectionLoadPolicy.text(r,"op",64))||!requested(r))return false;
             var guard=new ProjectedBentChannelGuard(c,r,ProjectedSourceColumnGuard.point(r.get("pos")));
             if(guard.chamber.rows()!=4&&guard.collectIndex==0)return false;
-            guard.require(c,false);return guard.chamber.shieldedActor(c);
+            guard.require(c,ProjectedBentChannelPolicy.admissionBefore(fill,level(c.level.getBlockState(ProjectedSourceColumnGuard.point(r.get("pos"))))));return guard.chamber.shieldedActor(c);
         }catch(RuntimeException unproved){return false;}
     }
     ProjectedBentChannelGuard(Minecraft c,JsonObject r,BlockPos source){

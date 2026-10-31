@@ -29,3 +29,15 @@ Intent journals separate preflight (`dispatch_started=false,pending=null`) from 
 `projected_bent_middle_service_protocol=1` additionally supports `bent_middle_ceiling`, only when the active service roof is present and distinct. The shared point must be exactly path index1's original bottom-slab roof. Both declared openings must be AIR, with every other original roof unchanged. The receipt returns both opening positions; Python requires the shared-position echo. This lets entry roof429 stay open through the staged pour/collections, while only the active outer roof changes; no roof above newly placed water needs to be mined. The ordinary fluid-neighbour mining prohibition stays intact.
 
 For this profile the seed at path index2 uses the southern GLASS support and its NORTH face. The northern wall is a waterloggable stair and must not be clicked with a bucket as though it were glass. Legacy seed support remains unchanged. The follow-up candidate passed189 Java and49 Python tests, including the shared-roof restriction and the real north-stair/south-glass distinction. These are candidate tests, not live acceptance.
+
+## Overflow admission phase correction (31.17)
+
+The shielded hostile-admission probe previously always called the overflow guard
+with `before=false`. That correctly checks an already-poured original source, but
+rejects an entirely dry first-pour path whenever a nearby hostile requires the
+shielded probe. Infer the phase from the actual action target: placement is before
+when it is not yet a source; collection is before when it is still a source.
+The normal constructor and pre-send checks still enforce their exact stage,
+geometry, entity and owned-health requirements. No bucket use is retried.
+201 related Java tests pass, including the dry-first-pour regression and staged
+seed/collection shapes. Actual flow acceptance remains a separate game check.
