@@ -103,4 +103,15 @@ class ModelWaterPlanTest {
   assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,true,false,false,false,100,70));
   assertFalse(ProjectedFlowCorrectionGuard.remoteCalmCreeper(true,true,false,false,true,Double.NaN,70));
  }
+ @Test void originalWaterOperationsDistinguishBelowFloorGroundMobsFromImmediateAndRangedThreats(){
+  for(String type:new String[]{"minecraft:zombie","minecraft:zombie_villager","minecraft:slime","minecraft:spider","minecraft:cave_spider"}){
+   assertTrue(ProjectedFlowCorrectionGuard.distantGroundThreat(type,true,false,25,4));
+   assertFalse(ProjectedFlowCorrectionGuard.distantGroundThreat(type,true,false,25,3.99));
+   assertTrue(ProjectedFlowCorrectionGuard.distantGroundThreat(type,true,true,144,0));
+   assertFalse(ProjectedFlowCorrectionGuard.distantGroundThreat(type,true,true,143.9,5));
+   assertFalse(ProjectedFlowCorrectionGuard.distantGroundThreat(type,false,true,200,5));
+  }
+  for(String type:new String[]{"minecraft:creeper","minecraft:skeleton","minecraft:bogged","minecraft:vex","minecraft:enderman"})assertFalse(ProjectedFlowCorrectionGuard.distantGroundThreat(type,true,false,200,10));
+  assertFalse(ProjectedFlowCorrectionGuard.distantGroundThreat("minecraft:zombie",true,false,Double.NaN,5));
+ }
 }
