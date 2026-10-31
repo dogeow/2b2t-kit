@@ -11,3 +11,8 @@
 `projected_model_water.place` 可热更新，计算原图连通水域与再生邻接边界，要求原生单次源水回执和完整流路三帧稳定。若只读发现目标已是源水，不发送桶操作，也不据此宣称完整水流已验证。
 
 相关Java产物249项、Python入口及现有水操作16项通过。宿主入口需完整重启，worker只新增对应文件；实机纠正与原图流向仍须逐段验证，不将测试通过视为全塔完成。
+
+
+## Live pre-send phase correction (2026.11.01.2)
+
+The first live source request reported use_count=0, no packet observations, and no durable cell claim. The model-water check had interpreted a pre-send observation as post-placement. It now uses the same explicit-preflight/use-sent phase predicate as the existing column modes. A regression covers both phases; the isolated artifact passes 250 Java tests and changes only BucketWaterAction plus version metadata. This is not proof that any water has been placed.

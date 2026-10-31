@@ -64,4 +64,14 @@ class ModelWaterPlanTest {
   boolean owner=false;for(var method:node.methods)if(method.name.equals("bucketOwnerCurrent"))for(var i:method.instructions)if(i instanceof org.objectweb.asm.tree.MethodInsnNode c)owner|=c.owner.endsWith("ProjectedModelWaterGuard")&&c.name.equals("shieldedWorkspace");assertTrue(owner);
  }
  @Test void explicitFlagNeedsBoolean(){assertFalse(ProjectedModelWaterGuard.requested(new com.google.gson.JsonObject()));assertThrows(IllegalArgumentException.class,()->ProjectedModelWaterGuard.requested(com.google.gson.JsonParser.parseString("{\"projected_model_water_source\":1}").getAsJsonObject()));}
+ @Test void unsentGeometryChecksStillUsePrePlacementPhase(){
+  assertTrue(BucketWaterPolicy.columnRequiresAir(false,false));
+  assertTrue(BucketWaterPolicy.columnRequiresAir(true,false));
+  assertFalse(BucketWaterPolicy.columnRequiresAir(false,true));
+  assertTrue(BucketWaterPolicy.columnRequiresAir(true,true));
+  assertDoesNotThrow(()->{
+   String source=java.nio.file.Files.readString(java.nio.file.Path.of("src/client/java/dev/twob2tkit/automation/BucketWaterAction.java"));
+   assertTrue(source.contains("projectedModelWater.require(c,BucketWaterPolicy.columnRequiresAir(airRequired,receipt.sent()))"));
+  });
+ }
 }
