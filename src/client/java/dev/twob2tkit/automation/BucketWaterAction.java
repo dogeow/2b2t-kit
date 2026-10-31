@@ -193,6 +193,12 @@ final class BucketWaterAction {
     }
     Vec3 aim(Minecraft c) {
         if(mode==BucketWaterPolicy.Mode.FILL){
+            if(projectedDrain!=null){
+                var hit=ProjectedDrainAim.visible(c.level,c.player.getEyePosition(),target,
+                    c.player.blockInteractionRange()-.2,net.minecraft.world.phys.shapes.CollisionContext.of(c.player));
+                if(hit==null)throw new IllegalStateException("No exposed waterlogged surface within normal bucket reach");
+                Vec3 point=BlockFaceTarget.inside(hit);entityRayClear(c,point);return point;
+            }
             Vec3 point=Vec3.atCenterOf(target);var hit=c.level.clip(new ClipContext(c.player.getEyePosition(),point,ClipContext.Block.OUTLINE,ClipContext.Fluid.SOURCE_ONLY,c.player));
             if(!BlockFaceTarget.matches(hit,target,null)||c.player.getEyePosition().distanceTo(point)>c.player.blockInteractionRange()-.2)
                 throw new IllegalStateException("Source water is occluded or outside normal reach");

@@ -2962,10 +2962,19 @@ public final class AutomationBridge {
                 lastBucketAdmissionRejection=bucketAdmissionDiagnostics(c,r);
                 throw new IllegalStateException("Water bucket action requires the current healthy idle guarded material lease");
             }
-            checkSiteTarget(r,r.getAsJsonArray("pos"));
-            if(command.equals("bucket_place"))checkSiteTarget(r,r.getAsJsonArray("support"));
-            var plannedBucket=new BucketWaterAction(c,r,session(c),lastId,root(c),()->bucketOwnerCurrent(c,r));
-            Vec3 aim=plannedBucket.aim(c);RotationAim.Look look=RotationAim.lookAt(c.player,aim);
+            BucketWaterAction plannedBucket;RotationAim.Look look;
+            try{
+                checkSiteTarget(r,r.getAsJsonArray("pos"));
+                if(command.equals("bucket_place"))checkSiteTarget(r,r.getAsJsonArray("support"));
+                plannedBucket=new BucketWaterAction(c,r,session(c),lastId,root(c),()->bucketOwnerCurrent(c,r));
+                Vec3 aim=plannedBucket.aim(c);look=RotationAim.lookAt(c.player,aim);
+            }catch(Exception beforeAssignment){
+                // No task or normal use exists yet. Keep this precise no-input evidence.
+                lastBucketAdmissionRejection=bucketAdmissionDiagnostics(c,r);
+                lastBucketAdmissionRejection.addProperty("admission_stage","before_task_assignment");
+                lastBucketAdmissionRejection.addProperty("reason",beforeAssignment.getMessage());
+                throw beforeAssignment;
+            }
             bucketWaterTask=plannedBucket;lastBucketWater=null;
             active=r.deepCopy();op=command;phase="running";deadline=ticks+100;
             detail="rotating for exactly one bounded normal water bucket use";
