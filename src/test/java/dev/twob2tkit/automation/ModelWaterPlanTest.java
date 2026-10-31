@@ -129,4 +129,18 @@ class ModelWaterPlanTest {
   int probes=0;for(var m:node.methods)if(m.name.equals("probe"))for(var i:m.instructions)if(i instanceof org.objectweb.asm.tree.MethodInsnNode call){if(call.name.equals("useItemOn"))probes++;assertFalse(java.util.Set.of("useItem","setBlock","send","acknowledge").contains(call.name));}
   assertEquals(1,probes);
  }
+ @Test void inertFloorEchoMayUseOriginalStoneStepsButNeverChangeTheirShapeOrWaterBit(){
+  for(var dry:Blocks.COBBLESTONE_STAIRS.getStateDefinition().getPossibleStates()){
+   if(dry.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED))continue;
+   var wet=dry.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED,true);
+   assertTrue(ProjectedFlowCorrectionGuard.inertFloorPair(dry,dry,false,false));
+   assertTrue(ProjectedFlowCorrectionGuard.inertFloorPair(wet,dry,false,false));
+   assertFalse(ProjectedFlowCorrectionGuard.inertFloorPair(wet,dry.cycle(net.minecraft.world.level.block.state.properties.BlockStateProperties.HORIZONTAL_FACING),false,false));
+   assertFalse(ProjectedFlowCorrectionGuard.inertFloorPair(dry,dry,true,false));
+  }
+  var chest=Blocks.CHEST.defaultBlockState();assertFalse(ProjectedFlowCorrectionGuard.inertFloorPair(chest,chest,true,true));
+  var gate=Blocks.SPRUCE_FENCE_GATE.defaultBlockState();assertFalse(ProjectedFlowCorrectionGuard.inertFloorPair(gate,gate,false,false));
+  var door=Blocks.SPRUCE_TRAPDOOR.defaultBlockState();assertFalse(ProjectedFlowCorrectionGuard.inertFloorPair(door,door,false,false));
+  assertFalse(ProjectedFlowCorrectionGuard.inertFloorPair(Blocks.DIRT.defaultBlockState(),Blocks.MAGMA_BLOCK.defaultBlockState(),false,true));
+ }
 }

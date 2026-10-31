@@ -29,10 +29,14 @@ final class ProjectedFlowCorrectionGuard {
   for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++)for(int z=-1;z<=1;z++)if(!ProjectedModelWaterGuard.loaded(c,target.offset(x,y,z)))throw new IllegalStateException("Water correction needs current server chunks");
   if(before)probeHit(c);
  }
+ static boolean inertFloorPair(BlockState actual,BlockState original,boolean blockEntity,boolean full){
+  if(blockEntity||!(actual.equals(original)||ProjectedWaterlogDrain.pair(actual,original,false)))return false;
+  if(actual.is(Blocks.COBBLESTONE_STAIRS)||actual.is(Blocks.COBBLESTONE_SLAB))return true;
+  return full&&actual.getFluidState().isEmpty()&&(actual.is(Blocks.COBBLESTONE)||actual.is(Blocks.GLASS)||actual.is(Blocks.STONE)||actual.is(Blocks.MAGMA_BLOCK)||actual.is(Blocks.PACKED_ICE));
+ }
  net.minecraft.world.phys.BlockHitResult probeHit(Minecraft c){
   var support=target.below();var original=LitematicaAccess.schematicWorld().getBlockState(support);var actual=c.level.getBlockState(support);
-  if(!actual.equals(original)||c.level.getBlockEntity(support)!=null||!actual.getFluidState().isEmpty()||!actual.isCollisionShapeFullBlock(c.level,support)
-     ||!(actual.is(Blocks.COBBLESTONE)||actual.is(Blocks.GLASS)||actual.is(Blocks.STONE)||actual.is(Blocks.MAGMA_BLOCK)||actual.is(Blocks.PACKED_ICE)))throw new IllegalStateException("Flow drain needs the original dry inert full-block floor for one server echo");
+  if(!inertFloorPair(actual,original,c.level.getBlockEntity(support)!=null,actual.isCollisionShapeFullBlock(c.level,support)))throw new IllegalStateException("Flow drain needs an original inert stone floor shape for one server echo");
   var hit=BlockFaceTarget.visible(c,c.player.getEyePosition(),support,net.minecraft.core.Direction.UP,c.player.blockInteractionRange()-.2);
   if(hit==null)throw new IllegalStateException("Inert source-drain verification face is occluded or out of reach");return hit;
  }
