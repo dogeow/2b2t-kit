@@ -25,12 +25,14 @@ final class ProjectedTrapdoorWaterlog {
         &&state.getValue(TrapDoorBlock.HALF)==Half.BOTTOM&&!state.getValue(TrapDoorBlock.OPEN)&&!state.getValue(TrapDoorBlock.POWERED)
         &&(state.getValue(TrapDoorBlock.FACING)==Direction.NORTH||state.getValue(TrapDoorBlock.FACING)==Direction.SOUTH);}
     static boolean pair(BlockState wet,BlockState dry){return closedBottom(wet)&&closedBottom(dry)&&ProjectedWaterlogDrain.pair(wet,dry,false);}
-    ProjectedTrapdoorWaterlog(Minecraft c,JsonObject r,BlockPos target){
+    ProjectedTrapdoorWaterlog(Minecraft c,JsonObject r,BlockPos target){this(c,r,target,false);}
+    ProjectedTrapdoorWaterlog(Minecraft c,JsonObject r,BlockPos target,boolean observeCompleted){
         this.target=target.immutable();placement=ProjectionLoadPolicy.text(r,"placement_key",8192);
         if(!r.has("trapdoor_row_bounds")||!r.get("trapdoor_row_bounds").isJsonObject())throw new IllegalArgumentException("Exact original trapdoor row bounds required");
         var box=r.getAsJsonObject("trapdoor_row_bounds");var lo=ProjectedSourceColumnGuard.point(box.get("min"));var hi=ProjectedSourceColumnGuard.point(box.get("max"));bounds=new ProjectedTrapdoorRowPolicy.Bounds(lo.getX(),lo.getY(),lo.getZ(),hi.getX());
         if(!bounds.valid()||lo.getY()!=hi.getY()||lo.getZ()!=hi.getZ()||target.getY()!=lo.getY()||target.getZ()!=lo.getZ()||target.getX()<lo.getX()||target.getX()>hi.getX())throw new IllegalArgumentException("Only a target inside the original29-cell row is supported");
-        var model=LitematicaAccess.schematicWorld();if(model==null)throw new IllegalStateException("Loaded original model required");wet=model.getBlockState(target);dry=c.level.getBlockState(target);
+        var model=LitematicaAccess.schematicWorld();if(model==null)throw new IllegalStateException("Loaded original model required");wet=model.getBlockState(target);var actual=c.level.getBlockState(target);
+        dry=observeCompleted&&actual.hasProperty(TrapDoorBlock.WATERLOGGED)?actual.setValue(TrapDoorBlock.WATERLOGGED,false):actual;
         if(!pair(wet,dry)||!wet.toString().equals(ProjectionLoadPolicy.text(r,"expected_wet_state",2048)))throw new IllegalStateException("Only the original waterlogged bit may change");
         for(int x=bounds.minX();x<=bounds.maxX();x++){var p=new BlockPos(x,bounds.y(),bounds.z());if(c.level.getBlockState(p).hasProperty(TrapDoorBlock.WATERLOGGED)&&c.level.getBlockState(p).getValue(TrapDoorBlock.WATERLOGGED))priorWet.add(p);}
     }

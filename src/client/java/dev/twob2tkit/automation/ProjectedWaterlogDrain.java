@@ -33,12 +33,14 @@ final class ProjectedWaterlogDrain {
         return wet.setValue(property,false).equals(dry)&&wet.getFluidState().is(Fluids.WATER)
             &&wet.getFluidState().isSource()&&dry.getFluidState().isEmpty();
     }
-    ProjectedWaterlogDrain(Minecraft c,JsonObject r,BlockPos target){
+    ProjectedWaterlogDrain(Minecraft c,JsonObject r,BlockPos target){this(c,r,target,false);}
+    ProjectedWaterlogDrain(Minecraft c,JsonObject r,BlockPos target,boolean observeCompleted){
         this.target=target.immutable();placement=ProjectionLoadPolicy.text(r,"placement_key",8192);
         var selection=LitematicaAccess.lockedBuildSelection();var model=LitematicaAccess.schematicWorld();
         if(!selection.key().equals(placement)||!selection.contains(target)||!LitematicaAccess.inVisibleLayer(target)
             ||model==null||!LitematicaAccess.loadingReason(selection).isEmpty())throw new IllegalStateException("Projected drain needs the current locked loaded visible target");
-        wet=c.level.getBlockState(target);dry=model.getBlockState(target);
+        var actual=c.level.getBlockState(target);dry=model.getBlockState(target);
+        wet=observeCompleted&&actual.equals(dry)&&actual.hasProperty(BlockStateProperties.WATERLOGGED)?actual.setValue(BlockStateProperties.WATERLOGGED,true):actual;
         if(!ProjectionLoadPolicy.text(r,"expected_dry_state",2048).equals(dry.toString())
             ||!pair(wet,dry,c.level.getBlockEntity(target)!=null))
             throw new IllegalStateException("Projected drain only changes waterlogged=true to the otherwise identical dry slab or trapdoor in the schematic");
