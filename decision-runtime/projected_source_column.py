@@ -203,7 +203,10 @@ def refill(c,low,high,source,placement_key,out,*,completed_overflow=False,profil
     if completed_overflow and state.get('projected_source_column_overflow_supply_protocol')!=1:raise RuntimeError('Native completed-overflow supply protocol required')
     if (not isinstance(source,list)or len(source)!=3 or any(type(v)is not int for v in source)
             or source[0]!=low[0]+1 or source[2]!=low[2]or not low[1]<=source[1]<=high[1]):raise ValueError('Only a completed center source may supply buckets')
-    model=c.request('projection_model')['projection_model'];frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True)
+    model=c.request('projection_model')['projection_model']
+    for _ in range(4):
+        frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True)
+        if coherent(frame,c.world,lo,hi):break
     if model.get('placement_key')!=placement_key:raise RuntimeError('Projection changed')
     plan=geometry(model,frame,low,high,c.world,completed_overflow=completed_overflow,profile=profile);rows={tuple(v['pos']):v['state']for v in frame['blocks']}
     if any(rows.get((x,source[1],source[2]))!=SOURCE for x in range(low[0],high[0]+1)):

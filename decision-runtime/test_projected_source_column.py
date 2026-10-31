@@ -144,6 +144,34 @@ class SourceSupplyTest(unittest.TestCase):
         m,f=fixture()
         for x in range(10,13):change(f,[x,59,20],SOURCE)
         return m,f
+    def test_transient_cross_tick_supply_scan_retries_reads_before_one_fill(self):
+        from projected_source_column import refill
+        class Transient(SupplyFake):
+            scans=0
+            def checked(self,op,**kw):
+                r=super().checked(op,**kw)
+                if op=='scan':
+                    self.scans+=1
+                    if self.scans==1:r=copy.deepcopy(r);r['scan_coherent']=False
+                return r
+        m,f=self.prepared();c=Transient(m,f)
+        with tempfile.TemporaryDirectory()as d:
+            result=refill(c,LOW,HIGH,[11,59,20],KEY,Path(d)/'one');self.assertTrue(result['complete'])
+        self.assertEqual(c.fills,1);self.assertGreaterEqual(c.scans,2)
+    def test_persistent_cross_tick_scan_never_dispatches_a_fill(self):
+        from projected_source_column import refill
+        class Incoherent(SupplyFake):
+            scans=0
+            def checked(self,op,**kw):
+                r=super().checked(op,**kw)
+                if op=='scan':self.scans+=1;r=copy.deepcopy(r);r['scan_coherent']=False
+                return r
+        m,f=self.prepared();c=Incoherent(m,f)
+        with tempfile.TemporaryDirectory()as d:
+            out=Path(d)/'one'
+            with self.assertRaises(RuntimeError):refill(c,LOW,HIGH,[11,59,20],KEY,out)
+            record=json.loads((out/'progress.json').read_text());self.assertFalse(record['dispatch_started']);self.assertIsNone(record['pending'])
+        self.assertEqual(c.fills,0);self.assertEqual(c.scans,4)
     def test_old_host_rejects_supply_before_any_input(self):
         from projected_source_column import refill
         m,f=self.prepared();c=SupplyFake(m,f);c.supply_protocol=0
