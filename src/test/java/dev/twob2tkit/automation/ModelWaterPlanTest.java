@@ -123,4 +123,10 @@ class ModelWaterPlanTest {
    assertFalse(ProjectedFlowCorrectionGuard.separatedThreat(type,true,false,Double.NaN,10));
   }
  }
+ @Test void fullBucketInertVerificationCannotPerformAnotherBucketUse()throws Exception{
+  assertSame(net.minecraft.world.InteractionResult.PASS,net.minecraft.world.item.Items.WATER_BUCKET.useOn(null));
+  var node=new org.objectweb.asm.tree.ClassNode();try(var in=ProjectedFlowCorrectionGuard.class.getResourceAsStream("ProjectedFlowCorrectionGuard.class")){assertNotNull(in);new org.objectweb.asm.ClassReader(in).accept(node,0);}
+  int probes=0;for(var m:node.methods)if(m.name.equals("probe"))for(var i:m.instructions)if(i instanceof org.objectweb.asm.tree.MethodInsnNode call){if(call.name.equals("useItemOn"))probes++;assertFalse(java.util.Set.of("useItem","setBlock","send","acknowledge").contains(call.name));}
+  assertEquals(1,probes);
+ }
 }

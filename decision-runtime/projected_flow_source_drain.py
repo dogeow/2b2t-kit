@@ -13,6 +13,7 @@ def confirmed(r,request,world,target):
     return(r.get('id')==request and r.get('world_session')==world and r.get('phase')=='done'
         and a.get('request_id')==request and a.get('world_session')==world and a.get('pos')==target
         and a.get('operation')=='bucket_fill'and a.get('projected_flow_source_drain')is True
+        and type(a.get('flow_source_drain_probe_count'))is int and a['flow_source_drain_probe_count']==1
         and type(a.get('use_count'))is int and a['use_count']==1 and a.get('confirmed')is True
         and a.get('unknown_outcome')is False and a.get('server_block_confirmed')is True and a.get('server_inventory_confirmed')is True)
 
@@ -21,7 +22,7 @@ def drain(c,target,key,model,out):
     goal=next((v['state']for v in model['expected']if v['pos']==target),None)
     if goal not in [f'Block{{minecraft:water}}[level={i}]'for i in range(1,8)]:raise RuntimeError('Original ordinary flowing-water cell required')
     s=c.status();lease=s.get('supervision_lease')or{}
-    if(s.get('projected_flow_source_drain_protocol')!=1 or s.get('health')!=20 or s.get('food',0)<18 or s.get('air_supply',0)<270
+    if(s.get('projected_flow_source_drain_protocol')!=2 or s.get('health')!=20 or s.get('food',0)<18 or s.get('air_supply',0)<270
        or not s.get('guard_armed')or s.get('guard_busy')or s.get('screen')or s.get('manual_movement')
        or lease.get('job_session')!=c.task or s.get('projection_selection',{}).get('key')!=key or model.get('placement_key')!=key):raise RuntimeError('Healthy current original-flow owner required')
     frame=c.checked('scan',min=target,max=target,details=True,include_predictions=True);write_json(out/'before.json',frame)

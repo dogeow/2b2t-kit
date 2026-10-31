@@ -58,6 +58,7 @@ final class BucketWaterAction {
     private final ProjectedSourceReturnGuard projectedReturn;
     private final ProjectedModelWaterGuard projectedModelWater;
     private final ProjectedFlowCorrectionGuard flowCorrection;
+    private boolean flowCorrectionProbeSent;
     private boolean sourceReturnProbeSent;
 
     BucketWaterAction(Minecraft c,JsonObject request,String world,String requestId,java.nio.file.Path root,BooleanSupplier ownerCurrent) throws java.io.IOException {
@@ -243,6 +244,10 @@ final class BucketWaterAction {
         // Vanilla BucketItem.use performs its own identical POV ray; useItemOn would not fill a bucket.
         if(!c.gameMode.useItem(c.player,InteractionHand.MAIN_HAND).consumesAction())
             throw new IllegalStateException("One bucket use was sent but not accepted; outcome unknown, do not retry");
+        if(flowCorrection!=null){
+            if(!sameContext(c)||!ownerCurrent.getAsBoolean()||!c.player.getMainHandItem().is(Items.WATER_BUCKET)||c.player.getMainHandItem().getCount()!=1)throw new IllegalStateException("Drain verification context changed after one use; do not retry");
+            flowCorrectionProbeSent=true;var probeClaim=snapshot(false);probeClaim.addProperty("stage","before_single_inert_flow_probe");BucketUseStore.update(claimPath,probeClaim);flowCorrection.probe(c);
+        }
         if(projectedReturn!=null){
             // One ordinary bucket use above may preserve a source without a block
             // packet. One inert block interaction asks vanilla to send its real
@@ -316,7 +321,7 @@ final class BucketWaterAction {
         out.addProperty("confirmed",confirmed&&retired);out.addProperty("unknown_outcome",receipt.sent()&&!retired);
         out.addProperty("confirmation_scope","post_single_normal_use_current_connection_target_block_and_selected_bucket_slot_server_packets_plus_vanilla_prediction_settled_and_exact_inventory_delta_after_8_ticks");
         out.addProperty("expected_state_before",expectedState);
-        out.addProperty("projected_flow_source_drain",flowCorrection!=null);out.addProperty("projected_source_return",projectedReturn!=null);out.addProperty("projected_model_water_source",projectedModelWater!=null);
+        out.addProperty("flow_source_drain_probe_count",flowCorrectionProbeSent?1:0);out.addProperty("projected_flow_source_drain",flowCorrection!=null);out.addProperty("projected_source_return",projectedReturn!=null);out.addProperty("projected_model_water_source",projectedModelWater!=null);
         out.addProperty("source_return_block_probe_count",sourceReturnProbeSent?1:0);
         out.addProperty("projected_bubble_column",projectedBubble!=null);
         if(projectedBubble!=null)out.addProperty("expected_bubble_state",projectedBubble.expectedState());
