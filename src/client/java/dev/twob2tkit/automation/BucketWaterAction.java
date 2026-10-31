@@ -72,6 +72,7 @@ final class BucketWaterAction {
         boolean supply=ProjectedSourceColumnSupplyGuard.requested(request);
         if(supply&&!SourceColumnSupplyPolicy.exclusiveFill(mode==BucketWaterPolicy.Mode.FILL,column,drain,channel,sources))
             throw new IllegalArgumentException("Source-column supply is an exclusive fill-only operation");
+        if(!supply&&request.has("source_supply_completed_overflow"))throw new IllegalArgumentException("Completed overflow supply requires explicit source supply mode");
         projectedSupply=supply?new ProjectedSourceColumnSupplyGuard(c,request,target):null;
         boolean bent=ProjectedBentChannelGuard.requested(request);
         if(bent&&!ProjectedBentChannelPolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply))
@@ -253,6 +254,7 @@ final class BucketWaterAction {
         out.addProperty("projected_water_column",projectedColumn!=null);
         out.addProperty("projected_source_column",projectedSources!=null);
         out.addProperty("projected_source_column_supply",projectedSupply!=null);
+        out.addProperty("source_supply_completed_overflow",projectedSupply!=null&&projectedSupply.completedOverflow());
         out.addProperty("projected_waterlog_drain",projectedDrain!=null);
         out.addProperty("projected_water_channel",projectedChannel!=null);
         if(projectedChannel!=null){

@@ -132,11 +132,11 @@ class SupplyFake(Fake):
     supply_protocol=1
     def __init__(self,model,frame):super().__init__(model,frame);self.fills=0
     def status(self):
-        s=super().status();s['projected_source_column_supply_protocol']=self.supply_protocol;s['hand']={'item':'minecraft:bucket','count':1}
+        s=super().status();s['projected_source_column_supply_protocol']=self.supply_protocol;s['projected_source_column_overflow_supply_protocol']=getattr(self,'overflow_protocol',0);s['hand']={'item':'minecraft:bucket','count':1}
         s['inventory']=[{'slot':0,'item':'minecraft:bucket','count':1-self.fills},{'slot':1,'item':'minecraft:water_bucket','count':self.fills}];return s
     def request(self,op,**kw):
         if op=='bucket_fill':
-            self.calls.append(op);self.last='supply-one';self.fills+=1;r=receipt(self.last,kw['pos']);r['bucket_water']['operation']='bucket_fill';r['bucket_water'].pop('projected_source_column');r['bucket_water']['projected_source_column_supply']=True;return r
+            self.calls.append(op);self.last='supply-one';self.fills+=1;r=receipt(self.last,kw['pos']);r['bucket_water']['operation']='bucket_fill';r['bucket_water'].pop('projected_source_column');r['bucket_water']['projected_source_column_supply']=True;r['bucket_water']['source_supply_completed_overflow']=kw.get('source_supply_completed_overflow',False);return r
         return super().request(op,**kw)
 
 class SourceSupplyTest(unittest.TestCase):
@@ -173,5 +173,29 @@ class SourceSupplyTest(unittest.TestCase):
         self.assertTrue(supply_receipt(r,'s',WORLD,[11,59,20]))
         for key,value in [('projected_source_column_supply',False),('operation','bucket_place'),('server_inventory_confirmed',False),('unknown_outcome',True),('use_count',2)]:
             bad=copy.deepcopy(r);bad['bucket_water'][key]=value;self.assertFalse(supply_receipt(bad,'s',WORLD,[11,59,20]))
+
+class CompletedOverflowSupplyTest(unittest.TestCase):
+    def prepared(self):
+        m,f=fixture()
+        for y in range(59,68):
+            for x in range(10,13):change(f,[x,y,20],SOURCE)
+        for x in range(10,13):change(f,[x,68,20],f'Block{{minecraft:water}}[level={12-x}]')
+        c=SupplyFake(m,f);c.overflow_protocol=1;return c
+    def test_completed_overflow_is_explicit_and_preserves_existing_top_and27_sources(self):
+        from projected_source_column import refill
+        c=self.prepared()
+        with tempfile.TemporaryDirectory()as d:r=refill(c,LOW,HIGH,[11,67,20],KEY,Path(d)/'one',completed_overflow=True);self.assertTrue(r['source_preservation_observed'])
+        self.assertEqual(c.fills,1)
+    def test_old_host_cannot_gain_the_new_scope_from_python_alone(self):
+        from projected_source_column import refill
+        c=self.prepared();c.overflow_protocol=0
+        with tempfile.TemporaryDirectory()as d:
+            with self.assertRaises(RuntimeError):refill(c,LOW,HIGH,[11,67,20],KEY,Path(d)/'one',completed_overflow=True)
+        self.assertEqual(c.fills,0);self.assertEqual(c.calls,[])
+    def test_receipt_cannot_confuse_dry_top_and_completed_top_supply(self):
+        from projected_source_column import supply_receipt
+        r=receipt('s',[11,67,20]);r['bucket_water'].update(operation='bucket_fill',projected_source_column_supply=True)
+        self.assertFalse(supply_receipt(r,'s',WORLD,[11,67,20],completed_overflow=True))
+        r['bucket_water']['source_supply_completed_overflow']=True;self.assertTrue(supply_receipt(r,'s',WORLD,[11,67,20],completed_overflow=True));self.assertFalse(supply_receipt(r,'s',WORLD,[11,67,20]))
 
 if __name__=='__main__':unittest.main()

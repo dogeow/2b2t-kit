@@ -4667,6 +4667,7 @@ public final class AutomationBridge {
         j.addProperty("projected_source_column_protocol",1);
         j.addProperty("projected_source_column_shielded_work_protocol",1);
         j.addProperty("projected_source_column_supply_protocol",1);
+        j.addProperty("projected_source_column_overflow_supply_protocol",1);
         j.addProperty("projected_bent_channel_protocol",1);
         j.addProperty("projected_bent_channel_seed_protocol",1);
         j.addProperty("projected_observer_place_protocol",1);

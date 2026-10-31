@@ -25,6 +25,7 @@ final class ProjectedSourceColumnGuard {
     private final BlockPos target;
     private final Map<BlockPos,String> pins=new LinkedHashMap<>();
     private final Set<BlockPos> originalSources=new HashSet<>();
+    private BlockPos refillTarget;
     static boolean requested(JsonObject r){
         if(!r.has("projected_source_column"))return false;
         var v=r.get("projected_source_column");
@@ -82,7 +83,7 @@ final class ProjectedSourceColumnGuard {
     void excludeRefillTarget(BlockPos refill){
         if(!bounds.contains(refill.getX(),refill.getY(),refill.getZ())||refill.getX()!=bounds.minX()+1)
             throw new IllegalArgumentException("Only the middle source of this chamber can supply buckets");
-        originalSources.remove(refill);
+        refillTarget=refill.immutable();originalSources.remove(refill);
     }
     boolean shieldedActor(Minecraft c){
             var p=c.player;var body=p.getBoundingBox();var b=bounds;
@@ -120,9 +121,13 @@ final class ProjectedSourceColumnGuard {
     private static boolean upDropper(BlockState s){return s.is(Blocks.DROPPER)&&s.getValue(DispenserBlock.FACING)==Direction.UP;}
     private static boolean dryStair(BlockState s){return s.is(Blocks.COBBLESTONE_STAIRS)&&s.getValue(StairBlock.FACING)==Direction.SOUTH
         &&s.getValue(StairBlock.HALF)==Half.BOTTOM&&s.getValue(StairBlock.SHAPE)==StairsShape.STRAIGHT&&!s.getValue(StairBlock.WATERLOGGED);}
-    void require(Minecraft c,boolean before){requireWorkspace(c,before,false);}
-    void requireCompleted(Minecraft c){requireWorkspace(c,false,true);}
-    private void requireWorkspace(Minecraft c,boolean before,boolean completedOverflow){
+    void require(Minecraft c,boolean before){requireWorkspace(c,before,false,null);}
+    void requireCompleted(Minecraft c){requireWorkspace(c,false,true,null);}
+    void requireCompletedSupply(Minecraft c){
+        if(refillTarget==null)throw new IllegalStateException("Only a validated middle source may be excluded during supply");
+        requireWorkspace(c,false,true,refillTarget);
+    }
+    private void requireWorkspace(Minecraft c,boolean before,boolean completedOverflow,BlockPos supplyException){
         var selection=LitematicaAccess.lockedBuildSelection();var model=LitematicaAccess.schematicWorld();
         if(model==null||!selection.key().equals(placement)||!LitematicaAccess.loadingReason(selection).isEmpty()
                 ||c.level.environmentAttributes().getValue(net.minecraft.world.attribute.EnvironmentAttributes.WATER_EVAPORATES,target))
@@ -156,8 +161,11 @@ final class ProjectedSourceColumnGuard {
             topDry&=(completedOverflow?level(c.level.getBlockState(p))>=-1:c.level.getBlockState(p).isAir())
                 &&level(model.getBlockState(p))==bounds.maxX()-x;
         }
-        if(completedOverflow&&cells.stream().anyMatch(cell->cell.actualLevel()!=0))
-            throw new IllegalStateException("Overflow requires every chamber source to remain complete");
+        if(completedOverflow){
+            int excluded=supplyException==null?-1:(supplyException.getY()-bounds.minY())*3+supplyException.getX()-bounds.minX();
+            if(!SourceColumnSupplyPolicy.completedChamber(cells.stream().map(ProjectedSourceColumnPolicy.Cell::actualLevel).toList(),excluded))
+                throw new IllegalStateException("Completed overflow requires all other chamber sources to remain complete");
+        }
         var volume=new AABB(bounds.minX(),bounds.minY(),bounds.minZ(),bounds.maxX()+1,bounds.maxY()+1,bounds.minZ()+1);
         boolean other=!c.level.getEntities(c.player,volume,e->e instanceof LivingEntity&&e.isAlive()).isEmpty();
         var p=c.player;boolean ready=p!=null&&ProjectedSourceColumnPolicy.actorReady(p.getHealth(),p.getFoodData().getFoodLevel(),p.getAirSupply(),p.getMaxAirSupply(),p.isInLava(),!p.isDeadOrDying());
