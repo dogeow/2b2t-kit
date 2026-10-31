@@ -32,9 +32,9 @@ final class ProjectedFlowCorrectionGuard {
  static boolean remoteCalmCreeper(boolean current,boolean ordinary,boolean visible,boolean igniting,boolean below,double playerDistanceSquared,double targetDistanceSquared){
   return current&&ordinary&&!visible&&!igniting&&below&&Double.isFinite(playerDistanceSquared)&&Double.isFinite(targetDistanceSquared)&&playerDistanceSquared>64&&targetDistanceSquared>49;
  }
- static boolean distantGroundThreat(String type,boolean current,boolean visible,double distanceSquared,double verticalGap){
-  return current&&java.util.Set.of("minecraft:zombie","minecraft:zombie_villager","minecraft:slime","minecraft:spider","minecraft:cave_spider").contains(type)&&Double.isFinite(distanceSquared)&&Double.isFinite(verticalGap)
-   &&(visible?distanceSquared>=144:verticalGap>=4);
+ static boolean separatedThreat(String type,boolean current,boolean visible,double distanceSquared,double verticalGap){
+  return current&&Double.isFinite(distanceSquared)&&Double.isFinite(verticalGap)&&(!visible&&verticalGap>=4&&java.util.Set.of("minecraft:skeleton","minecraft:stray","minecraft:bogged").contains(type)||java.util.Set.of("minecraft:zombie","minecraft:zombie_villager","minecraft:slime","minecraft:spider","minecraft:cave_spider").contains(type)&&Double.isFinite(distanceSquared)&&Double.isFinite(verticalGap)
+   &&(visible?distanceSquared>=144:verticalGap>=4));
  }
  static boolean shieldedWorkspace(Minecraft c,JsonObject r){
   try{
@@ -50,7 +50,7 @@ final class ProjectedFlowCorrectionGuard {
    if(!c.level.getEntities(p,body.inflate(24),e->e instanceof Projectile a&&e.isAlive()&&a.getOwner()!=p&&e.getDeltaMovement().lengthSqr()>.0001).isEmpty())return false;
    for(var e:c.level.getEntities(p,body.inflate(16),e->e instanceof Enemy&&e.isAlive())){
     if(e instanceof Creeper a&&remoteCalmCreeper(e.level()==c.level&&c.level.getEntity(e.getId())==e&&ProjectedModelWaterGuard.loaded(c,e.blockPosition()),!a.isPowered(),p.hasLineOfSight(e),a.isIgnited()||a.getSwellDir()>0||a.getSwelling(1)>0,e.getBoundingBox().maxY<=target.getY()-1,ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),ProjectedSourceColumnGuard.boxDistanceSquared(new net.minecraft.world.phys.AABB(target),e.getBoundingBox())))continue;
-    if(distantGroundThreat(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(),e.level()==c.level&&c.level.getEntity(e.getId())==e&&ProjectedModelWaterGuard.loaded(c,e.blockPosition()),p.hasLineOfSight(e),ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),body.minY-e.getBoundingBox().maxY))continue;
+    if(separatedThreat(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(),e.level()==c.level&&c.level.getEntity(e.getId())==e&&ProjectedModelWaterGuard.loaded(c,e.blockPosition()),p.hasLineOfSight(e),ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),body.minY-e.getBoundingBox().maxY))continue;
     if(!ModelWaterThreatPolicy.permit(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(),e.level()==c.level&&c.level.getEntity(e.getId())==e&&ProjectedModelWaterGuard.loaded(c,e.blockPosition()),p.hasLineOfSight(e),ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),e instanceof EnderMan a&&!a.isCreepy()))return false;
    }return true;
   }catch(RuntimeException unproved){return false;}

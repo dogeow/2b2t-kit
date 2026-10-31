@@ -56,7 +56,7 @@ final class ProjectedModelWaterGuard {
    if(!c.level.getEntities(p,body.inflate(24),e->e instanceof Projectile a&&e.isAlive()&&a.getOwner()!=p&&e.getDeltaMovement().lengthSqr()>.0001).isEmpty())return false;
    for(var e:c.level.getEntities(p,body.inflate(16),e->e instanceof Enemy&&e.isAlive())){
     String type=BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString();boolean current=e.level()==c.level&&c.level.getEntity(e.getId())==e&&loaded(c,e.blockPosition());
-    if(ProjectedFlowCorrectionGuard.distantGroundThreat(type,current,p.hasLineOfSight(e),ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),body.minY-e.getBoundingBox().maxY))continue;
+    if(ProjectedFlowCorrectionGuard.separatedThreat(type,current,p.hasLineOfSight(e),ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),body.minY-e.getBoundingBox().maxY))continue;
     if(!ModelWaterThreatPolicy.permit(type,current,p.hasLineOfSight(e),ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),e instanceof EnderMan a&&!a.isCreepy()))return false;
    }return true;
   }catch(RuntimeException unproved){return false;}
