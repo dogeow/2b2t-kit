@@ -27,6 +27,12 @@ final class IdleThermalPolicy {
    return true;
   }catch(RuntimeException invalid){return false;}
  }
+ static boolean readOnly(String op){return java.util.Set.of("snapshot","scan","scan_trees","scan_snow_biomes","snow_seed_candidates","projection_model","projection_audit","projection_list","map_audit","decision_screenshot").contains(op);}
+ static boolean pendingMutation(JsonObject r,JsonObject status,long now){
+  try{return !readOnly(text(r,"op"))&&!text(r,"id").equals(text(status,"last_request"))
+    &&text(r,"world_session").equals(text(status,"world_session"))&&r.has("expires_at")&&r.get("expires_at").getAsLong()>now;
+  }catch(RuntimeException invalid){return true;}
+ }
  static double rise(double feet,java.util.function.DoublePredicate clear){
   if(!Double.isFinite(feet))return Double.NaN;
   for(double delta:new double[]{3,2.5,2,1.5,1,.5})if(clear.test(delta))return feet+delta;

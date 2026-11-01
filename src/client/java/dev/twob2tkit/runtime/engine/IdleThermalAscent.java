@@ -29,9 +29,7 @@ final class IdleThermalAscent {
     var s=JsonParser.parseString(Files.readString(p)).getAsJsonObject();boolean pending=false;Path req=root(c).resolve("request.json");
     if(Files.isRegularFile(req)&&Files.size(req)<2000000){
      var r=JsonParser.parseString(Files.readString(req)).getAsJsonObject();
-     pending=!IdleThermalPolicy.text(r,"id").equals(IdleThermalPolicy.text(s,"last_request"))
-       &&IdleThermalPolicy.text(r,"world_session").equals(IdleThermalPolicy.text(s,"world_session"))
-       &&r.has("expires_at")&&r.get("expires_at").getAsLong()>now;
+     pending=IdleThermalPolicy.pendingMutation(r,s,now);
     }
     String server=c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip;
     if(IdleThermalPolicy.idle(s,now,server,c.level.dimension().identifier().toString(),pending))observed=s;
@@ -41,9 +39,8 @@ final class IdleThermalAscent {
   try{
    Path req=root(c).resolve("request.json");
    if(Files.isRegularFile(req)&&Files.size(req)<2000000){
-    var r=JsonParser.parseString(Files.readString(req)).getAsJsonObject();String op=IdleThermalPolicy.text(r,"op");
-    boolean read=java.util.Set.of("snapshot","scan","scan_trees","projection_model","projection_audit","projection_list","map_audit").contains(op);
-    if(!read&&!IdleThermalPolicy.text(r,"id").equals(IdleThermalPolicy.text(observed,"last_request"))&&r.has("expires_at")&&r.get("expires_at").getAsLong()>now)return false;
+    var r=JsonParser.parseString(Files.readString(req)).getAsJsonObject();
+    if(IdleThermalPolicy.pendingMutation(r,observed,now))return false;
    }
   }catch(Exception unknownPending){return false;}
   return true;
