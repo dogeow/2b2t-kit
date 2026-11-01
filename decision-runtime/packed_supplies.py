@@ -104,7 +104,33 @@ def player_intersects_pad(player_pos,pad):
             and player_pos[1]+1.8>pad[1])
 
 def clear_player_from_pad(client,pad):
-    if not player_intersects_pad(client.status()['pos'],pad):return
+    initial=client.status()
+    if not player_intersects_pad(initial['pos'],pad):return
+    lease=initial.get('supervision_lease')or{}
+    flight=(initial.get('flight')is True and initial.get('air_only_navigation_protocol',0)>=2
+            and initial.get('guard_armed')is True and initial.get('guard_pve_only')is True
+            and not initial.get('guard_busy')and initial.get('health',0)>=19 and initial.get('food',0)>=18
+            and lease.get('kind')=='materials'and lease.get('job_session')==getattr(client,'task',None)
+            and lease.get('world_session')==getattr(client,'world',None)
+            and lease.get('revision')==initial.get('control_revision'))
+    if flight:
+        # Hovering beside an outdoor pad needs a loaded dry body sweep, not a full-cube floor.
+        # Bottom slabs and uneven grass remain unchanged; vanilla air navigation repeats collision checks.
+        from material_jobs.navigation import _body_sweep,_below_vertical_start
+        from projected_source_column import coherent
+        for dx,dz in ((-2,0),(2,0),(0,-2),(0,2)):
+            state=client.status();start=state['pos']
+            target=[pad[0]+dx+.5,max(pad[1]+.1,start[1]),pad[2]+dz+.5]
+            low,high=_body_sweep(start,target)
+            observed=client.request('scan',min=low,max=high,details=True,include_predictions=True)
+            if not coherent(observed,client.world,low,high):continue
+            if any(row.get('fluid')or not row.get('passable')and not _below_vertical_start(row,start)
+                   for row in observed['blocks']):continue
+            result=client.request('navigate',target=target,arrival=.15,seconds=15,air_only=True)
+            if result.get('phase')!='done':raise RuntimeError('Pad flight clearance outcome retained; no second move')
+            if player_intersects_pad(client.status()['pos'],pad):raise RuntimeError('Pad flight clearance did not settle outside box; no replay')
+            return
+        raise RuntimeError('No currently loaded dry body sweep beside the temporary shulker pad')
     for dx,dz in ((2,0),(-2,0),(0,2),(0,-2)):
         x,z=pad[0]+dx,pad[2]+dz
         rows=client.request('scan',min=[x,pad[1]-1,z],max=[x,pad[1]+2,z],details=True)['blocks']
