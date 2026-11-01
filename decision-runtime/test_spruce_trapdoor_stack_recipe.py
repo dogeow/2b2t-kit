@@ -27,6 +27,28 @@ class SpruceTrapdoorBatchTest(unittest.TestCase):
   self.assertTrue(settled_result(before,after,SPEC,batch))
   wrong=fixture([('spruce_planks',1),('spruce_trapdoor',2)],empty=3)
   self.assertFalse(settled_result(before,wrong,SPEC,batch))
+ def test_small_trapdoor_batch_uses_one_verified_group_instead_of_per_cell_repeats(self):
+  from unittest.mock import patch
+  from test_grouped_recipe import Client
+  from kit_runtime.inventory import InventorySession
+  before=fixture([('spruce_planks',64)],empty=4);batch=plan_batch(before,SPEC,10)
+  self.assertEqual(('exact_groups',5,10),(batch['distribution'],batch['rounds'],batch['produced']))
+  client=Client(before)
+  with patch('kit_runtime.inventory.time.sleep'):
+   for action in batch['actions']:InventorySession(client).distribute_exact(client.status(),client.status()['menu']['slots'][action['source']],action['cells'],action['count'])
+  self.assertEqual([5]*6,[client.status()['menu']['slots'][i]['count']for i in [1,2,3,4,5,6]])
+  self.assertEqual(34,client.status()['menu']['slots'][10]['count']);self.assertEqual(1,sum(op=='distribute'for op,_ in client.calls));self.assertEqual(0,client.status()['menu']['cursor']['count'])
+ def test_carpet_batch_evenly_splits_one_stack_into_two_cells(self):
+  from unittest.mock import patch
+  from test_grouped_recipe import Client
+  from kit_runtime.inventory import InventorySession
+  carpet={'recipe_id':'white_carpet','output':'minecraft:white_carpet','width':3,'produces':3,'ingredients':{'minecraft:white_wool':[1,2]}}
+  before=fixture([('white_wool',64)],empty=4);batch=plan_batch(before,carpet,32)
+  self.assertEqual(('exact_groups',32,96),(batch['distribution'],batch['rounds'],batch['produced']))
+  client=Client(before)
+  with patch('kit_runtime.inventory.time.sleep'):
+   for action in batch['actions']:InventorySession(client).distribute_exact(client.status(),client.status()['menu']['slots'][action['source']],action['cells'],action['count'])
+  self.assertEqual([32,32],[client.status()['menu']['slots'][i]['count']for i in [1,2]]);self.assertEqual(2,len(client.calls));self.assertEqual(0,client.status()['menu']['cursor']['count'])
  @unittest.skipUnless(os.environ.get('MINECRAFT_TEST_CLIENT_JAR'),'Minecraft recipe jar not configured')
  def test_contract_matches_actual_installed_recipe_catalog(self):
   from recipe_catalog import RecipeCatalog

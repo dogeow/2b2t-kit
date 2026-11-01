@@ -198,7 +198,9 @@ def grouped_batch(menu,spec,max_rounds):
     twenty items one at a time. Other recipes retain their ordinary cell path.
     """
     if not((spec.get('output')in COLOR_OUTPUTS and _color_recipe(spec))
-            or _furnishing_recipe(spec) or storage_recipe_supported(spec) or cobblestone_recipe_supported(spec)):return None
+            or _furnishing_recipe(spec) or storage_recipe_supported(spec) or cobblestone_recipe_supported(spec)
+            or (spec.get('output') in ({'minecraft:spruce_trapdoor'}|{f'minecraft:{c}_carpet'for c in COLORS})
+                and supported(spec))):return None
     for rounds in range(max_rounds,0,-1):
         slots=copy.deepcopy(menu['slots'][-36:]);actions=[]
         for item,cells in spec['ingredients'].items():
