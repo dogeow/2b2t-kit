@@ -122,6 +122,13 @@ final class BorerRangedCombat {
         }
         // Retain every unresolved UUID. Only a continuously verified safe height
         // permits other work; returning into reach/LOS makes this gate false immediately.
+        if(engine.standaloneGuard&&!missingRestored&&BorerEnclosedThreats.permits(c,session.targets())){
+            safetyRise.cancel();releaseControls(c);session.pause(p.tickCount);
+            if(!holdReason.equals("safe-deferred-enclosed-ground-mobs"))
+                engine.fileLog(c,"area-defense-safe-deferred-enclosed-ground-mobs unresolved="+session.targets().size()+" confirmed_deaths=0");
+            holdReason="safe-deferred-enclosed-ground-mobs";
+            engine.status="实墙封闭室内的未蓄爆敌人无法接近，保持工位并保留记录";return false;
+        }
         if(coveredFloorHostiles(c,nearby,missingRestored)){
             safetyRise.cancel();releaseControls(c);session.pause(p.tickCount);
             if(!holdReason.equals("safe-deferred-covered-floor"))
