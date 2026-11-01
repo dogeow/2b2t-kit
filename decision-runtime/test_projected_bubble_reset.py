@@ -1,5 +1,5 @@
 import unittest
-from projected_bubble_reset import plan,mined,resume_plugs,BUBBLE,MAGMA,FLOW
+from projected_bubble_reset import plan,mined,resume_plugs,mining_preflight_refused,BUBBLE,MAGMA,FLOW
 class ResetPlanTest(unittest.TestCase):
     def setUp(self):
         self.targets=[[x,62,z]for x in range(3)for z in range(2)]
@@ -37,6 +37,12 @@ class ResetPlanTest(unittest.TestCase):
     def test_resume_cannot_remove_an_original_source(self):
         p=self.targets[0];self.rows[tuple(p)]='Block{minecraft:dirt}';self.goals[tuple(p)]='Block{minecraft:water}[level=0]'
         with self.assertRaises(ValueError):plan(self.targets,self.goals,self.rows,confirmed_plugs=[p])
+    def test_before_task_refusal_does_not_clear_real_mining(self):
+        r={'phase':'error','detail':'Six loaded pinned neighbors with only water fluids required'}
+        self.assertTrue(mining_preflight_refused(r))
+        for patch in [{'phase':'waiting'},{'native_sequence':-1},{'mining_target':[0,62,0]},
+                      {'outcome_pending':True},{'server_confirmed':False},{'detail':'different error'}]:
+            self.assertFalse(mining_preflight_refused({**r,**patch}))
     def test_native_mining_requires_matching_ack(self):
         self.assertTrue(mined({'phase':'done','server_confirmed':True,'native_sequence':8,'server_ack_sequence':8}))
         for r in [{'phase':'done'},{'phase':'done','server_confirmed':True,'native_sequence':8,'server_ack_sequence':7},

@@ -54,6 +54,15 @@ def mined(reply):
     return (reply.get('phase')=='done' and reply.get('server_confirmed') is True
             and type(seq)is int and seq>0 and reply.get('server_ack_sequence')==seq)
 
+def mining_preflight_refused(reply):
+    # This exact guard failure is before ordinaryMiningConfirmation.begin and
+    # before the native mining task is assigned. Running mining replies carry
+    # target/sequence/outcome fields and must never enter this no-input branch.
+    return (reply.get('phase')=='error'
+            and reply.get('detail')=='Six loaded pinned neighbors with only water fluids required'
+            and all(reply.get(k)is None for k in ('mining_target','native_sequence',
+                'server_ack_sequence','outcome_pending','server_confirmed')))
+
 def resume_plugs(previous, targets):
     if (previous.get('pending') is not None or previous.get('complete') is not False
         or previous.get('targets')!=targets or previous.get('removed_plugs')!=[]
@@ -128,17 +137,21 @@ def reset_group(c, targets, key, model, out, approach, leave, *, resume_from=Non
                 time.sleep(.2)
             book['plugs'][','.join(map(str,p))]=p;book['pending']=None;save();leave(p,'plug-'+str(i))
         for i,p in enumerate(targets):
-            approach(p,'remove-'+str(i));x,y,z=p
+            approach(p,'remove-'+str(i));c.checked('select_item',item='minecraft:diamond_shovel');x,y,z=p
             r=sample([x-1,y-1,z-1],[x+1,y+1,z+1],'remove-before-'+str(i));rows=states(r)
             if rows.get(tuple(p))!=DIRT: raise RuntimeError('Known temporary plug changed')
             pins={name:rows.get((x+dx,y+dy,z+dz),AIR)for name,dx,dy,dz in SIDES}
             if any('bubble_column'in v for v in pins.values()): raise RuntimeError('Unplugged source still adjacent')
-            c.checked('select_item',item='minecraft:diamond_shovel');s=owner()
+            s=owner()
             book['pending']={'kind':'remove_known_source_plug','target':p};save()
             reply=c.request('mine_block',pos=p,face='up',expected_state=DIRT,seconds=10,
                 projected_wet_terrain=True,placement_key=key,expected_goal_state=goals[tuple(p)],
                 expected_tool_slot=s['selected_slot'],expected_neighbors=pins)
             write_json(out/f'remove-{i}-native.json',reply)
+            if mining_preflight_refused(reply):
+                book['pending']=None
+                book.setdefault('no_input_mining_refusals',[]).append({'request_id':reply.get('id'),'target':p})
+                save();raise RuntimeError('Mining refused before dispatch; known plug retained, no request replay')
             if not mined(reply): raise RuntimeError('Original mining receipt unresolved; no replay')
             r=sample(p,p,'removed-'+str(i));state=states(r).get(tuple(p),AIR)
             if state!=AIR and state not in FLOW and not state.startswith('Block{minecraft:water}[level='):
