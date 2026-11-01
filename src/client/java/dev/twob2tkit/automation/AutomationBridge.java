@@ -4652,6 +4652,10 @@ public final class AutomationBridge {
         j.add("loaded_villagers",VillagerTrading.loaded(c));
         j.addProperty("villager_trade_rebalance",c.level.enabledFeatures().contains(net.minecraft.world.flag.FeatureFlags.TRADE_REBALANCE));
         j.addProperty("player_name",c.player.getGameProfile().name());j.addProperty("player_uuid",c.player.getUUID().toString());j.addProperty("experience_level",c.player.experienceLevel);
+        j.addProperty("player_experience_observation_protocol",1);
+        j.addProperty("experience_total",c.player.totalExperience);
+        j.addProperty("experience_progress",c.player.experienceProgress);
+        j.addProperty("experience_next_level_cost",c.player.getXpNeededForNextLevel());
         c.player.getLastDeathLocation().ifPresent(death->{var marker=new JsonObject();marker.addProperty("dimension",death.dimension().identifier().toString());marker.add("pos",JSON.toJsonTree(new int[]{death.pos().getX(),death.pos().getY(),death.pos().getZ()}));j.add("server_last_death",marker);});
         j.addProperty("attack_strength",c.player.getAttackStrengthScale(0));
         j.addProperty("recent_hurt_at",KitClient.config().lastAttackTimeEpochMillis);j.addProperty("recent_attacker",KitClient.config().lastAttacker);
