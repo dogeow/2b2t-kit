@@ -67,6 +67,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	private final BorerMiningModules miningModules = new BorerMiningModules();
 	boolean areaInstantRebreakRequested() { return mode == Mode.AREA && miningModules.instantRebreakRequested(); }
     private final RecoveryAscent recoveryAscent = new RecoveryAscent();
+    private final IdleThermalAscent idleThermalAscent = new IdleThermalAscent();
 	private static final int CLEAR_CONFIRM_TICKS = 3;
 	private static final int MOVEMENT_RECOVERY_TICKS = 40;
 	private static final int MOVEMENT_TIMEOUT_TICKS = 120;
@@ -294,7 +295,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 最近一条给玩家看的状态说明。 */
 	@Override
 	public String status() {
-		return scenery.active() ? scenery.status() : status;
+		return idleThermalAscent.active() ? "待机烫伤：正在升离热源" : scenery.active() ? scenery.status() : status;
 	}
 
 	/** 按指定模式启动，并重置挖矿、找矿和拾取状态。 */
@@ -413,6 +414,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	@Override
 	public void stop(Minecraft client, String reason) {
         guardMagmaSneak.close(client);
+        idleThermalAscent.cancel(client,"stopped",false);
 		hudFrames.clear();
 		captureProtection.close();
 		loadedVillagerEvents.workStopped(reason);
@@ -909,25 +911,29 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	public boolean tickStandaloneGuard(Minecraft c, boolean enabled) {
         // The host explicitly sends false when emergency/manual control disarms
         // the guard. Do this before the active-miner early return, without reason-text heuristics.
-        if(standaloneGuardEnabled&&!enabled)rangedCombat.end(c);
+        if(standaloneGuardEnabled&&!enabled){rangedCombat.end(c);idleThermalAscent.cancel(c,"guard_disabled",c.player!=null&&c.player.getHealth()<14);}
         guardMagmaSneak.tick(c,enabled&&!active);
         emptyBoatRecovery.tick(c,enabled&&!active);
         channelWaterPlacement.tick(c,enabled&&!active);
         captureProtection.tick(c,enabled&&!active);
         standaloneGuardEnabled=enabled;
         if(!active && !enabled && recoveryAscent.tick(c))return true;
-		if (active) return false; // The running mining engine already owns this same combat object.
+		if (active) { idleThermalAscent.cancel(c,"active_mining",false); return false; } // The running mining engine already owns this same combat object.
 		if (!enabled || c.player == null || c.level == null || c.player.isDeadOrDying()) {
+            idleThermalAscent.cancel(c,"guard_disabled",c.player!=null&&c.player.getHealth()<14);
 			rangedCombat.end(c);
 			if (standaloneGuard) { mobs.lowerShield(c); engagement.clear(); }
 			standaloneGuard = false; return false;
 		}
 		if (c.gui.screen() != null) {
+            idleThermalAscent.cancel(c,"interface",false);
 			rangedCombat.pause(c);
 			if (standaloneGuard) mobs.lowerShield(c);
 			standaloneGuard = false; return false;
 		}
 		engagement.update(c);
+        if(rangedCombat.hasCreeperEmergency(c))idleThermalAscent.cancel(c,"creeper_emergency",true);
+        else if(idleThermalAscent.tick(c)){standaloneGuard=true;return true;}
 		var meal = meteorAutomation.meal();
 		boolean usingFood=c.player.isUsingItem()&&c.player.getUseItem().has(DataComponents.FOOD);
 		boolean manualFood=c.player.getMainHandItem().has(DataComponents.FOOD)
