@@ -18,4 +18,29 @@ class IdleThermalPolicyTest {
  @Test void ascentChoosesHighestLoadedClearStepWithoutForcingCeiling(){assertEquals(13,IdleThermalPolicy.rise(10,d->true));assertEquals(12,IdleThermalPolicy.rise(10,d->d<=2));assertTrue(Double.isNaN(IdleThermalPolicy.rise(10,d->false)));assertTrue(Double.isNaN(IdleThermalPolicy.rise(Double.NaN,d->true)));}
  @Test void candidateReallyInvokesIdleRecoveryAndReleasesItOnStop()throws Exception{var node=new org.objectweb.asm.tree.ClassNode();try(var in=getClass().getResourceAsStream("DefaultTunnelBorerEngine.class")){assertNotNull(in);new org.objectweb.asm.ClassReader(in).accept(node,0);}boolean tick=false,stop=false;for(var m:node.methods)for(var i:m.instructions)if(i instanceof org.objectweb.asm.tree.MethodInsnNode c&&c.owner.endsWith("IdleThermalAscent")){tick|=m.name.equals("tickStandaloneGuard")&&c.name.equals("tick");stop|=m.name.equals("stop")&&c.name.equals("cancel");}assertTrue(tick&&stop);}
  @Test void recoveryNeverTeleportsOrAcknowledgesSafetyLocks()throws Exception{var node=new org.objectweb.asm.tree.ClassNode();try(var in=getClass().getResourceAsStream("IdleThermalAscent.class")){assertNotNull(in);new org.objectweb.asm.ClassReader(in).accept(node,0);}for(var m:node.methods)for(var i:m.instructions)if(i instanceof org.objectweb.asm.tree.MethodInsnNode c){assertFalse(java.util.Set.of("setPos","teleportTo","setDeltaMovement","disconnect","confirmRecovery").contains(c.name),c.name);}}
+ @Test void burningIdleRecoveryStopsBelowCollisionFreePowderSnow(){
+  double feet=61.6;
+  // Observed machine geometry: powder snow at65, solid ceiling at66, standing body1.8 high.
+  // Powder snow has no ordinary standing collision but the26.2 server destroys it for a burning player.
+  assertEquals(64.1,IdleThermalPolicy.rise(feet,d->feet+d+1.8<=66),.000001);
+  assertEquals(63.1,IdleThermalPolicy.rise(feet,d->feet+d+1.8<=66
+      &&(feet+d+1.8<=65||IdleThermalPolicy.safeAscentMaterial("minecraft:powder_snow",false))),.000001);
+ }
+ @Test void recoveryCannotForceItsSmallestStepThroughPowderSnow(){
+  double feet=63;
+  assertTrue(Double.isNaN(IdleThermalPolicy.rise(feet,d->feet+d+1.8<=65
+      ||IdleThermalPolicy.safeAscentMaterial("minecraft:powder_snow",false))));
+ }
+ @Test void ordinarySnowAndLeavingCurrentFireKeepPriorMaterialBehavior(){
+  assertTrue(IdleThermalPolicy.safeAscentMaterial("minecraft:air",false));
+  assertTrue(IdleThermalPolicy.safeAscentMaterial("minecraft:snow",false));
+  assertTrue(IdleThermalPolicy.safeAscentMaterial("minecraft:fire",false));
+  assertFalse(IdleThermalPolicy.safeAscentMaterial("minecraft:air",true));
+  assertFalse(IdleThermalPolicy.safeAscentMaterial(null,false));
+ }
+ @Test void actualAscentUsesMaterialEvidenceAlongsideLoadedCollisionChecks()throws Exception{
+  var node=new org.objectweb.asm.tree.ClassNode();try(var in=getClass().getResourceAsStream("IdleThermalAscent.class")){assertNotNull(in);new org.objectweb.asm.ClassReader(in).accept(node,0);}
+  var calls=new java.util.HashSet<String>();for(var m:node.methods)if(m.name.equals("clear"))for(var i:m.instructions)if(i instanceof org.objectweb.asm.tree.MethodInsnNode call)calls.add(call.name);
+  assertTrue(calls.containsAll(java.util.Set.of("safeAscentMaterial","noCollision","isServerChunk","getFluidState")));
+ }
 }

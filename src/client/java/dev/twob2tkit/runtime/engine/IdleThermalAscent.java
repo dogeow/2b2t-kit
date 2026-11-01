@@ -50,7 +50,8 @@ final class IdleThermalAscent {
   if(!c.level.noCollision(c.player,box))return false;
   for(var p:BlockPos.betweenClosed(BlockPos.containing(box.minX,box.minY,box.minZ),BlockPos.containing(box.maxX-1e-7,box.maxY-1e-7,box.maxZ-1e-7))){
    if(!LoadedServerChunkEvidence.isServerChunk(c.level,c.level.getChunkSource().getChunk(p.getX()>>4,p.getZ()>>4,ChunkStatus.FULL,false)))return false;
-   if(c.level.getFluidState(p).is(net.minecraft.tags.FluidTags.LAVA))return false;
+   String block=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(c.level.getBlockState(p).getBlock()).toString();
+   if(!IdleThermalPolicy.safeAscentMaterial(block,c.level.getFluidState(p).is(net.minecraft.tags.FluidTags.LAVA)))return false;
   }return true;
  }
  boolean tick(Minecraft c){
