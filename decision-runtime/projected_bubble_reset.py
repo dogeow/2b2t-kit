@@ -1,4 +1,4 @@
-"""Reset a closed group of accidental down-bubble sources through normal dirt plugs.
+"""Reset accidental source groups through normal dirt plugs.
 
 Uses the existing normal interaction and pinned wet-terrain mining interfaces.
 No bucket input, native exception, original source removal, or request retry.
@@ -16,9 +16,21 @@ MAGMA = 'Block{minecraft:magma_block}'
 DIRT = 'Block{minecraft:dirt}'
 SIDES = [('east',1,0,0),('west',-1,0,0),('up',0,1,0),
          ('down',0,-1,0),('north',0,0,-1),('south',0,0,1)]
+SOURCE = 'Block{minecraft:water}[level=0]'
 FLOW = {f'Block{{minecraft:water}}[level={i}]' for i in range(1,8)}
 
-def plan(targets, goals, rows, *, confirmed_plugs=()):
+def inert_floor(actual, original):
+    if original in {MAGMA,'Block{minecraft:cobblestone}','Block{minecraft:glass}',
+                    'Block{minecraft:stone}','Block{minecraft:packed_ice}'}:
+        return actual==original
+    if not isinstance(original,str)or not original.startswith(('Block{minecraft:cobblestone_stairs}',
+                                                             'Block{minecraft:cobblestone_slab}')):
+        return False
+    return ('waterlogged=false'in original and actual in
+            {original,original.replace('waterlogged=false','waterlogged=true')})
+
+def plan(targets, goals, rows, *, confirmed_plugs=(), allow_plain_sources=False):
+    if type(allow_plain_sources)is not bool: raise ValueError('Explicit boolean ordinary-source mode required')
     if not isinstance(targets,list) or not 1 <= len(targets) <= 32:
         raise ValueError('One bounded source group required')
     if any(not isinstance(p,list) or len(p)!=3 or any(type(v)is not int for v in p) for p in targets):
@@ -40,13 +52,17 @@ def plan(targets, goals, rows, *, confirmed_plugs=()):
     for x,y,z in cells:
         p=(x,y,z); floor=(x,y-1,z)
         if goals.get(p) not in FLOW: raise ValueError('Original ordinary flow required; sources protected')
-        if rows.get(p)!=(DIRT if p in known else BUBBLE): raise ValueError('Current bubble or journaled exact dirt plug required')
-        if goals.get(floor)!=MAGMA or rows.get(floor)!=MAGMA:
+        expected={DIRT} if p in known else {BUBBLE,SOURCE} if allow_plain_sources else {BUBBLE}
+        if rows.get(p)not in expected: raise ValueError('Current extra source or journaled exact dirt plug required')
+        if allow_plain_sources:
+            if not inert_floor(rows.get(floor),goals.get(floor)):
+                raise ValueError('Original inert floor shape must be preserved')
+        elif goals.get(floor)!=MAGMA or rows.get(floor)!=MAGMA:
             raise ValueError('Preserved original magma floor required')
         for _,dx,dy,dz in SIDES:
             q=(x+dx,y+dy,z+dz)
-            if dy==0 and rows.get(q)==BUBBLE and q not in cells:
-                raise ValueError('Adjacent accidental bubble omitted from group')
+            if dy==0 and (rows.get(q)==BUBBLE or allow_plain_sources and rows.get(q)==SOURCE and goals.get(q)in FLOW)and q not in cells:
+                raise ValueError('Adjacent extra source omitted from group')
     return [list(p) for p in sorted(cells)]
 
 def mined(reply):
@@ -73,10 +89,10 @@ def resume_plugs(previous, targets):
         raise ValueError('Exact confirmed plug journal required')
     return dict(plugs)
 
-def reset_group(c, targets, key, model, out, approach, leave, *, resume_from=None):
+def reset_group(c, targets, key, model, out, approach, leave, *, resume_from=None, allow_plain_sources=False):
     out=Path(out);out.mkdir(parents=True,exist_ok=False)
     book={'complete':False,'pending':None,'plugs':{},'removed_plugs':[],
-          'automatic_retry_allowed':False,'bucket_uses':0}
+          'automatic_retry_allowed':False,'bucket_uses':0,'allow_plain_sources':allow_plain_sources}
     def save(): write_json(out/'progress.json',book)
     save(); goals={tuple(v['pos']):v['state'] for v in model['expected']}
     if resume_from is not None:
@@ -107,7 +123,7 @@ def reset_group(c, targets, key, model, out, approach, leave, *, resume_from=Non
             if coherent(r,c.world,low,high): return r
         raise RuntimeError('No current coherent group frame')
     def states(r): return {tuple(v['pos']):v['state'] for v in r['blocks']}
-    frame=sample(lo,hi,'group-before'); targets=plan(targets,goals,states(frame),confirmed_plugs=list(book['plugs'].values()))
+    frame=sample(lo,hi,'group-before'); targets=plan(targets,goals,states(frame),confirmed_plugs=list(book['plugs'].values()),allow_plain_sources=allow_plain_sources)
     if inventory_counts(owner()).get('minecraft:dirt',0)<len(targets)-len(book['plugs']):
         raise RuntimeError('Enough dirt for the whole source group is required')
     book['targets']=targets;save()
@@ -116,7 +132,7 @@ def reset_group(c, targets, key, model, out, approach, leave, *, resume_from=Non
             if ','.join(map(str,p))in book['plugs']: continue
             approach(p,'plug-'+str(i)); floor=[p[0],p[1]-1,p[2]]
             r=sample(floor,p,'plug-before-'+str(i)); rows=states(r)
-            if rows.get(tuple(p))!=BUBBLE or rows.get(tuple(floor))!=MAGMA:
+            if rows.get(tuple(p))not in ({BUBBLE,SOURCE}if allow_plain_sources else{BUBBLE}) or not inert_floor(rows.get(tuple(floor)),goals.get(tuple(floor))):
                 raise RuntimeError('Source or protected floor changed; no plug input')
             for e in r.get('scan_entities',[]):
                 b=e.get('bounds')or{}
@@ -124,7 +140,7 @@ def reset_group(c, targets, key, model, out, approach, leave, *, resume_from=Non
                     raise RuntimeError('Entity occupies source; no plug input')
             c.checked('select_item',item='minecraft:dirt');before=inventory_counts(owner())
             book['pending']={'kind':'one_temporary_source_plug','target':p};save()
-            reply=c.request('interact',pos=floor,face='up',expected_state=MAGMA,expected_hand='minecraft:dirt')
+            reply=c.request('interact',pos=floor,face='up',expected_state=rows[tuple(floor)],expected_hand='minecraft:dirt')
             write_json(out/f'plug-{i}-native.json',reply)
             if reply.get('phase')!='done': raise RuntimeError('Original plug result unresolved; do not replay')
             frames=[];deadline=time.monotonic()+8

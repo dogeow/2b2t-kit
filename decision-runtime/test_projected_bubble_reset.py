@@ -1,5 +1,5 @@
 import unittest
-from projected_bubble_reset import plan,mined,resume_plugs,mining_preflight_refused,BUBBLE,MAGMA,FLOW
+from projected_bubble_reset import plan,mined,resume_plugs,mining_preflight_refused,inert_floor,SOURCE,BUBBLE,MAGMA,FLOW
 class ResetPlanTest(unittest.TestCase):
     def setUp(self):
         self.targets=[[x,62,z]for x in range(3)for z in range(2)]
@@ -43,6 +43,24 @@ class ResetPlanTest(unittest.TestCase):
         for patch in [{'phase':'waiting'},{'native_sequence':-1},{'mining_target':[0,62,0]},
                       {'outcome_pending':True},{'server_confirmed':False},{'detail':'different error'}]:
             self.assertFalse(mining_preflight_refused({**r,**patch}))
+    def test_explicit_plain_source_group_preserves_stair_shape(self):
+        dry='Block{minecraft:cobblestone_stairs}[facing=west,half=bottom,shape=straight,waterlogged=false]'
+        for p in self.targets:
+            x,y,z=p;self.rows[x,y,z]=SOURCE;self.goals[x,y-1,z]=dry
+            self.rows[x,y-1,z]=dry.replace('waterlogged=false','waterlogged=true')
+        self.assertEqual(len(plan(self.targets,self.goals,self.rows,allow_plain_sources=True)),6)
+        with self.assertRaises(ValueError):plan(self.targets,self.goals,self.rows)
+    def test_plain_sources_do_not_include_original_source(self):
+        with self.assertRaises(ValueError):plan(self.targets,self.goals,self.rows,allow_plain_sources='yes')
+        self.rows[0,62,0]=SOURCE;self.goals[0,62,0]=SOURCE
+        with self.assertRaises(ValueError):plan(self.targets,self.goals,self.rows,allow_plain_sources=True)
+    def test_extra_plain_source_may_not_be_omitted(self):
+        self.rows[3,62,0]=SOURCE;self.goals[3,62,0]=next(iter(FLOW));self.goals[3,61,0]=self.rows[3,61,0]=MAGMA
+        with self.assertRaises(ValueError):plan(self.targets,self.goals,self.rows,allow_plain_sources=True)
+    def test_inert_floor_rejects_container_and_shape_change(self):
+        dry='Block{minecraft:cobblestone_stairs}[facing=west,half=bottom,shape=straight,waterlogged=false]'
+        self.assertFalse(inert_floor(dry.replace('west','east'),dry))
+        self.assertFalse(inert_floor('Block{minecraft:chest}','Block{minecraft:chest}'))
     def test_native_mining_requires_matching_ack(self):
         self.assertTrue(mined({'phase':'done','server_confirmed':True,'native_sequence':8,'server_ack_sequence':8}))
         for r in [{'phase':'done'},{'phase':'done','server_confirmed':True,'native_sequence':8,'server_ack_sequence':7},
