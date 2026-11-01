@@ -2746,6 +2746,7 @@ public final class AutomationBridge {
                 saveInventoryIntent(c,inventoryClick);
             }else{c.gameMode.handleContainerInput(menu.containerId,slot,button,input,c.player);settle(r,8);}
         }else if(command.equals("interact")){
+            boolean vanillaInput=VanillaBlockInput.requested(r);
             JsonArray p=r.getAsJsonArray("pos");checkSiteTarget(r,p);BlockPos pos=new BlockPos(p.get(0).getAsInt(),p.get(1).getAsInt(),p.get(2).getAsInt());
             if(!state(c,pos).equals(str(r,"expected_state")))throw new IllegalStateException("Target block changed");
             if(!itemId(c.player.getMainHandItem()).equals(str(r,"expected_hand")))throw new IllegalStateException("Held item changed");
@@ -2768,6 +2769,7 @@ public final class AutomationBridge {
             Vec3 aim=BlockFaceTarget.inside(visible);Direction usedFace=visible.getDirection();
             boolean projectedObserver=ProjectedObserverPlacementGuard.requested(r);
             if(projectedObserver&&(dryPaving||terrainReplace))throw new IllegalArgumentException("Observer placement cannot combine terrain operations");
+            if(vanillaInput&&(dryPaving||terrainReplace||projectedSlab||projectedObserver))throw new IllegalArgumentException("Normal gate input cannot combine placement exceptions");
             boolean observerOwned=currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c);
             var level=c.level;RotationAim.Look look=projectedObserver
                 ?ProjectedObserverPlacementGuard.require(c,r,pos,usedFace,observerOwned,null):RotationAim.lookAt(c.player,aim);
@@ -2808,18 +2810,24 @@ public final class AutomationBridge {
                     // Send exactly one use rather than a block packet followed by a fallback.
                     var interactionInput=new BlockInteractionObservation.Input(str(r,"id"),session(c),pos,state(c,pos),
                         itemId(c.player.getMainHandItem()),c.player.getInventory().getSelectedSlot(),c.player.getDirection().name(),checkedHit.getDirection().name(),
-                        c.player.getMainHandItem().getItem() instanceof net.minecraft.world.item.BoatItem?"useItem":"useItemOn",
+                        vanillaInput?"Minecraft.startUseItem":c.player.getMainHandItem().getItem() instanceof net.minecraft.world.item.BoatItem?"useItem":"useItemOn",
                         c.player.getYRot(),c.player.getXRot(),c.player.isSecondaryUseActive(),c.options.keyShift.isDown(),KitClient.forceSneakForPlacement(),c.player.getAbilities().mayBuild);
                     net.minecraft.world.InteractionResult interactionResult;
-                    if(c.player.getMainHandItem().getItem() instanceof net.minecraft.world.item.BoatItem){
+                    if(vanillaInput){
+                        lastBlockInteractionObservation=BlockInteractionObservation.snapshot(interactionInput,null,"not_attempted");
+                        VanillaBlockInput.perform(c,r,pos,usedFace,currentMaterialRequest(c,r)&&guardArmed()&&pveOnly()&&!guardBusy&&!KitKeys.manualMovementDown(c),lastBlockInteractionObservation);
+                        interactionResult=null;
+                    }else if(c.player.getMainHandItem().getItem() instanceof net.minecraft.world.item.BoatItem){
                         if(!currentMaterialRequest(c,r)||!guardArmed()||!pveOnly()||guardBusy||loadedHostileNearby(c)||c.player.getHealth()<19)
                             throw new IllegalStateException("Boat placement requires the healthy owned material controller");
                         interactionResult=c.gameMode.useItem(c.player,InteractionHand.MAIN_HAND);
                     }else interactionResult=c.gameMode.useItemOn(c.player,InteractionHand.MAIN_HAND,checkedHit);
-                    boolean clientSwing=VanillaInteractionPolicy.clientSwingRequired(interactionResult)&&c.player!=null&&session(c).equals(interactionInput.worldSession());
+                    boolean clientSwing=!vanillaInput&&VanillaInteractionPolicy.clientSwingRequired(interactionResult)&&c.player!=null&&session(c).equals(interactionInput.worldSession());
                     if(clientSwing)c.player.swing(InteractionHand.MAIN_HAND);
-                    lastBlockInteractionObservation=BlockInteractionObservation.snapshot(interactionInput,interactionResult,c.level==null?"unavailable":state(c,pos));
-                    lastBlockInteractionObservation.addProperty("client_swing_requested",clientSwing);
+                    if(vanillaInput)lastBlockInteractionObservation.addProperty("state_after_local_call",c.level==null?"unavailable":state(c,pos));
+                    else lastBlockInteractionObservation=BlockInteractionObservation.snapshot(interactionInput,interactionResult,c.level==null?"unavailable":state(c,pos));
+                    if(vanillaInput)lastBlockInteractionObservation.add("client_swing_requested",com.google.gson.JsonNull.INSTANCE);else lastBlockInteractionObservation.addProperty("client_swing_requested",clientSwing);
+                    if(!vanillaInput)lastBlockInteractionObservation.addProperty("vanilla_input_handler_returned",false);
                     settle(r,processing?400:terrainReplace||dryPaving?80:projectedObserver||projectedSlab?40:8);
                 }catch(Exception e){finish(c,"error",e.getMessage());}
             });
@@ -4559,7 +4567,7 @@ public final class AutomationBridge {
     }
     private static JsonObject snapshot(Minecraft c){
         JsonObject j=new JsonObject();j.addProperty("time",System.currentTimeMillis());
-        j.addProperty("block_interaction_observation_protocol",BlockInteractionObservation.PROTOCOL);j.addProperty("vanilla_interaction_swing_protocol",VanillaInteractionPolicy.PROTOCOL);
+        j.addProperty("block_interaction_observation_protocol",BlockInteractionObservation.PROTOCOL);j.addProperty("vanilla_interaction_swing_protocol",VanillaInteractionPolicy.PROTOCOL);j.addProperty("vanilla_block_input_protocol",VanillaBlockInput.PROTOCOL);
         if(lastBlockInteractionObservation!=null&&str(lastBlockInteractionObservation,"world_session").equals(session(c)))j.add("last_block_interaction",lastBlockInteractionObservation.deepCopy());
         j.addProperty("client_connection_protocol",1);j.addProperty("account_name",c.getUser().getName());
         j.addProperty("explicit_recovery_confirmation_protocol",1);
@@ -4651,7 +4659,7 @@ public final class AutomationBridge {
         j.addProperty("air_return_revision",nativeAirReturnActive?controlRevision:-1);
         j.addProperty("no_fall_active",dev.twob2tkit.runtime.engine.BorerFlight.meteorNoFallActive());
         j.addProperty("water_breathing_effect",c.player.hasEffect(net.minecraft.world.effect.MobEffects.WATER_BREATHING));j.addProperty("conduit_power_effect",c.player.hasEffect(net.minecraft.world.effect.MobEffects.CONDUIT_POWER));
-        j.addProperty("player_secondary_use_active",c.player.isSecondaryUseActive());j.addProperty("forced_placement_sneak",KitClient.forceSneakForPlacement());j.addProperty("player_can_build",c.player.getAbilities().mayBuild);j.addProperty("on_ground",c.player.onGround());j.addProperty("horizontal_collision",c.player.horizontalCollision);j.add("velocity",JSON.toJsonTree(new double[]{c.player.getDeltaMovement().x,c.player.getDeltaMovement().y,c.player.getDeltaMovement().z}));
+        j.addProperty("game_mode_destroying",c.gameMode!=null&&c.gameMode.isDestroying());j.addProperty("player_hands_busy",c.player.isHandsBusy());j.addProperty("player_using_item",c.player.isUsingItem());j.addProperty("player_secondary_use_active",c.player.isSecondaryUseActive());j.addProperty("forced_placement_sneak",KitClient.forceSneakForPlacement());j.addProperty("player_can_build",c.player.getAbilities().mayBuild);j.addProperty("on_ground",c.player.onGround());j.addProperty("horizontal_collision",c.player.horizontalCollision);j.add("velocity",JSON.toJsonTree(new double[]{c.player.getDeltaMovement().x,c.player.getDeltaMovement().y,c.player.getDeltaMovement().z}));
         j.addProperty("world_generator",c.getSingleplayerServer()==null?"":c.getSingleplayerServer().overworld().getChunkSource().getGenerator().getClass().getSimpleName());j.addProperty("day_time",c.level.getOverworldClockTime());j.addProperty("difficulty",c.level.getDifficulty().getSerializedName());
         if(craftTask!=null)j.add("native_skill",craftTask.progress());
         if(supplyTask!=null)j.add("build_supply",supplyTask.snapshot());
