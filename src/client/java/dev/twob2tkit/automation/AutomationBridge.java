@@ -1497,7 +1497,8 @@ public final class AutomationBridge {
                     currentMaterialRequest(c,active)&&!KitKeys.manualMovementDown(c));
                 if(owned)ownedMaterialMenu=menu.containerId;return owned;
             }
-            boolean owned=menu instanceof net.minecraft.world.inventory.ChestMenu||menu instanceof net.minecraft.world.inventory.ShulkerBoxMenu||menu instanceof net.minecraft.world.inventory.CraftingMenu||menu instanceof net.minecraft.world.inventory.AbstractFurnaceMenu||menu instanceof net.minecraft.world.inventory.AnvilMenu||menu instanceof net.minecraft.world.inventory.BrewingStandMenu||menu instanceof net.minecraft.world.inventory.LoomMenu||menu instanceof net.minecraft.world.inventory.StonecutterMenu;
+            boolean owned=menu instanceof net.minecraft.world.inventory.ChestMenu||menu instanceof net.minecraft.world.inventory.ShulkerBoxMenu||menu instanceof net.minecraft.world.inventory.CraftingMenu||menu instanceof net.minecraft.world.inventory.AbstractFurnaceMenu||menu instanceof net.minecraft.world.inventory.AnvilMenu||menu instanceof net.minecraft.world.inventory.BrewingStandMenu||menu instanceof net.minecraft.world.inventory.LoomMenu||menu instanceof net.minecraft.world.inventory.StonecutterMenu
+                ||OwnedAddedContainerMenus.allowed(menu.getClass().getSimpleName(),currentMaterialRequest(c,active),KitKeys.manualMovementDown(c));
             if(owned)ownedMaterialMenu=menu.containerId;return owned;
         }
         return false;
@@ -4572,7 +4573,7 @@ public final class AutomationBridge {
         j.addProperty("client_connection_protocol",1);j.addProperty("account_name",c.getUser().getName());
         j.addProperty("explicit_recovery_confirmation_protocol",1);
         j.addProperty("explicit_recovery_connection_protocol",1);
-        j.addProperty("inventory_click_protocol",InventoryDiagnostics.PROTOCOL);j.addProperty("inventory_probe_protocol",InventoryDiagnostics.PROTOCOL);
+        j.addProperty("inventory_click_protocol",InventoryDiagnostics.PROTOCOL);j.addProperty("owned_added_container_menu_protocol",1);j.addProperty("inventory_probe_protocol",InventoryDiagnostics.PROTOCOL);
         j.addProperty("processing_menu_protocol",ProcessingMenus.PROTOCOL);j.addProperty("decoration_attack_protocol",1);
         j.add("auto_refill_guard",AutoRefillCompatibility.snapshot());
         if(inventoryClick!=null&&inventoryClick.requestId.equals(statusId)){
