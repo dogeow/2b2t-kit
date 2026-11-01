@@ -6,7 +6,7 @@ import java.util.*;
 /** Hot-reloadable construction navigation. Never references host implementation classes. */
 public final class DefaultBuildNavigation implements BuildNavigation {
     private final java.util.function.Predicate<BlockPos> hazardClear;
-    public DefaultBuildNavigation(){this(NavigationHazardClearance::current);}
+    public DefaultBuildNavigation(){this(p->NavigationHazardClearance.current(p)&&NavigationHostileClearance.current(p));}
     /** An observation policy can be injected for isolated navigation fixtures. */
     public DefaultBuildNavigation(java.util.function.Predicate<BlockPos> hazardClear){
         this.hazardClear=Objects.requireNonNull(hazardClear);
@@ -29,6 +29,14 @@ public final class DefaultBuildNavigation implements BuildNavigation {
         }return cells;
     }
     public Motion motion(Vec3 delta){
+        var proposal=proposeMotion(delta);
+        return guardedMotion(proposal,proposal.arrived()||NavigationHostileClearance.currentStep(proposal.probe()));
+    }
+    static Motion guardedMotion(Motion proposal,boolean safe){
+        // No arrival credit and no movement input when a threat enters an already planned leg.
+        return safe?proposal:new Motion(false,proposal.vertical(),0,Vec3.ZERO);
+    }
+    private Motion proposeMotion(Vec3 delta){
         // Feet waypoints sit 0.02 above the grid; accept the real collision floor
         // and tiny Flight rounding instead of blocking horizontal movement on a micro-step.
         // The host still collision-checks every proposed movement.

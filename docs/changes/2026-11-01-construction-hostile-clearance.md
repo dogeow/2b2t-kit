@@ -1,0 +1,9 @@
+# Construction navigation around loaded hostile mobs
+
+A real four-cell build descended beneath the machine and stopped around X761425/Y60/Z793988 when creeper defense took priority. Skeleton and slime damage continued there until the native low-health exit. The construction navigator previously filtered physical heat/contact hazards but did not reserve clearance from loaded attackers.
+
+Engine 1.8.43 adds read-only threat clearance to both the direct shortcut and grid search. Ordinary creepers require more than 8 blocks of bounding-box clearance, charged creepers more than 12. Ranged attackers within 20 blocks require actual collision cover; exposed feet and torso are checked as well as the eye position. Nearby visible melee attackers also exclude a station. Neutral endermen are ignored. Entity observations and per-cell results refresh each client tick and remain scoped to the current level and connection.
+
+Every proposed movement also checks the current swept and destination body. A newly occupied danger zone returns zero movement without marking the waypoint reached, allowing the existing stall/replan behavior and native combat priority to handle it. This does not implement combat, change emergency thresholds, acknowledge a lock or guarantee escape from an already occupied worksite.
+
+The candidate compiled against the installed 26.2 host and dependencies, and 86 related tests passed. The isolated jar preserves the installed BorerThreats class byte for byte and changes only the declared navigation units and version metadata. Host/API stay unchanged (API3); this is hot reloadable. The required full offline Gradle build remains limited by the unavailable Fabric Loom1.17-SNAPSHOT cache. The candidate is prepared, not yet live-tested or installed: the new native low-health hold must first be acknowledged after real player recovery.
