@@ -70,7 +70,8 @@ def place(c,target,support,face,key,model,out,*,minor_thermal=False,remote_calm_
         return _place(c,target,support,face,key,model,out,minor_thermal=minor_thermal,remote_calm_creeper=remote_calm_creeper)
 
 
-def _place(c,target,support,face,key,model,out,*,minor_thermal=False,remote_calm_creeper=False):
+def _place(c,target,support,face,key,model,out,*,minor_thermal=False,remote_calm_creeper=False,verify_flow=True):
+    if type(verify_flow)is not bool:raise ValueError("Flow verification option must be boolean")
     out=Path(out);out.mkdir(parents=True,exist_ok=False);book={'pending':None,'dispatch_started':False,'complete':False,'automatic_retry_allowed':False};write_json(out/'progress.json',book)
     bounds,cells=layout(model,target);s=c.status();lease=s.get('supervision_lease')or{}
     if type(minor_thermal)is not bool or type(remote_calm_creeper)is not bool:raise ValueError('Construction options must be booleans')
@@ -104,6 +105,8 @@ def _place(c,target,support,face,key,model,out,*,minor_thermal=False,remote_calm
     if admission_rejected_before_use(r,c.last,c.world):book.update(pending=None,rejected_before_use=True);write_json(out/'progress.json',book);raise SourceAdmissionRejected(r.get('detail','Native source rejected before use'))
     if not receipt(r,c.last,c.world,target):raise RuntimeError('Original source use unresolved; retain and never replay')
     book.update(pending=None,source_confirmed=True);write_json(out/'progress.json',book)
+    if not verify_flow:
+        book.update(full_flow_still_requires_observation=True,complete=False);write_json(out/'progress.json',book);return book
     lo=[min(p[i]for p in cells)-(1 if i!=1 else 1)for i in range(3)];hi=[max(p[i]for p in cells)+1 for i in range(3)];stamps=[];deadline=time.monotonic()+18
     while len(stamps)<3:
         frame=c.checked('scan',min=lo,max=hi,details=True,include_predictions=True);write_json(out/'latest-flow-frame.json',frame);s=c.status();counts=inventory_counts(s);rows={tuple(v['pos']):v['state']for v in frame.get('blocks',[])}
@@ -116,3 +119,36 @@ def _place(c,target,support,face,key,model,out,*,minor_thermal=False,remote_calm
         if time.monotonic()>deadline:book['flow_not_yet_original']=True;write_json(out/'progress.json',book);raise RuntimeError('Use confirmed but original full flow not stable; no repeat')
         time.sleep(.25)
     book.update(complete=True,flow_frames=stamps,original_flow_cells=len(cells));write_json(out/'progress.json',book);return book
+
+
+def place_network_source(c,target,support,face,key,model,out):
+    """One acknowledged source of a multi-source arm; never claims full flow."""
+    _,cells=layout(model,target)
+    if sum(v==SOURCE for v in cells.values())<2:
+        raise ValueError('Multi-source network required; use place for a single-source arm')
+    return _place(c,target,support,face,key,model,out,verify_flow=False)
+
+
+def verify_network(c,target,key,model,out):
+    """Read-only final acceptance after every source in one arm is present."""
+    _,cells=layout(model,target)
+    out=Path(out);out.mkdir(parents=True,exist_ok=False)
+    low=[min(p[i]for p in cells)-1 for i in range(3)];high=[max(p[i]for p in cells)+1 for i in range(3)]
+    stamps=[];deadline=time.monotonic()+18
+    while len(stamps)<3:
+        s=c.status()
+        if model.get('placement_key')!=key or s.get('projection_selection',{}).get('key')!=key:
+            raise RuntimeError('Selected network changed; no completion claimed')
+        a=c.checked('scan',min=low,max=high,details=True,include_predictions=True)
+        write_json(out/'latest-frame.json',a);rows={tuple(v['pos']):v['state']for v in a.get('blocks',[])}
+        good=coherent(a,c.world,low,high) and all(rows.get(p,AIR)==v for p,v in cells.items())
+        if good:
+            if not stamps or a['time']>stamps[-1]:
+                stamps.append(a['time']);write_json(out/f'verified-flow-{len(stamps)}.json',a)
+        else:stamps=[]
+        if time.monotonic()>deadline:
+            write_json(out/'progress.json',{'complete':False,'flow_not_yet_original':True,'no_inputs_sent':True})
+            raise RuntimeError('Original network flow is not stable; no source replay')
+        time.sleep(.25)
+    result={'complete':True,'original_flow_cells':len(cells),'flow_frames':stamps,'no_inputs_sent':True}
+    write_json(out/'progress.json',result);return result
