@@ -110,6 +110,12 @@ def _color_recipe(spec):
 def supported(spec):
     if cobblestone_recipe_supported(spec):return True
     output=spec.get('output','')
+    if output=='minecraft:spruce_trapdoor':
+        return (spec.get('recipe_id')=='spruce_trapdoor'
+                and type(spec.get('width'))is int and spec['width']==3
+                and type(spec.get('produces'))is int and spec['produces']==2
+                and spec.get('ingredients')=={'minecraft:spruce_planks':[1,2,3,4,5,6]}
+                and all(type(cell)is int for cell in spec['ingredients']['minecraft:spruce_planks']))
     if output in ('minecraft:chest','minecraft:hopper'):
         return storage_recipe_supported(spec)
     if output=='minecraft:glow_item_frame':
