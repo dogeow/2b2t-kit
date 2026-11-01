@@ -63,6 +63,14 @@ def receipt(reply,identity,world,target):
         and a.get('server_inventory_confirmed')is True and a.get('server_observed_state')==SOURCE)
 
 def place(c,target,support,face,key,model,out,*,minor_thermal=False,remote_calm_creeper=False):
+    if type(minor_thermal)is not bool or type(remote_calm_creeper)is not bool:raise ValueError('Construction options must be booleans')
+    layout(model,target)
+    from construction_thermal_scope import original_source_work
+    with original_source_work(c,key,enabled=minor_thermal):
+        return _place(c,target,support,face,key,model,out,minor_thermal=minor_thermal,remote_calm_creeper=remote_calm_creeper)
+
+
+def _place(c,target,support,face,key,model,out,*,minor_thermal=False,remote_calm_creeper=False):
     out=Path(out);out.mkdir(parents=True,exist_ok=False);book={'pending':None,'dispatch_started':False,'complete':False,'automatic_retry_allowed':False};write_json(out/'progress.json',book)
     bounds,cells=layout(model,target);s=c.status();lease=s.get('supervision_lease')or{}
     if type(minor_thermal)is not bool or type(remote_calm_creeper)is not bool:raise ValueError('Construction options must be booleans')

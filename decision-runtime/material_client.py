@@ -677,7 +677,8 @@ class MaterialClient(Client):
   witness=getattr(self,'stuck_damage_witness',None)
   if witness is None:witness=self.stuck_damage_witness=StuckDamageWitness(*scope)
   idle=(getattr(self,'native_inflight',None)is None and getattr(self,'unconfirmed_native_request',None)is None)
-  evidence=witness.observe(state,revision=self.rev,native_idle=idle)
+  from construction_thermal_scope import allows
+  evidence=witness.observe(state,revision=self.rev,native_idle=idle,construction_thermal=allows(self,state))
   if evidence is not None:self._exit_stuck_damage(evidence)
  def _exit_stuck_damage(self,evidence):
   """Same controller, one emergency exit; no second action or automatic reentry."""

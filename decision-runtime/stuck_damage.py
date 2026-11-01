@@ -15,7 +15,7 @@ class StuckDamageWitness:
         self.hits = 0
         self.last_counted_hurt = None
 
-    def observe(self, state, *, revision, native_idle):
+    def observe(self, state, *, revision, native_idle, construction_thermal=False):
         if self.triggered:
             return None
         if not isinstance(state, dict):
@@ -58,6 +58,11 @@ class StuckDamageWitness:
         if self.last and stamp <= self.last['time']:
             if stamp < self.last['time']:
                 self.reset()
+            return None
+        # This is a bounded explicit construction window, never standby intent.
+        # Ownership, current lease, no hostiles and all safety checks above still apply.
+        if construction_thermal is True and state.get('minor_thermal_work_protocol')==1 and state.get('minor_thermal_work_allowed')is True and hp>=19 and type(state.get('food'))is int and state['food']>=18:
+            self.reset()
             return None
         environmental = state.get('recent_attacker') in ENVIRONMENTAL_ATTACKERS
         # A real escape or quiet interval is progress. Partial regeneration

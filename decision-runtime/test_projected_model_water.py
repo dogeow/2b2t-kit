@@ -50,6 +50,7 @@ class ModelWaterTests(unittest.TestCase):
   self.assertEqual(['scan','scan'],c.calls)
  def test_construction_opt_in_refuses_old_host_before_any_game_mutation(self):
   class Client:
+   world='w';task='t'
    def status(self):return {'health':20}
    def checked(self,*a,**kw):raise AssertionError('No operation on unsupported host')
   m={'expected':[{'pos':[10,68,20],'state':SOURCE}]}
