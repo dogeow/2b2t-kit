@@ -24,6 +24,35 @@ def layout(model,target):
     if not 3<=hi[0]-lo[0]+1<=33 or not 3<=hi[2]-lo[2]+1<=33 or (hi[0]-lo[0]+1)*3*(hi[2]-lo[2]+1)>4096:raise ValueError('Network bounds exceed native limits')
     return {'min':lo,'max':hi},cells
 
+def floor_mismatches(model,cells,rows):
+    """Mirror only native floor-state mismatch checks; native flow containment remains authoritative."""
+    goals={tuple(v['pos']):v['state']for v in model['expected']};bad=[]
+    for x,y,z in sorted(cells):
+        p=(x,y-1,z);expected=goals.get(p,AIR);actual=rows.get(p,AIR)
+        source=(actual==SOURCE or actual.startswith('Block{minecraft:bubble_column}')
+                or 'waterlogged=true'in actual)
+        same=actual==expected
+        if actual.startswith('Block{minecraft:hopper}')and expected.startswith('Block{minecraft:hopper}'):
+            same=actual.replace('enabled=true','enabled=false')==expected.replace('enabled=true','enabled=false')
+        if actual.startswith('Block{minecraft:dropper}')and expected.startswith('Block{minecraft:dropper}'):
+            same=actual.replace('triggered=true','triggered=false')==expected.replace('triggered=true','triggered=false')
+        if not source and not same:bad.append({'pos':list(p),'expected':expected,'actual':actual})
+    return bad
+
+def observe_original_floors(c,model,cells,out):
+    points=[(x,y-1,z)for x,y,z in cells];lo=[min(p[i]for p in points)for i in range(3)];hi=[max(p[i]for p in points)for i in range(3)];rows={};stamps=[]
+    for x in range(lo[0],hi[0]+1,6):
+        for z in range(lo[2],hi[2]+1,6):
+            low=[x,lo[1],z];high=[min(x+5,hi[0]),hi[1],min(z+5,hi[2])]
+            for attempt in range(4):
+                frame=c.checked('scan',min=low,max=high,details=True,include_predictions=True)
+                write_json(Path(out)/f'floor-{x}-{z}-{attempt}.json',frame)
+                if coherent(frame,c.world,low,high):break
+            else:raise RuntimeError('Current original-floor frame required before bucket selection')
+            stamps.append(frame['time']);rows.update({tuple(v['pos']):v['state']for v in frame['blocks']})
+    return {'mismatches':floor_mismatches(model,cells,rows),'frames':stamps,
+            'scope':'connected original planar network floors; native shape and full-region checks still required'}
+
 def receipt(reply,identity,world,target):
     a=reply.get('bucket_water')or{}
     return(reply.get('id')==identity and reply.get('world_session')==world and reply.get('phase')=='done'
@@ -47,6 +76,10 @@ def place(c,target,support,face,key,model,out):
     if actual==SOURCE:book.update(already_source_on_fresh_read=True,source_only_verified_by_read=True,full_flow_still_requires_observation=True);write_json(out/'progress.json',book);return book
     if actual!=AIR and not(actual.startswith('Block{minecraft:water}[level=')and actual!=SOURCE):raise RuntimeError('Original source cell is occupied')
     if anchor.get('solid')is not True or anchor.get('fluid')is True or anchor.get('block_entity')is True:raise RuntimeError('Dry inert full support required')
+    floors=observe_original_floors(c,model,cells,out);write_json(out/'floor-preflight.json',floors)
+    if floors['mismatches']:
+        book['blocking_floor_cells']=floors['mismatches'];write_json(out/'progress.json',book)
+        raise RuntimeError('Original water network floor differs; repair the recorded cells before bucket use')
     c.checked('select_item',item='minecraft:water_bucket');s=c.status();before=inventory_counts(s)
     if s['hand']['item']!='minecraft:water_bucket'or s['hand']['count']!=1:raise RuntimeError('Singleton full bucket required')
     book.update(pending='one_original_source_use',dispatch_started=True,target=target,bounds=bounds);write_json(out/'progress.json',book)
