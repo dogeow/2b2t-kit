@@ -4,6 +4,7 @@ import java.util.*;
 
 /** Placement-only transaction. Only the newly prepared object may ever be removed. */
 final class ProjectionLoadTransaction<P> {
+    static final int MAX_EXISTING_PLACEMENTS=256;
     interface Access<P>{List<P> all();P selected();boolean enabled(P placement);String fingerprint(P placement);
         void add(P placement);void remove(P placement);void enable(P placement,boolean enabled);void select(P placement);}
     record Saved<P>(P placement,boolean enabled,String fingerprint){}
@@ -14,7 +15,9 @@ final class ProjectionLoadTransaction<P> {
     private boolean applied;
     ProjectionLoadTransaction(Access<P> access,P added){
         this.access=access;this.added=Objects.requireNonNull(added);this.oldSelection=access.selected();
-        var old=access.all();if(old.contains(added)||old.size()>64)throw new IllegalStateException("Too many placements or new placement is already registered");
+        var old=access.all();
+        if(old.contains(added))throw new IllegalStateException("New placement is already registered");
+        if(old.size()>MAX_EXISTING_PLACEMENTS)throw new IllegalStateException("Too many existing placements (maximum "+MAX_EXISTING_PLACEMENTS+")");
         this.before=old.stream().map(p->new Saved<>(p,access.enabled(p),access.fingerprint(p))).toList();
     }
     List<Saved<P>> before(){return before;}

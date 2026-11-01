@@ -43,8 +43,21 @@ class ProjectionLoadTransactionTest {
     @Test void emptyManagerRollbackRestoresNoSelection(){
         var manager=new Manager();var tx=new ProjectionLoadTransaction<>(manager,new Placement("courtyard",false));tx.apply();assertTrue(tx.rollback());assertTrue(manager.all.isEmpty());assertNull(manager.selected);
     }
+    @Test void accumulatedProjectsCanLoadAndRollbackWithoutDeletingSavedPlacements(){
+        for(int count:List.of(65,ProjectionLoadTransaction.MAX_EXISTING_PLACEMENTS)){
+            var manager=old();while(manager.all.size()<count)manager.all.add(new Placement("saved"+manager.all.size(),false));
+            var before=new ArrayList<>(manager.all);var selected=manager.selected;
+            var fresh=new Placement("villa-xp",false);var tx=new ProjectionLoadTransaction<>(manager,fresh);tx.apply();
+            assertEquals(count+1,manager.all.size());assertSame(fresh,manager.selected);assertTrue(tx.unchanged());
+            tx.rollbackExplicit();assertEquals(before,manager.all);assertSame(selected,manager.selected);assertTrue(selected.enabled);
+        }
+    }
+    @Test void duplicateStillFailsBeforeAnyMutation(){
+        var manager=old();assertThrows(IllegalStateException.class,()->new ProjectionLoadTransaction<>(manager,manager.selected));
+        assertEquals(0,manager.operations);
+    }
     @Test void oversizedPlacementListFailsBeforeAnyMutation(){
-        var manager=new Manager();for(int i=0;i<65;i++)manager.all.add(new Placement("old"+i,false));
+        var manager=new Manager();for(int i=0;i<=ProjectionLoadTransaction.MAX_EXISTING_PLACEMENTS;i++)manager.all.add(new Placement("old"+i,false));
         assertThrows(IllegalStateException.class,()->new ProjectionLoadTransaction<>(manager,new Placement("new",false)));assertEquals(0,manager.operations);
     }
 }
