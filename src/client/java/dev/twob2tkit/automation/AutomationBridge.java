@@ -1576,6 +1576,7 @@ public final class AutomationBridge {
         if(ticks%5==0)writeStatus(c);
     }
     public static boolean beforeInput(Minecraft c){
+        if(brakeDisplacedWalk(c))return true;
         syncMaterialMiningLease(c);
         if(materialMiningCleanupPending)return true;
         if(active!=null)ownsMaterialMenu(c); // Capture our CraftingMenu even though it is an allowed survival screen.
@@ -1778,12 +1779,37 @@ public final class AutomationBridge {
         }
         return true;
     }
+    private static boolean explicitWalkDescent(JsonObject r){
+        return r!=null&&(r.has("freefall_brake_y")||r.has("water_descend")&&r.get("water_descend").getAsBoolean());
+    }
+    private static boolean ordinaryWalkFooting(Minecraft c,JsonArray point){
+        double x=point.get(0).getAsDouble(),y=point.get(1).getAsDouble(),z=point.get(2).getAsDouble();
+        if(!Double.isFinite(x)||!Double.isFinite(y)||!Double.isFinite(z))return false;
+        var foot=new net.minecraft.world.phys.AABB(x-.28,y-.3,z-.28,x+.28,y+.01,z+.28);
+        for(var p:BlockPos.betweenClosed(BlockPos.containing(foot.minX,foot.minY,foot.minZ),BlockPos.containing(foot.maxX,foot.maxY,foot.maxZ)))
+            if(!dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence.isServerChunk(c.level,c.level.getChunkSource().getChunk(p.getX()>>4,p.getZ()>>4,net.minecraft.world.level.chunk.status.ChunkStatus.FULL,false)))return false;
+        for(var shape:c.level.getBlockCollisions(c.player,foot)){
+            if(shape.isEmpty())continue;double top=shape.max(net.minecraft.core.Direction.Axis.Y);
+            if(top<=y+.02&&top>=y-.3)return true;
+        }
+        return false;
+    }
+    private static boolean brakeDisplacedWalk(Minecraft c){
+        if(active==null||c.player==null||c.level==null||!Set.of("walk","walk_path").contains(op)
+            ||explicitWalkDescent(active)||!active.has("walk_guard_origin_y")||KitKeys.manualMovementDown(c)
+            ||dev.twob2tkit.combat.EmergencyExit.held(c))return false;
+        double origin=active.get("walk_guard_origin_y").getAsDouble(),target=active.getAsJsonArray("target").get(1).getAsDouble();
+        if(OrdinaryWalkStepPolicy.withinEnvelope(origin,target,c.player.getY()))return false;
+        if(!MeteorModules.enable(MeteorModules.FLIGHT)){KitClient.safeLogout(c,"行走站位异常且飞行制动不可用");return true;}
+        finish(c,"waiting","Walking pose left its bounded step; Flight retained, stale walking request not continued");return true;
+    }
     public static void tick(Minecraft c){
         syncMaterialMiningLease(c);
         if(materialMiningCleanupPending){writeStatus(c);return;}
         if(!initialized){initialized=true;try{Path old=root(c).resolve("request.json");if(Files.isRegularFile(old))lastId=str(JsonParser.parseString(Files.readString(old)).getAsJsonObject(),"id");}catch(Exception ignored){}}
         if(guiRequested){guiRequested=false;if(c.player!=null)KitClient.openGui(c);}
         ticks++;
+        if(brakeDisplacedWalk(c)){writeStatus(c);return;}
         InventoryDiagnostics.sync(c);
         if(inventoryProbeRequest!=null&&System.currentTimeMillis()>inventoryProbeRequest.get("expires_at").getAsLong()){
             var proof=new JsonObject();proof.addProperty("protocol",InventoryDiagnostics.PROTOCOL);
@@ -1988,7 +2014,7 @@ public final class AutomationBridge {
                     boolean waterDescend=op.equals("walk")&&active.has("water_descend")&&active.get("water_descend").getAsBoolean();
                     boolean vertical=survival(active)?c.player.onGround() && Math.abs(c.player.getY()-p.get(1).getAsDouble())<=.2:waterDescend?WaterDescentPolicy.atTarget(c.player.getY(),p.get(1).getAsDouble()):Math.abs(c.player.getY()-p.get(1).getAsDouble())<=1.2;
                     if(Math.hypot(dx,dz)<=arrival && vertical){
-                        if(op.equals("walk_path") && ++pathIndex<active.getAsJsonArray("path").size())active.add("target",active.getAsJsonArray("path").get(pathIndex).deepCopy());
+                        if(op.equals("walk_path") && ++pathIndex<active.getAsJsonArray("path").size()){active.addProperty("walk_guard_origin_y",c.player.getY());active.add("target",active.getAsJsonArray("path").get(pathIndex).deepCopy());}
                         else finish(c,"done","walk target reached");
                     }
                 }else if(op.equals("planter_wheat_batch")){
@@ -2586,6 +2612,11 @@ public final class AutomationBridge {
                 if(r.get("air_only").getAsBoolean()&&(!materialNavigation||!airNavigationClear(c,r.getAsJsonArray("target"))))
                     throw new IllegalStateException("Air-only navigation requires the current material lease and a loaded clear dry path");
             }
+            if(command.equals("walk")&&!explicitWalkDescent(r)){
+                var target=r.getAsJsonArray("target");checkSiteTarget(r,target);
+                if(!OrdinaryWalkStepPolicy.boundedStep(c.player.getY(),target.get(1).getAsDouble())||!ordinaryWalkFooting(c,target))
+                    throw new IllegalStateException("Ordinary walking requires a supported step within 1.1 blocks; Flight was not disabled");
+            }
             boolean snowCruise=command.equals("navigate")&&r.has("snow_expedition_token");
 			ProfessionalPrinter.stop(c,true);stopWorkForScript(r,materialHandoff);
 			active=snowCruise?null:r.deepCopy();op=command;phase="running";detail="";
@@ -2597,7 +2628,7 @@ public final class AutomationBridge {
                 if(path==null || path.isEmpty() || path.size()>32)throw new IllegalArgumentException("Path must contain 1..32 observed waypoints");
                 Vec3 previous=c.player.position();
                 for(var value:path){JsonArray point=value.getAsJsonArray();checkSiteTarget(r,point);Vec3 next=new Vec3(point.get(0).getAsDouble(),point.get(1).getAsDouble(),point.get(2).getAsDouble());if(previous.distanceTo(next)>2 || Math.abs(previous.y-next.y)>1.1)throw new IllegalArgumentException("Path has an unsafe gap");previous=next;}
-                pathIndex=0;active.add("target",path.get(0).deepCopy());restoreFlight=false;MeteorModules.disable(MeteorModules.FLIGHT);
+                pathIndex=0;active.add("target",path.get(0).deepCopy());active.addProperty("walk_guard_origin_y",c.player.getY());restoreFlight=false;MeteorModules.disable(MeteorModules.FLIGHT);
             }else if(command.equals("walk")){
                 JsonArray p=r.getAsJsonArray("target");checkSiteTarget(r,p);
                 double d=Math.hypot(p.get(0).getAsDouble()-c.player.getX(),p.get(2).getAsDouble()-c.player.getZ());if(d>32)throw new IllegalArgumentException("Walking waypoint must be within 32 blocks");
@@ -2612,6 +2643,7 @@ public final class AutomationBridge {
                         ||!freefallColumnClear(c,c.player.blockPosition(),(int)Math.floor(brakeY)-2,(int)Math.ceil(c.player.getY())+2))
                         throw new IllegalStateException("Guarded freefall requires a clear loaded column and active Flight");
                 }
+                active.addProperty("walk_guard_origin_y",c.player.getY());
                 restoreFlight=MeteorModules.isActive(MeteorModules.FLIGHT) && (!r.has("restore_flight") || r.get("restore_flight").getAsBoolean());MeteorModules.disable(MeteorModules.FLIGHT);
             }else if(command.equals("navigate")){
                 boolean snowExpedition=r.has("snow_expedition_token");
