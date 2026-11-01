@@ -107,7 +107,23 @@ def _color_recipe(spec):
             and len(ingredients[dye])==1
             and sorted(cell for cells in ingredients.values()for cell in cells)==list(range(1,10)))
 
+def _white_wool_recipe(spec):
+    width=spec.get('width');ingredients=spec.get('ingredients')
+    if (type(width)is not int or width not in(2,3)or type(spec.get('produces'))is not int
+            or spec['produces']!=1 or not isinstance(ingredients,dict)
+            or any(not isinstance(cells,list)or any(type(cell)is not int for cell in cells)
+                   for cells in ingredients.values())):return False
+    if spec.get('recipe_id')=='white_wool_from_string':
+        return ingredients=={'minecraft:string':[1,2,3,4]if width==2 else[1,2,4,5]}
+    if spec.get('recipe_id')=='dye_white_wool':
+        colors={f'minecraft:{c}_wool'for c in COLORS if c!='white'}
+        return (ingredients.get('minecraft:white_dye')==[1]and len(ingredients)==2
+                and any(ingredients=={'minecraft:white_dye':[1],color:[2]}for color in colors))
+    return False
+
+
 def supported(spec):
+    if spec.get('output')=='minecraft:white_wool':return _white_wool_recipe(spec)
     if cobblestone_recipe_supported(spec):return True
     output=spec.get('output','')
     if output=='minecraft:spruce_trapdoor':
@@ -199,7 +215,7 @@ def grouped_batch(menu,spec,max_rounds):
     """
     if not((spec.get('output')in COLOR_OUTPUTS and _color_recipe(spec))
             or _furnishing_recipe(spec) or storage_recipe_supported(spec) or cobblestone_recipe_supported(spec)
-            or (spec.get('output') in ({'minecraft:spruce_trapdoor'}|{f'minecraft:{c}_carpet'for c in COLORS})
+            or (spec.get('output') in ({'minecraft:spruce_trapdoor','minecraft:white_wool'}|{f'minecraft:{c}_carpet'for c in COLORS})
                 and supported(spec))):return None
     for rounds in range(max_rounds,0,-1):
         slots=copy.deepcopy(menu['slots'][-36:]);actions=[]
