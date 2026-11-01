@@ -48,6 +48,21 @@ class ModelWaterTests(unittest.TestCase):
    book=json.loads((out/'progress.json').read_text());self.assertFalse(book['dispatch_started']);self.assertIsNone(book['pending'])
    self.assertEqual([10,67,20],book['blocking_floor_cells'][0]['pos'])
   self.assertEqual(['scan','scan'],c.calls)
+ def test_construction_opt_in_refuses_old_host_before_any_game_mutation(self):
+  class Client:
+   def status(self):return {'health':20}
+   def checked(self,*a,**kw):raise AssertionError('No operation on unsupported host')
+  m={'expected':[{'pos':[10,68,20],'state':SOURCE}]}
+  for opts in [{'minor_thermal':True},{'remote_calm_creeper':True}]:
+   with tempfile.TemporaryDirectory()as tmp:
+    with self.assertRaisesRegex(RuntimeError,'Host lacks'):place(Client(),[10,68,20],[11,68,20],'west','k',m,Path(tmp)/'out',**opts)
+ def test_construction_options_are_strict_booleans(self):
+  class Client:
+   def status(self):return {}
+  m={'expected':[{'pos':[10,68,20],'state':SOURCE}]}
+  for key in ['minor_thermal','remote_calm_creeper']:
+   with tempfile.TemporaryDirectory()as tmp:
+    with self.assertRaisesRegex(ValueError,'booleans'):place(Client(),[10,68,20],[11,68,20],'west','k',m,Path(tmp)/'out',**{key:1})
  def valid(self):return {'id':'r','world_session':'w','phase':'done','bucket_water':{'request_id':'r','world_session':'w','pos':[10,68,20],'operation':'bucket_place','projected_model_water_source':True,'use_count':1,'confirmed':True,'unknown_outcome':False,'server_block_confirmed':True,'server_inventory_confirmed':True,'server_observed_state':SOURCE}}
  def test_receipt_requires_single_use_both_real_receipts_and_exact_scope(self):
   self.assertTrue(receipt(self.valid(),'r','w',[10,68,20]))

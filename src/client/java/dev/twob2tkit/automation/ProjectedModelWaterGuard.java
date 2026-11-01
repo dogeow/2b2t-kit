@@ -10,6 +10,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
@@ -21,6 +22,18 @@ final class ProjectedModelWaterGuard {
  static boolean requested(JsonObject r){
   if(!r.has("projected_model_water_source"))return false;var v=r.get("projected_model_water_source");
   if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("Model source flag must be boolean");return v.getAsBoolean();
+ }
+ static boolean option(JsonObject r,String key){
+  if(!r.has(key))return false;var v=r.get(key);
+  if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException(key+" must be boolean");
+  if(!requested(r))throw new IllegalArgumentException("Construction bucket options require original model-source mode");
+  return v.getAsBoolean();
+ }
+ static boolean thermalWorkAllowed(Minecraft c,boolean optedIn){
+  if(c.player==null||c.level==null)return false;var p=c.player;
+  return ConstructionThermalBucketPolicy.allow(optedIn,true,
+   dev.twob2tkit.combat.EmergencyExit.minorThermalWorkAllowed(c),p.getHealth(),
+   ConstructionThermalBucketPolicy.recentMobAttack(p.getLastHurtByMob()!=null,p.tickCount,p.getLastHurtByMobTimestamp()));
  }
  ProjectedModelWaterGuard(JsonObject r,BlockPos target){
   var box=r.getAsJsonObject("model_water_bounds");if(box==null)throw new IllegalArgumentException("Original water bounds required");
@@ -51,11 +64,15 @@ final class ProjectedModelWaterGuard {
   try{
    if(c.player==null||c.level==null||!"bucket_place".equals(ProjectionLoadPolicy.text(r,"op",64))||!requested(r))return false;
    var target=ProjectedSourceColumnGuard.point(r.get("pos"));var guard=new ProjectedModelWaterGuard(r,target);guard.require(c,!ModelWaterPlan.source(c.level.getBlockState(target)));
-   long now=System.currentTimeMillis(),hurt=KitClient.config().lastAttackTimeEpochMillis;if(hurt<0||hurt>now||hurt!=0&&now-hurt<5000)return false;
+   boolean thermal=thermalWorkAllowed(c,option(r,"model_water_minor_thermal"));
+   boolean remote=option(r,"model_water_remote_calm_creeper");
+   long now=System.currentTimeMillis(),hurt=KitClient.config().lastAttackTimeEpochMillis;
+   if(hurt<0||hurt>now||hurt!=0&&now-hurt<5000&&!thermal)return false;
    var p=c.player;var body=p.getBoundingBox();
    if(!c.level.getEntities(p,body.inflate(24),e->e instanceof Projectile a&&e.isAlive()&&a.getOwner()!=p&&e.getDeltaMovement().lengthSqr()>.0001).isEmpty())return false;
    for(var e:c.level.getEntities(p,body.inflate(16),e->e instanceof Enemy&&e.isAlive())){
     String type=BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString();boolean current=e.level()==c.level&&c.level.getEntity(e.getId())==e&&loaded(c,e.blockPosition());
+    if(remote&&e instanceof Creeper a&&ProjectedFlowCorrectionGuard.remoteCalmCreeper(current,!a.isPowered(),p.hasLineOfSight(e),a.isIgnited()||a.getSwellDir()>0||a.getSwelling(1)>0,e.getBoundingBox().maxY<=target.getY()-1,ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),ProjectedSourceColumnGuard.boxDistanceSquared(new AABB(target),e.getBoundingBox())))continue;
     if(ProjectedFlowCorrectionGuard.separatedThreat(type,current,p.hasLineOfSight(e),ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),body.minY-e.getBoundingBox().maxY))continue;
     if(!ModelWaterThreatPolicy.permit(type,current,p.hasLineOfSight(e),ProjectedSourceColumnGuard.boxDistanceSquared(body,e.getBoundingBox()),e instanceof EnderMan a&&!a.isCreepy()))return false;
    }return true;

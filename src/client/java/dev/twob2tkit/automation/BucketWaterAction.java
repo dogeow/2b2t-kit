@@ -40,6 +40,7 @@ final class BucketWaterAction {
     private final List<ItemStack> before=new ArrayList<>();
     private final int selected,emptyBefore,waterBefore;
     private final float health;
+    private final boolean modelMinorThermal;
     private int emptyAfter,waterAfter;
     private boolean retired;
     private boolean observationDeferred;
@@ -108,6 +109,8 @@ final class BucketWaterAction {
         boolean modelWater=ProjectedModelWaterGuard.requested(request);
         if(!modelWater&&request.has("model_water_bounds"))throw new IllegalArgumentException("Model bounds require explicit source mode");
         if(modelWater&&!ProjectedBubblePolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent,collect,waterlog,bubble,sourceReturn))throw new IllegalArgumentException("Model source mode is exclusive place-only");
+        modelMinorThermal=ProjectedModelWaterGuard.option(request,"model_water_minor_thermal");
+        ProjectedModelWaterGuard.option(request,"model_water_remote_calm_creeper");
         projectedModelWater=modelWater?new ProjectedModelWaterGuard(request,target):null;
         boolean flowDrain=ProjectedFlowCorrectionGuard.requested(request);
         if(flowDrain&&(mode!=BucketWaterPolicy.Mode.FILL||column||drain||channel||sources||supply||bent||collect||waterlog||bubble||sourceReturn||modelWater))throw new IllegalArgumentException("Extra flow source drain is an exclusive fill-only operation");
@@ -155,7 +158,9 @@ final class BucketWaterAction {
         return sameContext(c)&&c.gui.screen()==null&&c.player.containerMenu==c.player.inventoryMenu
             &&c.player.containerMenu.getCarried().isEmpty()&&!c.player.isUsingItem()&&!c.options.keyUse.isDown()
             &&c.player.getInventory().getSelectedSlot()==selected&&!c.player.hasInfiniteMaterials()
-            &&!c.player.isInWater()&&!c.player.isInLava()&&!c.player.isOnFire()&&c.player.getHealth()>=health;
+            &&!c.player.isInWater()&&!c.player.isInLava()
+            &&((!c.player.isOnFire()&&c.player.getHealth()>=health)
+                ||projectedModelWater!=null&&ProjectedModelWaterGuard.thermalWorkAllowed(c,modelMinorThermal));
     }
     private boolean plainSource(BlockState state) {
         return BucketWaterPolicy.source(state.is(Blocks.WATER),state.getFluidState().is(Fluids.WATER)&&state.getFluidState().isSource(),

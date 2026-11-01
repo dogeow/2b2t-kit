@@ -62,10 +62,17 @@ def receipt(reply,identity,world,target):
         and a.get('unknown_outcome')is False and a.get('server_block_confirmed')is True
         and a.get('server_inventory_confirmed')is True and a.get('server_observed_state')==SOURCE)
 
-def place(c,target,support,face,key,model,out):
+def place(c,target,support,face,key,model,out,*,minor_thermal=False,remote_calm_creeper=False):
     out=Path(out);out.mkdir(parents=True,exist_ok=False);book={'pending':None,'dispatch_started':False,'complete':False,'automatic_retry_allowed':False};write_json(out/'progress.json',book)
     bounds,cells=layout(model,target);s=c.status();lease=s.get('supervision_lease')or{}
-    if(s.get('projected_model_water_source_protocol')!=1 or s.get('health')!=20 or s.get('food',0)<18
+    if type(minor_thermal)is not bool or type(remote_calm_creeper)is not bool:raise ValueError('Construction options must be booleans')
+    if(minor_thermal or remote_calm_creeper)and s.get('model_water_construction_options_protocol')!=1:raise RuntimeError('Host lacks original-source construction options; no mutation sent')
+    health=s.get('health',0)
+    healthy=(isinstance(health,(int,float))and not isinstance(health,bool)and 19<=health<=20)if minor_thermal else health==20
+    options={}
+    if minor_thermal:options['model_water_minor_thermal']=True
+    if remote_calm_creeper:options['model_water_remote_calm_creeper']=True
+    if(s.get('projected_model_water_source_protocol')!=1 or not healthy or s.get('food',0)<18
        or s.get('air_supply',0)<270 or s.get('screen')or s.get('manual_movement')or s.get('guard_busy')
        or not s.get('guard_armed')or not s.get('guard_pve_only')or lease.get('job_session')!=c.task
        or model.get('placement_key')!=key or s.get('projection_selection',{}).get('key')!=key):raise RuntimeError('Healthy current guarded original-network owner required')
@@ -83,7 +90,7 @@ def place(c,target,support,face,key,model,out):
     c.checked('select_item',item='minecraft:water_bucket');s=c.status();before=inventory_counts(s)
     if s['hand']['item']!='minecraft:water_bucket'or s['hand']['count']!=1:raise RuntimeError('Singleton full bucket required')
     book.update(pending='one_original_source_use',dispatch_started=True,target=target,bounds=bounds);write_json(out/'progress.json',book)
-    try:r=c.request('bucket_place',pos=target,expected_state=actual,expected_hand='minecraft:water_bucket',support=support,face=face,expected_support_state=anchor['state'],projected_model_water_source=True,placement_key=key,model_water_bounds=bounds)
+    try:r=c.request('bucket_place',pos=target,expected_state=actual,expected_hand='minecraft:water_bucket',support=support,face=face,expected_support_state=anchor['state'],projected_model_water_source=True,placement_key=key,model_water_bounds=bounds,**options)
     finally:book['request_id']=c.last;write_json(out/'progress.json',book)
     write_json(out/'native-reply.json',r)
     if admission_rejected_before_use(r,c.last,c.world):book.update(pending=None,rejected_before_use=True);write_json(out/'progress.json',book);raise SourceAdmissionRejected(r.get('detail','Native source rejected before use'))
