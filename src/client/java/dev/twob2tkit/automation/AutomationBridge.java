@@ -4591,6 +4591,7 @@ public final class AutomationBridge {
         j.addProperty("client_connection_protocol",1);j.addProperty("account_name",c.getUser().getName());
         j.addProperty("explicit_recovery_confirmation_protocol",1);
         j.addProperty("explicit_recovery_connection_protocol",1);
+        j.addProperty("game_interaction_protocol",1);j.add("game_interaction",GameInteractionClock.snapshot());
         j.addProperty("owned_blank_sign_editor_protocol",1);j.add("owned_blank_sign_editor",OwnedBlankSignEditor.snapshot());
         j.addProperty("inventory_click_protocol",InventoryDiagnostics.PROTOCOL);j.addProperty("owned_added_container_menu_protocol",1);j.addProperty("inventory_probe_protocol",InventoryDiagnostics.PROTOCOL);
         j.addProperty("processing_menu_protocol",ProcessingMenus.PROTOCOL);j.addProperty("decoration_attack_protocol",1);

@@ -20,7 +20,7 @@ final class EmptyChestRecovery {
     private static AbstractContainerMenu menu;
     private static boolean seen;
     private static final int[] counts=new int[27];
-    private static long serial,expires;
+    private static long serial,expires,inputSerial;
     private EmptyChestRecovery(){}
     static boolean allowed(boolean owned,boolean exactMenu,boolean serverSeen,boolean serverEmpty,
                            boolean clientEmpty,boolean cursorEmpty,boolean projectionPair,
@@ -33,12 +33,12 @@ final class EmptyChestRecovery {
     static void opening(Minecraft c,String owner,BlockPos pos){
         clear();if(owner.isEmpty()||c.player==null||c.level==null||c.player.containerMenu!=c.player.inventoryMenu)return;
         var state=c.level.getBlockState(pos);if(!state.is(Blocks.CHEST)||state.getValue(ChestBlock.TYPE)!=ChestType.SINGLE)return;
-        connection=c.getConnection();level=c.level;target=pos.immutable();task=owner;expires=System.currentTimeMillis()+30_000;
+        connection=c.getConnection();level=c.level;target=pos.immutable();task=owner;inputSerial=GameInteractionClock.serial();expires=System.currentTimeMillis()+30_000;
     }
     private static boolean current(Minecraft c,Object sender,int id){
         return target!=null&&sender==connection&&c.getConnection()==connection&&c.level==level
             &&c.player!=null&&c.player.containerMenu instanceof ChestMenu cm&&cm.getRowCount()==3&&cm.containerId==id
-            &&System.currentTimeMillis()<expires;
+            &&System.currentTimeMillis()<expires&&inputSerial==GameInteractionClock.serial();
     }
     static void content(Minecraft c,Object sender,int id,List<ItemStack> items){
         if(!current(c,sender,id)||items.size()!=63)return;
@@ -50,7 +50,7 @@ final class EmptyChestRecovery {
     }
     private static boolean serverEmpty(){for(int n:counts)if(n!=0)return false;return true;}
     static JsonObject snapshot(Minecraft c){
-        var out=new JsonObject();boolean exact=target!=null&&c.player!=null&&c.getConnection()==connection&&c.level==level&&c.player.containerMenu==menu&&System.currentTimeMillis()<expires;
+        var out=new JsonObject();boolean exact=target!=null&&c.player!=null&&c.getConnection()==connection&&c.level==level&&c.player.containerMenu==menu&&System.currentTimeMillis()<expires&&inputSerial==GameInteractionClock.serial();
         out.addProperty("server_content_seen",exact&&seen);out.addProperty("server_slots_empty",exact&&seen&&serverEmpty());out.addProperty("content_serial",serial);out.addProperty("menu_id",exact?menu.containerId:-1);
         if(target!=null)out.addProperty("target",target.toShortString());return out;
     }
@@ -83,15 +83,16 @@ final class EmptyChestRecovery {
     private static boolean tool(ItemStack stack){return stack.is(net.minecraft.tags.ItemTags.AXES)&&stack.isDamageableItem()&&stack.getMaxDamage()-stack.getDamageValue()>=32;}
     static void prepare(Minecraft c,JsonObject request,BlockPos pos,boolean owned){
         int slot=request.get("tool_slot").getAsInt();if(slot<0||slot>=9)throw new IllegalArgumentException("Chest repair requires an observed hotbar axe");
-        var current=c.player.containerMenu;boolean exact=target!=null&&target.equals(pos)&&task.equals(request.get("task_session").getAsString())&&c.level==level&&c.getConnection()==connection&&menu==current&&current instanceof ChestMenu cm&&cm.getRowCount()==3&&current.containerId==request.get("expected_menu_id").getAsInt()&&serial==request.get("expected_content_serial").getAsLong();
+        var current=c.player.containerMenu;boolean exact=target!=null&&target.equals(pos)&&task.equals(request.get("task_session").getAsString())&&c.level==level&&c.getConnection()==connection&&menu==current&&current instanceof ChestMenu cm&&cm.getRowCount()==3&&current.containerId==request.get("expected_menu_id").getAsInt()&&serial==request.get("expected_content_serial").getAsLong()&&inputSerial==GameInteractionClock.serial()&&GameInteractionClock.idleMillis(System.currentTimeMillis())>=5_000;
         boolean empty=current instanceof ChestMenu cm&&cm.getRowCount()==3;for(int i=0;i<27&&empty;i++)empty=!current.getSlot(i).hasItem();
         boolean transientEmpty=current.getCarried().isEmpty();for(int i=0;i<5;i++)transientEmpty&=!c.player.inventoryMenu.getSlot(i).hasItem();
         if(!allowed(owned,exact,seen,serverEmpty(),empty,transientEmpty,pair(c,request,pos),tool(c.player.getInventory().getItem(slot)),c.player.getInventory().getFreeSlot()>=0,c.player.getHealth()>=19&&c.player.getFoodData().getFoodLevel()>=18,dryIsolated(c,pos),otherPlayer(c,pos),expires-System.currentTimeMillis()))
             throw new IllegalStateException("Chest repair requires the current server-empty single menu, matching projection pair, dry isolated surroundings, axe and pickup room");
+        request.addProperty("chest_recovery_input_serial",inputSerial);
         clear();c.player.closeContainer();c.player.getInventory().setSelectedSlot(slot);
     }
     static void validateMining(Minecraft c,JsonObject request,BlockPos pos){
-        if(c.player.getInventory().getSelectedSlot()!=request.get("tool_slot").getAsInt()||!tool(c.player.getMainHandItem())||c.player.getInventory().getFreeSlot()<0||c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<18||!pair(c,request,pos)||!dryIsolated(c,pos)||otherPlayer(c,pos))
+        if(GameInteractionClock.serial()!=request.get("chest_recovery_input_serial").getAsLong()||c.player.getInventory().getSelectedSlot()!=request.get("tool_slot").getAsInt()||!tool(c.player.getMainHandItem())||c.player.getInventory().getFreeSlot()<0||c.player.getHealth()<19||c.player.getFoodData().getFoodLevel()<18||!pair(c,request,pos)||!dryIsolated(c,pos)||otherPlayer(c,pos))
             throw new IllegalStateException("Empty single chest repair context changed; mining stopped");
     }
 }

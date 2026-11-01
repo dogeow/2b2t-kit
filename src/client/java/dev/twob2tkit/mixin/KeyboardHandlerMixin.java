@@ -18,6 +18,11 @@ public abstract class KeyboardHandlerMixin {
 
     @Inject(method = "keyPress", at = @At("HEAD"))
     private void kit$notePhysicalKey(long window, int action, KeyEvent event, CallbackInfo info) {
+        dev.twob2tkit.automation.GameInteractionClock.interaction(minecraft,window);
         KitKeys.notePhysicalKey(minecraft,event.key(),action);
+    }
+    @Inject(method = "charTyped", at = @At("HEAD"))
+    private void kit$noteCharacterActivity(long window, net.minecraft.client.input.CharacterEvent event, CallbackInfo info) {
+        dev.twob2tkit.automation.GameInteractionClock.interaction(minecraft,window);
     }
 }

@@ -14,14 +14,14 @@ import java.util.Set;
 /** Opt-in completion of our own new blank sign editor through vanilla onClose, never keyboard input. */
 final class OwnedBlankSignEditor {
     private record Intent(Object level,Object connection,String request,String task,long revision,
-                          BlockPos target,BlockState expected,int beforeCount,long expires) {}
+                          BlockPos target,BlockState expected,int beforeCount,long inputSerial,long expires) {}
     private static Intent intent;
     private static int closed;
     private OwnedBlankSignEditor() {}
     static boolean policy(boolean optedIn,boolean sameOwner,boolean sameWorld,boolean sameBatch,
-                          boolean backgroundIdle,boolean exactTarget,boolean exactPlacement,
+                          boolean inputQuiet,boolean exactTarget,boolean exactPlacement,
                           boolean inventoryDelta,boolean emptyTransient,String[] lines,long remaining) {
-        if(!optedIn||!sameOwner||!sameWorld||!sameBatch||!backgroundIdle||!exactTarget
+        if(!optedIn||!sameOwner||!sameWorld||!sameBatch||!inputQuiet||!exactTarget
                 ||!exactPlacement||!inventoryDelta||!emptyTransient||remaining<=0||remaining>30_000
                 ||lines==null||lines.length!=4)return false;
         for(String line:lines)if(!"".equals(line))return false;
@@ -42,13 +42,13 @@ final class OwnedBlankSignEditor {
                 ||!schematic.getBlockState(pos).is(Blocks.SPRUCE_WALL_SIGN)||count(c)<1)
             throw new IllegalStateException("Blank sign editor recovery requires air and a supplied spruce wall sign goal");
         intent=new Intent(c.level,c.getConnection(),request.get("id").getAsString(),
-            request.get("task_session").getAsString(),revision,pos.immutable(),schematic.getBlockState(pos),count(c),System.currentTimeMillis()+30_000);
+            request.get("task_session").getAsString(),revision,pos.immutable(),schematic.getBlockState(pos),count(c),GameInteractionClock.serial(),System.currentTimeMillis()+30_000);
     }
     static boolean closeIfOwned(Minecraft c,JsonObject active,long revision,boolean currentOwner,boolean currentBatch,Set<BlockPos> currentTargets) {
         Intent i=intent;if(i==null)return false;
         boolean same=active!=null&&active.has("id")&&active.has("task_session")
             &&i.request.equals(active.get("id").getAsString())&&i.task.equals(active.get("task_session").getAsString())&&i.revision==revision;
-        if(!same||c.level!=i.level||c.getConnection()!=i.connection||System.currentTimeMillis()>=i.expires){clear();return false;}
+        if(!same||GameInteractionClock.serial()!=i.inputSerial||c.level!=i.level||c.getConnection()!=i.connection||System.currentTimeMillis()>=i.expires){clear();return false;}
         if(!(c.gui.screen() instanceof AbstractSignEditScreen screen)||c.player==null)return false;
         try {
             var signField=AbstractSignEditScreen.class.getDeclaredField("sign");signField.setAccessible(true);
@@ -65,7 +65,7 @@ final class OwnedBlankSignEditor {
             for(int slot=0;slot<5;slot++)empty&=!c.player.inventoryMenu.getSlot(slot).hasItem();
             if(!policy(active.has("close_owned_blank_sign")&&active.get("close_owned_blank_sign").getAsBoolean(),
                 same&&currentOwner,c.level==i.level&&c.getConnection()==i.connection,currentBatch&&currentTargets.equals(Set.of(i.target)),
-                !c.isWindowActive()&&!dev.twob2tkit.KitKeys.manualMovementDown(c),
+                GameInteractionClock.idleMillis(System.currentTimeMillis())>=5_000&&!dev.twob2tkit.KitKeys.manualMovementDown(c),
                 sign instanceof SignBlockEntity entity&&entity.getBlockPos().equals(i.target),placed,
                 count(c)==i.beforeCount-1,empty,lines,i.expires-System.currentTimeMillis()))return false;
             // Consume before the normal screen callback; no retry if its outcome is uncertain.

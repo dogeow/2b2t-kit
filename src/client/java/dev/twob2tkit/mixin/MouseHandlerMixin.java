@@ -30,9 +30,19 @@ public abstract class MouseHandlerMixin {
 	/** 无界面时把滚轮交给全息预览调距离；成功则取消原版滚动。 */
 	@Inject(method = "onScroll", at = @At("HEAD"), cancellable = true)
 	private void kit$previewDistance(long handle, double xoffset, double yoffset, CallbackInfo info) {
+        if(xoffset!=0||yoffset!=0)dev.twob2tkit.automation.GameInteractionClock.interaction(minecraft,handle);
 		if (this.minecraft.gui.screen() != null || this.minecraft.player == null) return;
 		if (KitClient.handlePreviewScroll(yoffset)) info.cancel();
 	}
+
+    @Inject(method = "onButton", at = @At("HEAD"))
+    private void kit$noteButtonActivity(long handle, net.minecraft.client.input.MouseButtonInfo button, int action, CallbackInfo info) {
+        dev.twob2tkit.automation.GameInteractionClock.interaction(minecraft,handle);
+    }
+    @Inject(method = "onMove", at = @At("HEAD"))
+    private void kit$noteGuiMotion(long handle, double x, double y, CallbackInfo info) {
+        dev.twob2tkit.automation.GameInteractionClock.guiMotion(minecraft,handle);
+    }
 
 	/** 玩家用鼠标转视角之后，重新施加巡航/盾构锁定的朝向。 */
 	@Inject(method = "turnPlayer", at = @At("RETURN"))
