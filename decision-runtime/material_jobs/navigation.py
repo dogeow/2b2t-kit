@@ -535,7 +535,9 @@ def local_park(client):
                                     and not _below_vertical_start(r,state['pos'])for r in rows):
         # A canopy may cover the exact trunk column even though a nearby
         # surveyed ground route and open sky are available. Don't log out there.
-        state=_escape_local_canopy(client)
+        from .air_roof_exit import escape as escape_air_roof
+        airborne_exit=escape_air_roof(client,state)
+        state=airborne_exit if airborne_exit is not None else _escape_local_canopy(client)
         x,z=math.floor(state['pos'][0]),math.floor(state['pos'][2])
         rows=_park_column(client,state)
         top=max((r['pos'][1]+1 for r in rows if r.get('fluid') or not r.get('passable',True)),default=None)
