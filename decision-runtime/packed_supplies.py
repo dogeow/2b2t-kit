@@ -21,6 +21,7 @@ DRY_PAD_SUPPORTS=frozenset({
     'Block{minecraft:grass_block}[snowy=false]',
     'Block{minecraft:grass_block}[snowy=true]',
     'Block{minecraft:cobblestone}',
+    'Block{minecraft:oak_planks}',  # Explicitly pinned dry workshop floor only.
     'Block{minecraft:stone}',
     'Block{minecraft:cobblestone_slab}[type=top,waterlogged=false]',
 })

@@ -14,6 +14,13 @@ class PackedPadSupportTests(unittest.TestCase):
         for state in [TOP,'Block{minecraft:stone}','Block{minecraft:cobblestone}',None]:
             self.assertFalse(pad_support_allowed(state))
 
+    def test_wooden_workshop_floor_requires_an_exact_explicit_pin(self):
+        oak='Block{minecraft:oak_planks}'
+        self.assertFalse(pad_support_allowed(oak))
+        self.assertTrue(pad_support_allowed(oak,oak))
+        for actual in [None,GRASS,'Block{minecraft:spruce_planks}','Block{minecraft:water}[level=0]']:
+            self.assertFalse(pad_support_allowed(actual,oak))
+
     def test_explicit_support_must_match_exactly(self):
         self.assertTrue(pad_support_allowed(TOP,TOP))
         self.assertTrue(pad_support_allowed('Block{minecraft:cobblestone}','Block{minecraft:cobblestone}'))
