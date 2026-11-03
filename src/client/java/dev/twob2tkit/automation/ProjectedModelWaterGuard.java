@@ -18,7 +18,7 @@ import net.minecraft.world.phys.AABB;
 /** Source repair only inside a loaded original planar network; no arbitrary water placement. */
 final class ProjectedModelWaterGuard {
  private static final dev.twob2tkit.runtime.engine.BorerMiningConfirmation PREDICTIONS=new dev.twob2tkit.runtime.engine.BorerMiningConfirmation();
- final ProjectedWaterFlowPolicy.Bounds bounds;private final BlockPos target,support;private final String placement;
+ final ProjectedWaterFlowPolicy.Bounds bounds;private final BlockPos target,support;private final String placement;private final boolean tiered;
  static boolean requested(JsonObject r){
   if(!r.has("projected_model_water_source"))return false;var v=r.get("projected_model_water_source");
   if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isBoolean())throw new IllegalArgumentException("Model source flag must be boolean");return v.getAsBoolean();
@@ -40,7 +40,9 @@ final class ProjectedModelWaterGuard {
   var lo=ProjectedSourceColumnGuard.point(box.get("min"));var hi=ProjectedSourceColumnGuard.point(box.get("max"));
   bounds=new ProjectedWaterFlowPolicy.Bounds(new ProjectedWaterFlowPolicy.Cell(lo.getX(),lo.getY(),lo.getZ()),new ProjectedWaterFlowPolicy.Cell(hi.getX(),hi.getY(),hi.getZ()));
   long volume=(long)(hi.getX()-lo.getX()+1)*(hi.getY()-lo.getY()+1)*(hi.getZ()-lo.getZ()+1);
-  if(!bounds.valid()||volume>4096||lo.getY()!=target.getY()-1||hi.getY()!=target.getY()+1||!bounds.contains(new ProjectedWaterFlowPolicy.Cell(target.getX(),target.getY(),target.getZ())))throw new IllegalArgumentException("Bounded planar source region required");
+  tiered=option(r,"model_water_tiered_containment");
+  if(tiered?!TieredModelWaterPlan.bounds(bounds,target):!bounds.valid()||volume>4096||lo.getY()!=target.getY()-1||hi.getY()!=target.getY()+1)throw new IllegalArgumentException("Bounded original source region required");
+  if(!bounds.contains(new ProjectedWaterFlowPolicy.Cell(target.getX(),target.getY(),target.getZ())))throw new IllegalArgumentException("Source outside water bounds");
   this.target=target.immutable();support=ProjectedSourceColumnGuard.point(r.get("support"));placement=ProjectionLoadPolicy.text(r,"placement_key",8192);
  }
  static boolean loaded(Minecraft c,BlockPos p){return !c.level.isOutsideBuildHeight(p)&&c.level.getWorldBorder().isWithinBounds(p)&&LoadedServerChunkEvidence.isServerChunk(c.level,c.level.getChunkSource().getChunk(p.getX()>>4,p.getZ()>>4,ChunkStatus.FULL,false));}
@@ -57,7 +59,7 @@ final class ProjectedModelWaterGuard {
    if((before||!p.equals(target))&&PREDICTIONS.pending(c.level,p))throw new IllegalStateException("Unsettled prediction in original water region");
    if(model.getBlockState(p).is(Blocks.WATER)&&(!selected.contains(p)||!LitematicaAccess.inVisibleLayer(p)))throw new IllegalStateException("Original fluid path outside locked visible selection");
   }
-  String why=ModelWaterPlan.rejection(c.level,model,bounds,target,p->!c.level.getEntities(c.player,new AABB(p),e->e.isAlive()&&!(e instanceof ItemEntity)&&!(e instanceof ExperienceOrb)).isEmpty());
+  String why=tiered?TieredModelWaterPlan.rejection(c.level,model,bounds,target,p->!c.level.getEntities(c.player,new AABB(p),e->e.isAlive()&&!(e instanceof ItemEntity)&&!(e instanceof ExperienceOrb)).isEmpty()):ModelWaterPlan.rejection(c.level,model,bounds,target,p->!c.level.getEntities(c.player,new AABB(p),e->e.isAlive()&&!(e instanceof ItemEntity)&&!(e instanceof ExperienceOrb)).isEmpty());
   if(why!=null)throw new IllegalStateException(why);
  }
  static boolean shieldedWorkspace(Minecraft c,JsonObject r){

@@ -107,7 +107,7 @@ final class BucketWaterAction {
         if(sourceReturn&&!ProjectedBubblePolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent,collect,waterlog,bubble))throw new IllegalArgumentException("Source return is an exclusive place-only operation");
         projectedReturn=sourceReturn?new ProjectedSourceReturnGuard(c,request,target):null;
         boolean modelWater=ProjectedModelWaterGuard.requested(request);
-        if(!modelWater&&request.has("model_water_bounds"))throw new IllegalArgumentException("Model bounds require explicit source mode");
+        if(!modelWater&&(request.has("model_water_bounds")||request.has("model_water_tiered_containment")))throw new IllegalArgumentException("Model bounds require explicit source mode");
         if(modelWater&&!ProjectedBubblePolicy.exclusive(mode==BucketWaterPolicy.Mode.PLACE,column,drain,channel,sources,supply,bent,collect,waterlog,bubble,sourceReturn))throw new IllegalArgumentException("Model source mode is exclusive place-only");
         modelMinorThermal=ProjectedModelWaterGuard.option(request,"model_water_minor_thermal");
         ProjectedModelWaterGuard.option(request,"model_water_remote_calm_creeper");
