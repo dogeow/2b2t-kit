@@ -62,7 +62,9 @@ class LateOwnedMenuTest(unittest.TestCase):
   for key,value in [('id','other'),('job_session','other'),('kind','parking'),('world_session','other')]:
    c=self.ready();s=late_frame();s['supervision_lease'][key]=value;self.assertFalse(late_allowed(c,s))
  def test_late_first_menu_has_bounded_time_window(self):
-  c=self.ready();s=late_frame();s['time']=11000;self.assertFalse(late_allowed(c,s))
+  c=self.ready();s=late_frame();s['time']=25000;self.assertFalse(late_allowed(c,s))
+ def test_server_menu_delayed_nine_seconds_still_matches_the_existing_container_wait(self):
+  c=self.ready();s=late_frame();s['time']=11400;self.assertTrue(late_allowed(c,s))
  def test_one_bound_menu_persists_through_read_only_poll_and_inventory_clicks(self):
   c=self.ready();s=late_frame();self.assertTrue(late_allowed(c,s));acknowledge(c,{'op':'snapshot','id':'read3'},dict(phase=None),s);s['time']=50000;self.assertTrue(late_allowed(c,s));s['menu']['id']=3;self.assertFalse(late_allowed(c,s))
  def test_close_removes_binding_and_prevents_reused_menu_id(self):

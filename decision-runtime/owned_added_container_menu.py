@@ -76,7 +76,7 @@ def late_allowed(client,state):
     if bound is not None:return bound==menu['id']
     age=state.get('time',-1)-t['ack_time']
     native=state.get('last_block_interaction')or{}
-    if not 0<=age<=8000 or native.get('request_id')!=t['request_id']or native.get('pos')!=t['pos']:return False
+    if not 0<=age<=20000 or native.get('request_id')!=t['request_id']or native.get('pos')!=t['pos']:return False
     client._owned_added_bound=menu['id']
     out=getattr(client,'out',None)
     if out is not None:
