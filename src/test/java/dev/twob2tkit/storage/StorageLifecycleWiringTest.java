@@ -22,6 +22,13 @@ class StorageLifecycleWiringTest {
         }
         assertTrue(calls("storage/StorageLifecycle","tick").contains("refresh"));
     }
+    @Test void cachedChunksCannotSupplyContainerAbsenceEvidence()throws Exception{
+        var worldCalls=calls("storage/StorageLifecycle","world");
+        assertTrue(worldCalls.containsAll(List.of("getChunk","isServerChunk","getBlockState")));
+        assertFalse(worldCalls.contains("hasChunkAt"),"Client cache presence is weaker than live server evidence");
+        assertTrue(worldCalls.indexOf("isServerChunk")<worldCalls.indexOf("getBlockState"),
+            "Reject cached or unloaded chunks before interpreting AIR as a missing container");
+    }
     @Test void supplyPermissionCandidateAndExplicitCollectionAllCheckVerifiedScope()throws Exception{
         for(String name:List.of("sourceEnabled","sources","approvedSource"))assertTrue(calls("automation/BuildSupplyTask",name).contains("usable"),name);
         assertTrue(calls("automation/BuildSupplyTask","toggleSource").contains("setSource"));

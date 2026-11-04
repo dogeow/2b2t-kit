@@ -43,8 +43,14 @@ public final class StorageLifecycle {
             KitConfig.normalizeDimension(c.level.dimension().identifier().toString()));
     }
     private static World world(Level level){return pos->{
-        if(!level.hasChunkAt(pos))return new Sight(false,false,"",Set.of());
-        String id=BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock()).toString();
+        // Bobby/cache presence is not evidence that the server currently supplies
+        // this chunk. Never turn a cached AIR cell into a missing-container claim.
+        var access=level.getChunkSource().getChunk(pos.getX()>>4,pos.getZ()>>4,
+            net.minecraft.world.level.chunk.status.ChunkStatus.FULL,false);
+        if(!(access instanceof net.minecraft.world.level.chunk.LevelChunk chunk)
+                ||!dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence.isServerChunk(level,chunk))
+            return new Sight(false,false,"",Set.of());
+        String id=BuiltInRegistries.BLOCK.getKey(chunk.getBlockState(pos).getBlock()).toString();
         boolean storage=StorageLabels.isStorageBlock(level,pos);
         return new Sight(true,storage,id,storage?StorageLabels.cluster(level,pos):Set.of());
     };}
