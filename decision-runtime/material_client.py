@@ -170,6 +170,9 @@ class Client:
     if s.get('screen')=='MerchantScreen':
      merchant=menu.get('merchant')or{}
      processing_owned=processing_owned and merchant.get('protocol')==1 and merchant.get('owned')is True and merchant.get('owner_task')==getattr(self,'task',None) and bool(merchant.get('villager_uuid'))
+    if not processing_owned:
+     from owned_added_container_menu import allowed as owned_added_menu_allowed,late_allowed as late_added_menu_allowed
+     processing_owned=owned_added_menu_allowed(s,self.world,getattr(self,'task',None),self.rev)or late_added_menu_allowed(self,s)
     if not processing_owned:raise Handoff('User opened a different interface')
    return s
  def request(self,op,**params):
@@ -203,6 +206,8 @@ class Client:
   rid='materials-'+uuid.uuid4().hex[:12]
   req={'id':rid,'op':op,'server':s['server'],'dimension':s['dimension'],'site':self.anchor,
        'world_session':self.world,'expected_revision':self.rev,'expires_at':int(time.time()*1000)+5000,**params}
+  from owned_added_container_menu import opening_ticket,acknowledge
+  added_opening=opening_ticket(s,req,getattr(self,'task',None))
   evidence_before=s;request_started=time.monotonic()
   self.last_owned_idle_ground_read=None  # A new dispatch cannot reuse an older read baseline.
   if op not in ('snapshot','scan'):self.last_owned_ground_walk=None
@@ -220,6 +225,8 @@ class Client:
     self.native_inflight=inflight;self.last=rid
     tmp.replace(path)
     published=True
+    from owned_added_container_menu import published as publish_added_opening
+    publish_added_opening(self,added_opening)
    except BaseException:
     self.last=previous_last;raise
    end=time.monotonic()+params.get('seconds',20)+15
@@ -299,6 +306,7 @@ class Client:
        'before_damage':{key:evidence_before.get(key) for key in ('recent_hurt_at','recent_attacker')},
        'before_safety_hold':evidence_before.get('safety_hold'),
        'terminal':{key:current.get(key) for key in fields}}))
+     acknowledge(self,req,result,current)
      idle_proof=idle_read_proof(self,op,sanitize(params),evidence_before,result,current)
      if idle_proof is not None:
       self.last_owned_idle_ground_read=idle_proof
