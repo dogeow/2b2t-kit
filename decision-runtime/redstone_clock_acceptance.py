@@ -124,3 +124,48 @@ def analyze_clock_trace(frames, *, layers=None, minimum_dry_seconds=20,
                                    'short_dry_intervals': bad_dry}
     result['passed'] = all(v['passed'] for v in result['layers'].values())
     return result
+
+
+def analyze_alternating_trace(frames, *, layers, minimum_dry_seconds=20,
+                              maximum_wet_seconds=40,
+                              maximum_transition_seconds=3,
+                              minimum_phase_swaps=4):
+    """Require adjacent physical layers to stay opposite between bounded waves.
+
+    ``layers`` is bottom-to-top order, not mapping iteration order. Transition
+    samples earn no dry credit and must lie between two opposite stable phases.
+    Proof remains limited to source cells; whole floors and XP need observation.
+    """
+    order = tuple(layers)
+    if (len(order) < 2 or type(minimum_phase_swaps) is not int
+            or minimum_phase_swaps < 2
+            or isinstance(maximum_transition_seconds, bool)
+            or not isinstance(maximum_transition_seconds, (int, float))
+            or not math.isfinite(maximum_transition_seconds)
+            or maximum_transition_seconds <= 0):
+        raise ValueError('Physical layer order and bounded phase requirements are required')
+    result = analyze_clock_trace(
+        frames, layers=order, minimum_dry_seconds=minimum_dry_seconds,
+        minimum_wet_seconds=minimum_dry_seconds,
+        maximum_wet_seconds=maximum_wet_seconds,
+        minimum_wet_intervals=1, minimum_dry_intervals=1)
+    stable = []
+    for i, frame in enumerate(frames):
+        phases = [_phase(frame['sources'][layer]) for layer in order]
+        if 'unknown' not in phases and all(a != b for a, b in zip(phases, phases[1:])):
+            stable.append((i, phases[0]))
+    errors = []
+    swaps = 0
+    if not stable or stable[0][0] != 0 or stable[-1][0] != len(frames)-1:
+        errors.append('Trace must begin and end in a confirmed alternating phase')
+    for (a, previous), (b, current) in zip(stable, stable[1:]):
+        if previous != current:
+            swaps += 1
+        if b > a+1 and (previous == current or
+                        frames[b]['time']-frames[a]['time'] > maximum_transition_seconds*1000):
+            errors.append({'after': frames[a]['time'], 'before': frames[b]['time'],
+                           'reason': 'Unbounded or non-swapping synchronous source interval'})
+    result.update(adjacent_layers=list(order), phase_swaps=swaps,
+                  alternating_stable_samples=len(stable), alternating_errors=errors)
+    result['passed'] = result['passed'] and not errors and swaps >= minimum_phase_swaps
+    return result
