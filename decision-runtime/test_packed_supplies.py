@@ -153,7 +153,8 @@ class EquipmentWithdrawalTest(unittest.TestCase):
  def run_withdrawal(self,c,target):
   from packed_supplies import take_box
   def block(client,pos):
-   if pos==[self.PAD[0],self.PAD[1]-1,self.PAD[2]]:return 'Block{minecraft:grass_block}[snowy=false]'
+   if getattr(client,'floor_missing',False) and pos==[self.PAD[0]+1,self.PAD[1]-1,self.PAD[2]+1]:return None
+   if pos[1]==self.PAD[1]-1 and abs(pos[0]-self.PAD[0])<=1 and abs(pos[2]-self.PAD[2])<=1:return 'Block{minecraft:grass_block}[snowy=false]'
    if pos==self.PAD and client.placed:return 'Block{minecraft:pink_shulker_box}[facing=up]'
    return None
   def opening(client,pos,kind):client.kind=kind;client.menu_id+=1;return client.status()

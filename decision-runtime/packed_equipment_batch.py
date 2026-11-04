@@ -11,7 +11,8 @@ from anvil_enchant_preview import stack_key,enchantments,bag,_wait
 from material_plan import inventory_counts
 from material_jobs.protocol import server_key
 from packed_supplies import (contents,open_box,block,carried_box,clear_player_from_pad,
-                              recover_and_return,workspace_requirement,PackedWorkspaceRequired,wait)
+                              recover_and_return,workspace_requirement,PackedWorkspaceRequired,wait,
+                              observe_drop_floor,require_drop_floor_unchanged)
 from projection_wood import use_with_margin
 from material_cleanup import register as register_cleanup
 from kit_runtime.journal import write_json
@@ -46,12 +47,14 @@ def take(client,profile_path,slot,requests):
     floor=block(client,ground)
     if not floor or 'minecraft:grass_block'not in floor or block(client,pad)or block(client,[pad[0],pad[1]+1,pad[2]]):
         raise RuntimeError('Registered temporary grass pad is not empty')
+    drop_floor=observe_drop_floor(client,pad,block)
     state=open_box(client,ender,'ChestMenu');source=deepcopy(state['menu']['slots'][slot]);available=stacks(source.get('contains',[]));wanted=stacks(requests)
     if source['count']!=1 or not source['item'].endswith('shulker_box')or any(available[k]<n for k,n in wanted.items()):
         client.checked('close_menu');raise ValueError('Explicit source lacks the complete exact batch; no box taken')
     initial_counts=contents(source['contains']);before=bag(state)
     record={'world_session':client.world,'task_session':client.task,'slot':slot,'item':source['item'],
             'initial_counts':initial_counts,'temporary_position':pad,'stage':'prepared','exact_requests':deepcopy(requests),
+            'drop_catch_floor':drop_floor,
             'source':{'position':ender,'slot':slot,'item':source['item'],'count':1,'counts':initial_counts,
                       'visible_stack':source},'batch_completed':0,'pending':None,
             'ownership_preflight':{'world_session':client.world,'cursor_clean':True,'inventory':deepcopy(initial['inventory'])}}
@@ -67,6 +70,7 @@ def take(client,profile_path,slot,requests):
     register_cleanup(client,str(journal),lambda:recover_and_return(client,record,ender,journal))
     client.checked('close_menu');client.checked('select_item',item=source['item'],slot=carried['slot']);clear_player_from_pad(client,pad)
     def empty_pad():
+        require_drop_floor_unchanged(client,pad,drop_floor,block)
         if block(client,pad)is not None or block(client,ground)!=floor:raise RuntimeError('Batch placement pad changed')
     use_with_margin(client,ground,floor,source['item'],('up',),empty_pad)
     placed=block(client,pad)
@@ -98,6 +102,7 @@ def take(client,profile_path,slot,requests):
     record['recovery_tool_before']=recovery_tool
     observed=block(client,pad);record['recovery_preflight']={'expected_state':placed,'observed_state':observed};save()
     if observed!=placed:raise RuntimeError('Original batch box changed before recovery')
+    require_drop_floor_unchanged(client,pad,drop_floor,block)
     save('breaking')
     try:client.checked('recover_shulker',pos=pad,expected_state=placed,face='up',seconds=15)
     except RuntimeError:

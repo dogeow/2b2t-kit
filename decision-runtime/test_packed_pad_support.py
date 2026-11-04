@@ -49,9 +49,9 @@ class PackedPadSupportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             client=Mock();client.out=Path(folder)
             client.status.return_value={'inventory':[{'slot':i,'item':'minecraft:air','count':0}for i in range(36)]}
-            with patch('packed_supplies.block',side_effect=[TOP,None,None])as read,patch('packed_supplies.open_box',side_effect=RuntimeError('source observation sentinel'))as opening:
+            with patch('packed_supplies.block',side_effect=lambda c,pos:TOP if pos[1]==0 else None)as read,patch('packed_supplies.open_box',side_effect=RuntimeError('source observation sentinel'))as opening:
                 with self.assertRaisesRegex(RuntimeError,'source observation sentinel'):
                     take_box(client,[0,1,0],[1,1,0],4,{},expected_pad_support=TOP)
-                self.assertEqual(3,read.call_count)
+                self.assertEqual(12,read.call_count)
                 opening.assert_called_once_with(client,[0,1,0],'ChestMenu')
             client.checked.assert_not_called()

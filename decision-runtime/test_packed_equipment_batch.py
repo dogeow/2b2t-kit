@@ -36,7 +36,7 @@ class BatchTests(unittest.TestCase):
         requests=[book(),book('minecraft:thorns',3),book('minecraft:unbreaking',3),book('minecraft:unbreaking',3)]
         if missing:requests.append(book('minecraft:efficiency',5))
         def block(client,pos):
-            if pos==[fixture.PAD[0],fixture.PAD[1]-1,fixture.PAD[2]]:return 'Block{minecraft:grass_block}[snowy=false]'
+            if pos[1]==fixture.PAD[1]-1 and abs(pos[0]-fixture.PAD[0])<=1 and abs(pos[2]-fixture.PAD[2])<=1:return 'Block{minecraft:grass_block}[snowy=false]'
             return 'Block{minecraft:pink_shulker_box}[facing=up]'if pos==fixture.PAD and client.placed else None
         def opening(client,pos,kind):client.kind=kind;client.menu_id+=1;return client.status()
         def placing(client,*args):

@@ -98,6 +98,31 @@ def wait(client,predicate):
 def block(client,pos):
     rows=client.request('scan',min=pos,max=pos)['blocks'];return rows[0]['state'] if rows else None
 
+def observe_drop_floor(client,pad,reader=None):
+    """Require a flat dry 3x3 catch surface, never just the box's support cell.
+
+    Reads only. No terrain is built or removed by this admission check.
+    All admitted full cubes and TOP slabs have the same top at pad[1].
+    """
+    if (not isinstance(pad,list)or len(pad)!=3
+            or any(type(n)is not int for n in pad)):
+        raise ValueError('Exact integer portable-box pad required')
+    read=block if reader is None else reader
+    observed=[]
+    for x in range(pad[0]-1,pad[0]+2):
+        for z in range(pad[2]-1,pad[2]+2):
+            pos=[x,pad[1]-1,z];state=read(client,pos)
+            if state not in DRY_PAD_SUPPORTS:
+                raise RuntimeError(f'Portable-box drop catch floor is incomplete or unsafe at {pos}; no box may be withdrawn or broken')
+            observed.append({'pos':pos,'state':state})
+    return observed
+
+
+def require_drop_floor_unchanged(client,pad,expected,reader=None):
+    if observe_drop_floor(client,pad,reader)!=expected:
+        raise RuntimeError('Portable-box drop catch floor changed; leave the box intact')
+
+
 def player_intersects_pad(player_pos,pad):
     return (abs(player_pos[0]-(pad[0]+.5))<.81
             and abs(player_pos[2]-(pad[2]+.5))<.81
@@ -322,12 +347,13 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
     ground=[pad[0],pad[1]-1,pad[2]];ground_state=block(client,ground)
     if block(client,pad) or block(client,[pad[0],pad[1]+1,pad[2]]) or not pad_support_allowed(ground_state,expected_pad_support):
         raise RuntimeError('Temporary shulker pad is not empty or its verified dry support changed')
+    drop_floor=observe_drop_floor(client,pad)
     s=open_box(client,ender,'ChestMenu');source=s['menu']['slots'][slot];item=source['item'];initial=contents(source.get('contains',[]))
     if source['count']!=1 or not item.endswith('shulker_box') or not initial:raise RuntimeError('Observed source box changed')
     wanted={i:n for i,n in targets.items() if n>inventory_counts(s)[i] and initial.get(i,0)>0}
     if not wanted:client.checked('close_menu');return None
     record={'slot':slot,'item':item,'initial_counts':initial,'requested':wanted,'temporary_position':pad,'stage':'prepared',
-            'pad_support_state':ground_state,'explicit_pad_support':expected_pad_support,
+            'pad_support_state':ground_state,'explicit_pad_support':expected_pad_support,'drop_catch_floor':drop_floor,
             'world_session':state.get('world_session'),
             'ownership_preflight':{'world_session':state.get('world_session'),'cursor_clean':_clean_cursor(state),
                 'inventory':[{key:v.get(key) for key in ('slot','item','count')} for v in state['inventory']]},
@@ -341,6 +367,7 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
     save('carried');register_cleanup(client,str(journal),lambda:recover_and_return(client,record,ender,journal));client.checked('close_menu');client.checked('select_item',item=item)
     clear_player_from_pad(client,pad)
     def pad_empty():
+        require_drop_floor_unchanged(client,pad,drop_floor)
         if block(client,pad) is not None or block(client,ground)!=ground_state:raise RuntimeError('Temporary pad changed before box placement')
     use_with_margin(client,ground,ground_state,item,('up',),pad_empty)
     placed=block(client,pad)
@@ -400,6 +427,7 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
     save('withdrawn')
     if observed!=placed:
         raise RuntimeError('Portable-box pad changed before recovery; preserve the journal without mining or pickup')
+    require_drop_floor_unchanged(client,pad,drop_floor)
     save('breaking')
     previous=getattr(client,'last_terminal_evidence',{}).get('request_id')
     try:client.checked('recover_shulker',pos=pad,expected_state=placed,face='up',seconds=15)
