@@ -1,0 +1,9 @@
+# Breathing before explicit material release
+
+A terminal navigation reply can have an updated position while its `under_water` flag still reflects the preceding tick. The common `MaterialClient.request(material_job_pause, release=True)` path now checks the actual nearby water cells before releasing the current owned material lease. A stale false flag cannot by itself authorize release in water.
+
+For an owned eligible wet position, a coherent complete body-column scan must prove a short unobstructed vertical exit. It reserves 1.5 blocks above the water surface and verifies full headroom. Native air return is armed when current submersion is known; the single normal ascent is then followed by two fresh snapshots showing dry position and full oxygen. A failed ascent is not replayed. Low reserve, a blocked/unknown column or incomplete confirmation prevents explicit release and leaves native protection authoritative.
+
+Human takeover, a changed world, a foreign lease and unresolved native requests never authorize a new recovery input. The hook does not unlock native safety holds, reconnect, resume construction, or prove general autonomous diving safe. It does not replace dedicated water-route planning or every host/supervisor shutdown path. Tests and installation are not real-server acceptance; no player assets or live dives are used for verification.
+
+Run `test_release_breathing.py`, `test_material_client.py`, `test_material_client_revision.py`, `test_construction_breathing.py`, `test_native_outcome_fence.py`, `test_material_guard_admission.py`, and `test_owned_added_container_menu.py`: 102 focused tests including the stale-flag incident, actual-water dry release, overhead slabs, full-air confirmation, human takeover and no replay after uncertain ascent. Python worker updates apply to subsequent workers without restarting Minecraft.

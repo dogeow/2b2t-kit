@@ -745,6 +745,9 @@ class MaterialClient(Client):
     if len(samples)==3:return True
    time.sleep(.25)
  def request(self,op,**params):
+  if op=='material_job_pause' and params.get('release') is True:
+   from material_jobs.release_breathing import before_release
+   before_release(self)
   if getattr(self,'recovery_only',False) and not recovery_action_allowed(self.status(),op,params):
    raise RuntimeError('Recovery-only session permits food, observation and a vertical safety ascent; ordinary work is blocked')
   previous=getattr(self,'last',None);returned=False;deadline=None;rejected=None;rejections=0
