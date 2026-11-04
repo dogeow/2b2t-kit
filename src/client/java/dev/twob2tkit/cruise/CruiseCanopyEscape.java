@@ -4,10 +4,19 @@ import java.util.*;
 import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 
-/** Short horizontal escape to a verified clear ascent column. Never digs blocks. */
+/** Short horizontal escape to a verified clear vertical column. Never digs blocks. */
 public final class CruiseCanopyEscape {
     public record Offset(int x,int z){}
     private CruiseCanopyEscape(){}
+    public static boolean needsEscape(double currentY,double targetY,boolean leafCeiling,boolean blockedFloor){
+        if(!Double.isFinite(currentY)||!Double.isFinite(targetY))return false;
+        return targetY>currentY+.6?leafCeiling:targetY<currentY-.6&&blockedFloor;
+    }
+    /** Leave the current platform before descending; do not require an ocean below to be AIR. */
+    public static double columnProbeY(double currentY,double targetY){
+        if(!Double.isFinite(currentY)||!Double.isFinite(targetY))throw new IllegalArgumentException("Finite cruise heights required");
+        return targetY<currentY?Math.max(targetY,currentY-2):targetY;
+    }
     /** Meteor Velocity may multiply speed by 15 while sprinting; stay below the remaining gap. */
     public static double speed(double gap){
         if(!Double.isFinite(gap)||gap<0)throw new IllegalArgumentException("Finite canopy waypoint gap required");

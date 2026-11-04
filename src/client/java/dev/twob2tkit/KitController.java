@@ -508,11 +508,18 @@ public final class KitController {
             clearCanopyRoute();return false;
         }
         if(canopyRoute.isEmpty()){
-            if(ticks<canopyRetryAfter||desiredY()<=p.getY()+.6||!leafCeiling(c,p))return false;
-            var body=p.getBoundingBox();double x=p.getX(),z=p.getZ(),y=desiredY();
+            if(ticks<canopyRetryAfter)return false;
+            double targetY=desiredY();
+            boolean descending=targetY<p.getY()-.6;
+            boolean floorBlocked=descending&&!c.level.noCollision(p,
+                CruiseCollisionPath.vertical(p.getBoundingBox(),-.25));
+            if(!CruiseCanopyEscape.needsEscape(p.getY(),targetY,
+                    !descending&&leafCeiling(c,p),floorBlocked))return false;
+            var body=p.getBoundingBox();double x=p.getX(),z=p.getZ(),y=targetY;
+            double probeY=CruiseCanopyEscape.columnProbeY(p.getY(),y);
             var offsets=CruiseCanopyEscape.find(6,(a,b)->clearCruiseSweep(c,p,
                 CruiseCollisionPath.horizontal(body.move(a.x(),0,a.z()),b.x()-a.x(),b.z()-a.z())),
-                a->clearCruiseSweep(c,p,CruiseCollisionPath.vertical(body.move(a.x(),0,a.z()),y-p.getY())));
+                a->clearCruiseSweep(c,p,CruiseCollisionPath.vertical(body.move(a.x(),0,a.z()),probeY-p.getY())));
             canopyRetryAfter=ticks+60;
             if(offsets.isEmpty())return false;
             canopyRoute=offsets.stream().map(a->new Vec3(x+a.x(),p.getY(),z+a.z())).toList();
@@ -556,7 +563,7 @@ public final class KitController {
         }
         canopyFlight.speed(speed);
         c.options.keyUp.setDown(aligned);
-        if(ticks%10==0)CruiseScreenHud.show("巡航 · 离开树冠 · "+(canopyIndex+1)+"/"+canopyRoute.size());
+        if(ticks%10==0)CruiseScreenHud.show("巡航 · "+(canopyRiseY<p.getY()?"离开平台":"离开树冠")+" · "+(canopyIndex+1)+"/"+canopyRoute.size());
         return true;
     }
 

@@ -28,6 +28,39 @@ class CruiseCanopyEscapeTest {
             assertEquals(1,Math.abs(prev.x()-next.x())+Math.abs(prev.z()-next.z()));
         }
     }
+    @Test void leavesGlassPlatformBeforeTryingToDescendToTheSavedCruiseHeight(){
+        var body=new AABB(.2,70,.2,.8,71.8,.8);
+        var platform=new AABB(-1,68,-1,2,70,2);
+        assertTrue(CruiseCanopyEscape.needsEscape(70,64.2,false,true));
+        double probe=CruiseCanopyEscape.columnProbeY(70,64.2);
+        assertEquals(68,probe);
+        var path=CruiseCanopyEscape.find(6,(a,b)->!dev.twob2tkit.cruise.CruiseCollisionPath.horizontal(
+            body.move(a.x(),0,a.z()),b.x()-a.x(),b.z()-a.z()).intersects(platform),
+            a->!dev.twob2tkit.cruise.CruiseCollisionPath.vertical(body.move(a.x(),0,a.z()),probe-70).intersects(platform));
+        assertFalse(path.isEmpty());
+        var end=path.getLast();
+        assertFalse(dev.twob2tkit.cruise.CruiseCollisionPath.vertical(body.move(end.x(),0,end.z()),probe-70).intersects(platform));
+        assertFalse(CruiseCanopyEscape.needsEscape(70,64.2,false,false));
+    }
+    @Test void descentDoesNotChangeLeafAscentOrInventAnEscapeForOrdinaryAltitudeAdjustments(){
+        assertTrue(CruiseCanopyEscape.needsEscape(70,90,true,false));
+        assertFalse(CruiseCanopyEscape.needsEscape(70,90,false,true));
+        assertFalse(CruiseCanopyEscape.needsEscape(70,70.2,true,true));
+        assertFalse(CruiseCanopyEscape.needsEscape(Double.NaN,64,false,true));
+        assertEquals(90,CruiseCanopyEscape.columnProbeY(70,90));
+        assertEquals(69,CruiseCanopyEscape.columnProbeY(70,69));
+    }
+    @Test void controllerUsesDescentPolicyWithoutChangingOwnedAirOnlyWaypoints()throws Exception{
+        var node=new org.objectweb.asm.tree.ClassNode();
+        try(var in=getClass().getResourceAsStream("/dev/twob2tkit/KitController.class")){
+            assertNotNull(in);new org.objectweb.asm.ClassReader(in).accept(node,0);
+        }
+        var method=node.methods.stream().filter(m->m.name.equals("tickCanopyEscape")).findFirst().orElseThrow();
+        var calls=new java.util.ArrayList<String>();
+        for(var instruction:method.instructions)if(instruction instanceof org.objectweb.asm.tree.MethodInsnNode call)calls.add(call.name);
+        assertTrue(calls.containsAll(List.of("managedAirOnlyNavigation","needsEscape","columnProbeY")));
+        assertTrue(calls.indexOf("managedAirOnlyNavigation")<calls.indexOf("needsEscape"));
+    }
     @Test void aWallUnknownCellsOrAnUnreachableColumnCannotBecomeAnExit(){
         assertTrue(CruiseCanopyEscape.find(6,(a,b)->false,a->a.x()!=0).isEmpty());
         assertTrue(CruiseCanopyEscape.find(6,(a,b)->true,a->Math.abs(a.x())>6).isEmpty());
