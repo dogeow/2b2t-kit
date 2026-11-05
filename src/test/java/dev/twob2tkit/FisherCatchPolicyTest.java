@@ -7,6 +7,35 @@ import static org.junit.jupiter.api.Assertions.*;
 
 final class FisherCatchPolicyTest {
     @Test
+    void openingInventoryCancelsPendingReelWithoutForgettingAnAcceptedCatch() {
+        var policy = new FisherCatchPolicy();
+        UUID hook = UUID.randomUUID();
+        assertFalse(policy.readyToReel(hook, true, 0, 1));
+        assertFalse(policy.readyToReel(hook, true, 0, 1));
+        policy.clearBite();
+        assertFalse(policy.readyToReel(hook, true, 0, 1));
+        assertFalse(policy.readyToReel(hook, false, 0, 1));
+        assertFalse(policy.readyToReel(hook, true, 0, 1));
+        assertFalse(policy.readyToReel(hook, true, 0, 1));
+        assertTrue(policy.readyToReel(hook, true, 0, 1));
+        assertTrue(policy.recordUse(hook, 0, true, true, false));
+        policy.clearBite();
+        assertFalse(policy.readyToReel(hook, true, 0, 1));
+        assertEquals(1, policy.catches());
+    }
+
+    @Test
+    void replacementHookCannotInheritTheOldHooksReelDelay() {
+        var policy = new FisherCatchPolicy();
+        UUID first = UUID.randomUUID(), second = UUID.randomUUID();
+        assertFalse(policy.readyToReel(first, true, 0, 1));
+        assertFalse(policy.readyToReel(first, true, 0, 1));
+        assertFalse(policy.readyToReel(second, true, 0, 1));
+        assertFalse(policy.readyToReel(second, true, 0, 1));
+        assertTrue(policy.readyToReel(second, true, 0, 1));
+    }
+
+    @Test
     void oneFishCannotBecomeThreeWhileOldHookWaitsForServerRemoval() {
         var policy = new FisherCatchPolicy();
         UUID hook = UUID.randomUUID();

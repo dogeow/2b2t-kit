@@ -6,10 +6,36 @@ import java.util.UUID;
 public final class FisherCatchPolicy {
     private UUID retrievedHook;
     private int catches;
+    private UUID bitingHook;
+    private int biteWait;
+
+    public void clearBite() {
+        bitingHook = null;
+        biteWait = 0;
+    }
+
+    /** Only a continuously observed bite on the current hook can trigger a reel. */
+    public boolean readyToReel(UUID hook, boolean biting, int cooldown, int delay) {
+        if (hook == null || !biting || !mayUse(hook, cooldown)) {
+            clearBite();
+            return false;
+        }
+        if (!hook.equals(bitingHook)) {
+            bitingHook = hook;
+            biteWait = delay;
+            return false;
+        }
+        if (biteWait > 0) {
+            biteWait--;
+            return false;
+        }
+        return true;
+    }
 
     public void reset() {
         retrievedHook = null;
         catches = 0;
+        clearBite();
     }
 
     public int catches() {

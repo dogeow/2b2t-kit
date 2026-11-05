@@ -50,8 +50,6 @@ public final class AutoFisher {
 	private Phase phase = Phase.FISH;
 	private int cooldown;
 	private int openWait;
-	private int caughtWait;
-	private boolean sawBite;
 	private int dumpStreak;
 	private final FisherCatchPolicy catchPolicy = new FisherCatchPolicy();
 	private long sessionStartMs;
@@ -99,8 +97,6 @@ public final class AutoFisher {
 		phase = Phase.FISH;
 		cooldown = 0;
 		openWait = 0;
-		caughtWait = 0;
-		sawBite = false;
 		dumpStreak = 0;
 		catchPolicy.reset();
 		sessionStartMs = System.currentTimeMillis();
@@ -138,7 +134,7 @@ public final class AutoFisher {
         if(client.options!=null&&client.player!=null&&client.player.getMainHandItem().getItem() instanceof FishingRodItem
             &&!KitKeys.isPhysicallyDown(client,client.options.keyUse))
             client.options.keyUse.setDown(false);
-        chestPos=null;cooldown=openWait=caughtWait=0;sawBite=false;
+        chestPos=null;cooldown=openWait=0;catchPolicy.clearBite();
 		if (!keepMenu && client.gui.screen() instanceof AbstractContainerScreen<?>) {
 			client.player.closeContainer();
 		}
@@ -166,6 +162,7 @@ public final class AutoFisher {
 			return;
 		}
 		if (client.gui.screen() != null) {
+			catchPolicy.clearBite();
 			releaseKeys(client);
 			status = "先关掉界面再钓";
 			return;
@@ -201,12 +198,14 @@ public final class AutoFisher {
 		}
 
 		if (!holdRod(client, player)) {
+			catchPolicy.clearBite();
 			status = "快捷栏没有鱼竿";
 			overlay(client, status, 0xFF5555);
 			return;
 		}
 
 		if (config.fisherLeaveHookToMeteor && meteorAutoFishActive()) {
+			catchPolicy.clearBite();
 			showStats(client);
 			return;
 		}
@@ -227,8 +226,7 @@ public final class AutoFisher {
 	private void castOrCatch(Minecraft client, LocalPlayer player) {
 		FishingHook hook = player.fishing;
 		if (hook == null) {
-			sawBite = false;
-			caughtWait = 0;
+			catchPolicy.clearBite();
 			if (cooldown > 0) return;
 			useRod(client, player);
 			return;
@@ -238,16 +236,7 @@ public final class AutoFisher {
 			return;
 		}
 		boolean biting = hook instanceof FishingHookBiteAccess access && access.kit$biting();
-		if (biting && !sawBite) {
-			sawBite = true;
-			caughtWait = CATCH_WAIT;
-			return;
-		}
-		if (sawBite) {
-			if (caughtWait > 0) {
-				caughtWait--;
-				return;
-			}
+		if (catchPolicy.readyToReel(hook.getUUID(), biting, cooldown, CATCH_WAIT)) {
 			useRod(client, player);
 		}
 	}
@@ -357,7 +346,7 @@ public final class AutoFisher {
 		applySpotLook(player);
 		phase = Phase.FISH;
 		cooldown = CAST_COOLDOWN;
-		sawBite = false;
+		catchPolicy.clearBite();
 		status = "回到钓点，继续钓";
 		overlay(client, status, 0x55FF55);
 	}
@@ -408,8 +397,7 @@ public final class AutoFisher {
 		boolean biting = hook instanceof FishingHookBiteAccess access && access.kit$biting();
 		boolean accepted = client.gameMode.useItem(player, InteractionHand.MAIN_HAND).consumesAction();
 		catchPolicy.recordUse(hookId, cooldown, accepted, biting, hookedEntity);
-		sawBite = false;
-		caughtWait = 0;
+		catchPolicy.clearBite();
 		cooldown = CAST_COOLDOWN;
 	}
 
