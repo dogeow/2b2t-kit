@@ -46,7 +46,7 @@ def menu_slot(inventory_slot):
     return 30 + inventory_slot if inventory_slot < 9 else 3 + inventory_slot - 9
 
 
-def validate_inputs(left, right, expected):
+def validate_inputs(left, right, expected, *, ignored_book_enchantments=()):
     if (left.get('count') != 1 or left.get('item') not in _LEFT
             or right.get('count') != 1 or right.get('item') != 'minecraft:enchanted_book'
             or not enchantments(right)):
@@ -55,11 +55,22 @@ def validate_inputs(left, right, expected):
             not isinstance(k, str) or not k.startswith('minecraft:')
             or type(v) is not int or v < 1 for k, v in expected.items()):
         raise ValueError('Explicit complete expected output enchantments required')
-    union = {**enchantments(left), **enchantments(right)}
-    if set(expected) != set(union):
+    if not isinstance(ignored_book_enchantments, (tuple, list, set, frozenset)):
+        raise ValueError('Explicit incompatible book enchantments required')
+    ignored = set(ignored_book_enchantments)
+    armor = {'minecraft:diamond_' + part for part in ('helmet', 'chestplate', 'leggings', 'boots')}
+    permitted = {'minecraft:piercing', 'minecraft:riptide'} if left['item'] in armor else set()
+    left_enchants, right_enchants = enchantments(left), enchantments(right)
+    if (not ignored <= permitted or not ignored <= set(right_enchants)
+            or ignored & set(left_enchants) or ignored & set(expected)):
+        raise ValueError('Only explicitly incompatible armor book effects may be ignored')
+    union = {**left_enchants, **right_enchants}
+    if set(expected) != set(union) - ignored:
         raise ValueError('Preview cannot invent or discard an input enchantment')
     for row in (left, right):
         for name, level in enchantments(row).items():
+            if row is right and name in ignored:
+                continue
             if name.endswith('_curse') or expected.get(name, 0) < level:
                 raise ValueError('Cursed inputs or stripped enchantments are not approved')
 
@@ -119,7 +130,7 @@ def _wait(client, predicate, *, seconds=6):
         time.sleep(.15)
 
 
-def run(client, pos, left_slot, right_slot, expected_left, expected_right, expected, out, *, face='south'):
+def run(client, pos, left_slot, right_slot, expected_left, expected_right, expected, out, *, face='south', ignored_book_enchantments=()):
     """Actor must already be at a valid anvil stance; this never finds a route."""
     if (not isinstance(pos, list) or len(pos) != 3 or any(type(v) is not int for v in pos)
             or face not in ('north', 'south', 'east', 'west', 'up')):
@@ -127,7 +138,7 @@ def run(client, pos, left_slot, right_slot, expected_left, expected_right, expec
     lslot, rslot = menu_slot(left_slot), menu_slot(right_slot)
     if left_slot == right_slot:
         raise ValueError('Two distinct carried input slots required')
-    validate_inputs(expected_left, expected_right, expected)
+    validate_inputs(expected_left, expected_right, expected, ignored_book_enchantments=ignored_book_enchantments)
     initial = client.status(); cursor = initial.get('menu', {}).get('cursor', {})
     if initial.get('screen') or cursor.get('count'):
         raise ValueError('Preview must open its own anvil from a clean world interface')
@@ -143,7 +154,7 @@ def run(client, pos, left_slot, right_slot, expected_left, expected_right, expec
               'task_session': client.task,
               'input_source_slots': {'left': left_slot, 'right': right_slot},
               'anvil': pos, 'left': deepcopy(expected_left), 'right': deepcopy(expected_right),
-              'expected_enchantments': expected, 'output_clicks': 0, 'experience_spent': 0}
+              'expected_enchantments': expected, 'ignored_book_enchantments': sorted(ignored_book_enchantments), 'output_clicks': 0, 'experience_spent': 0}
     def save(): write_json(path, record)
     save()
     scanned = client.checked('scan', min=pos, max=pos, details=True)

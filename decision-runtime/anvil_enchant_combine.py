@@ -12,10 +12,10 @@ from kit_runtime.journal import write_json
 from owned_material_menu import owned_menu_result
 
 
-def run(client,pos,left_slot,right_slot,left,right,expected,cost,out,*,face='up'):
+def run(client,pos,left_slot,right_slot,left,right,expected,cost,out,*,face='up',ignored_book_enchantments=()):
     if type(cost)is not int or not 1<=cost<=39:
         raise ValueError('Explicit planned legal anvil cost 1..39 required')
-    validate_inputs(left,right,expected)
+    validate_inputs(left,right,expected,ignored_book_enchantments=ignored_book_enchantments)
     ls,rs=menu_slot(left_slot),menu_slot(right_slot)
     if ls==rs or face not in ('up','north','south','east','west'):
         raise ValueError('Distinct inputs and reachable ordinary face required')
@@ -33,7 +33,7 @@ def run(client,pos,left_slot,right_slot,left,right,expected,cost,out,*,face='up'
     before=bag(initial);out=Path(out);out.mkdir(exist_ok=False);path=out/'combine.json'
     record={'complete':False,'pending':None,'world_session':client.world,'task_session':client.task,
             'anvil':pos,'left':deepcopy(left),'right':deepcopy(right),'planned_cost':cost,
-            'expected_enchantments':expected,'level_before':level,'output_clicks':0,
+            'expected_enchantments':expected,'ignored_book_enchantments':sorted(ignored_book_enchantments),'level_before':level,'output_clicks':0,
             'input_slots':{'left':left_slot,'right':right_slot}}
     def save():write_json(path,record)
     save();scan=client.checked('scan',min=pos,max=pos,details=True)
