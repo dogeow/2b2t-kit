@@ -23,6 +23,10 @@ import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.FishingRodItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.entity.EquipmentSlot;
+import java.util.ArrayList;
+import java.util.List;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.CopperChestBlock;
@@ -39,6 +43,7 @@ public final class AutoFisher {
 	private static final int CATCH_WAIT = 6;
 	private static final int DUMP_COOLDOWN = 3;
 	private static final int OPEN_WAIT = 8;
+	private static final int LOW_SPACE_SLOTS = 3;
 	private static final double SPOT_TOLERANCE = 0.45;
 
 	private final KitConfig config;
@@ -55,6 +60,8 @@ public final class AutoFisher {
 	private int openWait;
 	private int dumpStreak;
 	private final FisherCatchPolicy catchPolicy = new FisherCatchPolicy();
+	private final List<ItemStack> protectedFishingGear = new ArrayList<>();
+	private boolean inventoryWasOpen;
 	private long sessionStartMs;
     private long activityGeneration;
     private boolean idleNoDeposit;
@@ -102,6 +109,9 @@ public final class AutoFisher {
 		openWait = 0;
 		dumpStreak = 0;
 		catchPolicy.reset();
+		protectedFishingGear.clear();
+		rememberFishingGear(player);
+		inventoryWasOpen = false;
 		sessionStartMs = System.currentTimeMillis();
 		spotX = player.getX();
 		spotY = player.getY();
@@ -110,6 +120,10 @@ public final class AutoFisher {
 		spotPitch = player.getXRot();
         chestPos=idleNoDeposit?null:findNearbyChest(client,player);
 		status = "开始钓鱼";
+		int free = emptySlots(player);
+		if (free < LOW_SPACE_SLOTS) {
+			message(client, "背包空间不足，剩余 " + free + " 格。建议留至少 " + LOW_SPACE_SLOTS + " 格装渔获。");
+		}
 		String chest = chestPos == null ? "附近没看到箱子，满了会停" : "箱子 " + chestPos.getX() + " " + chestPos.getY() + " " + chestPos.getZ();
 		message(client, "已锁定脚底和视角。" + chest + "。再按 "
 			+ KitKeys.boundLabel(KitKeys.TOGGLE_FISHER) + " 或 End 停止");
@@ -171,10 +185,17 @@ public final class AutoFisher {
 			return;
 		}
 		if (client.gui.screen() != null) {
+			rememberFishingGear(player);
+			inventoryWasOpen = true;
 			catchPolicy.clearBite();
 			releaseKeys(client);
 			status = "先关掉界面再钓";
 			return;
+		}
+
+		if (inventoryWasOpen) {
+			rememberFishingGear(player);
+			inventoryWasOpen = false;
 		}
 
 		if (phase == Phase.APPROACH_CHEST) {
@@ -189,7 +210,7 @@ public final class AutoFisher {
 		releaseKeys(client);
         if(idleNoDeposit)applySpotLook(player);else holdSpot(player);
 		if (inventoryFull(player)) {
-			if (!hasStashableLoot(player.getInventory())) {
+			if (!hasStashableLoot(player)) {
 				stopKeepingMenu(client, "背包满了，没有可自动存箱的钓鱼杂物");
 				return;
 			}
@@ -423,35 +444,74 @@ public final class AutoFisher {
 		return stack.isDamageableItem() && stack.getMaxDamage() - stack.getDamageValue() <= 1;
 	}
 
-	/** 主背包 36 格无空位。 */
-	private static boolean inventoryFull(LocalPlayer player) {
-		Inventory inv = player.getInventory();
-		for (int i = 0; i < 36; i++) {
-			if (inv.getItem(i).isEmpty()) return false;
+	private static int emptySlots(LocalPlayer player) {
+		int empty = 0;
+		for (int slot = 0; slot < Inventory.INVENTORY_SIZE; slot++) {
+			if (player.getInventory().getItem(slot).isEmpty()) empty++;
 		}
-		return true;
+		return empty;
 	}
 
-	/** 下一个可快移进箱的钓鱼杂物槽。 */
-	private static Slot nextDumpSlot(LocalPlayer player, AbstractContainerMenu menu) {
+	private static boolean inventoryFull(LocalPlayer player) {
+		return emptySlots(player) == 0;
+	}
+
+	private Slot nextDumpSlot(LocalPlayer player, AbstractContainerMenu menu) {
 		for (Slot slot : menu.slots) {
-			if (slot.container != player.getInventory() || !slot.hasItem()) continue;
-			if (!mayStash(slot.getItem(), slot.getContainerSlot())) continue;
-			return slot;
+			if (slot.container == player.getInventory() && mayStash(player, slot.getItem(), slot.getContainerSlot())) {
+				return slot;
+			}
 		}
 		return null;
 	}
 
-	private static boolean hasStashableLoot(Inventory inventory) {
-		for (int slot = 9; slot < 36; slot++) {
-			if (mayStash(inventory.getItem(slot), slot)) return true;
+	private boolean hasStashableLoot(LocalPlayer player) {
+		for (int slot = Inventory.getSelectionSize(); slot < Inventory.INVENTORY_SIZE; slot++) {
+			if (mayStash(player, player.getInventory().getItem(slot), slot)) return true;
 		}
 		return false;
 	}
 
-	private static boolean mayStash(ItemStack stack, int slot) {
-		return !stack.isEmpty() && FisherStashPolicy.mayStash(
-			BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), slot, stack.has(DataComponents.FOOD));
+	private boolean mayStash(LocalPlayer player, ItemStack stack, int slot) {
+		if (stack.isEmpty() || stack.has(DataComponents.CUSTOM_NAME) || stack.has(DataComponents.CUSTOM_DATA)) return false;
+		boolean protectedItem = (stack.is(Items.BOW) && !stack.isEnchanted())
+			|| (trackedGear(stack) && isProtectedGear(player, stack));
+		return FisherStashPolicy.mayStash(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), slot, protectedItem);
+	}
+
+	private static boolean trackedGear(ItemStack stack) {
+		return stack.is(Items.BOW) || stack.is(Items.LEATHER_BOOTS);
+	}
+
+	private static ItemStack gearFingerprint(ItemStack stack) {
+		ItemStack copy = stack.copy();
+		copy.remove(DataComponents.DAMAGE);
+		return copy;
+	}
+
+	private static List<ItemStack> carriedGear(LocalPlayer player) {
+		List<ItemStack> carried = new ArrayList<>(player.getInventory().getNonEquipmentItems());
+		carried.add(player.getOffhandItem());
+		carried.add(player.getItemBySlot(EquipmentSlot.FEET));
+		return carried.stream().filter(AutoFisher::trackedGear).map(AutoFisher::gearFingerprint).toList();
+	}
+
+	private void rememberFishingGear(LocalPlayer player) {
+		for (ItemStack gear : carriedGear(player)) {
+			if (protectedFishingGear.stream().noneMatch(saved -> ItemStack.isSameItemSameComponents(saved, gear))) {
+				protectedFishingGear.add(gear);
+			}
+		}
+	}
+
+	private boolean isProtectedGear(LocalPlayer player, ItemStack stack) {
+		ItemStack candidate = gearFingerprint(stack);
+		var originals = protectedFishingGear.stream().filter(saved -> saved.is(stack.getItem())).toList();
+		if (originals.stream().anyMatch(saved -> ItemStack.isSameItemSameComponents(saved, candidate))) return true;
+		// If an original was removed or modified, distinguishability is lost.
+		List<ItemStack> carried = carriedGear(player);
+		return originals.stream().anyMatch(saved ->
+			carried.stream().noneMatch(gear -> ItemStack.isSameItemSameComponents(saved, gear)));
 	}
 
 	/** 是否箱子/潜影盒/漏斗菜单。 */
