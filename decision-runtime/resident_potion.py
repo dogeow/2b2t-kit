@@ -1,12 +1,33 @@
 """One scoped dose request, with independent debit and health evidence; never replay unknown use."""
 import json,time,uuid,math
+from pathlib import Path
 from material_plan import inventory_counts
 from kit_runtime.journal import write_json
 THERAPEUTIC={'minecraft:healing','minecraft:strong_healing','minecraft:regeneration','minecraft:long_regeneration','minecraft:strong_regeneration'}
+# Explicitly validated engine builds; unknown versions remain a pre-input stop.
+SUPPORTED_RUNTIME_VERSIONS=frozenset({'1.8.30','1.8.58'})
+def previous_dose_resolved(root,confirmed,now):
+ """Accept a confirmed dose or an expired native rejection with no use claim."""
+ root=Path(root);previous=root/'resident-potion.json'
+ if not previous.exists():return True
+ try:
+  old=json.loads(previous.read_text());identity=str(uuid.UUID(old['id']))
+  if identity!=old['id']:return False
+  last=json.loads(Path(confirmed).read_text()) if Path(confirmed).exists() else {}
+  if last.get('id')==identity and last.get('confirmed') is True:return True
+  reply=json.loads((root/'resident-potion-state.json').read_text())
+  world=str(uuid.UUID(old['world_session']))
+  if world!=old['world_session']:return False
+  issued,expires,observed=old['issued_at'],old['expires_at'],reply['time']
+  if any(type(v)is not int for v in (now,issued,expires,observed)):return False
+  claim=root/'resident-potion-claims'/world/(identity+'.json')
+  return (reply.get('id')==identity and reply.get('phase')=='rejected_preflight'
+          and issued<=observed<=now and issued<=expires<now and not claim.exists())
+ except (OSError,ValueError,TypeError,KeyError,AttributeError):return False
 def request_for(s,p,uid,effect,now,identity):
  lease=s.get('supervision_lease')or{};actors=[v for v in s.get('loaded_villagers',{}).get('villagers',[])if v.get('uuid')==uid];selected=s.get('selected_slot',-1)
  rows=[v for v in p.get('potions',[])if v.get('slot')==36+selected and v.get('nonempty_child_index')==-1]
- if(s.get('runtime_version')!='1.8.30'or s.get('health')!=20 or s.get('screen')or s.get('manual_movement')is not False
+ if(s.get('runtime_version') not in SUPPORTED_RUNTIME_VERSIONS or s.get('health')!=20 or s.get('screen')or s.get('manual_movement')is not False
     or s.get('guard_armed')is not True or s.get('guard_pve_only')is not True or s.get('guard_busy')is not False
     or s.get('phase')!='done'or s.get('connected')is not True or s.get('health_recovery_hold')or(s.get('safety_hold')or{}).get('active')
     or lease.get('kind')!='materials'or lease.get('world_session')!=s.get('world_session')or not lease.get('id')or not lease.get('job_session')
@@ -20,13 +41,12 @@ def request_for(s,p,uid,effect,now,identity):
  if actor.get('is_baby')is not False or not 0<actor.get('health',0)<20:raise ValueError('Same injured adult required')
  return dict(protocol=1,id=str(uuid.UUID(identity)),world_session=s['world_session'],lease_id=lease['id'],task_session=lease['job_session'],player_uuid=s['player_uuid'],control_revision=s['control_revision'],issued_at=now,expires_at=now+4000,player_pos=s['pos'],target_uuid=uid,target_pos=actor['pos'],expected_health=actor['health'],potion_contents={'potion':effect})
 def dose(c,uid,effect):
+ previous=c.q.root/'resident-potion.json';confirmed=c.n/'last-confirmed-resident-dose.json'
+ if not previous_dose_resolved(c.q.root,confirmed,int(time.time()*1000)):
+  raise RuntimeError('Previous dose remains unresolved; no new use')
  s,p=c.potions();candidates=[v for v in p['potions']if v['nonempty_child_index']==-1 and v['item']=='minecraft:splash_potion'and v['potion_contents']=={'potion':effect}and (9<=v['slot']<=44)];assert candidates
  row=candidates[0];slot=row['slot']if row['slot']<36 else row['slot']-36;c.native('select_item',item='minecraft:splash_potion',slot=slot)
  s,p=c.potions();r=request_for(s,p,uid,effect,int(time.time()*1000),str(uuid.uuid4()));path=c.n/('dose-'+r['id']+'.json')
- previous=c.q.root/'resident-potion.json';confirmed=c.n/'last-confirmed-resident-dose.json'
- if previous.exists():
-  old=json.load(open(previous));last=json.load(open(confirmed))if confirmed.exists()else{}
-  assert last.get('id')==old.get('id')and last.get('confirmed')is True,'Previous dose remains unresolved; no new use'
  before=inventory_counts(s);entry=dict(request=r,before_inventory=dict(before),before_health=r['expected_health'],complete=False,pending=True);write_json(path,entry);c.book.setdefault('doses',[]).append(str(path));c.save();write_json(previous,r)
  end=time.monotonic()+6;reply=None
  while time.monotonic()<end:
