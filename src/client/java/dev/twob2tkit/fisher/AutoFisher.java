@@ -7,6 +7,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import dev.twob2tkit.automation.AutomationBridge;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
@@ -157,6 +160,12 @@ public final class AutoFisher {
         if(idle==IdleFishingPolicy.Decision.STOP_CHANGED){stopKeepingMenu(client,"闲置钓鱼的已确认站位已改变");return;}
         if(idle==IdleFishingPolicy.Decision.STOP_FULL){stopKeepingMenu(client,"闲置钓鱼背包已满，不自动存箱");return;}
 
+		if (AutomationBridge.guardBusy()) {
+			catchPolicy.clearBite();
+			releaseKeys(client);
+			status = "防护处理中，暂停钓鱼和存箱";
+			return;
+		}
 		if (phase == Phase.DUMP || phase == Phase.OPEN_CHEST) {
 			handleStash(client, player);
 			return;
@@ -180,6 +189,10 @@ public final class AutoFisher {
 		releaseKeys(client);
         if(idleNoDeposit)applySpotLook(player);else holdSpot(player);
 		if (inventoryFull(player)) {
+			if (!hasStashableLoot(player.getInventory())) {
+				stopKeepingMenu(client, "背包满了，没有可自动存箱的钓鱼杂物");
+				return;
+			}
 			if (player.fishing != null) {
 				useRod(client, player);
 				status = "背包满了，先收钩再存箱";
@@ -302,6 +315,10 @@ public final class AutoFisher {
 		Slot dump = nextDumpSlot(player, menu);
 		if (dump == null) {
 			player.closeContainer();
+			if (inventoryFull(player)) {
+				stopKeepingMenu(client, "背包满了，没有可自动存箱的钓鱼杂物");
+				return;
+			}
 			phase = Phase.RETURN;
 			status = "箱子已存完，回钓点";
 			overlay(client, status, 0x55FF55);
@@ -415,14 +432,26 @@ public final class AutoFisher {
 		return true;
 	}
 
-	/** 下一个可快移进箱的非鱼竿槽。 */
+	/** 下一个可快移进箱的钓鱼杂物槽。 */
 	private static Slot nextDumpSlot(LocalPlayer player, AbstractContainerMenu menu) {
 		for (Slot slot : menu.slots) {
 			if (slot.container != player.getInventory() || !slot.hasItem()) continue;
-			if (slot.getItem().getItem() instanceof FishingRodItem) continue;
+			if (!mayStash(slot.getItem(), slot.getContainerSlot())) continue;
 			return slot;
 		}
 		return null;
+	}
+
+	private static boolean hasStashableLoot(Inventory inventory) {
+		for (int slot = 9; slot < 36; slot++) {
+			if (mayStash(inventory.getItem(slot), slot)) return true;
+		}
+		return false;
+	}
+
+	private static boolean mayStash(ItemStack stack, int slot) {
+		return !stack.isEmpty() && FisherStashPolicy.mayStash(
+			BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), slot, stack.has(DataComponents.FOOD));
 	}
 
 	/** 是否箱子/潜影盒/漏斗菜单。 */
