@@ -17,6 +17,22 @@ class CreeperEscapeWiringTest {
         var pause=calls(method("builder/ProjectionBuildJob","pauseForDefense"));
         assertFalse(pause.contains("hover"));assertFalse(pause.contains("release"));assertFalse(pause.contains("stop"));
     }
+    @Test void creeperRetreatRestoresAuraAndCameraReapplyDoesNotPauseItAgain() throws Exception {
+        var escape = method("runtime/engine/BorerRangedCombat", "evadeCreeper");
+        var ranged = Arrays.stream(escape.instructions.toArray())
+            .filter(i -> i instanceof MethodInsnNode call && call.name.equals("rangedMode"))
+            .toList();
+        assertEquals(1, ranged.size());
+        var arg = ranged.getFirst().getPrevious();
+        while (arg != null && arg.getOpcode() < 0) arg = arg.getPrevious();
+        assertNotNull(arg);
+        assertEquals(Opcodes.ICONST_0, arg.getOpcode());
+        var reapply = method("runtime/engine/BorerRangedCombat", "reapply");
+        assertTrue(Arrays.stream(reapply.instructions.toArray()).anyMatch(i ->
+            i instanceof FieldInsnNode field && field.getOpcode() == Opcodes.GETFIELD
+                && field.name.equals("creeperRetreat")));
+    }
+
     @Test void escapeIsConsideredBeforeMeleeAndBowAndBeforeFoodFreeze()throws Exception{
         var c=calls(method("runtime/engine/BorerRangedCombat","tick"));assertTrue(c.indexOf("evadeCreeper")<c.indexOf("attack"));assertTrue(c.indexOf("evadeCreeper")<c.indexOf("selectBow"));
         var d=calls(method("runtime/engine/DefaultTunnelBorerEngine","tickStandaloneGuard"));assertTrue(d.indexOf("hasCreeperEmergency")<d.indexOf("pauseForEating"));

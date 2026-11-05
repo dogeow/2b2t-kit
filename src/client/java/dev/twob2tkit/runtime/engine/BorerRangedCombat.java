@@ -46,6 +46,7 @@ final class BorerRangedCombat {
 	private boolean escaping, escapeFlightFailed,hoverMelee;
 	private final BorerAreaFlightSession escapeFlight = new BorerAreaFlightSession();
 	private boolean releasePending;
+	private boolean creeperRetreat;
 	private final BorerBowViewGate viewGate = new BorerBowViewGate();
 	private int lookTick = Integer.MIN_VALUE, viewWaitTicks;
     private int riseRetryAfter,safetyRiseRetryAfter;
@@ -55,6 +56,7 @@ final class BorerRangedCombat {
     private final BorerBlockedShotCounter blockedShotCounter=new BorerBlockedShotCounter();
 	BorerRangedCombat(DefaultTunnelBorerEngine engine) { this.engine = engine; this.peek=new BorerCombatPeek(engine); }
 	boolean tick(Minecraft c) {
+        creeperRetreat = false;
         var p = c.player;
         boolean minerCombat = engine.active && engine.mode != DefaultTunnelBorerEngine.Mode.AREA;
         var imminent = minerCombat ? engine.mobs.findImminentCreeper(c, p) : null;
@@ -973,6 +975,7 @@ final class BorerRangedCombat {
 	}
 	private boolean evadeCreeper(Minecraft c,Creeper creeper) {
         hoverMelee=false;
+        creeperRetreat = true;
 		var p=c.player;
 		if(!escaping){
 			// The host's beforeGuard/pauseForDefense path already yields construction
@@ -983,7 +986,7 @@ final class BorerRangedCombat {
 			DefaultTunnelBorerEngine.message(c,"苦力怕近身：施工暂停，优先撤离，确认安全后继续");
 			engine.fileLog(c,"guard-creeper-evade id="+creeper.getId()+" distance="+p.distanceTo(creeper)+" swelling="+swelling(creeper)+" visible="+p.hasLineOfSight(creeper)+" player="+p.position()+" mob="+creeper.position());
 		}
-		cancelDraw(c);rangedMode(true);engine.pauseGuardMovement(c);
+		cancelDraw(c);rangedMode(false);engine.pauseGuardMovement(c);
 		boolean flying=false;
 		if(!escapeFlightFailed)try{
 			escapeFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/creeper-escape-flight.bak"));
@@ -1380,6 +1383,7 @@ final class BorerRangedCombat {
         miningMeleeLease = false;
     }
 	private void releaseControls(Minecraft c) {
+        creeperRetreat = false;
 		shieldCycle.reset();
 		zombieApproach.reset();
         releaseZombieMelee();
@@ -1395,7 +1399,7 @@ final class BorerRangedCombat {
 	boolean reapply(Minecraft c) {
 		if(peek.active()){peek.reapply(c);return true;}
 		if (visibleLook(c) == null) return false;
-		rangedMode(!hoverMelee);
+		rangedMode(!hoverMelee && !creeperRetreat);
 		RotationAim.apply(c.player, look); return true;
 	}
 	private boolean visibleHost() {
