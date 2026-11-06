@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 import re
+import time
 
 from .protocol import JobBlocked, server_key
 
@@ -54,6 +55,22 @@ def _validate_profile(profile):
         raise JobBlocked('资源搜索半径必须是 1..384 的整数')
 
 
+def _read_kit_config(path, *, attempts=12, delay=.1):
+    """Read the current complete config; a concurrent in-place save may be partial.
+
+    Only parsing is retried; no stale fallback, no game action and no config write.
+    A persistently malformed file remains a blocking error.
+    """
+    for attempt in range(attempts):
+        try:
+            return json.loads(path.read_text())
+        except json.JSONDecodeError as error:
+            if attempt + 1 == attempts:
+                raise JobBlocked('Kit 配置正在写入或格式损坏；未使用不完整数据') from error
+            time.sleep(delay)
+    raise AssertionError('Unreachable config retry state')
+
+
 def load(automation, context):
     automation = Path(automation)
     path = profile_path(automation, context)
@@ -63,7 +80,7 @@ def load(automation, context):
                     or profile.get('dimension') != context['dimension']):
         raise JobBlocked('材料工位配置属于其他服务器或维度')
     config_path = automation.parent.parent / 'twob2tkit.json'
-    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    config = _read_kit_config(config_path) if config_path.exists() else {}
     if not isinstance(config,dict):
         raise JobBlocked('Kit 配置必须是 JSON 对象')
     configured_sources=config.get('projectionSupplySources',[])
