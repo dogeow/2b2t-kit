@@ -10,7 +10,7 @@ from safety_interlock import require_unlocked
 
 def pending_screen(screen, seen_connecting, elapsed):
     return screen in ('ConnectScreen','ReceivingLevelScreen','ProgressScreen','LevelLoadingScreen') or (
-        screen in ('TitleScreen','DisconnectedScreen') and not seen_connecting and 0 <= elapsed <= 2)
+        screen in ('TitleScreen','DisconnectedScreen') and not seen_connecting and elapsed >= 0)
 
 def connection_screen_seen(screen, seen_connecting):
     return seen_connecting or screen in ('ConnectScreen','ReceivingLevelScreen','ProgressScreen','LevelLoadingScreen')

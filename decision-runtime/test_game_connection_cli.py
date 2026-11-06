@@ -21,10 +21,10 @@ class ConnectionObservationTests(unittest.TestCase):
         self.assertTrue(pending_screen('DisconnectedScreen',False,.1))
     def test_return_to_title_or_unrelated_screen_does_not_restart_connection(self):
         self.assertFalse(pending_screen('TitleScreen',True,.1))
-        self.assertFalse(pending_screen('TitleScreen',False,2.1))
+        self.assertTrue(pending_screen('TitleScreen',False,2.1))
         self.assertFalse(pending_screen('CodeOfConductScreen',False,.1))
         self.assertFalse(pending_screen('DisconnectedScreen',True,.1))
-        self.assertFalse(pending_screen('DisconnectedScreen',False,2.1))
+        self.assertTrue(pending_screen('DisconnectedScreen',False,2.1))
     def test_repeated_original_disconnect_frame_keeps_start_grace(self):
         seen=False
         for elapsed in (.05,.3,.8):
@@ -34,3 +34,22 @@ class ConnectionObservationTests(unittest.TestCase):
         seen=connection_screen_seen('ConnectScreen',seen)
         self.assertTrue(seen)
         self.assertFalse(pending_screen('DisconnectedScreen',seen,1.2))
+
+class DelayedConnectionTests(unittest.TestCase):
+    def test_stale_disconnect_then_connecting_is_one_request(self):
+        from itertools import count
+        from kit_runtime.journal import write_json as real_write
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'automation';root.mkdir();output=Path(tmp)/'out'
+            base={'client_connection_protocol':1,'connected':False,'screen':'DisconnectedScreen','account_name':'likunyan','world_session':'old','control_revision':1,'safety_hold':{'active':False}}
+            connecting={**base,'screen':'ConnectScreen'}
+            online={**base,'connected':True,'screen':'','server':'simpcraft.com','player_name':'likunyan','world_session':'new','game_version':'v','kit_version':'k','runtime_version':'r'}
+            states=iter([base]+[base]*6+[connecting,online]);ticks=count();sent=[]
+            def write(path,value):
+                real_write(path,value)
+                if Path(path)==root/'request.json':
+                    sent.append(value);real_write(root/('reply-'+value['id']+'.json'),{'id':value['id'],'phase':'done'})
+            with patch('game_connection_cli.require_unlocked'),patch('game_connection_cli.read_fresh',side_effect=lambda *a,**kw:next(states)),patch('game_connection_cli.write_json',side_effect=write),patch('game_connection_cli.time.monotonic',side_effect=lambda:next(ticks)),patch('game_connection_cli.time.sleep'):
+                result=connect(root,'simpcraft.com','likunyan',output,seconds=60)
+            self.assertEqual(result['world_session'],'new');self.assertEqual(len(sent),1)
+            self.assertFalse(json.loads((output/'result.json').read_text())['request_replayed'])
