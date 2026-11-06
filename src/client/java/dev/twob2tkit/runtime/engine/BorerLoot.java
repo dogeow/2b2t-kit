@@ -19,11 +19,11 @@ import java.util.Map;
 final class BorerLoot {
 	private static final Logger LOGGER = LoggerFactory.getLogger("twob2tkit/Borer");
 	private static final int SEARCH_RADIUS = 7;
-	private static final int IGNORE_TICKS = 100;
 	private static final int MAX_HEADROOM_PROBE = 5;
 
 	private final DefaultTunnelBorerEngine engine;
 	private final Map<Integer, Long> ignored = new HashMap<>();
+	private final LootRetryBackoff retryBackoff = new LootRetryBackoff();
 	private BlockPos origin;
 	private OreTarget wanted;
 	private int startCount;
@@ -99,6 +99,7 @@ final class BorerLoot {
 	/** 清空已忽略掉落记录。 */
 	void clearIgnored() {
 		ignored.clear();
+		retryBackoff.clear();
 		nextNearbyScan = 0;
 		clear();
 	}
@@ -335,11 +336,12 @@ final class BorerLoot {
 
 	/** 放弃当前目标并记日志。 */
 	private boolean abandon(Minecraft client, LocalPlayer player, ItemEntity loot, String reason) {
-		ignored.put(loot.getId(), client.level.getGameTime() + IGNORE_TICKS);
+		int retryTicks = retryBackoff.nextDelay(loot.getUUID());
+		ignored.put(loot.getId(), client.level.getGameTime() + retryTicks);
 		LOGGER.warn("[twob2tkit/Borer {}] loot-collection-abandon reason={} ore={} item={} itemPos={} origin={} player={}",
 			engine.runtimeVersion(), reason, wanted, loot.getItem().getHoverName().getString(),
 			precise(loot), format(origin), precise(player));
-		engine.fileLog(client, "loot-defer reason=" + reason + " id=" + loot.getId() + " pos=" + precise(loot) + " retryTicks=" + IGNORE_TICKS);
+		engine.fileLog(client, "loot-defer reason=" + reason + " id=" + loot.getId() + " pos=" + precise(loot) + " retryTicks=" + retryTicks);
 		engine.walkRoute.clear();
 		entityId = -1;
 		targetTicks = 0;
