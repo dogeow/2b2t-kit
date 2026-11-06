@@ -87,6 +87,7 @@ public final class KitController {
 	private boolean lowHealthWarned;
 	private boolean flightWarningSent;
 	private double altitudeOffset;
+	private double mapCruiseFloor = Double.NaN;
 	private double dodgeFromX = Double.NaN;
 	private double dodgeFromZ = Double.NaN;
 	private int lastAltitudeDodgeTick = -200;
@@ -143,6 +144,7 @@ public final class KitController {
 	}
 
 	public void start(Minecraft client, double targetX, double targetZ, double cruiseY) {
+		mapCruiseFloor = Double.NaN;
 		config.targetX = targetX;
 		config.targetZ = targetZ;
 		config.cruiseY = cruiseY;
@@ -152,8 +154,16 @@ public final class KitController {
 		activate(client);
 	}
 
+	/** Map navigation uses the click-time altitude as a minimum during this route. */
+	public void startMapCruise(Minecraft client, double targetX, double targetZ, double initialY) {
+		if (!Double.isFinite(initialY)) return;
+		start(client, targetX, targetZ, initialY);
+		mapCruiseFloor = initialY;
+	}
+
 	/** 死亡返航：到达上方不离线。 */
 	public void startDeathRecovery(Minecraft client, double targetX, double targetZ, double cruiseY) {
+		mapCruiseFloor = Double.NaN;
 		config.targetX = targetX;
 		config.targetZ = targetZ;
 		config.cruiseY = cruiseY;
@@ -167,6 +177,7 @@ public final class KitController {
 	/** 按已存目标继续；无目标返回 false。 */
 	public boolean resume(Minecraft client) {
 		if (!config.hasTarget) return false;
+		if (Double.compare(mapCruiseFloor, config.cruiseY) != 0) mapCruiseFloor = Double.NaN;
 		disconnectOnThisArrival = config.disconnectOnArrival;
 		activate(client);
 		return true;
@@ -423,7 +434,7 @@ public final class KitController {
 		if (NetherRoofAssist.inNether(client) && client.player != null && !NetherRoofAssist.onRoof(client.player)) {
 			y = Math.min(config.cruiseY, NetherRoofAssist.underRoofCruiseY()) + altitudeOffset;
 		}
-		return Math.min(y, maxSafeFlyY(client));
+		return dev.twob2tkit.map.MapCruiseAltitude.floor(Math.min(y, maxSafeFlyY(client)), mapCruiseFloor);
 	}
 
 	/** 按容差升/降到目标高度；返回是否仍在调高。 */
@@ -730,7 +741,8 @@ public final class KitController {
 		double[] downs = {-3.0, -5.0, -8.0};
 		for (double dy : downs) {
 			double probeY = player.getY() + dy;
-			if (!yInWorld(client, probeY) || !pathClearAtY(client, player, dy, 8.0)) continue;
+			if (!dev.twob2tkit.map.MapCruiseAltitude.permits(probeY, mapCruiseFloor)
+					|| !yInWorld(client, probeY) || !pathClearAtY(client, player, dy, 8.0)) continue;
 			applyClimbHeight(client, player, probeY, "当前高度卡住，改走 Y %.0f 再继续", false);
 			return true;
 		}

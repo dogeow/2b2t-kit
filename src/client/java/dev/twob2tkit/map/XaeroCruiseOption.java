@@ -31,7 +31,7 @@ public final class XaeroCruiseOption extends RightClickOption {
         var c=Minecraft.getInstance();
         if(!available())return;
         // User selection takes over through the same path as Kit's saved-place navigation.
-        KitClient.controller().start(c,x+.5,z+.5,KitClient.config().cruiseY);
+        KitClient.controller().startMapCruise(c,x+.5,z+.5,c.player.getY());
         KitClient.controller().keepConnectedOnArrival();
         if(KitClient.controller().isActive())c.gui.setScreen(null);
     }
