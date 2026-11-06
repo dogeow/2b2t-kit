@@ -52,7 +52,7 @@ def settled(path):
    and len(frames)==2 and frames[0]['time']<frames[1]['time']
    and all(f['world_session']==book['world_session']and f['health']==20 and f['screen']==''
            and f['cursor_count']==0 and Counter(f['inventory'])==Counter(book['before'])for f in frames))
- except(OSError,KeyError,TypeError,ValueError):return False
+ except(OSError,KeyError,TypeError,ValueError):return reconnect_settled(path)
 
 def observable_selection(command,error,book,state,event,world,task):
  """A refused selection is distinct from a paid output click; no completed selection may exist."""
@@ -122,3 +122,42 @@ def settle_selection(builder,base):
  write_json(destination,proof)
  if not selection_settled(path):raise RuntimeError('New abort proof failed validation')
  builder.book.update(selection_abort_proof=str(destination.relative_to(base)),original_purchase_credit=0);builder.save();return proof
+
+
+def reconnect_settled(path):
+    """Prove an unissued output click and payment return after a reconnect.
+
+    The original transaction journal is never altered or marked complete.
+    Missing or inconsistent evidence always leaves the fence in place.
+    """
+    try:
+        path=Path(path)
+        book=json.loads(path.read_text())
+        proof=json.loads((path.parent/'reconnect-abort.json').read_text())
+        event=proof['refusal_event'];reply=proof['refusal_reply']
+        snapshot=proof['reconnect_snapshot'];reconnected=proof['reconnect_result']
+        checks=proof['return_observation'];pending=book['pending'];params=pending['params']
+        req=pending['request_id'];old=book['world_session'];new=snapshot['world_session']
+        stamps=checks['frames'];identity=reply['player_uuid']
+        return (proof['abort_settled'] is True and proof['purchase_credit']==0
+            and proof['original_sha256']==hashlib.sha256(path.read_bytes()).hexdigest()
+            and book['complete'] is False and pending['op']=='slot_click'
+            and params['slot']==2 and params['kind']=='pickup' and params['button']==0
+            and reply['id']==event['request_id']==req
+            and reply['phase']==event['phase']=='error' and reply['detail']==event['detail']==DETAIL
+            and event['op']=='slot_click' and event['world_session']==reply['world_session']==old
+            and all(event['params'].get(k)==v for k,v in params.items())
+            and event['inventory_delta']=={} and event['revision_before']==event['revision_after']
+            and event['position_before']==event['position_after']
+            and event['health_before']==event['health_after']==20
+            and new!=old and snapshot['connected'] is True and snapshot['health']==20
+            and snapshot['player_uuid']==identity and snapshot['server']==reply['server']==reconnected['server']
+            and reconnected['connected'] is True and reconnected['world_session']==new
+            and reconnected['request_replayed'] is False and reconnected['inventory_credit']==0
+            and inventory_counts(snapshot)==Counter(book['before'])
+            and checks['original_request']==req and checks['native_outcome']=='rejected_no_packet_sent'
+            and checks['inventory_equals_before'] is True and checks['original_replayed'] is False
+            and len(stamps)==3 and all(type(t) is int for t in stamps)
+            and reply['time'] < snapshot['time'] < stamps[0] < stamps[1] < stamps[2])
+    except (OSError,KeyError,TypeError,ValueError):
+        return False
