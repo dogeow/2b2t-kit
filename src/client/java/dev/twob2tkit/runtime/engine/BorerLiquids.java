@@ -357,7 +357,7 @@ final class BorerLiquids {
 			engine.overlay(client, engine.status, 0xFFFF55);
 			return false;
 		}
-		if (engine.enableMeteorFlight(player)) {
+		if (MagmaFlightEscape.tryStart(engine, player, client)) {
 			client.options.keyJump.setDown(true);
 			client.options.keyUp.setDown(false);
 			engine.status = "脚下岩浆块，飞行离开";
