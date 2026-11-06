@@ -427,6 +427,11 @@ public final class KitConfig {
 				config.save();
 			}
 			if (config.turnSpeed < 1.0 || config.turnSpeed > 120.0) config.turnSpeed = 12.0;
+			double normalizedArrival = dev.twob2tkit.cruise.CruiseArrivalPolicy.manualRadius(config.arrivalRadius);
+			if (Double.compare(normalizedArrival, config.arrivalRadius) != 0) {
+				config.arrivalRadius = normalizedArrival;
+				config.save();
+			}
 			if (config.ceilingFlyKey == null || config.ceilingFlyKey.isBlank()) config.ceilingFlyKey = "key.keyboard.c";
 			if (config.feederSettingsVersion < 1) {
 				config.feederRange = 12.0;

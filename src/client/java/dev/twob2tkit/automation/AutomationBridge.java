@@ -2654,11 +2654,12 @@ public final class AutomationBridge {
 					active=r.deepCopy();
                 }
                 JsonArray p=r.getAsJsonArray("target");if(!snowExpedition)checkSiteTarget(r,p);
-                if(r.has("arrival")){savedArrival=KitClient.config().arrivalRadius;
+                if(r.has("arrival"))
                     temporaryArrival=MaterialJobControlPolicy.arrival(r.get("arrival").getAsDouble(),materialNavigation);
-                    KitClient.config().arrivalRadius=temporaryArrival;}
                 MeteorModules.enable(MeteorModules.FLIGHT);
-                KitClient.controller().startExact(c,p.get(0).getAsDouble(),p.get(2).getAsDouble(),p.get(1).getAsDouble());
+                if(r.has("arrival"))
+                    KitClient.controller().startExact(c,p.get(0).getAsDouble(),p.get(2).getAsDouble(),p.get(1).getAsDouble(),temporaryArrival);
+                else KitClient.controller().startExact(c,p.get(0).getAsDouble(),p.get(2).getAsDouble(),p.get(1).getAsDouble());
                 idleNavigationBinding=supervisionLease!=null&&!str(r,"idle_service_id").isBlank()
                     ?idleBinding(str(r,"idle_service_id"),session(c),str(r,"task_session"),str(supervisionLease,"id")):"";
                 if(r.has("air_only")&&r.get("air_only").getAsBoolean()){

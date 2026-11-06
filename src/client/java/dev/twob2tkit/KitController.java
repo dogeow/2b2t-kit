@@ -131,11 +131,20 @@ public final class KitController {
 
 	/** 写入目标并起飞；到达是否离线跟配置。 */
 	private boolean exactArrival;
+	private double exactArrivalRadius = Double.NaN;
+	private double arrivalSampleX = Double.NaN, arrivalSampleZ = Double.NaN;
 
 	/** Scripted interaction targets require the requested height as well as X/Z. */
 	public void startExact(Minecraft client, double targetX, double targetZ, double cruiseY) {
 		start(client, targetX, targetZ, cruiseY);
 		exactArrival = true;
+	}
+
+	/** Script radius is session-only and must not overwrite the user's cruise setting. */
+	public void startExact(Minecraft client, double targetX, double targetZ, double cruiseY, double radius) {
+		if (!Double.isFinite(radius) || radius <= 0) throw new IllegalArgumentException("Invalid exact arrival radius");
+		startExact(client, targetX, targetZ, cruiseY);
+		exactArrivalRadius = radius;
 	}
 
 	/** A safety ascent must reach air without inheriting a route's logout preference. */
@@ -189,6 +198,9 @@ public final class KitController {
         var canopyBackup=client.gameDirectory.toPath().resolve("config/twob2tkit/cruise-canopy-flight-speed.bak");
         if(java.nio.file.Files.exists(canopyBackup))canopyFlight.prepare(canopyBackup);
 		exactArrival = false;
+		exactArrivalRadius = Double.NaN;
+		arrivalSampleX = client.player == null ? Double.NaN : client.player.getX();
+		arrivalSampleZ = client.player == null ? Double.NaN : client.player.getZ();
 		KitClient.prepareForCruise(client);
 		releaseKeys(client);
 		phase = Phase.ALTITUDE;
@@ -291,23 +303,28 @@ public final class KitController {
 			return;
 		}
 
-        // Also runs before exact-arrival's altitude branch, which otherwise
-        // returns before ordinary ceiling mining/obstacle handling can run.
-        if(tickCanopyEscape(client,player))return;
-
 		double finalDx = config.targetX - player.getX();
 		double finalDz = config.targetZ - player.getZ();
 		double horizontalDistance = Math.hypot(finalDx, finalDz);
-		if (horizontalDistance <= config.arrivalRadius) {
-			if (exactArrival && Math.abs(config.cruiseY - player.getY()) > 0.7) {
-				altitudeOffset = 0.0;
-				avoidanceActive = false;
-				blockedByObstacle = false;
-				releaseKeys(client);
-				adjustAltitude(client, player, 0.6);
-				return;
-			}
+		double arrivalRadius = exactArrival
+			? (Double.isFinite(exactArrivalRadius) ? exactArrivalRadius : config.arrivalRadius)
+			: dev.twob2tkit.cruise.CruiseArrivalPolicy.manualRadius(config.arrivalRadius);
+		boolean reached = dev.twob2tkit.cruise.CruiseArrivalPolicy.reached(exactArrival,
+			arrivalSampleX, arrivalSampleZ, player.getX(), player.getZ(), config.targetX, config.targetZ, arrivalRadius);
+		arrivalSampleX = player.getX(); arrivalSampleZ = player.getZ();
+		// A completed destination takes precedence over canopy detours.
+		if (reached && (!exactArrival || Math.abs(config.cruiseY - player.getY()) <= 0.7)) {
 			arrive(client);
+			return;
+		}
+        // Exact arrival still needs canopy escape before its altitude-only branch.
+        if(tickCanopyEscape(client,player))return;
+		if (reached && exactArrival) {
+			altitudeOffset = 0.0;
+			avoidanceActive = false;
+			blockedByObstacle = false;
+			releaseKeys(client);
+			adjustAltitude(client, player, 0.6);
 			return;
 		}
 
