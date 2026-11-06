@@ -1925,8 +1925,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 						return;
 					}
 				} else {
-					occludedTicks = 0;
-					status = "前方没有立足点，已停步，不往下掉";
+					BorerNoSupportRecovery.handle(this, client, player);
 				}
 			} else {
 				BlockPos wall = corridor.nextClearableCorridorBlock(client, player);
