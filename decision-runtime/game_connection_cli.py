@@ -9,8 +9,10 @@ from live_snapshot import read_fresh
 from safety_interlock import require_unlocked
 
 def pending_screen(screen, seen_connecting, elapsed):
+    # A returned menu can be a transient frame while the same socket is pending.
+    # Observe until the caller deadline; never use this to issue another request.
     return screen in ('ConnectScreen','ReceivingLevelScreen','ProgressScreen','LevelLoadingScreen') or (
-        screen in ('TitleScreen','DisconnectedScreen') and not seen_connecting and elapsed >= 0)
+        screen in ('TitleScreen','DisconnectedScreen') and elapsed >= 0)
 
 def connection_screen_seen(screen, seen_connecting):
     return seen_connecting or screen in ('ConnectScreen','ReceivingLevelScreen','ProgressScreen','LevelLoadingScreen')
