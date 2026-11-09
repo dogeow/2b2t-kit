@@ -906,6 +906,24 @@ public final class AutomationBridge {
             boolean keepGuard=str(lease,"remote_finish").equals("guard")&&!lowHealth
                 &&(!material||highGuardPark(c,lease)||reanchorHealthyHover(c,lease));
             var action=dev.twob2tkit.builder.BuildSupervisorSafety.decide(same,KitKeys.manualMovementDown(c),local,lowHealth || controllerFinished || now-lastSupervisionHeartbeat>15000,complete,!keepGuard);
+            // An owned, motionless and safe worksite can remain online under PvE guard.
+            // Do not apply this to low health, combat, liquid/fire, open screens or unsupported positions.
+            BlockPos support=c.player.blockPosition().below();
+            var motion=c.player.getDeltaMovement();
+            boolean supported=c.level.hasChunkAt(support)&&c.level.getBlockState(support)
+                .isFaceSturdy(c.level,support,net.minecraft.core.Direction.UP);
+            boolean safeBody=!c.player.isInWater()&&!c.player.isUnderWater()&&!c.player.isInLava()
+                &&!c.player.isOnFire()&&c.level.noCollision(c.player,c.player.getBoundingBox());
+            boolean still=Math.hypot(motion.x,motion.z)<.03&&Math.abs(motion.y)<.12;
+            if(action==dev.twob2tkit.builder.BuildSupervisorSafety.Action.LOGOUT
+                    &&ParkingLeasePolicy.stayOnline(same,str(lease,"remote_finish").equals("guard"),
+                        KitKeys.manualMovementDown(c),lowHealth,guardArmed()&&pveOnly(),
+                        nearThreat||guardBusy,safeBody,supported,still,c.gui.screen()==null,
+                        c.player.getFoodData().getFoodLevel())){
+                KitClient.stopWork("安全工位完成，保留在线防护");
+                supervisionLease=null;releaseMaterialMiningLease();armPveGuard(c);
+                phase="stopped";detail="安全工位待命，防护持续";writeStatus(c);return;
+            }
             boolean alreadyWaiting=lease.has("finish_waiting")&&lease.get("finish_waiting").isJsonPrimitive()
                 &&lease.getAsJsonPrimitive("finish_waiting").isBoolean()
                 &&lease.get("finish_waiting").getAsBoolean();
@@ -1576,8 +1594,8 @@ public final class AutomationBridge {
         if(ticks%5==0)writeStatus(c);
     }
     public static boolean beforeInput(Minecraft c){
-        if(brakeDisplacedWalk(c))return true;
         syncMaterialMiningLease(c);
+        if(brakeDisplacedWalk(c))return true;
         if(materialMiningCleanupPending)return true;
         if(active!=null)ownsMaterialMenu(c); // Capture our CraftingMenu even though it is an allowed survival screen.
         if(OwnedBlankSignEditor.closeIfOwned(c,active,controlRevision,active!=null&&op.equals("professional_print")&&currentMaterialRequest(c,active)&&guardArmed()&&pveOnly()&&!guardBusy&&!dev.twob2tkit.combat.EmergencyExit.held(c),projectionBatch.active()&&projectionBatch.count()==1&&projectionBatchCurrent(c),projectionBatch.positions()))return true;
@@ -2712,6 +2730,9 @@ public final class AutomationBridge {
             idleFisherBinding="";
             idleFisherGeneration=-1;
             phase="done";detail="auto fisher stopped; PvE guard remains armed";
+        }else if(command.equals("planter_stop")){
+            if(KitClient.planter()!=null&&KitClient.planter().isActive())KitClient.planter().stop(c,"脚本停止种田");
+            phase="done";detail="auto planter stopped; PvE guard remains armed";
         }else if(command.equals("guide")){
             if(r.has("stop") && r.get("stop").getAsBoolean())KitClient.structureGuide().stop();
             else{JsonArray pos=r.getAsJsonArray("pos");checkSiteTarget(r,pos);String name=str(r,"name");

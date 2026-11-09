@@ -71,7 +71,8 @@ class IdleActivityWiringTest {
             if(instruction instanceof VarInsnNode local&&local.getOpcode()==Opcodes.ILOAD&&local.var==3)keepMenuGuard=true;
             if(instruction instanceof TypeInsnNode type&&type.desc.endsWith("FishingRodItem"))rodGuard=true;
         }
-        assertTrue(writes.containsAll(Set.of("active","phase","chestPos","cooldown","openWait","caughtWait","sawBite")));
+        assertTrue(writes.containsAll(Set.of("active","phase","chestPos","cooldown","openWait")));
+        assertTrue(calls(body).contains("clearBite"));
         assertTrue(keepMenuGuard);assertTrue(rodGuard);
         assertFalse(calls(body).contains("handleContainerInput"));
         var supply=code("automation/BuildSupplyTask");

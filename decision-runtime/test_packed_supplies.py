@@ -183,6 +183,13 @@ class EquipmentWithdrawalTest(unittest.TestCase):
    self.assertEqual(1,c.box[2]['count']);self.assertEqual(0,c.box[1]['count'])
    self.assertEqual(24,record['slot']);self.assertEqual(1000,record['minimum_durability'][self.TOOL])
 
+ def test_two_unstackable_equipment_items_move_one_at_a_time(self):
+  with tempfile.TemporaryDirectory() as folder:
+   c=self.client(folder);record=self.run_withdrawal(c,5)
+   self.assertEqual({self.TOOL:2},record['taken']);self.assertTrue(c.returned)
+   clicks=[a for a in c.actions if a[0]=='slot_click' and a[1].get('expected_item')==self.TOOL]
+   self.assertEqual(2,len(clicks));self.assertTrue(all(a[1]['expected_count']==1 for a in clicks))
+
  def test_real_box_action_uses_shared_preflight_before_any_scan_or_inventory_mutation(self):
   from packed_supplies import take_box,workspace_requirement,PackedWorkspaceRequired,REQUIRED_FREE_SLOTS
   with tempfile.TemporaryDirectory() as folder:

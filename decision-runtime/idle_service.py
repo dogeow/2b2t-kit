@@ -229,7 +229,7 @@ class IdleService:
         # the old snapshot's own-input conflict as a foreign controller.
         if (self.runner is not None and self.runner.owns(state) and state.get('idle_activity_protocol')==1
                 and (activity.get('busy') is True or activity.get('idle_task_session')!=self.runner.identity().get('task_session'))):
-            deadline=time.monotonic()+.5
+            deadline=time.monotonic()+2.5  # Native snapshots can be published about one second apart.
             while time.monotonic()<deadline:
                 self._controls()
                 if self.book['paused']or not self.book['enabled']:raise IdleYield(self.book['reason']or'USER_STOP')
@@ -273,6 +273,14 @@ class IdleService:
             self._controls();state=self.observer()
             if self.book.get('world_session') is not None and state.get('world_session')!=self.book['world_session']:
                 self._finish('WORLD_SESSION_CHANGED');self.book.update(enabled=False,paused=True,reason='WORLD_SESSION_CHANGED');self.save();return self.status()
+            if self.runner is not None:
+                activity=state.get('idle_activity') or {}
+                if self.runner.owns(state) and (activity.get('busy') is True or activity.get('idle_task_session')!=self.runner.identity().get('task_session')):
+                    try:
+                        self.checkpoint(state)
+                        state=self.observer()
+                    except IdleYield as yielded:
+                        self._finish(str(yielded));return self.status()
             reason=busy_reason(self.root,self.profile,state,runner=self.runner,now_ms=int(self.clock()*1000))
             if self.runner is not None:
                 if reason or self.book['paused'] or not self.book['enabled']:

@@ -292,8 +292,14 @@ class NativeRunner:
         state=self.client.status();verify_shore(state,self._shore_scan(shore),shore,require_standing=False)
         if math.dist(state['pos'],shore['stand'])>.15 or state.get('on_ground') is not True:
             trace=[];hover=[shore['stand'][0],shore['stand'][1]+.4,shore['stand'][2]]
-            _travel(_MovementClient(self),hover,self.service.checkpoint,trace)
-            write_json(self.out/'shore-travel-trace.json',{'world_session':self.client.world,'target':hover,'trace':trace})
+            # A player already directly above the verified shore can land locally.
+            # Routing upward first may intersect a roof above the safe worksite.
+            pos=state['pos']
+            local_landing=(math.hypot(pos[0]-shore['stand'][0],pos[2]-shore['stand'][2])<=.05
+                           and 0<=pos[1]-shore['stand'][1]<=.4)
+            if not local_landing:
+                _travel(_MovementClient(self),hover,self.service.checkpoint,trace)
+            write_json(self.out/'shore-travel-trace.json',{'world_session':self.client.world,'target':hover,'trace':trace,'local_landing':local_landing})
             verify_shore(self.client.status(),self._shore_scan(shore),shore,require_standing=False)
             self._send_movement('walk',target=shore['stand'][:],arrival=.15,restore_flight=False,seconds=10,require_ground_landing=True)
             grounded=self.client.status()
@@ -531,7 +537,15 @@ class NativeRunner:
                 if self.owns(state):
                     c.rev=state['control_revision']  # Only the exact owned envelope can authorize this adoption.
                     self.service.publish_owner(state,force=True)
-                    if normal and not self.has_unknown():
+                    if (normal and self.job=='fish' and not self.has_unknown()
+                            and state.get('screen')=='' and state.get('guard_busy') is False
+                            and state.get('guard_armed') is True and state.get('health',0)>=19
+                            and state.get('under_water') is False):
+                        if state.get('fisher_active') is True:self._send('fisher_stop',cleanup=True)
+                        self._send('material_job_pause',cleanup=True,release=True)
+                        after=self.service.observer();lease=after.get('supervision_lease') or {}
+                        released=lease.get('job_session')!=c.task and after.get('fisher_active') is False and after.get('navigating') is False and after.get('guard_armed') is True
+                    elif normal and not self.has_unknown():
                         if self.job=='fish' and state.get('fisher_active') is True:self._send('fisher_stop',cleanup=True)
                         # The ordinary protected finish may move to the registered high park.
                         # Keep priority checks active there; only one-shot cancellation suppresses them.

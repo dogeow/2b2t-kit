@@ -1,4 +1,4 @@
-import json,tempfile,unittest
+import json,os,tempfile,unittest
 from unittest.mock import patch
 from pathlib import Path
 from material_jobs.build_progress import BuildMaterialProgress,phase,acquisition_activity
@@ -7,6 +7,18 @@ from test_projection_flat_jobs import model,layout_for,audit
 
 
 class BuildProgressTest(unittest.TestCase):
+    def test_same_size_and_restored_mtime_still_reads_replaced_ledger(self):
+        path = self.root / 'cache-test.json'
+        path.write_text('{"value":1}')
+        os.utime(path, ns=(1_000_000_000,1_000_000_000))
+        original = self.reader.read(path)
+        self.assertIs(self.reader.read(path), original)
+        replacement = path.with_suffix('.tmp')
+        replacement.write_text('{"value":2}')
+        os.utime(replacement, ns=(1_000_000_000,1_000_000_000))
+        replacement.replace(path)
+        self.assertEqual(self.reader.read(path), {'value':2})
+
     def test_material_pipeline_reports_real_inner_operation_and_live_movement(self):
         self.request['id']='job';self.status['state']='gathering'
         pipe=self.root/'pipelines/stone';pipe.mkdir(parents=True)

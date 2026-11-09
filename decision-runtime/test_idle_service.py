@@ -254,12 +254,12 @@ class IdleTests(unittest.TestCase):
         for low,high,hostile in (([8.3,64,.3],[8.8,65,.8],False),([8.3,64,1.5],[8.8,66,2],False),([13,64,2],[14,66,3],True)):
             changed=deepcopy(scan);changed['scan_entities'][0].update(hostile=hostile,bounds={'min':low,'max':high})
             with self.assertRaises(RuntimeError):verify_shore(state,changed,shore)
-    def test_fishing_stops_before_inventory_full_and_returns_to_guarded_park(self):
+    def test_fishing_stops_before_inventory_full_and_remains_guarded_online(self):
         self.activate()
         for slot in range(1,34):self.fake.state['inventory'][slot].update(item='minecraft:cod',count=1)
         self.service.tick();self.assertFalse(self.fake.state['fisher_active']);self.assertEqual(1,self.op_count('fisher_stop'))
-        self.assertEqual(1,self.op_count('finish'));self.assertEqual('parking',self.fake.state['supervision_lease']['kind'])
-        self.assertEqual(self.farm.profile['park_target'],self.fake.state['pos'])
+        self.assertEqual(0,self.op_count('finish'));self.assertEqual(1,self.op_count('material_job_pause'))
+        self.assertEqual({},self.fake.state['supervision_lease']);self.assertTrue(self.fake.state['guard_armed'])
     def test_high_farm_park_autonomously_reaches_registered_shore_lands_restores_flight_and_fishes(self):
         self.fake.state.update(pos=self.farm.profile['park_target'][:],on_ground=False,velocity=[0,0,0])
         self.activate()
@@ -274,9 +274,20 @@ class IdleTests(unittest.TestCase):
         arrival=json.loads((directory/'shore-arrival.json').read_text())
         self.assertGreaterEqual(arrival['ground_proof']['observed_span_ms'],400);self.assertFalse(arrival['on_ground_observed'])
         self.clock.step(91);self.service.tick();self.assertFalse(self.fake.state['fisher_active'])
-        self.assertEqual(self.farm.profile['park_target'],self.fake.state['pos'])
+        self.assertEqual(self.config['fishing']['shore']['stand'],self.fake.state['pos'])
+        self.assertTrue(self.fake.state['guard_armed'])
         self.clock.step(11);self.service.tick();self.clock.step(5.1);self.service.tick()
         self.assertEqual(2,self.op_count('fisher_start'))
+    def test_directly_above_shore_lands_without_high_route(self):
+        stand=self.config['fishing']['shore']['stand']
+        self.fake.state.update(pos=[stand[0],stand[1]+.228,stand[2]],on_ground=False,flight=True,velocity=[0,0,0])
+        with self.service.worker_lock():
+            self.activate()
+            moves=[(op,args) for op,args in self.fake.calls if op in ('navigate','walk')]
+            self.assertEqual('walk',moves[0][0])
+            self.assertEqual(stand,moves[0][1]['target'])
+            self.assertTrue(self.fake.state['fisher_active'])
+
     def test_unknown_navigation_walk_or_flight_restore_keeps_original_move_and_never_replays(self):
         for fault in ('navigate','walk','restore'):
             with self.subTest(fault=fault):
@@ -366,6 +377,30 @@ class IdleTests(unittest.TestCase):
             self.assertTrue(runner.stop_result['released']);self.assertEqual(1,self.op_count('material_job_pause'))
             self.service._finish('FOREGROUND_DEMAND');self.assertEqual(1,self.op_count('material_job_pause'))
         finally:priority.close()
+    def test_owned_revision_waits_for_one_second_native_snapshot(self):
+        runner,client=self.flight_client();initial=self.fake.observe();frames=[];tick=[0]
+        def monotonic():tick[0]+=.1;return tick[0]
+        def host_frame():
+            self.clock.step(.1);frames.append(True)
+            if len(frames)>=12:self.fake.state["idle_activity"]={"busy":False,"conflicts":[],"idle_task_session":client.task}
+            return self.fake.observe()
+        self.service.observer=host_frame
+        with patch("material_jobs_backend.JobClient.raw",return_value=initial),patch("idle_service.time.monotonic",side_effect=monotonic),patch("idle_service.time.sleep"),patch.object(runner,"stop") as stop:
+            self.assertEqual(2,client.raw()["control_revision"]);stop.assert_not_called()
+        self.assertGreaterEqual(len(frames),12);self.service.runner=None
+
+    def test_active_fisher_waits_for_owner_snapshot(self):
+     runner,client=self.flight_client();runner.job='fish';client.rev=2;client.native_inflight=None;self.fake.state.update(phase='done',navigating=False,fisher_active=True,idle_activity={'busy':True,'conflicts':['fisher','material_lease'],'idle_task_session':''});self.service.book['active_job']='fish';tick=[0];frames=[]
+     def monotonic():tick[0]+=.1;return tick[0]
+     def host_frame():
+      self.clock.step(.1);frames.append(True)
+      if len(frames)>=12:self.fake.state['idle_activity']={'busy':False,'conflicts':[],'idle_task_session':client.task}
+      return self.fake.observe()
+     self.service.observer=host_frame
+     with patch('idle_service.time.monotonic',side_effect=monotonic),patch('idle_service.time.sleep'),patch.object(runner,'stop') as stop,patch.object(runner,'should_finish',return_value=False):
+      self.service.tick();stop.assert_not_called()
+     self.assertGreaterEqual(len(frames),12);self.service.runner=None
+
     def test_owned_revision_advance_publishes_marker_and_reads_next_frame_without_self_stopping(self):
         runner,client=self.flight_client();initial=self.fake.observe();frames=[]
         def host_frame():

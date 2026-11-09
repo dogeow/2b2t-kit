@@ -72,6 +72,26 @@ class WorkbenchTests(unittest.TestCase):
 
 
 class BuildProgressTests(unittest.TestCase):
+    def test_submersion_during_build_pauses_before_refill_or_restart(self):
+        from material_jobs.protocol import JobBlocked
+        from unittest.mock import Mock
+
+        with tempfile.TemporaryDirectory() as d:
+            client = Mock(out=Path(d), world='world', task='task', rev=1)
+            client.heartbeat.id = 'lease'
+            dry = dict(time=1, pos=[0,64,0], health=20, connected=True, screen='',
+                       world_session='world', control_revision=1, window_active=True,
+                       projection_selection={'key':'selected'})
+            wet = dict(dry, under_water=True,
+                       supervision_lease=dict(kind='materials', job_session='task', id='lease',
+                                              world_session='world', revision=1),
+                       build_job=dict(active=True, session='job', placement_key='selected'))
+            client.status.side_effect = [dry, dry, dry, wet, dry | {'supervision_lease':wet['supervision_lease']}]
+            with patch('goal_workflow.prepare_build_material'), self.assertRaises(JobBlocked):
+                build_phase(client, 'selected')
+            self.assertEqual(['projection_start','build_control'],[call.args[0] for call in client.checked.call_args_list])
+            client.checked.assert_called_with('build_control',job_session='job',action='pause_and_report')
+
     def test_native_completion_race_is_reconciled_by_the_real_build_exit(self):
         from build_pause_reconciliation import REJECTION
         class Completed:

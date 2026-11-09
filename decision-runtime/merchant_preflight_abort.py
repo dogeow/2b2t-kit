@@ -34,7 +34,7 @@ def settled(path):
  """Validate a separate terminal abort proof; the refused purchase stays incomplete."""
  try:
   path=Path(path);book=json.loads(path.read_text())
-  if(book.get('pending')or{}).get('op')=='merchant_select_trade':return selection_settled(path,book)
+  if(book.get('pending')or{}).get('op')=='merchant_select_trade':return selection_settled(path,book) or selection_closed_after_reconnect(path,book)
   proof=json.loads((path.parent/'prepurchase-abort.json').read_text())
   refusal=proof['refusal'];closed=proof['close_receipt'];close_event=proof['close_event'];frames=proof['settled_frames'];request=book['pending']['request_id']
   if request is None:
@@ -89,6 +89,59 @@ def selection_was_unissued(book,error,event,world,task):
    and event['revision_before']==event['revision_after']and event['position_before']==event['position_after']
    and event['health_before']==event['health_after']==20)
  except(KeyError,TypeError,ValueError):return False
+
+def selection_closed_after_reconnect(path, book=None):
+    """A new session may proceed only after proving the old selection never reached output pickup."""
+    try:
+        path = Path(path)
+        book = book or json.loads(path.read_text())
+        proof = json.loads((path.parent / 'selection-closed-reconnect.json').read_text())
+        events = proof['old_events']
+        frames = proof['frames']
+        pending = book['pending']; old = book['world_session']; new = frames[0]['world_session']
+        selected, closed, released = events
+        event_path = path.parent.parent / 'control' / 'events.jsonl'
+        digest = hashlib.sha256()
+        tail = []
+        with event_path.open('rb') as stream:
+            for line in stream:
+                digest.update(line)
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                if not isinstance(event, dict):
+                    return False
+                selected_here = event.get('request_id') == pending['request_id']
+                if tail and (selected_here or len(tail) == 4):
+                    return False
+                if tail or selected_here:
+                    tail.append(event)
+        if len(tail) != 4 or proof['events_sha256'] != digest.hexdigest():
+            return False
+        if ([e.get('op') for e in tail] != ['merchant_select_trade','close_menu','scan','material_job_pause']
+                or [tail[0],tail[1],tail[3]] != events
+                or any(e.get('world_session') != old or e.get('phase') != 'done' for e in tail)):
+            return False
+        original_receipts = book['receipts']
+        identity = original_receipts[0]['player_uuid']
+        return (proof['original_sha256'] == hashlib.sha256(path.read_bytes()).hexdigest()
+            and proof['output_credit'] == 0 and proof['original_replayed'] is False
+            and book['complete'] is False and pending['op'] == 'merchant_select_trade'
+            and len(original_receipts) == 1 and original_receipts[0]['id'] == pending['request_id']
+            and selected['request_id'] == pending['request_id'] and selected['op'] == 'merchant_select_trade'
+            and selected['phase'] == 'done' and selected['world_session'] == old
+            and closed['op'] == 'close_menu' and closed['phase'] == 'done' and closed['world_session'] == old
+            and released['op'] == 'material_job_pause' and released['phase'] == 'done' and released['world_session'] == old
+            and all(not e.get('inventory_delta') for e in events)
+            and new != old and len(frames) == 3
+            and frames[0]['time'] < frames[1]['time'] < frames[2]['time']
+            and all(f['world_session'] == new and f['player_uuid'] == identity
+                    and f['server'] == original_receipts[0]['server']
+                    and f['connected'] is True and f['health'] == 20 and f['screen'] == ''
+                    and f['cursor_count'] == 0 and not f['supervision_lease']
+                    and Counter(f['inventory']) == Counter(book['before']) for f in frames))
+    except (OSError, KeyError, TypeError, ValueError, IndexError):
+        return False
 
 def selection_settled(path,book=None):
  try:

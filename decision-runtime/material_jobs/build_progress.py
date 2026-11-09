@@ -1,5 +1,6 @@
 """Display current material counts from the existing model and verified placement ledger."""
 from collections import Counter
+import os
 import json
 from pathlib import Path
 
@@ -23,12 +24,21 @@ class BuildMaterialProgress:
     def __init__(self,automation=None):
         self.cache={};self.layouts={};self.counts={};self.automation=Path(automation)if automation is not None else None
     def read(self,path):
-        path=Path(path);stamp=(path.stat().st_mtime_ns,path.stat().st_size)
+        def version(st):
+            return st.st_dev,st.st_ino,st.st_mtime_ns,st.st_ctime_ns,st.st_size
+
+        path=Path(path)
+        stamp=version(path.stat())
         previous=self.cache.get(path)
         if previous and previous[0]==stamp:return previous[1]
-        value=json.loads(path.read_text())
-        if stamp!=(path.stat().st_mtime_ns,path.stat().st_size):raise ValueError('Display input changed while reading')
-        self.cache[path]=(stamp,value);return value
+        with path.open('rb') as stream:
+            if stamp!=version(os.fstat(stream.fileno())):raise ValueError('Display input replaced before reading')
+            raw=stream.read()
+            if stamp!=version(os.fstat(stream.fileno())) or stamp!=version(path.stat()):
+                raise ValueError('Display input changed while reading')
+        value=json.loads(raw)
+        self.cache[path]=(stamp,value)
+        return value
 
     def details(self,request,status,state,out):
         if request.get('mode')!='projection' or status.get('state') in ('paused','failed','blocked','completed','cancelled'):return None

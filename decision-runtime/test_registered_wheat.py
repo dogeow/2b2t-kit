@@ -110,7 +110,9 @@ class Tests(unittest.TestCase):
     def test_unresolved_harvest_is_not_exposed_as_a_safe_generic_source_wait(self):
         self.c.pickup_delay=None
         result=self.execute();self.assertEqual('WAIT_RECONCILE',result['code'],result)
-        books=list((self.root/'source').rglob('wheat-harvest-*.json'))
+        books=[p for p in (self.root/'source').rglob('wheat-harvest-*.json')
+               if not p.name.endswith('.current-field-proof.json')]
+        self.assertEqual(1,len(books),books)
         self.assertTrue(json.loads(books[0].read_text())['pending'])
         self.assertEqual(1,sum(op=='mine_block'for op,_ in self.c.calls))
 

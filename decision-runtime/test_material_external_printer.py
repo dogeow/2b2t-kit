@@ -1,6 +1,8 @@
 from copy import deepcopy
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import time
 from unittest import TestCase
 from unittest.mock import Mock,patch
 from material_client import MaterialClient,Client,Handoff
@@ -9,6 +11,7 @@ class ExternalPrinterAdmissionTest(TestCase):
   return {'professional_printer':{'enabled':enabled,'owned':owned},'build_job':{'active':False},'supervision_lease':{},'material_protocol':2,'inventory_isolation':{'supported':True},'inventory':[{'item':'minecraft:cooked_beef','count':20,'slot':8}],'printer_idle_admission_protocol':protocol}
  def invoke(self,state,path):
   c=MaterialClient.__new__(MaterialClient);c.root=c.out=Path(path);c.world='world';c.recovery_only=False;c.raw=Mock(return_value=state);c.checked=Mock(return_value={'phase':'done'})
+  (c.root/'status.json').write_text(json.dumps({**state,'time':int(time.time()*1000)}))
   with patch.object(Client,'__init__',return_value=None),patch.object(Client,'request')as send,patch('material_client.write_manifest'),patch('material_client.SafetyHeartbeat'):
    try:c._init_material(c.root,c.out,'simpcraft.com',False,False,None,'disconnect',None)
    finally:self.assertEqual(0,send.call_count,'No implicit printer stop may be dispatched')

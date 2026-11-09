@@ -23,6 +23,14 @@ final class ParkingLeasePolicy {
             && !flightActive && otherwiseVerifiedPark && drySafeBody;
     }
 
+    /** Safe stationary work sites can release a finished guard lease without disconnecting. */
+    static boolean stayOnline(boolean same,boolean guardRequested,boolean manual,boolean lowHealth,
+                              boolean guardArmed,boolean hostile,boolean bodySafe,boolean solidSupport,
+                              boolean still,boolean screenClear,int food){
+        return same&&guardRequested&&!manual&&!lowHealth&&guardArmed&&!hostile&&bodySafe
+            &&solidSupport&&still&&screenClear&&food>=18;
+    }
+
     /** A combat/quiet-window wait is still a closing material lease, never verified parking. */
     static QuietWait quietWait(boolean logoutRequested,boolean lowHealth,boolean quiet,
                                boolean alreadyWaiting) {

@@ -390,7 +390,7 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
             if free<=1:record.setdefault('deferred',{})[material]='Reserve a free slot for the intact box';break
             if (material in VALUABLE or (required_stored_enchantments or {}).get(material)
                     or (required_enchantments or {}).get(material) or (minimum_durability or {}).get(material) or (exact_stacks or {}).get(material)):
-                if src.get('max_stack',64)==1 and src['count']==1 and need==1:
+                if src.get('max_stack',64)==1 and src['count']==1:
                     # A uniquely identified unstackable item is already an
                     # exact one-item transfer; inventory_exact intentionally
                     # handles ordinary stackable ingredients only.

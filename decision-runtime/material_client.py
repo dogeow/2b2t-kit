@@ -109,12 +109,18 @@ def recovery_action_allowed(state,op,params):
  if any(not isinstance(p,(list,tuple)) or len(p)!=3 or any(type(v)not in (int,float) or not math.isfinite(v) for v in p) for p in (source,target)):return False
  return bool(params.get('air_only')is True and 2<=target[1]-source[1]<=64 and math.hypot(target[0]-source[0],target[2]-source[2])<=.5)
 class Client:
- def __init__(self,root,out,server,min_health=18,dimension='minecraft:overworld'):
+ def __init__(self,root,out,server,min_health=18,dimension='minecraft:overworld',idle_storage_proof=None):
   if dimension not in ('minecraft:overworld','minecraft:the_nether'):raise ValueError('Unsupported explicit material dimension')
   self.root=Path(root);self.out=Path(out);self.out.mkdir(parents=True,exist_ok=True);self.server=server
   self.dimension=dimension
   s=self.raw();assert s.get('server','').removesuffix(':25565')==self.server.removesuffix(':25565') and s['dimension']==dimension
-  assert not s['screen'] and not s.get('manual_movement') and s['health']>=min_health
+  if idle_storage_proof is not None:
+   from idle_storage_recovery import may_recover_ui
+   assert s.get('screen') in ('ContainerScreen','ShulkerBoxScreen')
+   assert may_recover_ui(idle_storage_proof['before'],s,idle_storage_proof['idle_seconds'],authorized=True,hardware_idle=idle_storage_proof.get('hardware_idle'))
+  else:assert not s['screen']
+  assert not s.get('manual_movement') and s['health']>=min_health
+  self.idle_storage_proof=idle_storage_proof
   assert not any(s.get(k) for k in ('borer_active','chopping','navigating'))
   self.anchor=list(s['pos']);self.world=s['world_session'];self.rev=s['control_revision'];self.owned=False;self.last=None;self.native_inflight=None
  def raw(self,wait_seconds=None):
@@ -176,6 +182,15 @@ class Client:
     if not processing_owned:raise Handoff('User opened a different interface')
    return s
  def request(self,op,**params):
+  if getattr(self,'idle_storage_proof',None) is not None:
+   if op!='close_menu':raise Handoff('Idle storage client may only close the verified menu')
+   if getattr(self,'_idle_storage_attempted',False):raise Handoff('Original idle storage close must not be replayed')
+   from idle_storage_recovery import may_recover_ui
+   from manual_idle_resume import hardware_idle_seconds
+   current=self.raw();proof=self.idle_storage_proof
+   if not may_recover_ui(proof['before'],current,proof['idle_seconds'],authorized=True,hardware_idle=hardware_idle_seconds()):
+    raise Handoff('Idle storage changed; no close dispatched')
+   self._idle_storage_attempted=True
   until=min(time.monotonic()+60,getattr(self,'guard_admission_deadline',math.inf))
   while True:
    s=self.status(wait_interface=False) if op in ('stop','safe_logout','material_job_pause') else self.status()
@@ -627,6 +642,12 @@ class MaterialClient(Client):
   if remote_finish not in ('disconnect','guard') or remote_finish=='guard' and (not isinstance(park_target,(list,tuple)) or len(park_target)!=3):raise ValueError('Guard finish requires a high park target')
   self.remote_finish=remote_finish;self.park_target=list(park_target) if park_target is not None else None
   self.heartbeat=None;self.owned_material_menu=None;self.owned_inventory_crafting=None;self.job_progress=None
+  from live_snapshot import read_fresh
+  initial=read_fresh(Path(root))
+  if initial.get('screen') in ('ContainerScreen','ShulkerBoxScreen') and not self.recovery_only:
+   from idle_storage_recovery import close_stable_storage
+   if not close_stable_storage(root,Path(out)/'idle-storage-close',server,dimension=getattr(self,'requested_dimension','minecraft:overworld')):
+    raise Handoff('Storage changed or user is active; no close dispatched')
   super().__init__(root,out,server,min_health=14 if self.recovery_only else 18,dimension=getattr(self,'requested_dimension','minecraft:overworld'))
   self.record_experience=record_experience;self.experience_state=experience_state
   s=self.raw()

@@ -117,6 +117,11 @@ def prepare_build_material(client,state):
     return item
 
 def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells=None,max_station_repositions=0,background=False,navigation_grace_seconds=15,max_material_refills=32,air_seed_limit=8):
+    from material_jobs.construction_breathing import interrupt_submerged
+
+    def check_breathing(state):
+        interrupt_submerged(client,state,client.out)
+
     s=client.status()
     if s['projection_selection'].get('key')!=selection_key:raise Handoff('Selected projection changed')
     from planned_station_guard import require_safe_planned_station,UnsafePlannedStation
@@ -125,10 +130,12 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
         raise RuntimeError('Background construction requires the current protected material lease')
     if not s.get('window_active') and not background:
         raise RuntimeError('Minecraft must be the foreground window for construction movement')
+    check_breathing(s)
     if s['screen']:client.checked('close_menu')
-    from material_jobs.construction_breathing import interrupt_submerged
-    interrupt_submerged(client,client.status(),client.out)
-    prepare_build_material(client,client.status())
+    fresh=client.status()
+    check_breathing(fresh)
+    prepare_build_material(client,fresh)
+    check_breathing(client.status())
     client.checked('projection_start',manual_start=True,placement_key=selection_key)
     started=time.monotonic();last_gain=started;last_navigation=None;navigation_anchor=s
     best=0;last_report=-1;last_sample=0;last_subset_check=0;repositions=0;material_refills=0
@@ -139,10 +146,10 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             with (client.out/'build-station-events.jsonl').open('a') as stream:stream.write(json.dumps({'time':s['time'],'pos':s['pos'],'velocity':s.get('velocity'),'movement_keys':s.get('movement_keys'),'window_active':s.get('window_active'),'flight':s.get('flight'),'health':s['health'],'guard_busy':s.get('guard_busy'),'build':b,'printer':s.get('professional_printer')},ensure_ascii=False)+'\n')
         if b.get('placement_key')!=selection_key or s.get('projection_selection',{}).get('key')!=selection_key:raise Handoff('Projection changed during build')
         if b.get('outcome')=='manual_stop':raise Handoff('Player stopped construction')
+        check_breathing(s)
         if (background and not protected_background(client,s)) or (not background and not s.get('window_active')):
             if b.get('active'):client.checked('build_control',job_session=b['session'],action='pause_and_report')
             raise RuntimeError('Minecraft left foreground during construction')
-        interrupt_submerged(client,s,client.out)
         try:require_safe_planned_station(s,complete_cells)
         except UnsafePlannedStation:
             if b.get('active'):client.checked('build_control',job_session=b['session'],action='pause_and_report')
@@ -167,11 +174,13 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             client.checked('build_control',job_session=b['session'],action='pause_and_report')
             fresh=client.status()
             if fresh.get('projection_selection',{}).get('key')!=selection_key:raise Handoff('Projection changed before material refill')
+            check_breathing(fresh)
             item=prepare_build_material(client,fresh)
             if item:
                 with(client.out/'build-material-refills.jsonl').open('a')as stream:
                     stream.write(json.dumps({'world_session':fresh.get('world_session'),'previous_job_session':b['session'],
                         'item':item,'actual_hand':client.status().get('hand'),'matched_before':best,'placement_credit':0})+'\n')
+                check_breathing(client.status())
                 client.checked('projection_start',manual_start=True,placement_key=selection_key)
                 material_refills+=1;last_gain=time.monotonic();last_navigation=None;navigation_anchor=client.status()
                 print('BUILD_ACTUAL_HAND_REFILLED',item,material_refills,flush=True);continue
@@ -203,7 +212,9 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
                 with (client.out/'build-repositions.jsonl').open('a') as stream:
                     stream.write(json.dumps(proof,ensure_ascii=False)+'\n')
                 repositions+=1
-                if moved.get('phase')=='done' and client.status()['health']>=18:
+                fresh=client.status()
+                check_breathing(fresh)
+                if moved.get('phase')=='done' and fresh['health']>=18:
                     client.checked('projection_start',manual_start=True,placement_key=selection_key)
                     last_gain=time.monotonic();last_sample=0
                     print('BUILD_REPOSITION',repositions,b['station'],flush=True)
@@ -211,6 +222,7 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             print('BUILD_STALL',b.get('reason'),flush=True);break
         time.sleep(.3)
     s=client.status();b=s['build_job']
+    check_breathing(s)
     if b['active']:
         from build_pause_reconciliation import pause_or_observe_completion
         pause_or_observe_completion(client,b['session'])
@@ -222,6 +234,7 @@ def build_phase(client,selection_key,seconds=180,stall_seconds=90,complete_cells
             if q.get('projection_selection',{}).get('key')!=selection_key:raise Handoff('Projection changed before air finish')
             if (background and not protected_background(client,q))or(not background and not q.get('window_active')):
                 raise Handoff('Construction control changed before air finish')
+            check_breathing(q)
             return q
         completed=finish_carried(client,result,client.out/('air-finish-'+str(time.time_ns())),checkpoint,air_seed_limit)
         if completed:

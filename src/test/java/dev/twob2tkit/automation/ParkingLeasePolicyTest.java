@@ -9,6 +9,21 @@ import static org.junit.jupiter.api.Assertions.*;
 import static dev.twob2tkit.automation.ParkingLeasePolicy.Action.*;
 
 final class ParkingLeasePolicyTest {
+    @Test void safeFinishedWorksiteStaysOnlineOnlyWhileEveryGuardConditionHolds(){
+        assertTrue(ParkingLeasePolicy.stayOnline(true,true,false,false,true,false,true,true,true,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(false,true,false,false,true,false,true,true,true,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,false,false,false,true,false,true,true,true,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,true,true,false,true,false,true,true,true,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,true,false,true,true,false,true,true,true,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,true,false,false,false,false,true,true,true,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,true,false,false,true,true,true,true,true,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,true,false,false,true,false,false,true,true,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,true,false,false,true,false,true,false,true,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,true,false,false,true,false,true,true,false,true,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,true,false,false,true,false,true,true,true,false,20));
+        assertFalse(ParkingLeasePolicy.stayOnline(true,true,false,false,true,false,true,true,true,true,17));
+    }
+
     @Test void verifiedParkingPersistsWithoutAControllerHeartbeat(){
         assertEquals(KEEP,ParkingLeasePolicy.decide("parking",true,true,false,true));
     }
