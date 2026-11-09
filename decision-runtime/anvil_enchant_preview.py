@@ -46,11 +46,14 @@ def menu_slot(inventory_slot):
     return 30 + inventory_slot if inventory_slot < 9 else 3 + inventory_slot - 9
 
 
-def validate_inputs(left, right, expected, *, ignored_book_enchantments=()):
-    if (left.get('count') != 1 or left.get('item') not in _LEFT
-            or right.get('count') != 1 or right.get('item') != 'minecraft:enchanted_book'
+def validate_inputs(left, right, expected, *, ignored_book_enchantments=(), same_equipment=False):
+    identical_equipment = (same_equipment is True and left.get('item') != 'minecraft:enchanted_book'
+                           and left.get('item') == right.get('item') and stack_key(left) == stack_key(right)
+                           and type(left.get('durability')) is int and left.get('durability') == left.get('max_durability'))
+    if (left.get('count') != 1 or left.get('item') not in _LEFT or right.get('count') != 1
+            or (right.get('item') != 'minecraft:enchanted_book' and not identical_equipment)
             or not enchantments(right)):
-        raise ValueError('One approved base and one observed enchanted book required')
+        raise ValueError('One approved base and an observed book or explicitly matched full-durability equipment required')
     if not isinstance(expected, dict) or not expected or any(
             not isinstance(k, str) or not k.startswith('minecraft:')
             or type(v) is not int or v < 1 for k, v in expected.items()):
@@ -130,7 +133,7 @@ def _wait(client, predicate, *, seconds=6):
         time.sleep(.15)
 
 
-def run(client, pos, left_slot, right_slot, expected_left, expected_right, expected, out, *, face='south', ignored_book_enchantments=()):
+def run(client, pos, left_slot, right_slot, expected_left, expected_right, expected, out, *, face='south', ignored_book_enchantments=(), same_equipment=False):
     """Actor must already be at a valid anvil stance; this never finds a route."""
     if (not isinstance(pos, list) or len(pos) != 3 or any(type(v) is not int for v in pos)
             or face not in ('north', 'south', 'east', 'west', 'up')):
@@ -138,7 +141,7 @@ def run(client, pos, left_slot, right_slot, expected_left, expected_right, expec
     lslot, rslot = menu_slot(left_slot), menu_slot(right_slot)
     if left_slot == right_slot:
         raise ValueError('Two distinct carried input slots required')
-    validate_inputs(expected_left, expected_right, expected, ignored_book_enchantments=ignored_book_enchantments)
+    validate_inputs(expected_left, expected_right, expected, ignored_book_enchantments=ignored_book_enchantments, same_equipment=same_equipment)
     initial = client.status(); cursor = initial.get('menu', {}).get('cursor', {})
     if initial.get('screen') or cursor.get('count'):
         raise ValueError('Preview must open its own anvil from a clean world interface')

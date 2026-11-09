@@ -12,10 +12,10 @@ from kit_runtime.journal import write_json
 from owned_material_menu import owned_menu_result
 
 
-def run(client,pos,left_slot,right_slot,left,right,expected,cost,out,*,face='up',ignored_book_enchantments=()):
+def run(client,pos,left_slot,right_slot,left,right,expected,cost,out,*,face='up',ignored_book_enchantments=(),same_equipment=False):
     if type(cost)is not int or not 1<=cost<=39:
         raise ValueError('Explicit planned legal anvil cost 1..39 required')
-    validate_inputs(left,right,expected,ignored_book_enchantments=ignored_book_enchantments)
+    validate_inputs(left,right,expected,ignored_book_enchantments=ignored_book_enchantments,same_equipment=same_equipment)
     ls,rs=menu_slot(left_slot),menu_slot(right_slot)
     if ls==rs or face not in ('up','north','south','east','west'):
         raise ValueError('Distinct inputs and reachable ordinary face required')

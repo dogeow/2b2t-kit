@@ -25,6 +25,19 @@ class MixedArmorBookTests(unittest.TestCase):
         self.expected = {'minecraft:protection': 4}
         self.ignored = ('minecraft:piercing', 'minecraft:riptide')
 
+    def test_identical_full_equipment_requires_explicit_scope_and_preserves_effects(self):
+        first = stack('minecraft:diamond_helmet', [('minecraft:protection', 3), ('minecraft:respiration', 3)], slot=2)
+        second = stack('minecraft:diamond_helmet', [('minecraft:protection', 3), ('minecraft:respiration', 3)], slot=3)
+        expected = {'minecraft:protection': 4, 'minecraft:respiration': 3}
+        with self.assertRaises(ValueError):
+            validate_inputs(first, second, expected)
+        validate_inputs(first, second, expected, same_equipment=True)
+        worn = deepcopy(second); worn['durability'] -= 1
+        with self.assertRaises(ValueError):
+            validate_inputs(first, worn, expected, same_equipment=True)
+        with self.assertRaises(ValueError):
+            validate_inputs(first, second, {'minecraft:protection': 4}, same_equipment=True)
+
     def test_default_still_refuses_discarding_book_effects(self):
         with self.assertRaises(ValueError):
             validate_inputs(self.helmet, self.book, self.expected)
