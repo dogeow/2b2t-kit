@@ -98,4 +98,14 @@ final class BorerMiningPolicy {
 	static boolean adjacentOreCanBeSelected(int horizontalManhattan, int dy, boolean standingSupport, boolean landingSafe) {
 		return BorerOrePolicy.mineAdjacentOre(horizontalManhattan, dy, standingSupport, landingSafe);
 	}
+
+	/** 服务器确认挖掉后 10 秒内同一格又成了目标：方块被补回或被回滚。 */
+	static boolean reappearedAfterClear(long now, long clearedAt, boolean fallingBlock) {
+		return !fallingBlock && now - clearedAt >= 0 && now - clearedAt <= 200;
+	}
+
+	/** 第三次挖掉又出现就先别挖了，打断「挖了又补」的来回循环。 */
+	static boolean suppressReappearedBlock(int reappearCount) {
+		return reappearCount >= 3;
+	}
 }

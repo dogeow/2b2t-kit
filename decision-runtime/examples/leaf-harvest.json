@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "server": "127.0.0.1:25566",
+  "dimension": "minecraft:overworld",
+  "target": 4000,
+  "execution": "native_burst",
+  "batch_size": 16,
+  "pickup_grace_seconds": 0.5,
+  "approach_seconds": 12,
+  "park_target": [
+    0.5,
+    130,
+    0.5
+  ],
+  "regions": [
+    {
+      "min": [
+        0,
+        64,
+        0
+      ],
+      "max": [
+        15,
+        90,
+        15
+      ],
+      "authorized": true
+    }
+  ],
+  "protected_regions": [],
+  "depots": [],
+  "reserve_slots": 2,
+  "target_scope": "total_stock"
+}

@@ -17,6 +17,8 @@ import java.util.List;
 /** 岩浆/水封堵、接触逃生、岩浆块离开、找矿绕行。放置走 BorerPlace。 */
 final class BorerLiquids {
 	private final DefaultTunnelBorerEngine engine;
+	private BlockPos approachTarget;
+	private int approachStartTick;
 
 	BorerLiquids(DefaultTunnelBorerEngine engine) {
 		this.engine = engine;
@@ -101,10 +103,23 @@ final class BorerLiquids {
 			return;
 		}
 		double distSqr = player.getEyePosition().distanceToSqr(Vec3.atCenterOf(liquid));
-		if (BorerLiquidPolicy.shouldWalkToLeak(leak, engine.inMiningReach(player, liquid), distSqr)) {
+		if (BorerLiquidPolicy.shouldWalkToLeak(leak, engine.inMiningReach(player, liquid), distSqr,
+			engine.liquidSealFails > 0) && canApproachLeak(client, player, liquid)) {
+			if (!liquid.equals(approachTarget)) {
+				approachTarget = liquid.immutable();
+				approachStartTick = player.tickCount;
+			}
+			if (player.tickCount - approachStartTick >= 80) {
+				approachTarget = null;
+				giveUp(client, player, liquid, kind, "无法安全接近" + kind + "封堵点");
+				return;
+			}
 			approachLeak(client, player, liquid, kind);
 			return;
 		}
+		approachTarget = null;
+		client.options.keyUp.setDown(false);
+		client.options.keyJump.setDown(false);
 		if (!client.level.getBlockState(liquid).getFluidState().isEmpty()) {
 			client.options.keyShift.setDown(true);
 		} else {
@@ -122,8 +137,8 @@ final class BorerLiquids {
 			return;
 		} else {
 			engine.liquidSealFails++;
-			if (BorerLiquidPolicy.giveUpAfterFails(engine.liquidSealFails) && area) {
-				abandon(client, player, liquid, kind, "fails=" + engine.liquidSealFails);
+			if (BorerLiquidPolicy.giveUpAfterFails(engine.liquidSealFails)) {
+				giveUp(client, player, liquid, kind, "反复封堵" + kind + "失败");
 				return;
 			}
 		}
@@ -136,9 +151,41 @@ final class BorerLiquids {
 		engine.overlay(client, engine.status, placed ? 0x55FFFF : 0xFFFF55);
 	}
 
+	private void giveUp(Minecraft client, LocalPlayer player, BlockPos liquid, String kind, String reason) {
+		client.options.keyUp.setDown(false);
+		client.options.keyJump.setDown(false);
+		client.options.keyShift.setDown(false);
+		if (engine.mode == DefaultTunnelBorerEngine.Mode.AREA) {
+			abandon(client, player, liquid, kind, reason);
+		} else if (!engine.ores.skipActive(client, reason)) {
+			engine.stop(client, reason + " " + BorerText.block(liquid));
+		} else {
+			engine.liquidSealFailPos = null;
+			engine.liquidSealFails = 0;
+		}
+	}
+
+	/** Check the whole short movement envelope before approaching a leak. */
+	private boolean canApproachLeak(Minecraft client, LocalPlayer player, BlockPos liquid) {
+		Vec3 delta = Vec3.atCenterOf(liquid).subtract(player.position());
+		Vec3 horizontal = new Vec3(delta.x, 0, delta.z).normalize().scale(.6);
+		double vertical = Math.abs(delta.y) > .35 ? Math.copySign(.6, delta.y) : 0;
+		AABB swept = player.getBoundingBox().expandTowards(horizontal.x, vertical, horizontal.z);
+		if (!client.level.noCollision(player, swept)) return false;
+		for (BlockPos pos : BlockPos.betweenClosed(BlockPos.containing(swept.minX, swept.minY, swept.minZ),
+			BlockPos.containing(swept.maxX, swept.maxY, swept.maxZ))) {
+			if (!client.level.hasChunkAt(pos) || !client.level.getFluidState(pos).isEmpty()) return false;
+		}
+		return true;
+	}
+
 	/** 走近漏水点。 */
 	private void approachLeak(Minecraft client, LocalPlayer player, BlockPos liquid, String kind) {
 		engine.enableMeteorFlight(player);
+		if (!BorerFlight.isFlying(player)) {
+			giveUp(client, player, liquid, kind, "无法启用飞行接近封堵点");
+			return;
+		}
 		engine.lookAt(player, Vec3.atCenterOf(liquid));
 		client.options.keyAttack.setDown(false);
 		client.options.keyUp.setDown(true);
@@ -347,11 +394,20 @@ final class BorerLiquids {
 			feet.relative(engine.forward.getClockWise()),
 			feet.relative(engine.forward.getCounterClockWise())
 		};
+		int chosen = -1;
 		for (int i = 0; i < exits.length; i++) {
 			BlockPos pos = exits[i];
 			if (!BorerHazards.isMagma(client, pos) || !engine.canPlanMine(client, pos) || !engine.inMiningReach(player, pos)) continue;
-			engine.forward = exitDirections[i];
-			engine.setMiningTarget(client, player, pos, "magma-exit");
+			// Keep the exit already being dug; re-picking each tick restarts its progress.
+			if (pos.equals(engine.currentTarget)) { chosen = i; break; }
+			if (chosen < 0) chosen = i;
+		}
+		if (chosen >= 0) {
+			BlockPos pos = exits[chosen];
+			if (!pos.equals(engine.currentTarget)) {
+				engine.forward = exitDirections[chosen];
+				engine.setMiningTarget(client, player, pos, "magma-exit");
+			}
 			client.options.keyUp.setDown(false);
 			engine.status = "脚下岩浆块，潜行并挖开离开 " + BorerText.block(pos);
 			engine.overlay(client, engine.status, 0xFFFF55);
@@ -474,7 +530,7 @@ final class BorerLiquids {
 			for (int ahead : aheads) {
 				BlockPos via = from.relative(right, side).relative(along, ahead);
 				if (!client.level.hasChunkAt(via)) continue;
-				if (inStandColumn(client, via) != null) continue;
+				if (inStandColumn(client, via, BorerLiquidPolicy.ignoreLiquidUnderFloor(engine.magmaMining(), goal.getY() - from.getY())) != null) continue;
 				if (onTunnelLine(client, from, via, ahead + Math.abs(side)) != null) continue;
 				return via.immutable();
 			}
@@ -487,22 +543,31 @@ final class BorerLiquids {
 		int gx = to.getX() - from.getX();
 		int gz = to.getZ() - from.getZ();
 		int steps = Math.max(Math.abs(gx), Math.abs(gz));
-		if (steps <= 0) return inStandColumn(client, from);
+		boolean floorKept = BorerLiquidPolicy.ignoreLiquidUnderFloor(engine.magmaMining(), to.getY() - from.getY());
+		if (steps <= 0) return inStandColumn(client, from, floorKept);
 		steps = Math.min(steps, Math.max(1, maxSteps));
 		for (int i = 1; i <= steps; i++) {
 			int x = from.getX() + gx * i / steps;
 			int z = from.getZ() + gz * i / steps;
 			BlockPos col = new BlockPos(x, from.getY(), z);
 			if (!client.level.hasChunkAt(col)) continue;
-			BlockPos hit = inStandColumn(client, col);
+			BlockPos hit = inStandColumn(client, col, floorKept);
 			if (hit != null) return hit;
 		}
 		return null;
 	}
 
-	/** 在立足柱内找液体或挖开会露出的液体。 */
-	private BlockPos inStandColumn(Minecraft client, BlockPos feet) {
-		for (BlockPos pos : new BlockPos[]{feet.below(), feet, feet.above()}) {
+	/** 在立足柱内找液体或挖开会露出的液体；地面不挖时只看地面本身是不是液体。 */
+	private BlockPos inStandColumn(Minecraft client, BlockPos feet, boolean floorKept) {
+		BlockPos floor = feet.below();
+		if (floorKept) {
+			if (BorerHazards.isMagma(client, floor) && !engine.safeMagmaFloor(client, floor)) return floor.immutable();
+			if (BorerHazards.isLavaFluid(client, floor) || BorerHazards.isWater(client, floor)) return floor.immutable();
+		} else {
+			BlockPos found = atOrOpenedBy(client, floor);
+			if (found != null) return found;
+		}
+		for (BlockPos pos : new BlockPos[]{feet, feet.above()}) {
 			BlockPos found = atOrOpenedBy(client, pos);
 			if (found != null) return found;
 		}

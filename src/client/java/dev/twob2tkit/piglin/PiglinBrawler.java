@@ -42,6 +42,8 @@ public final class PiglinBrawler {
 	private static final int SHOT_REFRESH_TICKS = 3;
 	private static final int RANGED_SKIP_TICKS = 60;
 	private static final double FIREBALL_SCAN_RANGE = 28.0;
+	private static final double NEARBY_STATUS_RANGE = 64.0;
+	private static final int NEARBY_STATUS_INTERVAL = 20;
 
 	private final KitConfig config;
 	private boolean active;
@@ -63,6 +65,8 @@ public final class PiglinBrawler {
 	private String hoverNote = "";
 	private int rangedTargetId = -1;
 	private int rangedScanCooldown;
+	private int nearbyStatusCooldown;
+	private String nearbyStatus = "正在检查附近的猪人";
 	/** 弹道算下来打不到的目标，暂时跳过，别一直盯着一个坑里的怪。 */
 	private final Map<Integer, Long> rangedSkipped = new HashMap<>();
 	private BowAim.Shot shot;
@@ -115,6 +119,8 @@ public final class PiglinBrawler {
 		hoverNote = "";
 		rangedTargetId = -1;
 		rangedScanCooldown = 0;
+		nearbyStatusCooldown = 0;
+		nearbyStatus = "正在检查附近的猪人";
 		rangedSkipped.clear();
 		shot = null;
 		shotTargetId = -1;
@@ -196,8 +202,27 @@ public final class PiglinBrawler {
 		}
 
 		releaseKeys(client, false);
-		status = "没发现敌人";
+		status = nearbyPiglinStatus(client, player);
 		overlay(client, status, 0xA0A0A0);
+	}
+
+	/** Report loaded piglins beyond melee range without moving or claiming a hit. */
+	private String nearbyPiglinStatus(Minecraft client, LocalPlayer player) {
+		if (nearbyStatusCooldown-- > 0) return nearbyStatus;
+		nearbyStatusCooldown = NEARBY_STATUS_INTERVAL - 1;
+		var box = player.getBoundingBox().inflate(NEARBY_STATUS_RANGE);
+		double nearestSquared = Double.POSITIVE_INFINITY;
+		for (var piglin : client.level.getEntitiesOfClass(AbstractPiglin.class, box, LivingEntity::isAlive)) {
+			nearestSquared = Math.min(nearestSquared, player.distanceToSqr(piglin));
+		}
+		for (var piglin : client.level.getEntitiesOfClass(ZombifiedPiglin.class, box, LivingEntity::isAlive)) {
+			nearestSquared = Math.min(nearestSquared, player.distanceToSqr(piglin));
+		}
+		double nearest = nearestSquared <= NEARBY_STATUS_RANGE * NEARBY_STATUS_RANGE
+			? Math.sqrt(nearestSquared) : Double.POSITIVE_INFINITY;
+		nearbyStatus = BrawlerStatusPolicy.piglinStatus(nearest, config.brawlerMeleeReach,
+			config.brawlerMeleeEnabled);
+		return nearbyStatus;
 	}
 
 	/** 是否有要维持的瞄准。 */

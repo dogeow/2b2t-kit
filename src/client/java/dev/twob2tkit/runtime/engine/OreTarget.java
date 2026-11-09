@@ -23,6 +23,7 @@ public enum OreTarget {
 	QUARTZ("下界石英"),
 	ANCIENT_DEBRIS("远古残骸"),
 	GRAVEL("沙砾"),
+	MAGMA("岩浆块"),
 	ANY("任意矿石");
 
 	public final String label;
@@ -95,7 +96,7 @@ public enum OreTarget {
 		for (OreTarget target : parseList(value)) {
 			if (target == ANY) {
 				for (OreTarget concrete : values()) {
-					if (concrete != ANY && concrete != GRAVEL && concrete.matches(state)) return concrete;
+					if (concrete != ANY && !concrete.explicitOnly() && concrete.matches(state)) return concrete;
 				}
 				continue;
 			}
@@ -118,6 +119,7 @@ public enum OreTarget {
 			case QUARTZ -> state.is(Blocks.NETHER_QUARTZ_ORE);
 			case ANCIENT_DEBRIS -> state.is(Blocks.ANCIENT_DEBRIS);
 			case GRAVEL -> state.is(Blocks.GRAVEL);
+			case MAGMA -> state.is(Blocks.MAGMA_BLOCK);
 			case ANY -> isAnyOre(state);
 		};
 	}
@@ -142,14 +144,20 @@ public enum OreTarget {
 			case QUARTZ -> item == Items.QUARTZ || item == Items.NETHER_QUARTZ_ORE;
 			case ANCIENT_DEBRIS -> item == Items.ANCIENT_DEBRIS || item == Items.NETHERITE_SCRAP;
 			case GRAVEL -> item == Items.GRAVEL;
+			case MAGMA -> item == Items.MAGMA_BLOCK;
 			case ANY -> isAnyOreDropItem(item);
 		};
+	}
+
+	/** 沙砾、岩浆块是建材目标：只能单独勾选，不算进「任意矿石」，也不吃时运。 */
+	boolean explicitOnly() {
+		return this == GRAVEL || this == MAGMA;
 	}
 
 	/** 是否为任意已登记矿石方块。 */
 	private static boolean isAnyOre(BlockState state) {
 		for (OreTarget target : values()) {
-			if (target != ANY && target != GRAVEL && target.matches(state)) return true;
+			if (target != ANY && !target.explicitOnly() && target.matches(state)) return true;
 		}
 		return false;
 	}
@@ -157,7 +165,7 @@ public enum OreTarget {
 	/** 是否为任意已登记矿石掉落物。 */
 	private static boolean isAnyOreDrop(ItemStack stack) {
 		for (OreTarget target : values()) {
-			if (target != ANY && target != GRAVEL && target.matchesDrop(stack)) return true;
+			if (target != ANY && !target.explicitOnly() && target.matchesDrop(stack)) return true;
 		}
 		return false;
 	}
@@ -165,7 +173,7 @@ public enum OreTarget {
 	/** 是否为任一常见矿石掉落物。 */
 	private static boolean isAnyOreDropItem(Item item) {
 		for (OreTarget target : values()) {
-			if (target != ANY && target != GRAVEL && target.matchesDropItem(item)) return true;
+			if (target != ANY && !target.explicitOnly() && target.matchesDropItem(item)) return true;
 		}
 		return false;
 	}

@@ -272,9 +272,12 @@ public final class TunnelBorerScreen extends KitHudScreen {
 			return;
 		}
 		if (borer == null) return;
-		if (mode == TunnelBorer.Mode.AREA) KitClient.prepareForBorer(this.minecraft);
 		borer.start(this.minecraft, mode);
-		this.minecraft.gui.setScreen(null);
+		if (borer.isActive()) this.minecraft.gui.setScreen(null);
+		else {
+			String reason = TunnelBorer.manualStartBlock(this.minecraft);
+			showNotice(reason.isEmpty() ? "未启动，请查看游戏提示" : reason, 0xFF7777);
+		}
 	}
 
 	/** 当前模式按钮变灰。 */

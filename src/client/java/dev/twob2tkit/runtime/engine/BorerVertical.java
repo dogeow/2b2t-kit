@@ -14,9 +14,32 @@ final class BorerVertical {
 	private static final int MAX_JUMP_ATTEMPTS_PER_BLOCK = 2;
 
 	private final DefaultTunnelBorerEngine engine;
+	private final BorerAscentProgress ascent = new BorerAscentProgress();
+
+	void resetAscent() {
+		ascent.reset();
+	}
+
+	boolean ascentStalled(LocalPlayer player, BlockPos goal) {
+		return ascent.stalled(goal, player.tickCount, player.getY(),
+			player.onGround() || BorerFlight.isFlying(player) || BorerFlight.meteorScaffoldActive());
+	}
+
+	private boolean ownsScaffold;
+	private int scaffoldLastUsedTick;
 
 	BorerVertical(DefaultTunnelBorerEngine engine) {
 		this.engine = engine;
+	}
+
+	/** Release only Scaffold that this miner switched on, after the ascent is no longer used. */
+	void expireScaffold(int tick) {
+		if (ownsScaffold && tick - scaffoldLastUsedTick > 1) releaseScaffold();
+	}
+
+	void releaseScaffold() {
+		if (!ownsScaffold) return;
+		if (BorerFlight.ensureScaffold(false)) ownsScaffold = false;
 	}
 
 	/** 矿石不在同一层时，挖通道、台阶或选择跳跃方向。 */
@@ -326,7 +349,7 @@ final class BorerVertical {
 	}
 
 	/** 1×2 通道里跳不过去的台阶：先挖头顶挡路，不挖立足点。 */
-	private BlockPos mineInsteadOfJump(Minecraft client, LocalPlayer player, BlockPos front) {
+	BlockPos mineInsteadOfJump(Minecraft client, LocalPlayer player, BlockPos front) {
 		if (!hasJumpClearance(client, player) || jumpAttemptsExhausted(player)) {
 			BlockPos looked = engine.corridor.corridorCrosshair(client, player, engine.navigationColumn(client, player));
 			if (looked != null) {
@@ -447,7 +470,10 @@ final class BorerVertical {
 
 		if (placeTemporaryStep(client, player, feet)) return true;
 
+		boolean alreadyActive = BorerFlight.meteorScaffoldActive();
 		if (BorerFlight.ensureScaffold(true)) {
+			if (!alreadyActive) ownsScaffold = true;
+			if (ownsScaffold) scaffoldLastUsedTick = player.tickCount;
 			client.options.keyShift.setDown(false);
 			client.options.keyJump.setDown(player.onGround());
 			client.options.keyUp.setDown(true);

@@ -1,5 +1,6 @@
 package dev.twob2tkit.borer;
 
+import dev.twob2tkit.combat.EmergencyExit;
 import dev.twob2tkit.combat.MeteorCombatAssist;
 
 import dev.twob2tkit.KitConfig;
@@ -10,6 +11,7 @@ import dev.twob2tkit.runtime.api.BorerEngine;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 
@@ -64,7 +66,7 @@ public final class TunnelBorer {
 	public enum OreTarget {
 		DIAMOND("钻石"), COAL("煤矿"), IRON("铁矿"), GOLD("金矿"), REDSTONE("红石"),
 		LAPIS("青金石"), COPPER("铜矿"), EMERALD("绿宝石"), QUARTZ("石英"),
-		ANCIENT_DEBRIS("残骸"), GRAVEL("沙砾"), ANY("全选");
+		ANCIENT_DEBRIS("残骸"), GRAVEL("沙砾"), MAGMA("岩浆块"), ANY("全选");
 
 		public final String label;
 
@@ -86,6 +88,7 @@ public final class TunnelBorer {
 				case QUARTZ -> Items.QUARTZ;
 				case ANCIENT_DEBRIS -> Items.ANCIENT_DEBRIS;
 				case GRAVEL -> Items.GRAVEL;
+				case MAGMA -> Items.MAGMA_BLOCK;
 				case ANY -> Items.COMPASS;
 			};
 		}
@@ -251,8 +254,20 @@ public final class TunnelBorer {
 
 	/** 按模式启动盾构引擎。 */
 	public void start(Minecraft client, Mode mode) {
+		if (reportManualStartBlocked(client)) return;
 		miningChecklist.beforeStart(client, config);
 		engine.start(client, mode.name());
+	}
+
+	public static String manualStartBlock(Minecraft client) {
+		return EmergencyExit.held(client) ? "安全离线锁仍开启，请到「自动保护」手动解除" : "";
+	}
+
+	public static boolean reportManualStartBlocked(Minecraft client) {
+		String reason = manualStartBlock(client);
+		if (reason.isEmpty()) return false;
+		if (client.player != null) client.player.sendSystemMessage(Component.literal("[twob2tkit] " + reason));
+		return true;
 	}
 
 	/** A bounded material batch borrows area coordinates without changing the user's saved project. */

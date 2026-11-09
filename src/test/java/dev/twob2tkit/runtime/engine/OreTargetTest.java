@@ -54,4 +54,17 @@ final class OreTargetTest {
 		assertFalse(OreTarget.selectedMatchesDropItem("ANY", Items.GRAVEL));
 		assertFalse(OreTarget.fortuneApplies(Blocks.GRAVEL.defaultBlockState()));
 	}
+
+	@Test
+	void magmaIsAnExplicitMaterialTargetRatherThanPartOfAnyOre() {
+		assertTrue(OreTarget.selectedMatches("MAGMA", Blocks.MAGMA_BLOCK.defaultBlockState()));
+		assertTrue(OreTarget.selectedMatchesDropItem("MAGMA", Items.MAGMA_BLOCK));
+		assertTrue(OreTarget.firstMatching("MAGMA", Blocks.MAGMA_BLOCK.defaultBlockState()) == OreTarget.MAGMA);
+		assertTrue(OreTarget.firstMatching("QUARTZ,MAGMA", Blocks.NETHER_QUARTZ_ORE.defaultBlockState()) == OreTarget.QUARTZ);
+		assertFalse(OreTarget.selectedMatches("MAGMA", Blocks.NETHERRACK.defaultBlockState()));
+		assertFalse(OreTarget.selectedMatches("ANY", Blocks.MAGMA_BLOCK.defaultBlockState()));
+		assertFalse(OreTarget.selectedMatchesDropItem("ANY", Items.MAGMA_BLOCK));
+		assertTrue(OreTarget.firstMatching("ANY", Blocks.MAGMA_BLOCK.defaultBlockState()) == null);
+		assertFalse(OreTarget.fortuneApplies(Blocks.MAGMA_BLOCK.defaultBlockState()));
+	}
 }

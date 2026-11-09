@@ -60,6 +60,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
     private final LoadedHostileSurvey loadedHostileSurvey=new LoadedHostileSurvey();
     private final LoadedSpawnerSurvey loadedSpawnerSurvey=new LoadedSpawnerSurvey();
     private final LoadedVillagerEvents loadedVillagerEvents=new LoadedVillagerEvents();
+    private final LocalFarmMelee localFarmMelee=new LocalFarmMelee();
+    private final MeteorFarmAssist meteorFarmAssist=new MeteorFarmAssist();
     private final ResidentPotionTreatment residentPotionTreatment=new ResidentPotionTreatment();
     final BorerSurroundWait surroundWait = new BorerSurroundWait();
 	final BorerMiningConfirmation miningConfirmation = new BorerMiningConfirmation();
@@ -181,6 +183,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	final Map<BlockPos, Long> blockedOreTargets = new HashMap<>();
 	/** 普通挡路短期失败记忆；保留矿点，但不在下一 tick 原样重选同一块。 */
 	private final Map<BlockPos, Long> suppressedMiningTargets = new HashMap<>();
+	private final BorerReappearance reappearance = new BorerReappearance();
 	/** 真实准星连续未命中的目标；跨 clear/reselect 保留，避免矿石永远达不到超时。 */
 	private BlockPos aimMissTarget;
 	private int aimMissTicks;
@@ -357,6 +360,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		occludedTicks = 0;
 		blockedOreTargets.clear();
 		suppressedMiningTargets.clear();
+		reappearance.clear();
+		vertical.resetAscent();
 		aimMissTarget = null;
 		aimMissTicks = 0;
 		lastForwardPosition = client.player.position();
@@ -413,11 +418,14 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 停止盾构并松开所有按键。 */
 	@Override
 	public void stop(Minecraft client, String reason) {
+		vertical.releaseScaffold();
         guardMagmaSneak.close(client);
         idleThermalAscent.cancel(client,"stopped",false);
 		hudFrames.clear();
 		captureProtection.close();
 		loadedVillagerEvents.workStopped(reason);
+        localFarmMelee.close(host);
+        meteorFarmAssist.close(Minecraft.getInstance(),true);
 		stopSafetyNote="";
 		home.reset();
 		stepCycle.reset();
@@ -472,6 +480,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		occludedTicks = 0;
 		blockedOreTargets.clear();
 		suppressedMiningTargets.clear();
+		reappearance.clear();
+		vertical.resetAscent();
 		aimMissTarget = null;
 		aimMissTicks = 0;
 		lastForwardPosition = null;
@@ -912,6 +922,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
         // The host explicitly sends false when emergency/manual control disarms
         // the guard. Do this before the active-miner early return, without reason-text heuristics.
         if(standaloneGuardEnabled&&!enabled){rangedCombat.end(c);idleThermalAscent.cancel(c,"guard_disabled",c.player!=null&&c.player.getHealth()<14);}
+        LeafShearBatch.tick(c,enabled,active);
         guardMagmaSneak.tick(c,enabled&&!active);
         emptyBoatRecovery.tick(c,enabled&&!active);
         channelWaterPlacement.tick(c,enabled&&!active);
@@ -931,6 +942,9 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			if (standaloneGuard) mobs.lowerShield(c);
 			standaloneGuard = false; return false;
 		}
+        // Only the strictly scoped, grounded loopback trial owns this fixed melee station.
+        // Health/manual/projectile failures release that lease before normal defense resumes.
+        if(localFarmMelee.active()||meteorFarmAssist.active()){idleThermalAscent.cancel(c,"local_farm_station",false);if(meteorFarmAssist.active())status=meteorFarmAssist.status();standaloneGuard=false;return false;}
 		engagement.update(c);
         if(rangedCombat.hasCreeperEmergency(c))idleThermalAscent.cancel(c,"creeper_emergency",true);
         else if(idleThermalAscent.tick(c)){standaloneGuard=true;return true;}
@@ -993,6 +1007,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		loadedHostileSurvey.tick(client);
 		loadedSpawnerSurvey.tick(client);
 		loadedVillagerEvents.tick(client);
+        localFarmMelee.tick(client,host,()->rangedCombat.end(client));
+        meteorFarmAssist.tick(client,host,()->rangedCombat.pause(client));
         residentPotionTreatment.tick(client);
 		if (scenery.active()) return; // Do not let idle mining recovery rewrite the active scenery flight lease.
 		if (client.player == null || client.level == null) {
@@ -1100,10 +1116,15 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
     private boolean handleMiningContactRescue(Minecraft client, LocalPlayer player) {
         boolean lavaContact = BorerHazards.playerTouchedLava(client, player);
         if (!lavaContact) lavaContactTicks = 0;
+        if (sneakOnMagma(client, player)) {
+            client.options.keyShift.setDown(true);
+            return false;
+        }
         boolean contact = lavaContact || player.isInWater() || BorerHazards.playerOnMagma(client, player);
         if (!contact) return false;
         rangedCombat.pause(client);
-        releaseMine(client);
+        if (!BorerLiquidPolicy.keepMagmaExitDig(BorerHazards.playerOnMagma(client, player), lavaContact, player.isInWater(),
+                currentTarget != null && BorerHazards.isMagma(client, currentTarget))) releaseMine(client);
         if (liquids.handleLavaContact(client, player)) return true;
         if (liquids.handleWaterContact(client, player)) return true;
         if (BorerHazards.playerOnMagma(client, player)) {
@@ -1152,6 +1173,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		}
 		engagement.update(client);
 		if (client.gui.screen() != null && !(mode == Mode.AREA && areaRunner.ownsInventoryScreen(client))) {
+			vertical.releaseScaffold();
 			if (mealPause.paused()) releaseMine(client);
 			else {
 				rangedCombat.pause(client);
@@ -1165,6 +1187,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		}
 
 		LocalPlayer player = client.player;
+		vertical.expireScaffold(player.tickCount);
 		try {
         if(surroundWait.shouldAbort(host.surroundActive(),player.tickCount,player.getHealth())) {
             host.prepareForBorer(client); // Stops our unfinished emergency shelter without stopping this miner.
@@ -1333,7 +1356,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			if (loot.active() && handleLootCollection(client, player)) return;
 			if (mode == Mode.ORE && !loot.active()) {
 				BlockPos goal = sideOreTargetPos != null ? sideOreTargetPos : oreTargetPos;
-				if (goal != null && (currentTarget == null || !wantedBlock(client.level.getBlockState(currentTarget)))
+				if (goal != null && !walkRoute.hasSupportRoute(goal)
+					&& (currentTarget == null || !wantedBlock(client.level.getBlockState(currentTarget)))
 					&& !(BorerAim.inReach(player, goal) && canSeeBlock(client, player, goal))
 					&& walkRoute.walk(client, Vec3.atCenterOf(goal), false)) {
 					clearMiningTarget(client, "existing-open-route"); return;
@@ -1426,6 +1450,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 				boolean clearedSelectedOre = miningSelectedOre;
 				resetAimMissProgress();
 				clearMiningTarget(client, "server-cleared-block");
+				reappearance.confirmedClear(clearedTarget, client.level.getGameTime());
 				if (clearedSelectedOre) {
 					if (skipExperienceLoot()) {
 						status = lastMinedWasQuartz ? "石英已挖，经验模式不捡石英" : "煤矿已挖，经验模式不捡煤";
@@ -1447,6 +1472,17 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			if (mode == Mode.FORWARD) tryTurnAroundLava(client, player);
 			BlockPos planned = nextTarget(client, player);
 			if (planned != null) setMiningTarget(client, player, planned, "planner");
+			if (currentTarget == null && mode == Mode.ORE && !goingHome && !loot.active()
+				&& player.onGround() && !isFlying(player) && liquidDetourPos == null) {
+				BlockPos goal = sideOreTargetPos != null ? sideOreTargetPos : oreTargetPos;
+				if (goal != null && (goal.equals(standingColumn(client, player).below()) || walkRoute.hasSupportRoute(goal))) {
+					if (!walkRoute.walkBesideSupport(client, goal)) {
+						client.options.keyUp.setDown(false);
+						ores.skipActive(client, "目标矿块是当前立足点，未找到安全的侧面站位");
+					}
+					return;
+				}
+			}
 		}
 		boolean offCorridor = currentTarget != null && isOffCorridorWall(client, player, currentTarget);
 		BlockPos projectedBlocker = offCorridor ? findMovementBlocker(client, player) : null;
@@ -1833,6 +1869,22 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 				client.options.keyShift.setDown(descend);
 				attemptedForward = moving;
 				BlockPos goal = sideOreTargetPos != null ? sideOreTargetPos : oreTargetPos;
+				if (verticalMove == VerticalMove.UP && vertical.ascentStalled(player, goal)) {
+					client.options.keyUp.setDown(false);
+					client.options.keyJump.setDown(false);
+					attemptedForward = false;
+					verticalMove = VerticalMove.NONE;
+					BlockPos front = navigationColumn(client, player).relative(forward);
+					BlockPos blocker = vertical.mineInsteadOfJump(client, player, front);
+					if (blocker != null && !isMiningTargetSuppressed(client, blocker)) {
+						setMiningTarget(client, player, blocker, "stalled-ascent-clearance");
+						status = "起跳受阻，先清理挡路方块 " + format(blocker);
+						overlay(client, status, 0xFFFF55);
+					} else if (!ores.skipActive(client, "台阶无法安全通过")) {
+						stop(client, "台阶无法安全通过");
+					}
+					return;
+				}
 				status = switch (verticalMove) {
 					case PREPARE -> "临时台阶已放置，正在检查头顶空间";
 					case ADVANCE -> "先向前清路，寻找可向上的阶梯位置";
@@ -1963,7 +2015,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 				} else {
 					walkForwardCentered(client, player);
 				}
-				client.options.keyShift.setDown(BorerHazards.playerOnMagma(client, player));
+				client.options.keyShift.setDown(!isFlying(player) && BorerHazards.playerOnMagma(client, player));
 				status = mode == Mode.ORE && noMovementTicks >= MOVEMENT_RECOVERY_TICKS
 					? "前进受阻，正在重新对准通道中心" : oreTravelStatus(player);
 				if (dropAhead > 0 && BorerFallPolicy.shouldWalkIntoDrop(dropAhead, vertical.climbingToOre(client, player))) {
@@ -1991,6 +2043,10 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			if (discardPauseTicks > 0 && client.player != null && client.options != null) {
 				client.options.keyUp.setDown(false);
 				discardPauseTicks--;
+			}
+			// Many steps release crouch; re-hold it last so walking on magma never burns.
+			if (active && client.player != null && client.options != null && sneakOnMagma(client, client.player)) {
+				client.options.keyShift.setDown(true);
 			}
 			presentStatusHud(client);
 		}
@@ -2794,7 +2850,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 该格是否可立足。 */
 	boolean isStandable(Minecraft client, BlockPos pos) {
 		BlockState state = client.level.getBlockState(pos);
-		if (state.is(Blocks.MAGMA_BLOCK)) return false;
+		if (state.is(Blocks.MAGMA_BLOCK)) return safeMagmaFloor(client, pos);
 		if (state.isAir() || state.canBeReplaced() || !state.getFluidState().isEmpty()) return false;
 		return BorerHazards.isUnbreakable(client, pos) || state.getDestroySpeed(client.level, pos) >= 0.0F;
 	}
@@ -3139,15 +3195,67 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		return BorerHazards.isLavaFluid(client, pos);
 	}
 
+	/** 找矿模式勾选了岩浆块。 */
+	boolean magmaMining() {
+		return mode == Mode.ORE && OreTarget.parseList(oreConfig()).contains(OreTarget.MAGMA);
+	}
+
+	/** 向前、向下、找矿时顺路的岩浆块可以蹲着走；区域挖保留自己的走位规则。 */
+	boolean magmaWalk() {
+		return mode != Mode.AREA;
+	}
+
+	/** 这块岩浆块下面、四周以及上面落脚格四周都没有岩浆，就能蹲着站上去。 */
+	boolean safeMagmaFloor(Minecraft client, BlockPos pos) {
+		if (!magmaWalk() || !BorerHazards.isMagma(client, pos)) return false;
+		boolean lavaNear = BorerHazards.isLavaFluid(client, pos.below()) || BorerHazards.isLavaFluid(client, pos.above());
+		for (Direction side : Direction.Plane.HORIZONTAL) {
+			if (BorerHazards.isLavaFluid(client, pos.relative(side)) || BorerHazards.isLavaFluid(client, pos.above().relative(side))) lavaNear = true;
+		}
+		return BorerLiquidPolicy.safeMagmaFloor(true, true, lavaNear);
+	}
+
+	/** 从这一列往下穿过空气（最多 3 格）落到的是安全岩浆块。 */
+	boolean dropOntoSafeMagma(Minecraft client, BlockPos column) {
+		if (!magmaWalk()) return false;
+		BlockPos pos = column.below();
+		for (int depth = 0; depth <= 3; depth++, pos = pos.below()) {
+			if (BorerHazards.isMagma(client, pos)) return BorerLiquidPolicy.dropOntoSafeMagma(depth, safeMagmaFloor(client, pos));
+			BlockState state = client.level.getBlockState(pos);
+			if (!state.getFluidState().isEmpty() || !state.isAir() && !state.canBeReplaced()) return false;
+		}
+		return false;
+	}
+
+	/** 站在或将踩上岩浆块：脚下和四周没有岩浆就蹲着照常挖、照常走。 */
+	boolean sneakOnMagma(Minecraft client, LocalPlayer player) {
+		if (!magmaWalk() || isFlying(player)) return false;
+		BlockPos feet = player.blockPosition();
+		boolean magmaFloor = BorerHazards.playerOnMagma(client, player) || BorerHazards.isMagma(client, feet.relative(forward).below())
+			|| dropOntoSafeMagma(client, feet) || dropOntoSafeMagma(client, feet.relative(forward));
+		boolean lavaNear = false;
+		for (BlockPos level : new BlockPos[]{feet, feet.below()}) {
+			if (BorerHazards.isLavaFluid(client, level)) lavaNear = true;
+			for (Direction side : Direction.Plane.HORIZONTAL) {
+				if (BorerHazards.isLavaFluid(client, level.relative(side))) lavaNear = true;
+			}
+		}
+		return BorerLiquidPolicy.sneakOnMagma(true, magmaFloor, BorerHazards.playerTouchedLava(client, player), player.isInWater(), lavaNear);
+	}
+
 	/** 脚下或前方没有实体立足点、或前面是岩浆/水，就不能按前进。安全落差可以走：默认最多 3 格，Meteor NoFall 开着则更深。 */
 	boolean unsafeToWalk(Minecraft client, LocalPlayer player) {
 		BlockPos feet = player.blockPosition();
 		BlockPos next = feet.relative(forward);
 		if (isLava(client, next) || isLava(client, next.below()) || isLava(client, feet.below())) return true;
 		if (BorerHazards.isWater(client, next) || BorerHazards.isWater(client, next.below()) || BorerHazards.isWater(client, feet.below())) return true;
-		if (BorerHazards.isMagma(client, next.below()) || BorerHazards.isMagma(client, feet.below())) return true;
+		// Flight keeps its altitude here. On Meteor, the sneak key would descend.
 		if (isFlying(player)) return false;
+		if ((BorerHazards.isMagma(client, next.below()) || BorerHazards.isMagma(client, feet.below()))
+			&& !sneakOnMagma(client, player)) return true;
 		if (!player.onGround()) return true;
+		// Fall-depth scans count magma as a hazard; stepping or dropping (<= 3) onto lava-free magma is safe while crouched.
+		if (dropOntoSafeMagma(client, next)) return false;
 		if (mode == Mode.DOWN || mode == Mode.AREA) return !BorerHazards.canWalkOrFallInto(client, next);
 		return !BorerFallPolicy.canWalk(BorerHazards.safeFallDepth(client, next));
 	}
@@ -3445,6 +3553,21 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		}
 		BlockPos selected = target.immutable();
 		boolean changed = currentTarget == null || !currentTarget.equals(selected);
+		if (changed && client.level != null) {
+			var state = client.level.getBlockState(selected);
+			boolean falling = state.getBlock() instanceof net.minecraft.world.level.block.FallingBlock;
+			int count = reappearance.observe(selected, client.level.getGameTime(),
+				!state.isAir() && !state.canBeReplaced(), falling);
+			if (count > 0) {
+				fileLog(client, "block-reappeared target=" + format(selected) + " block=" + blockLabel(client, selected)
+					+ " count=" + count + " reason=" + reason + " player=" + precisePosition(player));
+				if (BorerMiningPolicy.suppressReappearedBlock(count)) {
+					suppressMiningTarget(client, selected, 600, "reappeared");
+					if (currentTarget != null) clearMiningTarget(client, "block-reappeared");
+					return;
+				}
+			}
+		}
 		currentTarget = selected;
 		clearConfirmTicks = 0;
 		if (changed) {
@@ -3633,7 +3756,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	}
 
 	/** 目标是否被抑制。 */
-	private boolean isMiningTargetSuppressed(Minecraft client, BlockPos pos) {
+	boolean isMiningTargetSuppressed(Minecraft client, BlockPos pos) {
 		if (client.level == null || pos == null) return false;
 		Long until = suppressedMiningTargets.get(pos);
 		if (until == null) return false;

@@ -165,4 +165,16 @@ final class BorerLootPolicyTest {
 		assertFalse(BorerLootPolicy.preferDropOverMining(true, false, 0.25));
 		assertFalse(BorerLootPolicy.preferDropOverMining(true, false, 1.0));
 	}
+
+	@Test
+	void diagonalHopSnapsToTheNearestAxisInsteadOfMiningSideWalls() {
+		// 2026-11-03: a magma drop one block up and east; the slightly north yaw hit the north wall
+		// and looped on suppressed side-wall targets until the drop was deferred.
+		assertTrue(BorerLootPolicy.axisYaw(-100.0F) == -90.0F);
+		assertTrue(BorerLootPolicy.axisYaw(-80.0F) == -90.0F);
+		assertTrue(BorerLootPolicy.axisYaw(10.0F) == 0.0F);
+		assertTrue(BorerLootPolicy.axisYaw(170.0F) == 180.0F);
+		assertTrue(BorerLootPolicy.axisYaw(-170.0F) == 180.0F);
+		assertTrue(BorerLootPolicy.axisYaw(260.0F) == -90.0F);
+	}
 }

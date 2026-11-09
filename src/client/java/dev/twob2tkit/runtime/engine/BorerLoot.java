@@ -272,8 +272,7 @@ final class BorerLoot {
 
 		if (BorerLootPolicy.shouldMineHeadToEnterLootDrop(dy, feetPassable, headMineable)) {
 			stuckTicks = 0;
-			holdStill(client);
-			engine.setMiningTarget(client, player, dropHead, "loot-drop-head");
+			prepareClearance(client, player, dropHead, "loot-drop-head");
 			engine.status = "挖头开 1×2 下去捡 " + format(dropHead);
 			return false;
 		}
@@ -281,7 +280,7 @@ final class BorerLoot {
 		if (!preferDrop && (!inPickup || embedded || ceilingBlocked)) {
 			if (engine.currentTarget != null && engine.shouldMine(client, engine.currentTarget)) {
 				stuckTicks = 0;
-				holdStill(client);
+				holdMovementForClearance(client);
 				engine.status = "清理掉落物前的遮挡 " + format(engine.currentTarget);
 				return false;
 			}
@@ -300,12 +299,12 @@ final class BorerLoot {
 			}
 			if (obstruction != null && (!inPickup || embedded || ceilingBlocked)) {
 				stuckTicks = 0;
-				holdStill(client);
-				engine.setMiningTarget(client, player, obstruction, "loot-obstruction");
+				prepareClearance(client, player, obstruction, "loot-obstruction");
 				engine.status = "清理掉落物前的遮挡 " + format(obstruction);
 				return false;
 			}
-		} else if (engine.currentTarget != null) {
+		} else if (engine.currentTarget != null
+				&& LootClearancePolicy.clearBeforePickup(preferDrop, inPickup, embedded, ceilingBlocked)) {
 			engine.clearMiningTarget();
 		}
 
@@ -316,7 +315,7 @@ final class BorerLoot {
 			return true;
 		}
 
-		engine.releaseMine(client);
+		if (engine.currentTarget == null) engine.releaseMine(client);
 		if (!walkToward(client, player, loot, dropSafe, inPickup, horiz)) return false;
 		engine.overlay(client, String.format(Locale.ROOT, "正在拾取%s掉落物（距离 %.1f） %s",
 			wanted.label, distance, precise(loot)), 0xFFFF55);
@@ -350,6 +349,27 @@ final class BorerLoot {
 		holdStill(client);
 		engine.overlay(client, reason + "：" + wanted.label + "掉落物 " + precise(loot) + "，改捡其他", 0xFFFF55);
 		return true;
+	}
+
+	/** Stop movement without cancelling a mining action already targeting this block. */
+	private void holdMovementForClearance(Minecraft client) {
+		client.options.keyUp.setDown(false);
+		client.options.keyJump.setDown(false);
+		client.options.keyShift.setDown(false);
+		client.options.keyLeft.setDown(false);
+		client.options.keyRight.setDown(false);
+		client.options.keyDown.setDown(false);
+	}
+
+	private void prepareClearance(Minecraft client, LocalPlayer player, BlockPos target, String reason) {
+		boolean same = target.equals(engine.currentTarget);
+		boolean valid = same && engine.shouldMine(client, target);
+		if (LootClearancePolicy.keepTarget(same, valid)) {
+			holdMovementForClearance(client);
+		} else {
+			holdStill(client);
+			engine.setMiningTarget(client, player, target, reason);
+		}
 	}
 
 	/** 停挖并松开全部移动键，原地待命。 */
@@ -393,16 +413,33 @@ final class BorerLoot {
 		boolean ceilingAbove = jumpBlocked(client, player, dy);
 		AABB ascent = hopBody(player.getBoundingBox(), yaw);
 		boolean bodyClear = !ceilingAbove && client.level.noCollision(player, ascent);
+		if (!bodyClear && !ceilingAbove && hopNeeded && !BorerFlight.isFlying(player)) {
+			// A slightly diagonal yaw sweeps the hop box into a side wall; a straight hop may be clear.
+			float axis = BorerLootPolicy.axisYaw(yaw);
+			AABB straight = hopBody(player.getBoundingBox(), axis);
+			if (axis != yaw && client.level.noCollision(player, straight) && !lavaInYaw(client, player, axis)) {
+				yaw = axis;
+				player.setYRot(yaw);
+				player.setYHeadRot(yaw);
+				ascent = straight;
+				bodyClear = true;
+				blocked = collisionInYaw(client, player, yaw);
+			}
+		}
 		BlockPos dest = ahead(player, yaw);
 		boolean supported = canDrop || engine.isStandable(client, dest) || engine.isStandable(client, dest.below());
 		if (!BorerFlight.isFlying(player) && hopNeeded && !bodyClear && !lavaAhead) {
 			BlockPos blocker = hopObstruction(client, player, ascent);
 			if (blocker != null) {
-				holdStill(client);
-				engine.setMiningTarget(client, player, blocker, "loot-hop-clearance");
+				prepareClearance(client, player, blocker, "loot-hop-clearance");
 				engine.status = "先清起跳通道，再拾取 " + format(blocker);
 				return false;
 			}
+		}
+		// The route is now usable; release any old clearance target before moving.
+		if (engine.currentTarget != null) {
+			engine.releaseMine(client);
+			engine.clearMiningTarget(client, "loot-clearance-no-longer-needed");
 		}
 		boolean safeAscent = hopNeeded && supported && bodyClear;
 		if (moving && (lavaAhead || blocked && !canDrop && !safeAscent) && !BorerFlight.isFlying(player)) {
@@ -481,7 +518,7 @@ final class BorerLoot {
 			BlockPos.containing(body.maxX - 1e-5, body.maxY - 1e-5, body.maxZ - 1e-5))) {
 			if (!engine.canPlanMine(client, pos) || engine.isStandingSupport(client, player, pos)
 				|| engine.isUnsafeFloorMine(client, player, pos) || !BorerAim.inReach(player, pos)
-				|| !engine.canSeeBlock(client, player, pos)) continue;
+				|| !engine.canSeeBlock(client, player, pos) || engine.isMiningTargetSuppressed(client, pos)) continue;
 			boolean intersects = client.level.getBlockState(pos).getCollisionShape(client.level, pos).toAabbs().stream()
 				.anyMatch(box -> box.move(pos.getX(), pos.getY(), pos.getZ()).intersects(body));
 			if (!intersects) continue;

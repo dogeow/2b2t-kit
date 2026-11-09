@@ -109,4 +109,14 @@ final class BorerMiningPolicyTest {
 		assertTrue(BorerMiningPolicy.refusePathIntoLava(true));
 		assertFalse(BorerMiningPolicy.refusePathIntoLava(false));
 	}
+
+	@Test
+	void aFloorBlockThatKeepsComingBackIsSuppressedOnTheThirdTime() {
+		// 2026-11-03: netherrack floors 94239/94240 29 99995 were mined, came back and were mined again for 10s.
+		assertTrue(BorerMiningPolicy.reappearedAfterClear(1100, 1000, false));
+		assertFalse(BorerMiningPolicy.reappearedAfterClear(1300, 1000, false));
+		assertFalse(BorerMiningPolicy.reappearedAfterClear(1100, 1000, true));
+		assertFalse(BorerMiningPolicy.suppressReappearedBlock(2));
+		assertTrue(BorerMiningPolicy.suppressReappearedBlock(3));
+	}
 }

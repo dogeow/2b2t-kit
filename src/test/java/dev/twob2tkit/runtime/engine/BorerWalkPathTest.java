@@ -6,6 +6,17 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BorerWalkPathTest {
+	@Test void routeForOreUnderfootRequiresADifferentSafeStandingColumn() {
+		BlockPos ore = BlockPos.ZERO.below();
+		var goal = BorerWalkRoute.besideSupportGoal(ore);
+		assertFalse(goal.test(BlockPos.ZERO));
+		World world = new World();
+		var route = BorerWalkPath.find(world, BlockPos.ZERO, goal, 4, 100, 3, false);
+		assertEquals(2, route.nodes().size());
+		assertTrue(goal.test(route.nodes().getLast()));
+		assertTrue(BorerWalkPath.standable(world, route.nodes().getLast()));
+	}
+
 	@Test void productionWaypointInputsTraverseAnLTurnWithoutClippingTheWall() {
 		World w = new World(); w.ground = false;
 		List<BlockPos> corridor = List.of(new BlockPos(0, 0, 0), new BlockPos(1, 0, 0), new BlockPos(2, 0, 0), new BlockPos(2, 0, 1), new BlockPos(2, 0, 2));

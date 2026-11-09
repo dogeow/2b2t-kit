@@ -8,6 +8,7 @@ import net.minecraft.world.item.ItemStack;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Supplier;
 import dev.twob2tkit.borer.AreaProjectsScreen;
 import dev.twob2tkit.borer.BorerAreaMarks;
 import dev.twob2tkit.borer.BorerAreaProjects;
@@ -30,11 +31,8 @@ final class ClickGuiPages {
 	static void mining(Screen parent, KitConfig c, TunnelBorer.Mode mode) {
 		TunnelBorer b = KitClient.borer();
 		KitFormScreen p = new KitFormScreen(parent, mode.label, "只配置当前挖法；保存数值不启动。物资与安全设置共用。")
-			.bind(c).id("mining-" + mode.name()).active(() -> b != null && b.isActive(), () -> {
-				if (b == null) return;
-				if (b.isActive()) b.stop(mc(), "界面停止当前挖掘任务");
-				else { c.borerLastMode = mode.name(); c.save(); KitClient.prepareForBorer(mc()); b.start(mc(), mode); }
-			});
+			.bind(c).id("mining-" + mode.name()).runLabels("开始挖矿", "停止挖矿");
+		bindMiningRun(p, b, c, () -> mode);
 		p.status(() -> b == null ? "运行引擎未就绪" : b.status());
 		if (mode == TunnelBorer.Mode.ORE) {
 			p.section("目标矿石 · 可多选");
@@ -280,16 +278,7 @@ final class ClickGuiPages {
 		}
 		TunnelBorer borer = KitClient.borer();
 		KitFormScreen panel = new KitFormScreen(parent, "盾构机", "点图标勾矿。Xray 用 Meteor 的 Z。");
-		panel.active(
-			() -> borer != null && borer.isActive(),
-			() -> {
-				if (borer == null) return;
-				if (borer.isActive()) borer.stop(mc(), "设置页关闭");
-				else {
-					KitClient.prepareForBorer(mc());
-					borer.start(mc(), TunnelBorer.Mode.fromConfig(config.borerLastMode));
-				}
-			});
+		bindMiningRun(panel, borer, config, () -> TunnelBorer.Mode.fromConfig(config.borerLastMode));
 		panel.section("模式");
 		panel.cycle("挖法", "向前 / 向下 / 找矿 / 区域",
 			new String[]{"向前挖", "向下挖", "自动找矿", "区域挖"},
@@ -416,6 +405,29 @@ final class ClickGuiPages {
 		});
 		panel.action("回地狱门", "沿走过的路飞回记下的门。", () -> KitClient.goNetherPortal(mc()));
 		open(parent, panel);
+	}
+
+	private static void bindMiningRun(KitFormScreen page, TunnelBorer borer, KitConfig config, Supplier<TunnelBorer.Mode> mode) {
+		page.active(() -> borer != null && borer.isActive(), () -> {
+			if (borer == null) {
+				page.showNotice("运行引擎未就绪", 0xFF7777);
+				return;
+			}
+			if (borer.isActive()) {
+				borer.stop(mc(), "界面停止当前挖掘任务");
+				return;
+			}
+			TunnelBorer.Mode selected = mode.get();
+			if (!selected.name().equals(config.borerLastMode)) {
+				config.borerLastMode = selected.name();
+				config.save();
+			}
+			borer.start(mc(), selected);
+			if (!borer.isActive()) {
+				String reason = TunnelBorer.manualStartBlock(mc());
+				page.showNotice(reason.isEmpty() ? "未启动，请查看游戏提示" : reason, 0xFF7777);
+			}
+		});
 	}
 
 	/** 巡航坐标与开始。 */

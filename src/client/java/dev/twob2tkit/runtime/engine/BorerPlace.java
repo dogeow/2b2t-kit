@@ -165,6 +165,8 @@ final class BorerPlace {
 	/** 记住刚放置的支撑/封堵格。 */
 	void rememberPlacedSupport(BlockPos pos, Block block) {
 		engine.protectedSealBlocks.put(pos.immutable(), block);
+		engine.fileLog(Minecraft.getInstance(), "place-block pos=" + BorerText.block(pos)
+			+ " block=" + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(block));
 		if (engine.currentTarget != null && engine.currentTarget.equals(pos)) {
 			engine.clearMiningTarget(Minecraft.getInstance(), "placed-protected-support");
 		}
@@ -177,6 +179,11 @@ final class BorerPlace {
 		Minecraft client = Minecraft.getInstance();
 		if (client != null && client.level != null && player != null
 			&& !BorerFallPolicy.shouldBridge(BorerHazards.safeFallDepth(client, player.blockPosition().relative(engine.forward)))) {
+			return false;
+		}
+		// Do not pave over safe magma (it would be mined again); crouch down onto it instead.
+		if (client != null && client.level != null && player != null
+			&& engine.dropOntoSafeMagma(client, player.blockPosition().relative(engine.forward))) {
 			return false;
 		}
 		if (engine.mode != DefaultTunnelBorerEngine.Mode.ORE) return true;

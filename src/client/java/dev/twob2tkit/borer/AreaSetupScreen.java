@@ -74,7 +74,14 @@ public final class AreaSetupScreen extends KitHudScreen {
         button(actionLeft, footer, actionWidth, KitClient.borer() != null && KitClient.borer().isActive() ? "停止当前任务" : "开始 / 继续挖", () -> {
             if (KitClient.borer() == null) { showNotice("运行引擎未就绪", 0xFF7777); return; }
             if (KitClient.borer().isActive()) { KitClient.borer().stop(this.minecraft, "界面停止"); rebuildWidgets(); return; }
-            if (apply()) { KitClient.borer().start(this.minecraft, TunnelBorer.Mode.AREA); this.minecraft.gui.setScreen(null); }
+            if (apply()) {
+                KitClient.borer().start(this.minecraft, TunnelBorer.Mode.AREA);
+                if (KitClient.borer().isActive()) this.minecraft.gui.setScreen(null);
+                else {
+                    String reason = TunnelBorer.manualStartBlock(this.minecraft);
+                    showNotice(reason.isEmpty() ? "未启动，请查看游戏提示" : reason, 0xFF7777);
+                }
+            }
         });
         button(actionRight, footer, actionWidth, "返回 · 保留草稿", this::onClose);
         layoutContent();

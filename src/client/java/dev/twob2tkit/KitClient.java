@@ -596,6 +596,7 @@ public final class KitClient implements ClientModInitializer {
 	/** 热键开关盾构。 */
 	public static void toggleBorer(Minecraft client) {
 		if (instance == null || client.player == null) return;
+		if (!instance.tunnelBorer.isActive() && TunnelBorer.reportManualStartBlocked(client)) return;
 		if (instance.controller.isActive()) instance.controller.stop(client, "开始盾构，已停巡航");
 		if (instance.autoSurround.isActive()) instance.autoSurround.stop(client, "开始盾构，已停围箱");
 		if (instance.autoFeeder.isActive()) instance.autoFeeder.stop(client, "开始盾构，已停喂养");

@@ -97,7 +97,20 @@ public final class BorerThreats {
 			|| source.is(DamageTypes.FALL)
 			|| source.is(DamageTypes.SWEET_BERRY_BUSH)
 			|| source.is(DamageTypes.FREEZE)
-			|| source.is(DamageTypes.DRY_OUT);
+			|| source.is(DamageTypes.DRY_OUT)
+			// Terrain, not a mob: gravel/sand over the head while mining, crowding,
+			// dripstone, falling blocks, elytra impacts, lightning, world border.
+			// Mob-applied effects (WITHER, MAGIC, INDIRECT_MAGIC) stay non-environmental
+			// so a wither skeleton or witch keeps mining paused.
+			|| source.is(DamageTypes.IN_WALL)
+			|| source.is(DamageTypes.CRAMMING)
+			|| source.is(DamageTypes.STALAGMITE)
+			|| source.is(DamageTypes.FALLING_STALACTITE)
+			|| source.is(DamageTypes.FALLING_BLOCK)
+			|| source.is(DamageTypes.FALLING_ANVIL)
+			|| source.is(DamageTypes.FLY_INTO_WALL)
+			|| source.is(DamageTypes.LIGHTNING_BOLT)
+			|| source.is(DamageTypes.OUTSIDE_BORDER);
 	}
 
 	/** 环境伤害中文名。 */
@@ -115,6 +128,13 @@ public final class BorerThreats {
 		if (source.is(DamageTypes.STARVE)) return "饥饿";
 		if (source.is(DamageTypes.FREEZE)) return "冰冻";
 		if (source.is(DamageTypes.DRY_OUT)) return "干涸";
+		if (source.is(DamageTypes.IN_WALL)) return "窒息";
+		if (source.is(DamageTypes.CRAMMING)) return "挤压";
+		if (source.is(DamageTypes.STALAGMITE) || source.is(DamageTypes.FALLING_STALACTITE)) return "滴水石锥";
+		if (source.is(DamageTypes.FALLING_BLOCK) || source.is(DamageTypes.FALLING_ANVIL)) return "下落方块";
+		if (source.is(DamageTypes.FLY_INTO_WALL)) return "撞墙";
+		if (source.is(DamageTypes.LIGHTNING_BOLT)) return "雷击";
+		if (source.is(DamageTypes.OUTSIDE_BORDER)) return "世界边界";
 		String id = source.getMsgId();
 		return id == null || id.isBlank() ? "环境伤害" : id;
 	}

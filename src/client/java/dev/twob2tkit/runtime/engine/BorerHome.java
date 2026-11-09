@@ -137,20 +137,22 @@ final class BorerHome {
 
 	/** 根据位移选主轴朝向。 */
 	private void chooseHeading(double dx, double dz) {
+		engine.forward = homeHeading(engine.forward, dx, dz);
+	}
+
+	static Direction homeHeading(Direction forward, double dx, double dz) {
 		double ax = Math.abs(dx);
 		double az = Math.abs(dz);
 		Direction xDir = dx >= 0 ? Direction.EAST : Direction.WEST;
 		Direction zDir = dz >= 0 ? Direction.SOUTH : Direction.NORTH;
-		if (engine.forward.getAxis() == Direction.Axis.X && ax + 0.9 >= az) {
-			if (ax > 0.15) engine.forward = xDir;
-			return;
-		}
-		if (engine.forward.getAxis() == Direction.Axis.Z && az + 0.9 >= ax) {
-			if (az > 0.15) engine.forward = zDir;
-			return;
-		}
-		if (ax >= az && ax > 0.15) engine.forward = xDir;
-		else if (az > 0.15) engine.forward = zDir;
+		boolean onX = forward.getAxis() == Direction.Axis.X;
+		// Already level on the current axis: the hysteresis below would keep walking
+		// into the tunnel wall while the goal sits sideways on the other axis.
+		if ((onX ? ax : az) <= 0.15 && (onX ? az : ax) > 0.15) return onX ? zDir : xDir;
+		if (onX && ax + 0.9 >= az) return ax > 0.15 ? xDir : forward;
+		if (!onX && az + 0.9 >= ax) return az > 0.15 ? zDir : forward;
+		if (ax >= az && ax > 0.15) return xDir;
+		return az > 0.15 ? zDir : forward;
 	}
 
 	/** 回家时优先走进已经挖开的 1×2，而不是对着墙的那一侧。 */

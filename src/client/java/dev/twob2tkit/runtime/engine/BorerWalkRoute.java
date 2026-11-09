@@ -13,7 +13,7 @@ final class BorerWalkRoute {
 	private final DefaultTunnelBorerEngine engine;
 	private List<BlockPos> path = List.of();
 	private BlockPos target;
-	private boolean loot, home;
+	private boolean loot, home, besideSupport;
 	private int index, stall;
 	private long nextPlan;
 	private double best = Double.POSITIVE_INFINITY;
@@ -22,10 +22,20 @@ final class BorerWalkRoute {
 	void clear() { path = List.of(); target = null; index = stall = 0; nextPlan = 0; best = Double.POSITIVE_INFINITY; progress.resetTarget(); }
 	long progress() { return progress.count(); }
 	boolean walk(Minecraft c, Vec3 goal, boolean pickup) {
-		return walk(c, goal, pickup, false);
+		return walk(c, goal, pickup, false, false);
 	}
 	boolean walkHome(Minecraft c, BlockPos goal) {
-		return walk(c, Vec3.atBottomCenterOf(goal), false, true);
+		return walk(c, Vec3.atBottomCenterOf(goal), false, true, false);
+	}
+	boolean walkBesideSupport(Minecraft c, BlockPos ore) {
+		return walk(c, Vec3.atCenterOf(ore), false, false, true);
+	}
+	boolean hasSupportRoute(BlockPos ore) {
+		return besideSupport && ore.equals(target) && !path.isEmpty();
+	}
+	static Predicate<BlockPos> besideSupportGoal(BlockPos ore) {
+		return foot -> Math.abs(foot.getX() - ore.getX()) + Math.abs(foot.getZ() - ore.getZ()) == 1
+			&& foot.getY() >= ore.getY() && foot.getY() <= ore.getY() + 1;
 	}
 	static Predicate<BlockPos> routeGoal(Vec3 goal, boolean pickup, boolean home) {
 		BlockPos block = BlockPos.containing(goal);
@@ -34,18 +44,21 @@ final class BorerWalkRoute {
 			: Math.abs(foot.getX() - block.getX()) + Math.abs(foot.getZ() - block.getZ()) <= 1
 				&& block.getY() - foot.getY() >= -1 && block.getY() - foot.getY() <= 2;
 	}
-	private boolean walk(Minecraft c, Vec3 goal, boolean pickup, boolean returning) {
+	private boolean walk(Minecraft c, Vec3 goal, boolean pickup, boolean returning, boolean beside) {
 		var p = c.player;
 		if (BorerFlight.isFlying(p)) return false;
 		BlockPos block = BlockPos.containing(goal);
-		if (!block.equals(target) || loot != pickup || home != returning) { clear(); target = block; loot = pickup; home = returning; }
+		if (!block.equals(target) || loot != pickup || home != returning || besideSupport != beside) {
+			clear(); target = block; loot = pickup; home = returning; besideSupport = beside;
+		}
 		long now = c.level.getGameTime();
 		if (path.isEmpty()) {
 			if (!p.onGround() || now < nextPlan) return false;
 			nextPlan = now + 10;
 			var w = world(c);
-			var route = BorerWalkPath.find(w, p.blockPosition(), routeGoal(goal, pickup, returning),
-				12, 640, Math.min(returning ? 3 : 12, BorerFallPolicy.maxSafeFallBlocks(BorerFlight.meteorNoFallActive())), BorerFlight.canStepOneBlock(p));
+			var destination = beside ? besideSupportGoal(block) : routeGoal(goal, pickup, returning);
+			var route = BorerWalkPath.find(w, p.blockPosition(), destination,
+				12, 640, Math.min(returning || beside ? 3 : 12, BorerFallPolicy.maxSafeFallBlocks(BorerFlight.meteorNoFallActive())), BorerFlight.canStepOneBlock(p));
 			if (route.nodes().size() <= 1) return false;
 			path = route.nodes(); index = 0; stall = 0; best = Double.POSITIVE_INFINITY;
 			engine.fileLog(c, "ore-walk-route kind=" + (returning ? "home" : pickup ? "loot" : "ore") + " goal=" + block + " steps=" + path.size() + " expanded=" + route.expanded());
@@ -96,7 +109,7 @@ final class BorerWalkRoute {
 				&& !c.level.getBlockState(p).is(Blocks.SWEET_BERRY_BUSH)
 				&& c.level.getBlockState(p).getCollisionShape(c.level, p).isEmpty()); }
 			public boolean floor(BlockPos b) { return floor.computeIfAbsent(b, p -> c.level.hasChunkAt(p)
-				&& !BorerHazards.isMagma(c, p) && c.level.getBlockState(p).getFluidState().isEmpty()
+				&& (!BorerHazards.isMagma(c, p) || engine.safeMagmaFloor(c, p)) && c.level.getBlockState(p).getFluidState().isEmpty()
 				&& c.level.getBlockState(p).isFaceSturdy(c.level, p, net.minecraft.core.Direction.UP)); }
 		};
 	}

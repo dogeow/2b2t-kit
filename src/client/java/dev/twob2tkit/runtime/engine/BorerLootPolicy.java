@@ -130,4 +130,13 @@ public final class BorerLootPolicy {
 	public static boolean preferDropOverMining(boolean safeLootDrop, boolean inPickupRange, double dy) {
 		return safeLootDrop && !inPickupRange && dy < -0.25;
 	}
+
+	/** 斜着起跳会擦到旁边的墙：对正到最近的东南西北再试，别去挖侧墙。 */
+	public static float axisYaw(float yaw) {
+		float snapped = Math.round(yaw / 90.0F) * 90.0F;
+		snapped %= 360.0F;
+		if (snapped > 180.0F) snapped -= 360.0F;
+		if (snapped <= -180.0F) snapped += 360.0F;
+		return snapped;
+	}
 }

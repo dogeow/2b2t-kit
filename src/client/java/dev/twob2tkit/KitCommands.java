@@ -231,9 +231,8 @@ final class KitCommands {
 						config.save();
 						TunnelBorer borer = KitClient.borer();
 						if (borer == null) return 0;
-						KitClient.prepareForBorer(client);
 						borer.start(client, TunnelBorer.Mode.AREA);
-						return 1;
+						return borer.isActive() ? 1 : 0;
 					}))
 				)
 				.then(literal("whitelist")
