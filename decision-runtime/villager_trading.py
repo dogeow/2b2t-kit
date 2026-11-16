@@ -271,7 +271,7 @@ def settle_closed_trade(c,receipt,*,seconds=20):
         time.sleep(.1)
     return dict(complete=True,inventory=dict(expected),confirmations=stamps,purchases_sent=0)
 
-def buy_one(c,index,out):
+def buy_one(c,index,out,*,_batch=None):
     """One output pickup, then its bound receiving stack; unknown clicks are retained."""
     scope=hashlib.sha256((c.server.lower().removesuffix(':25565')+'|minecraft:overworld').encode()).hexdigest()[:20]
     registry=Path(c.root)/'merchant-trades'/scope;registry.mkdir(parents=True,exist_ok=True)
@@ -286,7 +286,10 @@ def buy_one(c,index,out):
     if (previous and previous.get('complete')is True and not previous.get('pending')
             and previous.get('world_session')==c.world and previous.get('uuid')==info['villager_uuid']
             and previous.get('opening_request_id') and previous['opening_request_id']==info.get('opening_request_id')):
-        raise RuntimeError('Reopen this trader for a fresh server quote before another purchase; no selection sent')
+        if (_batch is None or previous.get('batch')!=_batch
+                or previous.get('offer',{}).get('index')!=index
+                or Counter(previous.get('after',{}))!=combined(q)):
+            raise RuntimeError('Reopen this trader for a fresh server quote before another purchase; no selection sent')
     if type(index)is not int or not 0<=index<len(info['offers']):raise ValueError('Exact current offer index required')
     offer=deepcopy(info['offers'][index]);before=combined(q)
     expected=before.copy()
@@ -303,6 +306,7 @@ def buy_one(c,index,out):
     book={'world_session':c.world,'uuid':info['villager_uuid'],'offer':offer,'before':dict(before),
           'expected_after':dict(+expected),'pending':None,'complete':False,'lock_server_verified':False,
           'trader_xp_before':info['trader_xp'],'opening_request_id':info.get('opening_request_id')}
+    if _batch is not None:book['batch']=_batch
     def save():write_json(path,book)
     def send(op,**params):
         book['pending']={'op':op,'params':params};save();previous=c.last
@@ -364,6 +368,46 @@ def buy_one(c,index,out):
     c.merchant_purchase_hand_trade_items=tuple(v['item']for v in(offer['cost_a'],offer['cost_b'],result)if v['count'])
     c.merchant_purchase_hand_pending=True
     return book
+
+def sell_many(c,index,limit,out):
+    """Sell one ordinary commodity for emeralds within one owned server menu."""
+    if type(limit)is not int or not 1<=limit<=16:
+        raise ValueError('One to sixteen commodity sales required')
+    out=Path(out);out.mkdir(exist_ok=False)
+    menu,info=owned_info(c,c.status())
+    if type(index)is not int or not 0<=index<len(info['offers']):
+        raise ValueError('Exact current commodity offer index required')
+    offer=deepcopy(info['offers'][index])
+    payment,extra,result=(offer[k] for k in ('cost_a','cost_b','result'))
+    item=payment['item'];price=payment['count']
+    if (item not in {'minecraft:paper','minecraft:stick','minecraft:iron_ingot','minecraft:flint',
+                     'minecraft:wheat','minecraft:rotten_flesh'}
+            or type(price)is not int or not 1<=price<=payment['max_stack']
+            or extra['count']!=0 or result['item']!='minecraft:emerald' or result['count']!=1):
+        raise ValueError('Batch sales require one ordinary commodity payment for one emerald')
+    for stack in (payment,result):
+        encoded=stack.get('stack_data')
+        if (not isinstance(encoded,dict) or encoded.get('id')!=stack['item']
+                or encoded.get('count',1)!=stack['count'] or encoded.get('components',{})!={}):
+            raise ValueError('Batch sales require plain payment and result stacks')
+    uses,maximum=offer['uses'],offer['max_uses']
+    if type(uses)is not int or type(maximum)is not int or not 0<=uses<=maximum:
+        raise ValueError('Current bounded merchant stock required')
+
+    owner=(menu['id'],info['villager_uuid'],info['opening_request_id'])
+    terms=tuple(offer[k] for k in ('cost_a','cost_b','result','max_uses'))
+    sales=[]
+    for number in range(min(limit,maximum-uses)):
+        q=c.status();current,merchant=owned_info(c,q)
+        if (current['id'],merchant['villager_uuid'],merchant['opening_request_id'])!=owner:
+            raise RuntimeError('Original merchant window changed during the batch')
+        if index>=len(merchant['offers']):break
+        row=merchant['offers'][index]
+        if (row['out_of_stock'] or tuple(row[k] for k in ('cost_a','cost_b','result','max_uses'))!=terms
+                or combined(q)[item]<price):
+            break
+        sales.append(buy_one(c,index,out/f'sale-{number+1:02d}',_batch=str(out.resolve())))
+    return {'complete':True,'sales':sales,'requested_limit':limit,'sold':len(sales)}
 
 def verify_reopened_lock(purchase,reopened):
     """A later newly opened server menu, not predicted XP, supplies lock evidence."""

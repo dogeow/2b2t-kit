@@ -3,7 +3,7 @@ from copy import deepcopy
 from pathlib import Path
 import json,tempfile,unittest
 from unittest.mock import patch
-from villager_trading import book_matches,candidates,buy_one,verify_reopened_lock,_settle_purchase_hand,open as open_merchant
+from villager_trading import book_matches,candidates,buy_one,sell_many,verify_reopened_lock,_settle_purchase_hand,open as open_merchant
 
 def stack(item='minecraft:air',count=0,**extra):return {'item':item,'count':count,**extra}
 BOOK=stack('minecraft:enchanted_book',1,stored_enchantments=[{'id':'minecraft:mending','level':1}])
@@ -38,6 +38,43 @@ class Merchant:
         return {'phase':'done','id':self.last}
 
 class VillagerTradingTests(unittest.TestCase):
+    def test_multiple_paper_sales_reuse_the_window_and_stop_at_stock_or_price_change(self):
+        for price_changes,expected in ((False,2),(True,1)):
+            with self.subTest(price_changes=price_changes), tempfile.TemporaryDirectory() as tmp:
+                c=Merchant(tmp)
+                c.offer.update(cost_a=stack('minecraft:paper',24,max_stack=64,
+                                            stack_data={'id':'minecraft:paper','count':24}),cost_b=stack(),
+                               result=stack('minecraft:emerald',1,max_stack=64,
+                                            stack_data={'id':'minecraft:emerald','count':1}),max_uses=2)
+                c.menu['merchant']['opening_request_id']='one-opening'
+                c.menu['slots'][3]=dict(slot=3,**stack('minecraft:emerald',5,max_stack=64))
+                c.menu['slots'][4]=dict(slot=4,**stack('minecraft:paper',64,max_stack=64))
+
+                def click(op,**params):
+                    c.calls.append((op,params)); c.last='r'+str(len(c.calls))
+                    m=c.menu
+                    if op=='merchant_select_trade':
+                        m['slots'][4]['count']-=24
+                        m['slots'][0].update(stack('minecraft:paper',24))
+                        m['slots'][2].update(stack('minecraft:emerald',1))
+                    elif params['slot']==2:
+                        m['slots'][0].update(stack())
+                        m['slots'][2].update(stack())
+                        m['cursor']=stack('minecraft:emerald',1)
+                    else:
+                        m['slots'][3]['count']+=1
+                        m['cursor']=stack()
+                        if price_changes:c.offer['cost_a']['count']=25
+                    return {'phase':'done','id':c.last}
+
+                c.checked=click
+                sold=sell_many(c,0,4,Path(tmp)/'batch')
+                self.assertEqual(sold['sold'],expected)
+                self.assertEqual(len(c.calls),3*expected)
+                self.assertEqual(c.menu['slots'][3]['count'],5+expected)
+                self.assertEqual(c.menu['slots'][4]['count'],64-24*expected)
+                self.assertTrue(all(row['opening_request_id']=='one-opening' for row in sold['sales']))
+
     def test_plain_emerald_sale_merges_output_without_consuming_another_slot(self):
         with tempfile.TemporaryDirectory()as tmp:
             c=Merchant(tmp)

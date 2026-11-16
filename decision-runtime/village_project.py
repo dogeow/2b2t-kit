@@ -187,6 +187,9 @@ def execute(c,command,directory,checkpoint):
     if kind=='merchant_buy_one':
         from villager_trading import buy_one
         return buy_one(c,command['index'],out/'actual-one-trade')
+    if kind=='merchant_sell_many':
+        from villager_trading import sell_many
+        return sell_many(c,command['index'],command['limit'],out/'actual-commodity-sales')
     if kind=='merchant_lock_wanted':
         from villager_trading import lock_wanted
         return lock_wanted(c,command['targets'],out/'actual-one-wanted-lock',
