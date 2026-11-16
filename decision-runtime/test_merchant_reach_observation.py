@@ -1,11 +1,17 @@
 import unittest
 import test_sleeping_merchant_observation as fixtures
-from sleeping_merchant_observation import observable_reach,REACH_HOST_SHA256,OCCLUSION_HOST_SHA256,observable
+from sleeping_merchant_observation import observable_reach,REACH_HOST_SHA256,OCCLUSION_HOST_SHA256,INSTALLED_26_2_HOST_SHA256,observable
 class MerchantReachObservationTests(unittest.TestCase):
  def fixture(self):
   c,err,o,e,s,f=fixtures.SleepingMerchantObservationTests().fixture();err['error']='Entity out of reach';e['detail']='Entity out of reach';e['phase']='error';return c,err,o,e,s,f
  def test_pinned_zero_movement_range_guard_only_allows_observation(self):
   self.assertTrue(observable_reach(*self.fixture(),'w','t',REACH_HOST_SHA256));self.assertFalse(observable(*self.fixture(),'w','t'))
+ def test_installed_26_2_admits_only_proven_pre_input_refusals(self):
+  for detail in ('Entity out of reach','Entity is occluded'):
+   c,err,o,e,s,f=self.fixture();err['error']=e['detail']=detail
+   self.assertTrue(observable_reach(c,err,o,e,s,f,'w','t',INSTALLED_26_2_HOST_SHA256))
+   err['unconfirmed_native_request']={'id':'original'}
+   self.assertFalse(observable_reach(c,err,o,e,s,f,'w','t',INSTALLED_26_2_HOST_SHA256))
  def test_audited_20_4_host_keeps_unknown_receipts_and_effects_fenced(self):
   sha='7d29812c22ed57cd52ab0e1e310e029693eca2915a652cdb8b09b1b3acbc8607'
   self.assertTrue(observable_reach(*self.fixture(),'w','t',sha))

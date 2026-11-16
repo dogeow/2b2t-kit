@@ -58,14 +58,16 @@ def observable_bridged(command,opening,event,reply,state,flags,world,task):
 REACH_HOST_SHA256='ebce50979ba7aaadc8c855e548af54169bf8dc45de86a3ff49756b9dea06dbeb'
 # 20.4 bytecode audited: both range exceptions precede opening tracking,
 # camera rotation and MultiPlayerGameMode.interact (host20.4-merchant-reach-bytecode-1651.txt).
-REACH_HOST_SHA256S=frozenset((REACH_HOST_SHA256,'7d29812c22ed57cd52ab0e1e310e029693eca2915a652cdb8b09b1b3acbc8607'))
+# Audited range and occlusion throws precede menu tracking, view rotation and interaction.
+INSTALLED_26_2_HOST_SHA256='a2ef848585382eddbeb3791242e9eaf31934df43e0a0e4fba59f039c5d5d9877'
+REACH_HOST_SHA256S=frozenset((REACH_HOST_SHA256,'7d29812c22ed57cd52ab0e1e310e029693eca2915a652cdb8b09b1b3acbc8607',INSTALLED_26_2_HOST_SHA256))
 OCCLUSION_HOST_SHA256='7d29812c22ed57cd52ab0e1e310e029693eca2915a652cdb8b09b1b3acbc8607'
 def observable_reach(command,error,opening,event,state,flags,world,task,host_sha256):
  # Current 20.4 bytecode 17641-17653 throws before opening, rotation or interaction.
  # The older host has only the prior range audit, so retain its occlusion errors.
  detail=error.get('error')
  audited=(detail=='Entity out of reach'and host_sha256 in REACH_HOST_SHA256S
-          or detail=='Entity is occluded'and host_sha256==OCCLUSION_HOST_SHA256)
+          or detail=='Entity is occluded'and host_sha256 in (OCCLUSION_HOST_SHA256,INSTALLED_26_2_HOST_SHA256))
  return(audited and _observable(command,error,opening,event,state,flags,world,task,detail,'error'))
 
 def _observable(command,error,opening,event,state,flags,world,task,detail,phase):
