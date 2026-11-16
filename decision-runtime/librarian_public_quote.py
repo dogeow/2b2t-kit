@@ -61,7 +61,13 @@ def open_when_reachable(builder, room, awake, *, seconds=30, max_attempts=2, dis
         builder.save()
         try:
             reply = builder.q.send('merchant_open', actor=actor, seconds=35)
-        except RuntimeError:
+        except RuntimeError as error:
+            if str(error) == ('Original village action retained: '
+                              'Original villager is asleep; wake the assigned bed before opening'):
+                observation = builder.q.observe_sleeping_merchant_timeout()
+                record.update(pending=False, sleeping_refusal_observed=observation['id'])
+                builder.save()
+                return None
             # The existing observer checks the audited host, native terminal,
             # unchanged inventory/position/revision and absence of unknown input.
             # If any condition fails it raises, retaining the original request.

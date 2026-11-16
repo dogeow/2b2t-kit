@@ -94,7 +94,20 @@ class VillageQueue:
         state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
         if not(d/'error.json').exists()or(d/'result.json').exists()or(self.out/'control/unconfirmed-native-request.json').exists():raise RuntimeError('No known sleeping merchant terminal')
         error=json.loads((d/'error.json').read_text());opening=json.loads((d/'actual-normal-merchant-open/open.json').read_text());events=[json.loads(line)for line in(self.out/'control/events.jsonl').read_text().splitlines()];event=next((e for e in reversed(events)if e.get('request_id')==error.get('last_request')),None);flags=read(self.root,state)
-        if not observable(command,error,opening,event,state,flags,self.world,self.lease['job_session']):raise RuntimeError('Merchant interaction or ownership remains unresolved')
+        preflight = (command.get('action') == 'merchant_open'
+                     and error.get('error') == 'Original villager is asleep; wake the assigned bed before opening'
+                     and error.get('native_inflight') is None and error.get('unconfirmed_native_request') is None
+                     and opening.get('uuid') == command.get('actor', {}).get('uuid')
+                     and opening.get('world_session') == self.world and opening.get('pending') is False
+                     and opening.get('interaction_sent') is False and opening.get('refusal') == 'assigned_adult_is_asleep'
+                     and event and event.get('request_id') == state.get('last_request') == error.get('last_request')
+                     and event.get('world_session') == self.world and event.get('phase') == 'done'
+                     and event.get('params', {}).get('task_session') == self.lease['job_session']
+                     and event.get('revision_after') == event.get('revision_before') == state.get('control_revision')
+                     and event.get('inventory_delta') == {} and not state.get('screen')
+                     and not state.get('menu', {}).get('cursor', {}).get('count')
+                     and state.get('health') == 20 and state.get('manual_movement') is False)
+        if not preflight and not observable(command,error,opening,event,state,flags,self.world,self.lease['job_session']):raise RuntimeError('Merchant interaction or ownership remains unresolved')
         self._sleeping_merchant_read=command['id']
         try:return self.native('snapshot')
         finally:self._sleeping_merchant_read=None

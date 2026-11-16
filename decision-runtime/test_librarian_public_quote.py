@@ -49,6 +49,16 @@ class PublicQuoteTests(unittest.TestCase):
         self.assertEqual(1, b.q.send.call_count)
         self.assertTrue(b.book['public_quote_admissions'][0]['pending'])
 
+    def test_resident_falling_asleep_before_open_is_observed_without_retry(self):
+        b, room, _ = self.setup_case()
+        b.q.send.side_effect = RuntimeError(
+            'Original village action retained: Original villager is asleep; wake the assigned bed before opening')
+        b.q.observe_sleeping_merchant_timeout.return_value = {'id': 'read-only'}
+        self.assertIsNone(open_when_reachable(b, room, lambda: True))
+        self.assertEqual(1, b.q.send.call_count)
+        b.q.observe_merchant_reach_refusal.assert_not_called()
+        self.assertEqual('read-only', b.book['public_quote_admissions'][0]['sleeping_refusal_observed'])
+
     def test_wrong_merchant_is_not_traded_or_retried(self):
         b, room, reply = self.setup_case()
         reply['menu']['merchant']['villager_uuid'] = 'other'
