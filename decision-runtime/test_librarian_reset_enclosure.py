@@ -39,6 +39,8 @@ class ResetEnclosureTests(unittest.TestCase):
 
     def test_closed_top_trapdoor_keeps_separate_player_pickup_route(self):
         scene, room = self.fixture()
+        header = next(row for row in scene['blocks'] if row['pos'] == [100, 67, 100])
+        header['state'] = 'Block{minecraft:spruce_planks}'
         scene['blocks'][-1]['state'] = ('Block{minecraft:dark_oak_trapdoor}'
             '[half=top,open=false,waterlogged=false]')
         self.assertEqual(require_enclosed_reset(scene, room)['counter_opening'], 1.8125)

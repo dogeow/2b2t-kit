@@ -2,7 +2,7 @@
 from projection_completion import block_state
 
 FULL_CUBES = frozenset('minecraft:' + name for name in (
-    'dark_oak_planks', 'cherry_planks', 'oak_planks', 'cobblestone', 'cobbled_deepslate',
+    'dark_oak_planks', 'cherry_planks', 'oak_planks', 'spruce_planks', 'cobblestone', 'cobbled_deepslate',
     'stone', 'dirt', 'grass_block',
 ))
 
