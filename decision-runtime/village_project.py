@@ -111,13 +111,16 @@ def execute(c,command,directory,checkpoint):
         from packed_supplies import open_box
         return owned_menu_result(c,open_box(c,command['pos'],'ShulkerBoxMenu',allow_empty=command.get('allow_empty',False)))
     if kind=='take_packed_materials':
-        from packed_supplies import open_box,choose_box,take_box
+        from packed_supplies import open_box,choose_box,take_box,pad_support_allowed
         from material_plan import inventory_counts
         profile=json.loads(Path(command['profile']).read_text());ender=profile['ender_chest'];pad=profile['shulker_pad']
+        support=profile.get('shulker_pad_support_state')
+        if support is not None and not pad_support_allowed(support,support):
+            raise ValueError('Packed workspace requires an explicitly allowed support state')
         q=open_box(c,ender,'ChestMenu');chosen=choose_box(q['menu']['slots'][:27],command['targets'],inventory_counts(q))
         c.checked('close_menu')
         if chosen is None:return {'complete':False,'reason':'No currently observed ender shulker contains requested stock'}
-        result=take_box(c,ender,pad,chosen[1],command['targets'])
+        result=take_box(c,ender,pad,chosen[1],command['targets'],expected_pad_support=support)
         return {'complete':result is None or result.get('stage')=='returned','packed_transfer':result}
     if kind=='take_packed_equipment':
         from packed_equipment import take

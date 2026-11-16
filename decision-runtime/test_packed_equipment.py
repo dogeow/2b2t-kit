@@ -38,5 +38,16 @@ class PackedEquipmentTests(unittest.TestCase):
             take_box.assert_called_once_with(c,[1,64,2],[3,64,2],14,{'minecraft:enchanted_book':1},exact_stacks={'minecraft:enchanted_book':wanted})
             c.checked.assert_called_once_with('close_menu')
 
+    def test_explicit_oak_support_is_forwarded_and_bad_support_is_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            profile=Path(d)/'profile.json';data={'server':'simpcraft.com','dimension':'minecraft:overworld','ender_chest':[1,64,2],'shulker_pad':[3,64,2],'shulker_pad_support_state':'Block{minecraft:oak_planks}'};profile.write_text(json.dumps(data))
+            wanted=book('minecraft:sharpness',5);initial={'dimension':'minecraft:overworld','inventory':[empty(i) for i in range(36)]};final=deepcopy(initial);final['inventory'][9]={**wanted,'slot':9};boxes=[empty(i) for i in range(27)];boxes[10]={'item':'minecraft:shulker_box','count':1,'contains':[wanted]};c=Mock(server='simpcraft.com');c.status.side_effect=[initial,final]
+            with patch('packed_equipment.open_box',return_value={'menu':{'slots':boxes}}),patch('packed_equipment.take_box',return_value={'stage':'returned'}) as box:
+                self.assertTrue(take(c,profile,10,wanted)['complete']);self.assertEqual(box.call_args.kwargs['expected_pad_support'],'Block{minecraft:oak_planks}')
+            data['shulker_pad_support_state']='Block{minecraft:lava}';profile.write_text(json.dumps(data));c=Mock(server='simpcraft.com');c.status.return_value=initial
+            with patch('packed_equipment.open_box') as opening:
+                with self.assertRaises(ValueError):take(c,profile,10,wanted)
+                opening.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

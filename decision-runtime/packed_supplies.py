@@ -98,6 +98,23 @@ def wait(client,predicate):
 def block(client,pos):
     rows=client.request('scan',min=pos,max=pos)['blocks'];return rows[0]['state'] if rows else None
 
+def _observe_placed_box(client,pad,item):
+    # Inventory can acknowledge the use before the placed block is visible.
+    # Observe the original placement without sending another interaction.
+    deadline=time.monotonic()+6
+    previous=None
+    expected='Block{'+item+'}'
+    while time.monotonic()<deadline:
+        state=block(client,pad)
+        if state is not None:
+            if not state.startswith(expected):
+                raise RuntimeError('Portable box pad changed after placement; preserve the original action')
+            if state==previous:
+                return state
+        previous=state
+        time.sleep(.15)
+    raise RuntimeError('Box placement is not confirmed; preserve the original action')
+
 def observe_drop_floor(client,pad,reader=None):
     """Require a flat dry 3x3 catch surface, never just the box's support cell.
 
@@ -370,8 +387,7 @@ def take_box(client,ender,pad,slot,targets,required_stored_enchantments=None,min
         require_drop_floor_unchanged(client,pad,drop_floor)
         if block(client,pad) is not None or block(client,ground)!=ground_state:raise RuntimeError('Temporary pad changed before box placement')
     use_with_margin(client,ground,ground_state,item,('up',),pad_empty)
-    placed=block(client,pad)
-    if 'shulker_box' not in (placed or ''):raise RuntimeError('Box placement is not confirmed')
+    placed=_observe_placed_box(client,pad,item)
     record['placed_state']=placed;save('placed');s=open_box(client,pad,'ShulkerBoxMenu')
     if contents(s['menu']['slots'][:27])!=initial:raise RuntimeError('Opened contents differ from the observed carried box')
     before=inventory_counts(s)

@@ -4,7 +4,7 @@ from pathlib import Path
 from anvil_enchant_preview import stack_key, enchantments
 from material_jobs.protocol import server_key
 from material_plan import inventory_counts
-from packed_supplies import open_box, take_box, matching_count, workspace_requirement, PackedWorkspaceRequired
+from packed_supplies import open_box, take_box, matching_count, workspace_requirement, PackedWorkspaceRequired, pad_support_allowed
 
 
 def take(client,profile_path,box_slot,expected):
@@ -21,6 +21,9 @@ def take(client,profile_path,box_slot,expected):
         raise ValueError('Current registered Ender workspace required')
     space=workspace_requirement(initial)
     if space:raise PackedWorkspaceRequired(space)
+    support=profile.get('shulker_pad_support_state')
+    if support is not None and not pad_support_allowed(support,support):
+        raise ValueError('Packed workspace requires an explicitly allowed support state')
     item=expected['item'];exact={item:expected};count=inventory_counts(initial)[item]
     qualified=matching_count(initial['inventory'],item,exact_stacks=exact)
     state=open_box(client,profile['ender_chest'],'ChestMenu');box=state['menu']['slots'][box_slot]
@@ -29,8 +32,9 @@ def take(client,profile_path,box_slot,expected):
     client.checked('close_menu')
     if not found:
         return {'complete':False,'reason':'Explicit source no longer contains the exact approved stack','box_withdrawn':False}
+    options={'expected_pad_support':support} if support is not None else {}
     result=take_box(client,profile['ender_chest'],profile['shulker_pad'],box_slot,
-                    {item:count+1},exact_stacks=exact)
+                    {item:count+1},exact_stacks=exact,**options)
     final=client.status()
     if (not result or result.get('stage')!='returned' or inventory_counts(final)[item]!=count+1
             or matching_count(final['inventory'],item,exact_stacks=exact)!=qualified+1):

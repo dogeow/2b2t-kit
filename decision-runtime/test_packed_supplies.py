@@ -150,16 +150,22 @@ class EquipmentWithdrawalTest(unittest.TestCase):
     return self.status()
   return Client()
 
- def run_withdrawal(self,c,target):
+ def run_withdrawal(self,c,target,*,delay_box_reads=0):
   from packed_supplies import take_box
   def block(client,pos):
+   nonlocal delay_box_reads
    if getattr(client,'floor_missing',False) and pos==[self.PAD[0]+1,self.PAD[1]-1,self.PAD[2]+1]:return None
    if pos[1]==self.PAD[1]-1 and abs(pos[0]-self.PAD[0])<=1 and abs(pos[2]-self.PAD[2])<=1:return 'Block{minecraft:grass_block}[snowy=false]'
-   if pos==self.PAD and client.placed:return 'Block{minecraft:pink_shulker_box}[facing=up]'
+   if pos==self.PAD and client.placed:
+    if delay_box_reads:
+     delay_box_reads-=1
+     return None
+    return 'Block{minecraft:pink_shulker_box}[facing=up]'
    return None
   def opening(client,pos,kind):client.kind=kind;client.menu_id+=1;return client.status()
   def place(client,pos,state,hand,faces,before_use=None):
    if before_use:before_use()
+   client.actions.append(('place_box',{'pos':pos}))
    self.assertEqual(self.BOX,hand);client.placed=True
    index=next(i for i,row in enumerate(client.inventory) if row['item']==self.BOX and row['count'])
    client.inventory[index]={'slot':index,'item':'minecraft:air','count':0,'max_stack':1}
@@ -173,6 +179,22 @@ class EquipmentWithdrawalTest(unittest.TestCase):
    stack.enter_context(patch('packed_supplies.time.monotonic',side_effect=itertools.count(step=.5)))
    return take_box(c,self.ENDER,self.PAD,24,{self.TOOL:target},minimum_durability={self.TOOL:1000},
                    required_enchantments={self.TOOL:{'minecraft:efficiency':3}})
+
+ def test_delayed_box_block_is_observed_without_placing_again(self):
+  with tempfile.TemporaryDirectory() as folder:
+   c=self.client(folder);record=self.run_withdrawal(c,4,delay_box_reads=2)
+   self.assertEqual('returned',record['stage']);self.assertTrue(c.returned)
+   self.assertEqual(1,sum(op=='place_box' for op,_ in c.actions))
+
+ def test_unobserved_box_stops_without_a_second_placement_or_break(self):
+  with tempfile.TemporaryDirectory() as folder:
+   c=self.client(folder)
+   with self.assertRaisesRegex(RuntimeError,'placement is not confirmed'):
+    self.run_withdrawal(c,4,delay_box_reads=100)
+   self.assertFalse(c.returned)
+   self.assertEqual(1,sum(op=='place_box' for op,_ in c.actions))
+   self.assertFalse(any(op=='recover_shulker' for op,_ in c.actions))
+   self.assertEqual('carried',json.loads((c.out/'packed-transfer-active.json').read_text())['stage'])
 
  def test_three_worn_tools_do_not_satisfy_an_additional_qualified_tool(self):
   with tempfile.TemporaryDirectory() as folder:

@@ -33,6 +33,38 @@ class VillageQueue:
         from action_efficiency import ActionEfficiency
         self.efficiency=ActionEfficiency(self.out,prefix,self.world)
     def close(self):self.lock.close()
+    def observe_packed_pad_refusal(self):
+        """Observe an empty-pad preflight failure before any box was moved."""
+        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
+        if (command.get('action')!='take_packed_materials' or not (d/'error.json').exists()
+                or (d/'result.json').exists() or not (d/'intent.json').exists()
+                or (self.out/'control/unconfirmed-native-request.json').exists()
+                or (self.out/'control/packed-transfer-active.json').exists()):
+            raise RuntimeError('No unstarted packed-pad refusal')
+        error=json.loads((d/'error.json').read_text())
+        events=[json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        start=(d/'intent.json').stat().st_mtime
+        segment=[e for e in events if e.get('time',0)>=start-.1]
+        last=segment[-1] if segment else {}
+        allowed={'scan','snapshot','approach_block','interact','close_menu'}
+        profile=json.loads(Path(command['profile']).read_text())
+        if (error.get('error')!='Temporary shulker pad is not empty or its verified dry support changed'
+                or error.get('type')!='RuntimeError' or error.get('native_inflight') is not None
+                or error.get('unconfirmed_native_request') is not None or not segment
+                or any(e.get('op') not in allowed or e.get('phase') not in (None,'done')
+                   or e.get('world_session')!=self.world or e.get('inventory_delta')!={}
+                   or e.get('params',{}).get('task_session')!=self.lease.get('job_session')
+                   or e.get('op')=='interact' and e.get('params',{}).get('pos')!=profile.get('ender_chest')
+                   for e in segment)
+                or last.get('op')!='scan' or last.get('request_id')!=error.get('last_request')
+                or last.get('request_id')!=state.get('last_request') or last.get('revision_after')!=state.get('control_revision')
+                or last.get('position_after')!=state.get('pos') or state.get('screen')!=''
+                or state.get('health')!=20 or state.get('navigating') or state.get('pending_scan')):
+            raise RuntimeError('Packed-pad refusal does not prove the box was untouched')
+        self._storage_record_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._storage_record_read=None
+
     def observe_sleeping_merchant_timeout(self):
         return self.observe_idle_merchant_timeout()
     def observe_paid_lock_reopen_timeout(self):
