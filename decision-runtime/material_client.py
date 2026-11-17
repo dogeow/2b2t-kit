@@ -108,6 +108,10 @@ def recovery_action_allowed(state,op,params):
  source=state.get('pos');target=params.get('target')
  if any(not isinstance(p,(list,tuple)) or len(p)!=3 or any(type(v)not in (int,float) or not math.isfinite(v) for v in p) for p in (source,target)):return False
  return bool(params.get('air_only')is True and 2<=target[1]-source[1]<=64 and math.hypot(target[0]-source[0],target[2]-source[2])<=.5)
+def recovery_food_selection_allowed(state,op,params,recovery_only):
+ return (recovery_only and state.get('recovery_food_selection_protocol')==1
+         and op=='select_item' and params.get('recovery_food') is True
+         and type(params.get('slot')) is int and 0<=params['slot']<36)
 class Client:
  def __init__(self,root,out,server,min_health=18,dimension='minecraft:overworld',idle_storage_proof=None):
   if dimension not in ('minecraft:overworld','minecraft:the_nether'):raise ValueError('Unsupported explicit material dimension')
@@ -195,7 +199,8 @@ class Client:
   while True:
    s=self.status(wait_interface=False) if op in ('stop','safe_logout','material_job_pause') else self.status()
    if op!='safe_logout' and s.get('health',0)<14 and not vertical_surface_escape(s,op,params):raise RuntimeError('Low health')
-   if op in ('guard','snapshot','scan','scan_trees','stop','material_job_pause','safe_logout','use_item') or not s.get('guard_busy'):break
+   if (op in ('guard','snapshot','scan','scan_trees','stop','material_job_pause','safe_logout','use_item')
+       or not s.get('guard_busy') or recovery_food_selection_allowed(s,op,params,getattr(self,'recovery_only',False))):break
    vertical_escape=vertical_surface_escape(s,op,params)
    if s.get('under_water') and not vertical_escape:
     raise RuntimeError('Defense is busy underwater; surface before another action')

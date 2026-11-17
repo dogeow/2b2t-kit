@@ -3,9 +3,17 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from material_client import Client,MaterialClient,Handoff
+from material_client import Client,MaterialClient,Handoff,recovery_food_selection_allowed
 BUSY='Construction guard is defending or eating; wait before changing items or starting work'
 class GuardAdmissionTest(unittest.TestCase):
+ def test_recovery_food_selection_requires_exact_slot_and_advertised_protocol(self):
+  state={'recovery_food_selection_protocol':1}
+  params={'recovery_food':True,'slot':34}
+  self.assertTrue(recovery_food_selection_allowed(state,'select_item',params,True))
+  self.assertFalse(recovery_food_selection_allowed({},'select_item',params,True))
+  self.assertFalse(recovery_food_selection_allowed(state,'select_item',params,False))
+  self.assertFalse(recovery_food_selection_allowed(state,'select_item',{'recovery_food':True,'slot':34.5},True))
+  self.assertFalse(recovery_food_selection_allowed(state,'slot_click',params,True))
  def client(self,d,states):
   c=MaterialClient.__new__(MaterialClient);c.task='task';c.world='world';c.rev=1;c.last='original'
   c.root=c.out=Path(d);current=[None];stream=iter(states);seen=[]

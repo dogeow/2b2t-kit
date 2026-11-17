@@ -7,7 +7,7 @@ from material_client import MaterialClient
 from job_progress import JobProgress
 from safety_interlock import require_unlocked
 
-FOOD=('minecraft:cooked_beef','minecraft:cooked_porkchop','minecraft:baked_potato','minecraft:cooked_mutton','minecraft:cooked_chicken','minecraft:bread')
+FOOD=('minecraft:cooked_beef','minecraft:cooked_porkchop','minecraft:baked_potato','minecraft:cooked_mutton','minecraft:cooked_chicken','minecraft:bread','minecraft:cooked_salmon','minecraft:cooked_cod')
 
 def ensure_work_food(client,out,minimum=18):
     """Use one carried ordinary food on the same idle dry material owner."""
@@ -58,10 +58,20 @@ def recover(game_dir,out):
     try:
         state=c.status()
         if state.get('food',0)<20:
-            carried={v['item']:v['count'] for v in state['inventory'] if v['count']>0}
-            item=next((v for v in FOOD if carried.get(v)),None)
-            if item is None:raise RuntimeError('No confirmed carried cooked food; no external gathering started')
-            c.set_progress(phase='进食');c.checked('select_item',item=item);c.checked('use_item',item=item,seconds=6)
+            carried=[v for v in state['inventory'] if v['count']>0 and 0<=v['slot']<36]
+            food=next((row for item in FOOD for row in carried if row['item']==item),None)
+            if food is None:raise RuntimeError('No confirmed carried cooked food; no external gathering started')
+            c.set_progress(phase='进食')
+            selection={'recovery_food':True} if state.get('recovery_food_selection_protocol')==1 else {}
+            c.checked('select_item',item=food['item'],slot=food['slot'],**selection)
+            # AutoEat can use the staged slot before this controller gets its next tick.
+            staged=c.status()
+            if staged.get('guard_food',{}).get('eating'):
+                end=time.monotonic()+6
+                while staged.get('guard_food',{}).get('eating') and time.monotonic()<end:
+                    time.sleep(.2);staged=c.status()
+            elif staged['food']<20 and staged['food']==state['food']:
+                c.checked('use_item',item=food['item'],seconds=6)
             if c.status().get('food',0)<18:raise RuntimeError('Food use did not restore work reserve; no duplicate use')
         # MaterialClient verifies the complete actual dry body column first.
         c.set_progress(phase='原地升高');c._finish_vertical(c.status())
