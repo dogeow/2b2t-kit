@@ -23,6 +23,19 @@ SPEC={'recipe_id':'white_concrete_powder','output':'minecraft:white_concrete_pow
       'ingredients':{'minecraft:sand':[1,2,3,4],'minecraft:gravel':[5,6,7,8],'minecraft:white_dye':[9]}}
 
 class StackRecipeTest(unittest.TestCase):
+    def test_paper_uses_only_the_vanilla_three_cane_recipe(self):
+        spec={'recipe_id':'paper','output':'minecraft:paper','produces':3,'width':3,
+              'ingredients':{'minecraft:sugar_cane':[1,2,3]}}
+        self.assertTrue(supported(spec))
+        for change in ({'width':2},{'produces':1},{'recipe_id':'other'},
+                       {'ingredients':{'minecraft:sugar_cane':[True,2,3]}},
+                       {'ingredients':{'minecraft:sugar_cane':[1,2,4]}}):
+            self.assertFalse(supported({**spec,**change}))
+        before=fixture([('sugar_cane',64),('sugar_cane',64),('sugar_cane',61)],empty=4)
+        batch=plan_batch(before,spec,63)
+        self.assertGreater(batch['rounds'],1)
+        self.assertEqual(batch['rounds']*3,batch['produced'])
+
     def test_furnishing_batches_preserve_real_input_and_output_counts(self):
         specs=[
           ({'recipe_id':'book','output':'minecraft:book','produces':1,'width':3,

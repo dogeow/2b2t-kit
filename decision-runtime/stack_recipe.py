@@ -126,6 +126,13 @@ def supported(spec):
     if spec.get('output')=='minecraft:white_wool':return _white_wool_recipe(spec)
     if cobblestone_recipe_supported(spec):return True
     output=spec.get('output','')
+    if output=='minecraft:paper':
+        ingredients=spec.get('ingredients')
+        return (spec.get('recipe_id')=='paper'
+                and type(spec.get('width'))is int and spec['width']==3
+                and type(spec.get('produces'))is int and spec['produces']==3
+                and ingredients=={'minecraft:sugar_cane':[1,2,3]}
+                and all(type(cell)is int for cell in ingredients['minecraft:sugar_cane']))
     if output=='minecraft:spruce_trapdoor':
         return (spec.get('recipe_id')=='spruce_trapdoor'
                 and type(spec.get('width'))is int and spec['width']==3
