@@ -15,6 +15,10 @@ def layers(row):
         return []
     if row.get('solid') is True and row.get('block_entity') is False:
         return [(0., 1.)]
+    # In the installed vanilla client, blast furnaces inherit BlockBehaviour's
+    # full-block collision shape; being a block entity does not change it.
+    if kind == 'minecraft:blast_furnace' and row.get('solid') is True and row.get('block_entity') is True:
+        return [(0., 1.)]
     if props.get('waterlogged') != 'false':
         return []
     if kind.endswith('_slab'):

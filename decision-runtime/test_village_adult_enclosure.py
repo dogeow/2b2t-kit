@@ -62,6 +62,14 @@ class EnclosureTests(unittest.TestCase):
         for y in range(64,68):r[(-1,y,2)]=partial('unknown','variant=x')
         self.assertFalse(audit(r,**k)['verified'])
 
+    def test_blast_furnace_is_a_full_boundary_but_unknown_block_entities_are_not(self):
+        r,k=self.fixture()
+        r[(0,64,0)] = dict(state='Block{minecraft:blast_furnace}[facing=south,lit=false]', solid=True, fluid=False, block_entity=True)
+        r.pop((0,65,0))
+        self.assertTrue(audit(r,**k)['verified'])
+        r[(0,64,0)]['state'] = 'Block{minecraft:unknown_container}'
+        self.assertFalse(audit(r,**k)['verified'])
+
     def test_geometry_and_exact_adult_gap_boundary(self):
         self.assertEqual(maximum_gap([(1.9,3)],0,3),1.9)
         r,k=self.fixture()
