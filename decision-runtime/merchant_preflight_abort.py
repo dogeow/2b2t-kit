@@ -34,7 +34,7 @@ def settled(path):
  """Validate a separate terminal abort proof; the refused purchase stays incomplete."""
  try:
   path=Path(path);book=json.loads(path.read_text())
-  if(book.get('pending')or{}).get('op')=='merchant_select_trade':return selection_settled(path,book) or selection_closed_after_reconnect(path,book)
+  if(book.get('pending')or{}).get('op')=='merchant_select_trade':return selection_settled(path,book) or selection_closed_after_reconnect(path,book) or selection_refusal_closed(path,book)
   proof=json.loads((path.parent/'prepurchase-abort.json').read_text())
   refusal=proof['refusal'];closed=proof['close_receipt'];close_event=proof['close_event'];frames=proof['settled_frames'];request=book['pending']['request_id']
   if request is None:
@@ -53,6 +53,21 @@ def settled(path):
    and all(f['world_session']==book['world_session']and f['health']==20 and f['screen']==''
            and f['cursor_count']==0 and Counter(f['inventory'])==Counter(book['before'])for f in frames))
  except(OSError,KeyError,TypeError,ValueError):return reconnect_settled(path)
+
+def selection_refusal_closed(path,book=None):
+ """Verify an unissued selection after the original menu was closed by the player."""
+ try:
+  path=Path(path);raw=path.read_bytes();book=book or json.loads(raw)
+  proof=json.loads((path.parent/'preselection-player-closed.json').read_text())
+  error=proof['original_error'];event=proof['refusal'];frames=proof['frames'];task=event['params']['task_session']
+  return (proof['original_sha256']==hashlib.sha256(raw).hexdigest() and proof['purchase_credit']==0
+   and proof['original_replayed'] is False and selection_was_unissued(book,error,event,book['world_session'],task)
+   and len(frames)>=2 and all(type(v.get('time')) is int for v in frames)
+   and all(a['time']<b['time'] for a,b in zip(frames,frames[1:]))
+   and all(v['world_session']==book['world_session'] and v['connected'] is True and v['health']==20
+    and v['screen']=='' and v['cursor_count']==0 and not v['supervision_lease']
+    and v['manual_movement'] is False and Counter(v['inventory'])==Counter(book['before']) for v in frames))
+ except (OSError,KeyError,TypeError,ValueError):return False
 
 def observable_selection(command,error,book,state,event,world,task):
  """A refused selection is distinct from a paid output click; no completed selection may exist."""

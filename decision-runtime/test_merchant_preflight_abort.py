@@ -27,4 +27,12 @@ class MerchantPreflightAbortTest(unittest.TestCase):
    path=Path(d)/'one-trade.json';path.write_text(json.dumps(self.book));frames=[{'time':n,'world_session':'w','health':20,'screen':'','cursor_count':0,'inventory':self.book['before']}for n in [1,2]]
    proof={'abort_settled':True,'purchase_credit':0,'original_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'refusal':self.event,'close_receipt':{'id':'close','phase':'done','op':'settle','world_session':'w'},'close_event':{'request_id':'close','phase':'done','op':'close_menu','world_session':'w','params':{'task_session':'t'}},'settled_frames':frames,'world_session':'w','uuid':'u'};p=Path(d)/'prepurchase-abort.json';p.write_text(json.dumps(proof));self.assertTrue(settled(path));self.assertFalse(json.loads(path.read_text())['complete']);proof['settled_frames'][1]['time']=1;p.write_text(json.dumps(proof));self.assertFalse(settled(path))
    proof['settled_frames'][1]['time']=2;p.write_text(json.dumps(proof));path.write_text(path.read_text()+' ');self.assertFalse(settled(path))
+ def test_player_closed_unissued_selection_never_credits_a_purchase(self):
+  with tempfile.TemporaryDirectory() as d:
+   path=Path(d)/'one-trade.json';params={'index':1,'menu_id':69,'expected_villager_uuid':'u'}
+   book={'world_session':'w','uuid':'u','complete':False,'pending':{'op':'merchant_select_trade','params':params,'request_id':'r'},'before':{'minecraft:emerald':9},'receipts':[]}
+   path.write_text(json.dumps(book));event={'world_session':'w','request_id':'r','op':'merchant_select_trade','phase':'error','detail':DETAIL,'params':dict(params,task_session='t'),'inventory_delta':{},'revision_before':3,'revision_after':3,'position_before':[1,2,3],'position_after':[1,2,3],'health_before':20,'health_after':20}
+   frames=[{'time':n,'world_session':'w','connected':True,'health':20,'screen':'','cursor_count':0,'supervision_lease':None,'manual_movement':False,'inventory':book['before']} for n in (1,2)]
+   proof={'original_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'purchase_credit':0,'original_replayed':False,'original_error':self.error,'refusal':event,'frames':frames};p=Path(d)/'preselection-player-closed.json';p.write_text(json.dumps(proof))
+   self.assertTrue(settled(path));proof['frames'][1]['inventory']={'minecraft:emerald':8};p.write_text(json.dumps(proof));self.assertFalse(settled(path))
 if __name__=='__main__':unittest.main()
