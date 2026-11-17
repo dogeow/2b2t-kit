@@ -51,18 +51,22 @@ def execute(c,command,directory,checkpoint):
                 raise ValueError('Preview anvil must use its current registered local workshop route')
             from warehouse_audit_cli import _RegisteredRoute
             route=_RegisteredRoute(c,profile);route.route('workbench_entry')
+        book_options = {key: command[key] for key in ('ignored_book_enchantments',) if key in command}
         result=run(c,command['pos'],command['left_slot'],command['right_slot'],
                    command['expected_left'],command['expected_right'],command['expected_enchantments'],
-                   out/'actual-zero-xp-anvil-preview',face=command.get('face','south'))
+                   out/'actual-zero-xp-anvil-preview',face=command.get('face','south'),
+                   **book_options)
         # A failed/unknown preview keeps its original window and inputs. It
         # never enters this return path or dispatches a cleanup from finally.
         if route is not None:route.route('workbench_exit')
         return owned_menu_result(c,result)
     if kind=='anvil_enchant_combine':
         from anvil_enchant_combine import run
+        book_options = {key: command[key] for key in ('ignored_book_enchantments',) if key in command}
         result=run(c,command['pos'],command['left_slot'],command['right_slot'],
                    command['expected_left'],command['expected_right'],command['expected_enchantments'],
-                   command['expected_cost'],out/'actual-one-planned-anvil-output',face=command.get('face','up'))
+                   command['expected_cost'],out/'actual-one-planned-anvil-output',face=command.get('face','up'),
+                   **book_options)
         return owned_menu_result(c,result)
     if kind=='hot_runtime_update':
         from hot_update import inspect_engine,install_and_reload

@@ -55,6 +55,16 @@ class VillageProjectTests(unittest.TestCase):
                                        Path('/tmp/project-dispatch-test/actual-one-planned-anvil-output'),face='up')
         c.request.assert_not_called()
 
+    def test_explicit_anvil_exclusions_are_forwarded_without_invention(self):
+        c=Mock();c.status.return_value={}
+        base={'pos':[1,65,2],'left_slot':3,'right_slot':4,'expected_left':{},'expected_right':{},
+              'expected_enchantments':{'minecraft:protection':4},'ignored_book_enchantments':['minecraft:piercing']}
+        for action,module in (('anvil_enchant_preview','anvil_enchant_preview.run'),('anvil_enchant_combine','anvil_enchant_combine.run')):
+            command={**base,'action':action,'expected_cost':2}
+            with self.subTest(action=action),patch('village_project._safe'),patch(module,return_value={'complete':True}) as run:
+                execute(c,command,Path('/tmp/project-dispatch-test'),lambda:{})
+                self.assertEqual(run.call_args.kwargs['ignored_book_enchantments'],['minecraft:piercing'])
+
     def test_zero_xp_anvil_preview_uses_the_same_owner_and_exact_bound_inputs(self):
         c=Mock();c.status.return_value={}
         command={'action':'anvil_enchant_preview','pos':[1,65,2], 'left_slot':3,'right_slot':4,
