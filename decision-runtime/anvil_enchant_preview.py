@@ -47,11 +47,16 @@ def menu_slot(inventory_slot):
 
 
 def validate_inputs(left, right, expected, *, ignored_book_enchantments=(), same_equipment=False):
-    identical_equipment = (same_equipment is True and left.get('item') != 'minecraft:enchanted_book'
-                           and left.get('item') == right.get('item') and stack_key(left) == stack_key(right)
-                           and type(left.get('durability')) is int and left.get('durability') == left.get('max_durability'))
+    matching_equipment = (
+        same_equipment is True and left.get('item') != 'minecraft:enchanted_book'
+        and left.get('item') == right.get('item')
+        and all(type(row.get('durability')) is int and row['durability'] == row.get('max_durability')
+                for row in (left, right))
+        and stack_key({k: v for k, v in left.items() if k != 'enchantments'})
+        == stack_key({k: v for k, v in right.items() if k != 'enchantments'})
+    )
     if (left.get('count') != 1 or left.get('item') not in _LEFT or right.get('count') != 1
-            or (right.get('item') != 'minecraft:enchanted_book' and not identical_equipment)
+            or (right.get('item') != 'minecraft:enchanted_book' and not matching_equipment)
             or not enchantments(right)):
         raise ValueError('One approved base and an observed book or explicitly matched full-durability equipment required')
     if not isinstance(expected, dict) or not expected or any(

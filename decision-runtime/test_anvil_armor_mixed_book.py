@@ -38,6 +38,17 @@ class MixedArmorBookTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_inputs(first, second, {'minecraft:protection': 4}, same_equipment=True)
 
+    def test_full_armor_can_keep_a_compatible_extra_effect(self):
+        left = stack('minecraft:diamond_chestplate',
+                     [('minecraft:protection', 3), ('minecraft:unbreaking', 3)], slot=2)
+        right = stack('minecraft:diamond_chestplate', [('minecraft:protection', 3)], slot=3)
+        expected = {'minecraft:protection': 4, 'minecraft:unbreaking': 3}
+        validate_inputs(left, right, expected, same_equipment=True)
+        with self.assertRaises(ValueError):
+            validate_inputs(left, right, {'minecraft:protection': 4}, same_equipment=True)
+        with self.assertRaises(ValueError):
+            validate_inputs(left, {**right, 'custom_name': 'Different'}, expected, same_equipment=True)
+
     def test_default_still_refuses_discarding_book_effects(self):
         with self.assertRaises(ValueError):
             validate_inputs(self.helmet, self.book, self.expected)
