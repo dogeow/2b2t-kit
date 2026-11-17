@@ -14,7 +14,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ConcreteBlockUpdatesMixin {
     @Inject(method="handleBlockUpdate",at=@At("TAIL"))
     private void kit$concreteBlockUpdate(ClientboundBlockUpdatePacket packet,CallbackInfo info){
-        dev.twob2tkit.storage.StorageLifecycle.blockUpdated(net.minecraft.client.Minecraft.getInstance(),packet.getPos());
+        dev.twob2tkit.storage.StorageLifecycle.blockUpdated(net.minecraft.client.Minecraft.getInstance(),packet.getPos(),packet.getBlockState());
         if((Object)this==net.minecraft.client.Minecraft.getInstance().getConnection()){
             dev.twob2tkit.automation.SingleBlockMiningConfirmation.serverBlock(net.minecraft.client.Minecraft.getInstance(),packet.getPos(),packet.getBlockState());
             dev.twob2tkit.automation.ProfessionalPrinter.serverBlock(packet.getPos(),packet.getBlockState());
@@ -25,7 +25,7 @@ public abstract class ConcreteBlockUpdatesMixin {
     }
     @Inject(method="handleChunkBlocksUpdate",at=@At("TAIL"))
     private void kit$concreteSectionUpdate(ClientboundSectionBlocksUpdatePacket packet,CallbackInfo info){
-        packet.runUpdates((pos,state)->dev.twob2tkit.storage.StorageLifecycle.blockUpdated(net.minecraft.client.Minecraft.getInstance(),pos));
+        packet.runUpdates((pos,state)->dev.twob2tkit.storage.StorageLifecycle.blockUpdated(net.minecraft.client.Minecraft.getInstance(),pos,state));
         if((Object)this==net.minecraft.client.Minecraft.getInstance().getConnection()){
             packet.runUpdates((pos,state)->dev.twob2tkit.automation.SingleBlockMiningConfirmation.serverBlock(net.minecraft.client.Minecraft.getInstance(),pos,state));
             if(dev.twob2tkit.automation.ProfessionalPrinter.owned())packet.runUpdates(dev.twob2tkit.automation.ProfessionalPrinter::serverBlock);

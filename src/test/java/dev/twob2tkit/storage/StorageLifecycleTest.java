@@ -221,4 +221,70 @@ class StorageLifecycleTest {
         assertEquals(StorageLifecycle.MISSING,r.status);assertEquals(StorageLifecycle.ACTIVE,foreign.status);
         assertEquals(StorageLifecycle.ACTIVE,r.history.getFirst().status);assertEquals(1,saves.get());
     }
+    private final StorageLifecycle.Scope home=new StorageLifecycle.Scope("simpcraft.com","","minecraft:overworld","6aa7c3da");
+    private final StorageLifecycle.Scope lobby=new StorageLifecycle.Scope("simpcraft.com","","minecraft:overworld","-72e6f1c3");
+    @Test void savedCoordinatesCanGuideAcrossTheSameSimpcraftWorldViaTheLocalRelay() {
+        var r = record();
+        var relay = new StorageLifecycle.Scope("127.0.0.1:25566", "", home.dimension(), home.seed());
+        assertFalse(StorageLifecycle.canGuide(r, relay), "Legacy records without a matching world cannot cross addresses");
+        r.worldSeed = home.seed();
+        r.status = StorageLifecycle.RECHECK;
+        r.contentsDirty = true;
+        assertTrue(StorageLifecycle.canGuide(r, home));
+        assertTrue(StorageLifecycle.canGuide(r, relay));
+        assertFalse(StorageLifecycle.same(r, relay), "Guidance does not broaden inventory scope");
+        assertFalse(StorageLifecycle.canGuide(r, lobby));
+        assertFalse(StorageLifecycle.canGuide(r, new StorageLifecycle.Scope(relay.server(), "", "minecraft:the_nether", home.seed())));
+        assertFalse(StorageLifecycle.canGuide(r, new StorageLifecycle.Scope("other.example", "", home.dimension(), home.seed())));
+        r.server = relay.server();
+        assertTrue(StorageLifecycle.canGuide(r, home));
+        r.status = StorageLifecycle.MISSING;
+        assertFalse(StorageLifecycle.canGuide(r, relay));
+        assertFalse(StorageLifecycle.canGuide(r, home));
+    }
+    @Test void anotherWorldOnTheSameServerAndDimensionCannotInvalidateARecord(){
+        var r=record();r.worldSeed=home.seed();
+        assertFalse(StorageLifecycle.observe(r,lobby,p->{throw new AssertionError("Another world must not be probed");},200));
+        assertFalse(StorageLifecycle.markBlockUpdated(List.of(r),lobby,position,"minecraft:air",201));
+        assertFalse(StorageLifecycle.same(r,lobby));assertTrue(StorageLifecycle.same(r,home));
+        assertEquals(StorageLifecycle.ACTIVE,r.status);assertFalse(r.contentsDirty);assertTrue(r.history.isEmpty());
+        assertTrue(StorageLifecycle.observe(r,home,p->air(),202));assertEquals(StorageLifecycle.MISSING,r.status);
+    }
+    @Test void unmarkedRecordIgnoresAbsenceUntilAWorldShowsItsExactContainer(){
+        var r=record();
+        assertFalse(StorageLifecycle.observe(r,lobby,p->air(),200),"A lobby at the same coordinates proves nothing");
+        assertFalse(StorageLifecycle.markBlockUpdated(List.of(r),lobby,position,"minecraft:air",201));
+        assertFalse(StorageLifecycle.observe(r,lobby,p->box(p,"minecraft:barrel"),202));
+        assertEquals("",r.worldSeed);assertEquals(StorageLifecycle.ACTIVE,r.status);assertTrue(r.history.isEmpty());
+        assertTrue(StorageLifecycle.observe(r,home,p->box(p,r.blockId),203));
+        assertEquals(home.seed(),r.worldSeed);assertEquals(StorageLifecycle.ACTIVE,r.status);assertFalse(r.contentsDirty);
+        assertFalse(StorageLifecycle.observe(r,lobby,p->air(),204));
+        assertTrue(StorageLifecycle.observe(r,home,p->air(),205));assertEquals(StorageLifecycle.MISSING,r.status);
+    }
+    @Test void fixedContainerFlappedByTheOldScopeRegainsStructureButNotContentConfidence(){
+        for(String reasonStatus:List.of(StorageLifecycle.MISSING,StorageLifecycle.RECHECK)){
+            var r=record();r.blockId="minecraft:chest";r.status=reasonStatus;r.contentsDirty=true;
+            r.invalidReason=reasonStatus.equals(StorageLifecycle.MISSING)?"当前世界已加载位置没有容器":"原位置重新出现容器，历史库存待确认";
+            r.contentsDirtyReason=r.invalidReason;
+            assertTrue(StorageLifecycle.observe(r,home,p->box(p,r.blockId),300));
+            assertEquals(StorageLifecycle.ACTIVE,r.status);assertEquals("",r.invalidReason);assertEquals(home.seed(),r.worldSeed);
+            assertTrue(r.contentsDirty);assertEquals(StorageLifecycle.MISJUDGED,r.contentsDirtyReason);
+            assertEquals(64,r.items.getFirst().count);assertEquals(100,r.lastSeenEpochMillis);
+            assertEquals(reasonStatus,r.history.getLast().status);
+        }
+        var box=record();box.status=StorageLifecycle.MISSING;box.invalidReason="当前世界已加载位置没有容器";box.contentsDirty=true;
+        assertTrue(StorageLifecycle.observe(box,home,p->box(p,box.blockId),300));
+        assertEquals(StorageLifecycle.MISSING,box.status,"A shulker box at the old spot may be a different box");
+        assertTrue(StorageLifecycle.observe(box,home,p->box(p,box.blockId),301));assertEquals(StorageLifecycle.RECHECK,box.status);
+    }
+    @Test void resentStateOfTheSameBlockIsProvisionalWhileAReplacementStillRequiresRecheck(){
+        var r=record();r.blockId="minecraft:barrel";var saves=new AtomicInteger();
+        assertTrue(StorageLifecycle.markBlockUpdated(List.of(r),current,position,"minecraft:barrel",200));
+        assertEquals(0,StorageLifecycle.refresh(List.of(r),current,p->box(p,r.blockId),201,saves::incrementAndGet));
+        assertEquals(StorageLifecycle.ACTIVE,r.status);assertFalse(r.contentsDirty);assertTrue(r.history.isEmpty());
+        assertTrue(StorageLifecycle.markBlockUpdated(List.of(r),current,position,"minecraft:air",202));
+        assertTrue(StorageLifecycle.markBlockUpdated(List.of(r),current,position,"minecraft:barrel",203));
+        assertEquals(1,StorageLifecycle.refresh(List.of(r),current,p->box(p,r.blockId),204,saves::incrementAndGet));
+        assertEquals(StorageLifecycle.RECHECK,r.status);assertEquals(1,r.history.size());
+    }
 }

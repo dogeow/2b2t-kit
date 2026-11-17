@@ -75,7 +75,7 @@ public final class StorageRecordsScreen extends KitHudScreen {
 			addRenderableWidget(Button.builder(Component.literal("指引"), button -> startGuide(snapshot)).bounds(left + 280, y, 44, 20)
 				.tooltip(Tooltip.create(Component.literal("只指路，不飞、不挖。字幕和箭头显示方向、距离。")))
 				.build())
-				.active = sameDimension(snapshot);
+				.active = StorageLifecycle.canGuide(this.minecraft, snapshot);
 			addRenderableWidget(Button.builder(Component.literal("删除"), button -> delete(snapshot)).bounds(left + 328, y, 44, 20).build());
 		}
 
@@ -221,8 +221,8 @@ public final class StorageRecordsScreen extends KitHudScreen {
 
 	/** 开始走向该存储。 */
 	private void startGuide(KitConfig.StorageSnapshot snapshot) {
-		if (!StorageLifecycle.usable(this.minecraft, snapshot)) {
-			showNotice("此记录需要在原服务器重新开箱核对，无法指引", 0xFFFF55);
+		if (!StorageLifecycle.canGuide(this.minecraft, snapshot)) {
+			showNotice("无法指引：请检查记录的世界、维度和容器状态", 0xFFFF55);
 			return;
 		}
 		StructureGuide guide = KitClient.structureGuide();
@@ -238,11 +238,6 @@ public final class StorageRecordsScreen extends KitHudScreen {
 		showNotice("已删除仓库记录", 0xFFFF55);
 		page = Math.min(page, maxPage(visibleSnapshots()));
 		rebuildWidgets();
-	}
-
-	/** 是否同一维度。 */
-	private boolean sameDimension(KitConfig.StorageSnapshot snapshot) {
-		return this.minecraft.level != null && this.minecraft.level.dimension().identifier().toString().equals(snapshot.dimension);
 	}
 
 	/** 翻页。 */

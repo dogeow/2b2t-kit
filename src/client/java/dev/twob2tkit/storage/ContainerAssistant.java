@@ -32,6 +32,9 @@ public final class ContainerAssistant {
 	private BlockPos openedPosition;
 	private String openedDimension = "";
 	private String lastFingerprint = "";
+	private AbstractContainerMenu openedMenu;
+	private String openedTitle = "";
+	private boolean contentsSeen;
 	private int ticksInContainer;
 	private int takeCooldown;
 	private boolean restockReported;
@@ -79,6 +82,9 @@ public final class ContainerAssistant {
 			openedDimension = KitConfig.normalizeDimension(
 				client.level.dimension().identifier().toString());
 			lastFingerprint = "\u0000";
+			openedMenu = menu;
+			openedTitle = screen.getTitle().getString();
+			contentsSeen = false;
 			ticksInContainer = 0;
 				takeCooldown = 0;
 				restockReported = false;
@@ -88,9 +94,12 @@ public final class ContainerAssistant {
 
 		ticksInContainer++;
 		if (takeCooldown > 0) takeCooldown--;
-		if (openedPosition != null && (ticksInContainer == 1 || ticksInContainer % 10 == 0)) {
-			recordSnapshot(client, screen, menu);
+		// The menu opens empty; its slots are only real once the server's first contents packet arrives.
+		boolean arrived = contentsSeen || contentsArrived(client, menu, ticksInContainer);
+		if (openedPosition != null && arrived && (!contentsSeen || ticksInContainer % 10 == 0)) {
+			recordSnapshot(client, openedTitle, menu);
 		}
+		contentsSeen = arrived;
 		if (config.autoRestockFromOpenedContainers && takeCooldown == 0 && ticksInContainer >= 10
 			&& (KitClient.borer() == null || !KitClient.borer().isManagingInventory())
 			&& (KitClient.fisher() == null || !KitClient.fisher().isDepositing())) {
@@ -101,6 +110,15 @@ public final class ContainerAssistant {
 	/** 是否支持的容器菜单。 */
 	private boolean isSupported(AbstractContainerMenu menu) {
 		return menu instanceof ChestMenu || menu instanceof ShulkerBoxMenu || menu instanceof HopperMenu;
+	}
+
+	/** 服务器首个内容包会把状态号推进到非零；兜底等 20 tick，真空箱也能记下。 */
+	static boolean contentsArrived(Minecraft client, AbstractContainerMenu menu, int ticks) {
+		if (menu.getStateId() != 0 || ticks >= 20) return true;
+		for (Slot slot : menu.slots) {
+			if (slot.container != client.player.getInventory() && slot.hasItem()) return true;
+		}
+		return false;
 	}
 
 	/** 解析当前打开的方块坐标。 */
@@ -117,7 +135,7 @@ public final class ContainerAssistant {
 	}
 
 	/** 把箱内物品记进仓库记录。 */
-	private void recordSnapshot(Minecraft client, AbstractContainerScreen<?> screen, AbstractContainerMenu menu) {
+	private void recordSnapshot(Minecraft client, String title, AbstractContainerMenu menu) {
 		Map<String, ItemTotal> totals = new LinkedHashMap<>();
 		for (Slot slot : menu.slots) {
 			if (slot.container == client.player.getInventory() || !slot.hasItem()) continue;
@@ -137,7 +155,7 @@ public final class ContainerAssistant {
 			labels.x = openedPosition.getX();
 			labels.y = openedPosition.getY();
 			labels.z = openedPosition.getZ();
-			labels.title = screen.getTitle().getString();
+			labels.title = title;
 			labels.lastSeenEpochMillis = System.currentTimeMillis();
 			StorageLabels.apply(client.level, openedPosition, labels);
             if(!StorageLifecycle.capture(client,openedPosition,labels))return;
@@ -151,7 +169,7 @@ public final class ContainerAssistant {
 		snapshot.x = openedPosition.getX();
 		snapshot.y = openedPosition.getY();
 		snapshot.z = openedPosition.getZ();
-		snapshot.title = screen.getTitle().getString();
+		snapshot.title = title;
 		snapshot.lastSeenEpochMillis = System.currentTimeMillis();
 		StorageLabels.apply(client.level, openedPosition, snapshot);
         if(!StorageLifecycle.capture(client,openedPosition,snapshot))return;
@@ -217,7 +235,17 @@ public final class ContainerAssistant {
 
 	/** 清当前开箱跟踪。 */
 	private void resetOpenContainer() {
-        if(currentContainerId>=0&&openedPosition!=null)config.save();
+		if (currentContainerId >= 0 && openedPosition != null) {
+			// 快照每 10 tick 才记一次；关箱前最后几 tick 的取放在这里补记。
+			Minecraft client = Minecraft.getInstance();
+			if (contentsSeen && openedMenu != null && client.player != null && client.level != null) {
+				recordSnapshot(client, openedTitle, openedMenu);
+			}
+			config.save();
+		}
+		openedMenu = null;
+		openedTitle = "";
+		contentsSeen = false;
 		currentContainerId = -1;
 		openedPosition = null;
 		openedDimension = "";

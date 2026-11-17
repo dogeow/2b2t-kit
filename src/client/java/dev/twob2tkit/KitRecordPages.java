@@ -143,9 +143,9 @@ public final class KitRecordPages {
             dev.twob2tkit.automation.BuildSupplyTask.toggleSource(mc(),s);
             list.message(dev.twob2tkit.automation.BuildSupplyTask.sourceEnabled(mc(),s)?"已允许作为建造补给箱；不会立即取料":"已取消此箱的建造补给权限");list.refresh();
         }, s -> StorageLifecycle.usable(mc(), s));
-        list.action("指引", "只显示位置，不移动或打开箱子。", s -> {
-            if (StorageLifecycle.usable(mc(), s) && KitClient.structureGuide() != null) { KitClient.structureGuide().start(StorageLabels.headline(s), s.x, s.y, s.z); mc().gui.setScreen(null); }
-        }, s -> StorageLifecycle.usable(mc(), s));
+        list.action("指引", "显示保存的坐标；待确认记录到达后请检查容器。", s -> {
+            if (StorageLifecycle.canGuide(mc(), s) && KitClient.structureGuide() != null) { KitClient.structureGuide().start(StorageLabels.headline(s), s.x, s.y, s.z); mc().gui.setScreen(null); }
+        }, s -> StorageLifecycle.canGuide(mc(), s));
         list.action("删除", "只删除本地记录，不清空箱子。", s -> confirm(list, "删除仓库记录", StorageLabels.headline(s) + "\n仅删除本地记录，不影响世界中的箱子和物品。", () -> { c.storageSnapshots.removeIf(v -> v.scopedKey().equals(s.scopedKey())); c.save(); list.refresh(); }), s -> true);
         list.footer("停止指引", () -> { if (KitClient.structureGuide() != null) KitClient.structureGuide().stop(); list.message("已停止指引"); });
         list.footer("附近物资", () -> dev.twob2tkit.storage.NearbyInventoryScreen.open(list,c));

@@ -15,6 +15,11 @@ public final class StorageLifecycle {
     private static int ticks;
     private static Object observedLevel;
     private static final String PACKET_RECHECK="容器附近收到服务器更新，结构和库存待复核";
+    private static final String GONE="当前世界已加载位置没有容器",REAPPEARED="原位置重新出现容器，历史库存待确认";
+    static final String MISJUDGED="曾在同服其他世界被误判为移除；结构已复核，库存待开箱确认";
+    /** Login/respawn hashed seed: the only client-visible mark separating worlds that share one address and dimension id. */
+    private static volatile String worldMark="";
+    public static void worldMark(long hashedSeed,boolean flat){worldMark=Long.toHexString(hashedSeed)+(flat?"f":"");dirty=true;}
     static final Map<KitConfig.StorageSnapshot,BlockUpdate> blockUpdates=new IdentityHashMap<>();
     static final class BlockUpdate {
         final String status,invalidReason,contentsDirtyReason;
@@ -32,7 +37,10 @@ public final class StorageLifecycle {
         }
     }
     private StorageLifecycle(){}
-    record Scope(String server,String worldId,String dimension){}
+    record Scope(String server,String worldId,String dimension,String seed){
+        /** No world mark: such a scope can identify a record but never prove a container absent. */
+        Scope(String server,String worldId,String dimension){this(server,worldId,dimension,"");}
+    }
     record Sight(boolean loaded,boolean container,String blockId,Set<BlockPos> parts){}
     interface World { Sight at(BlockPos pos); }
     public static String serverKey(String server){return server==null?"":server.trim().toLowerCase(Locale.ROOT).replaceFirst(":25565$","");}
@@ -40,8 +48,9 @@ public final class StorageLifecycle {
         if(c==null||c.level==null)return null;
         return new Scope(serverKey(c.getCurrentServer()==null?"singleplayer":c.getCurrentServer().ip),
             c.getSingleplayerServer()==null?"":c.getSingleplayerServer().getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).toAbsolutePath().normalize().toString(),
-            KitConfig.normalizeDimension(c.level.dimension().identifier().toString()));
+            KitConfig.normalizeDimension(c.level.dimension().identifier().toString()),worldMark);
     }
+    private static String seed(KitConfig.StorageSnapshot record){return record.worldSeed==null?"":record.worldSeed;}
     private static World world(Level level){return pos->{
         // Bobby/cache presence is not evidence that the server currently supplies
         // this chunk. Never turn a cached AIR cell into a missing-container claim.
@@ -60,9 +69,54 @@ public final class StorageLifecycle {
     }
     static boolean same(KitConfig.StorageSnapshot record,Scope scope){
         return known(record)&&scope!=null&&serverKey(record.server).equals(scope.server)
-            &&Objects.equals(record.worldId,scope.worldId)&&KitConfig.normalizeDimension(record.dimension).equals(scope.dimension);
+            &&Objects.equals(record.worldId,scope.worldId)&&KitConfig.normalizeDimension(record.dimension).equals(scope.dimension)
+            &&(seed(record).isBlank()||scope.seed.isBlank()||seed(record).equals(scope.seed));
+    }
+    /** Only the world a record was opened in may invalidate it; a lobby or mirror world at the same coordinates may not. */
+    private static boolean bound(KitConfig.StorageSnapshot record,Scope scope){return seed(record).equals(scope.seed);}
+    /**
+     * A record without a world mark is adopted by the first world that shows its exact container.
+     * Fixed containers that the old server+dimension scope flapped to missing regain their structure; contents stay unconfirmed.
+     */
+    private static boolean adopt(KitConfig.StorageSnapshot record,Scope scope,World world,long now){
+        if(!seed(record).isBlank()||scope.seed.isBlank())return false;
+        var parts=positions(record);if(parts.isEmpty())return false;
+        for(var pos:parts){
+            var seen=world.at(pos);
+            if(!seen.loaded||!seen.container||!seen.blockId.equals(record.blockId)||!parts.equals(seen.parts))return false;
+        }
+        record.worldSeed=scope.seed;record.lastStructureObservedAt=now;
+        boolean flapped=MISSING.equals(record.status)&&GONE.equals(record.invalidReason)
+            ||RECHECK.equals(record.status)&&REAPPEARED.equals(record.invalidReason);
+        if(flapped&&!record.blockId.contains("shulker_box")){
+            archive(record);record.status=ACTIVE;record.invalidReason="";
+            record.contentsDirty=true;record.contentsDirtyReason=MISJUDGED;record.contentsDirtyAt=now;
+        }
+        return true;
     }
     public static boolean sameScope(Minecraft c,KitConfig.StorageSnapshot record){return same(record,scope(c));}
+    /** A waypoint can use cached coordinates without trusting cached inventory. */
+    public static boolean canGuide(Minecraft client, KitConfig.StorageSnapshot record) {
+        return canGuide(record, scope(client));
+    }
+
+    static boolean canGuide(KitConfig.StorageSnapshot record, Scope current) {
+        if (record == null || current == null
+                || !(ACTIVE.equals(record.status) || RECHECK.equals(record.status))
+                || positions(record).isEmpty()) {
+            return false;
+        }
+        if (same(record, current)) {
+            return true;
+        }
+        String recordedServer = serverKey(record.server);
+        boolean directAndRelay = ("simpcraft.com".equals(recordedServer) && "127.0.0.1:25566".equals(current.server))
+                || ("127.0.0.1:25566".equals(recordedServer) && "simpcraft.com".equals(current.server));
+        return directAndRelay && "".equals(record.worldId) && "".equals(current.worldId)
+                && KitConfig.normalizeDimension(record.dimension).equals(current.dimension)
+                && !current.seed.isBlank() && current.seed.equals(seed(record));
+    }
+
     public static String statusLabel(KitConfig.StorageSnapshot record){
         if(record==null||!known(record))return "历史记录 · 来源待核实";
         return switch(record.status==null?UNKNOWN:record.status){
@@ -75,6 +129,7 @@ public final class StorageLifecycle {
         if(record.server==null)record.server="";else record.server=serverKey(record.server);
         if(record.worldId==null)record.worldId="";
         if(record.playerId==null)record.playerId="";
+        if(record.worldSeed==null)record.worldSeed="";
         if(record.invalidReason==null)record.invalidReason="";
         if(record.contentsDirtyReason==null)record.contentsDirtyReason="";
         // Older versions mixed topology observation times into lastVerifiedAt.
@@ -102,6 +157,7 @@ public final class StorageLifecycle {
     /** Missing chunks and foreign/legacy scopes leave prior evidence untouched. */
     static boolean observe(KitConfig.StorageSnapshot record,Scope scope,World world,long now){
         if(!same(record,scope))return false;
+        if(!bound(record,scope))return adopt(record,scope,world,now);
         pendingUpdate(record); // A real menu may already have replaced the provisional invalidation.
         var parts=positions(record);if(parts.isEmpty())return transition(record,RECHECK,"容器组合记录不完整，请重新开箱",now);
         var seen=new LinkedHashMap<BlockPos,Sight>();
@@ -113,7 +169,7 @@ public final class StorageLifecycle {
                 return transition(record,RECHECK,"已加载的容器部分已变化，另一半尚未加载",now);
             return false;
         }
-        if(seen.values().stream().noneMatch(Sight::container))return transition(record,MISSING,"当前世界已加载位置没有容器",now);
+        if(seen.values().stream().noneMatch(Sight::container))return transition(record,MISSING,GONE,now);
         BlockPos pos=new BlockPos(record.x,record.y,record.z);var primary=seen.get(pos);
         if(!primary.container)return transition(record,RECHECK,"原容器的一半已变化，旧合计库存待复核",now);
         if(!parts.equals(primary.parts))return transition(record,RECHECK,"容器类型或双箱组合已变化，旧库存待复核",now);
@@ -134,7 +190,7 @@ public final class StorageLifecycle {
             }
             return changed;
         }
-        if(MISSING.equals(record.status))return transition(record,RECHECK,"原位置重新出现容器，历史库存待确认",now);
+        if(MISSING.equals(record.status))return transition(record,RECHECK,REAPPEARED,now);
         // Matching topology neither refreshes contents nor overwrites the original dirty reason.
         if(now-record.lastStructureObservedAt>=60_000||record.lastStructureObservedAt==0){
             record.lastStructureObservedAt=now;return true;
@@ -178,16 +234,24 @@ public final class StorageLifecycle {
         if(dirty||++ticks%20==0){dirty=false;refresh(c,config);}
     }
     /** Called only from authoritative server block-update packet tails. */
-    public static void blockUpdated(Minecraft c,BlockPos position){
+    public static void blockUpdated(Minecraft c,BlockPos position,net.minecraft.world.level.block.state.BlockState state){
         if(c==null||c.level==null||position==null)return;
         var config=KitClient.config();if(config==null||config.storageSnapshots==null)return;
-        dirty|=markBlockUpdated(config.storageSnapshots,scope(c),position,System.currentTimeMillis());
+        String blockId=state==null?null:BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        dirty|=markBlockUpdated(config.storageSnapshots,scope(c),position,blockId,System.currentTimeMillis());
     }
     /** Packet callbacks touch metadata only; world reads, history copies and saves belong to refresh. */
     static boolean markBlockUpdated(List<KitConfig.StorageSnapshot> records,Scope scope,BlockPos position,long now){
+        return markBlockUpdated(records,scope,position,null,now);
+    }
+    /**
+     * A resent or property-only state of the recorded block (barrel lid, hopper lock, the server's
+     * echo after every right click) is no replacement: it stays provisional like a neighboring update.
+     */
+    static boolean markBlockUpdated(List<KitConfig.StorageSnapshot> records,Scope scope,BlockPos position,String blockId,long now){
         boolean affected=false;
         for(var record:records){
-            if(!same(record,scope))continue;
+            if(!same(record,scope)||!bound(record,scope))continue;
             int distance=Math.abs(record.x-position.getX())+Math.abs(record.y-position.getY())+Math.abs(record.z-position.getZ());
             boolean direct=distance==0,nearby=distance<=1;
             if(record.containerPositions!=null)for(var part:record.containerPositions){
@@ -196,6 +260,7 @@ public final class StorageLifecycle {
                 direct|=distance==0;nearby|=distance<=1;
             }
             if(!nearby)continue;
+            direct&=blockId==null||!blockId.equals(record.blockId);
             affected=true;var update=pendingUpdate(record);
             if(update!=null){update.direct|=direct;continue;}
             if(!ACTIVE.equals(record.status))continue;
@@ -227,7 +292,7 @@ public final class StorageLifecycle {
         var observed=world(c.level);var seen=observed.at(pos);
         if(!seen.loaded||!seen.container||seen.parts.isEmpty()||seen.parts.size()>2)return false;
         for(var p:seen.parts){var part=observed.at(p);if(!part.loaded||!part.container||!seen.parts.equals(part.parts))return false;}
-        record.server=scope.server;record.worldId=scope.worldId;record.dimension=scope.dimension;
+        record.server=scope.server;record.worldId=scope.worldId;record.dimension=scope.dimension;record.worldSeed=scope.seed;
         record.playerId=c.player==null?"":c.player.getUUID().toString();
         record.status=ACTIVE;record.invalidReason="";record.lastStructureObservedAt=System.currentTimeMillis();
         record.lastVerifiedAt=record.lastSeenEpochMillis;

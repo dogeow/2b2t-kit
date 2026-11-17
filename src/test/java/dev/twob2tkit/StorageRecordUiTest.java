@@ -32,6 +32,7 @@ final class StorageRecordUiTest {
         for (var method : node("KitRecordPages").methods)
             if (method.name.equals("storage") || method.name.startsWith("lambda$storage$")) calls.addAll(calls(method));
         assertTrue(calls.contains("dev/twob2tkit/storage/StorageLifecycle.usable"));
+        assertTrue(calls.contains("dev/twob2tkit/storage/StorageLifecycle.canGuide"));
         assertTrue(calls.contains("dev/twob2tkit/storage/StorageLifecycle.statusLabel"));
         assertTrue(calls.contains("dev/twob2tkit/KitConfig$StorageSnapshot.scopedKey"));
         assertFalse(calls.contains("dev/twob2tkit/KitConfig$StorageSnapshot.key"));
@@ -47,7 +48,7 @@ final class StorageRecordUiTest {
 
     @Test void retainedLegacyFallbackCannotGuideToInvalidRecordsOrDeleteOtherServers() throws Exception {
         assertTrue(calls(method("storage/StorageRecordsScreen", "startGuide"))
-            .contains("dev/twob2tkit/storage/StorageLifecycle.usable"));
+            .contains("dev/twob2tkit/storage/StorageLifecycle.canGuide"));
         var calls = new ArrayList<String>();
         for (var method : node("storage/StorageRecordsScreen").methods)
             if (method.name.equals("delete") || method.name.startsWith("lambda$delete$")) calls.addAll(calls(method));

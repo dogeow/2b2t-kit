@@ -970,6 +970,7 @@ public final class KitConfig {
                 existing.lastVerifiedAt = snapshot.lastSeenEpochMillis;
                 existing.lastStructureObservedAt = snapshot.lastStructureObservedAt;
                 existing.playerId = snapshot.playerId;
+                existing.worldSeed = snapshot.worldSeed;
                 existing.status = snapshot.status; existing.invalidReason = "";
                 existing.contentsDirty = false; existing.contentsDirtyReason = ""; existing.contentsDirtyAt = 0;
             }
@@ -1161,6 +1162,8 @@ public final class KitConfig {
 	/** 开过的容器快照。 */
 	public static final class StorageSnapshot {
         public String server="", worldId="", status="unknown_scope", invalidReason="";
+        /** World mark from the login/respawn seed hash; blank until a real open or a matching sighting binds it. */
+        public String worldSeed="";
         /** Ender-chest contents belong to a player rather than a physical container. */
         public String playerId="";
         /** Legacy content-verification timestamp; structure observations never advance it. */
