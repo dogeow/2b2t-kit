@@ -4,6 +4,7 @@ import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import dev.twob2tkit.chat.core.ChatText;
 import dev.twob2tkit.chat.core.IgnoreCommandPolicy;
+import dev.twob2tkit.chat.core.LocalChatDelivery;
 import dev.twob2tkit.chat.core.SpamGuard;
 import dev.twob2tkit.chat.core.TranslationClient;
 import dev.twob2tkit.chat.core.LocalHelperService;
@@ -91,7 +92,7 @@ public final class BilingualClient implements ClientModInitializer {
         ClientReceiveMessageEvents.ALLOW_CHAT.register((message, signed, sender, type, time) ->
                 allowIncoming(message, signed == null ? null : signed.signature(), sender));
         ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) ->
-                overlay || allowIncoming(message, null, null));
+                overlay || LocalChatDelivery.isActive() || allowIncoming(message, null, null));
         ClientSendMessageEvents.ALLOW_CHAT.register(BilingualClient::allowOutgoing);
         ClientPlayConnectionEvents.JOIN.register((handler, packetSender, client) -> {
             resetSession();
@@ -324,7 +325,7 @@ public final class BilingualClient implements ClientModInitializer {
     }
 
     public static void onDisplayedMessage(GuiMessage original) {
-        if (!initialized || original.source() == GuiMessageSource.SYSTEM_CLIENT) return;
+        if (!initialized || LocalChatDelivery.isActive() || original.source() == GuiMessageSource.SYSTEM_CLIENT) return;
         Receipt receipt = null;
         for (var it = receipts.iterator(); it.hasNext();) {
             Receipt item = it.next();
