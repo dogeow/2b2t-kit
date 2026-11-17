@@ -6,24 +6,21 @@ enum LanguageIdentity {
         if request.from != "auto" { return request.from }
         let letters = request.text.unicodeScalars.filter { CharacterSet.letters.contains($0) }
         guard !letters.isEmpty else { return nil }
-        let hasHan = request.text.range(of: #"\p{Han}"#, options: .regularExpression) != nil
-        let chinese = request.text.applyingTransform(StringTransform("Traditional-Simplified"), reverse: false) == request.text ? "zh-Hans" : "zh-Hant"
-        // User preference: uncertain text defaults to Chinese when it contains
-        // Han characters, otherwise English. Explicit source settings win.
         if letters.count <= 3 && letters.allSatisfy({ $0.isASCII }) { return "en" }
         let recognizer = NLLanguageRecognizer()
-        recognizer.languageConstraints = [.english, .simplifiedChinese, .traditionalChinese]
         recognizer.processString(request.text)
-        guard let dominant = recognizer.dominantLanguage else { return hasHan ? chinese : "en" }
-        let confidence = recognizer.languageHypotheses(withMaximum: 1)[dominant] ?? 0
-        if confidence < 0.85 { return hasHan ? chinese : "en" }
-        let tag = dominant.rawValue
-        // Shared Han glyphs do not establish a Traditional writing system.
-        // Do not reinterpret text containing actual Traditional-only glyphs.
-        if tag == "zh-Hant", request.text.applyingTransform(StringTransform("Traditional-Simplified"), reverse: false) == request.text {
-            return "zh-Hans"
+        let hypotheses = recognizer.languageHypotheses(withMaximum: 1)
+        let language = hypotheses.first.flatMap { $0.value >= 0.75 ? $0.key : nil }
+        if let language, language != .traditionalChinese {
+            return language.rawValue
         }
-        return tag
+        // Ambiguous chat falls back to Chinese when it contains Han, otherwise English.
+        if language == nil && request.text.range(of: #"\p{Han}"#, options: .regularExpression) == nil {
+            return "en"
+        }
+        // Shared Han glyphs do not establish a Traditional writing system.
+        let simplified = request.text.applyingTransform(StringTransform("Traditional-Simplified"), reverse: false)
+        return simplified == request.text ? "zh-Hans" : "zh-Hant"
     }
 
     static func chineseScriptTranslation(for request: TranslationRequest) -> TranslationResult? {

@@ -5,7 +5,6 @@ import Translation
 @MainActor final class TranslatorModel: ObservableObject {
     @Published var serverStatus = "正在启动本地服务…"
     @Published var listening = false
-    var status = "先选择语言并下载语言包，再开始游戏。"
     var active: TranslationJob?
     @Published var workers: [TranslationWorkerMailbox] = []
     var queued = 0
@@ -13,8 +12,12 @@ import Translation
     @Published var testInput = "Hello! Where is the nearest village?"
     @Published var testOutput = ""
     @Published var source = "en"
-    @Published var target = "zh-Hans"
-    @Published var preparing = false
+    @Published var target = "zh"
+    @Published private(set) var missingPack: LanguagePair?
+    @Published private(set) var packDownload: LanguagePackDownload?
+    @Published private(set) var packDownloadNotice = ""
+    @Published private(set) var packRevision = 0
+    private var testID: String?
     private var pending: [TranslationJob] = []
     private var deadlines: [UUID: Task<Void, Never>] = [:]
     private var server: LocalServer?
@@ -26,7 +29,7 @@ import Translation
     private var sessionStops = 0
     private var failedJobs = 0
     private var windowState: [String: Bool] = [:]
-    private var installedPairs: Set<String> = []
+    private var installedPairs: Set<LanguagePair> = []
 
     func start() {
         guard server == nil else { return }
@@ -35,7 +38,7 @@ import Translation
         let router = TranslationRequestRouter(diagnostics: diagnostics) { [weak self] request, completion in
             Task { @MainActor in
                 guard let self else { completion(HTTPFailure(503, "unavailable", "Helper is unavailable.").reply); return }
-                self.enqueue(request, prepareOnly: false, completion: completion)
+                self.enqueue(request, completion: completion)
             }
         }
         server = LocalServer(onState: { [weak self] message, ready in
@@ -44,15 +47,15 @@ import Translation
         server?.start()
     }
 
-    func enqueue(_ request: TranslationRequest, prepareOnly: Bool, completion: @escaping (HTTPReply) -> Void) {
+    func enqueue(_ request: TranslationRequest, completion: @escaping (HTTPReply) -> Void) {
         // Preserve filtered messages immediately, even if the language worker is busy.
-        if !prepareOnly, LanguageIdentity.preservesDeathMessage(request.text),
+        if LanguageIdentity.preservesDeathMessage(request.text),
            let unchanged = LanguageIdentity.unchangedTranslation(for: request) {
             completion(.translated(unchanged))
             return
         }
         let resolved: TranslationRequest
-        if !prepareOnly, request.from == "auto" {
+        if request.from == "auto" {
             guard let source = LanguageIdentity.resolvedSource(for: request) else {
                 completion(.translated(TranslationResult(translation: request.text, sourceLanguage: "und",
                                                         targetLanguage: request.to, id: request.id)))
@@ -61,15 +64,15 @@ import Translation
             resolved = TranslationRequest(text: request.text, from: source, to: request.to, id: request.id)
         } else { resolved = request }
         let canonical = TranslationRequest(text: resolved.text,
-                from: resolved.from == "auto" ? "auto" : Locale.Language(identifier: resolved.from).minimalIdentifier,
+                from: Locale.Language(identifier: resolved.from).minimalIdentifier,
                 to: Locale.Language(identifier: resolved.to).minimalIdentifier, id: resolved.id)
         guard pending.count < 32 else { completion(HTTPFailure(429, "queue_full", "Translation queue is full; keep the original message.").reply); return }
-        let job = TranslationJob(request: canonical, prepareOnly: prepareOnly, completion: completion)
+        let job = TranslationJob(request: canonical, completion: completion)
         pending.append(job)
         deadlines[job.id] = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(prepareOnly ? 300 : 25))
+            try? await Task.sleep(for: .seconds(25))
             guard !Task.isCancelled, let self else { return }
-            self.finish(job.id, reply: HTTPFailure(504, "translation_timeout", prepareOnly ? "Language preparation timed out. Try again in the helper." : "Translation timed out. Open the helper to check language models.").reply)
+            self.finish(job.id, reply: HTTPFailure(504, "translation_timeout", "Translation timed out. Open the helper to check language models.").reply)
         }
         advance()
     }
@@ -82,52 +85,39 @@ import Translation
         active = job
         queued = pending.count
         publishDiagnostics()
-        if job.prepareOnly {
-            status = "正在准备语言包，请完成系统提示…"
+        if let unchanged = LanguageIdentity.chineseScriptTranslation(for: job.request) ?? LanguageIdentity.unchangedTranslation(for: job.request) {
+            finish(job.id, reply: .translated(unchanged))
+            return
+        }
+        let pair = LanguagePair(source: job.request.from, target: job.request.to)
+        if installedPairs.contains(pair) {
             dispatch(job)
-        } else {
-            if let unchanged = LanguageIdentity.chineseScriptTranslation(for: job.request) ?? LanguageIdentity.unchangedTranslation(for: job.request) {
-                finish(job.id, reply: .translated(unchanged))
-                return
-            }
-            let pair = job.request.from + "→" + job.request.to
-            if installedPairs.contains(pair) {
-                status = "正在翻译…"
-                dispatch(job)
-                return
-            }
-            status = "正在检查语言包…"
-            // Gate before mounting translationTask: constructing its session may
-            // initiate framework preparation even before the action is invoked.
-            Task { [weak self] in
-                guard let self else { return }
-                do {
-                    let availability = LanguageAvailability()
-                    let target = Locale.Language(identifier: job.request.to)
-                    let status: LanguageAvailability.Status
-                    if job.request.from == "auto" {
-                        status = try await availability.status(for: job.request.text, to: target)
-                    } else {
-                        status = await availability.status(from: Locale.Language(identifier: job.request.from), to: target)
-                    }
-                    guard self.active?.id == job.id else { return }
-                    switch status {
-                    case .installed:
-                        self.installedPairs.insert(pair)
-                        self.status = "正在翻译…"
-                        self.dispatch(job)
-                    case .supported:
-                        throw HTTPFailure(503, "language_not_installed", "未安装 \(job.request.from) → \(job.request.to) 语言包；请在助手中准备此语言对。")
-                    case .unsupported:
-                        throw HTTPFailure(400, "unsupported_language_pair", "Apple Translation 不支持这组语言，或原文已经是目标语言。")
-                    @unknown default:
-                        throw HTTPFailure(503, "language_unavailable", "Language availability is unknown.")
-                    }
-                } catch let failure as HTTPFailure {
-                    self.finish(job.id, reply: failure.reply)
-                } catch {
-                    self.finish(job.id, reply: HTTPFailure(503, "language_check_failed", error.localizedDescription).reply)
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            let availability = await pair.availability()
+            guard self.active?.id == job.id else { return }
+            switch availability {
+            case .installed:
+                self.installedPairs.insert(pair)
+                if self.missingPack == pair {
+                    self.missingPack = nil
+                    self.packRevision += 1
                 }
+                self.dispatch(job)
+            case .supported:
+                if self.missingPack != pair {
+                    self.missingPack = pair
+                    self.packRevision += 1
+                }
+                self.finish(job.id, reply: HTTPFailure(503, "language_not_installed",
+                    "未安装 \(pair.label) 语言包。请打开助手的「语言包管理」下载。").reply)
+            case .unsupported:
+                self.finish(job.id, reply: HTTPFailure(400, "unsupported_language_pair",
+                    "当前 macOS 不支持 \(pair.label)。").reply)
+            @unknown default:
+                self.finish(job.id, reply: HTTPFailure(503, "language_unavailable", "无法获取语言包状态。").reply)
             }
         }
     }
@@ -137,7 +127,7 @@ import Translation
         if let current = active, current.id == id {
             job = current; active = nil
             if reply.status != 200 {
-                installedPairs.remove(current.request.from + "→" + current.request.to)
+                installedPairs.remove(LanguagePair(source: current.request.from, target: current.request.to))
                 if let index = workers.firstIndex(where: { $0.source == current.request.from && $0.target == current.request.to }) {
                     workers[index].continuation.finish(); workers.remove(at: index)
                 }
@@ -147,13 +137,11 @@ import Translation
         } else { return }
         deadlines.removeValue(forKey: id)?.cancel()
         if reply.status == 200 {
-            if job.prepareOnly { status = "语言包已就绪，可以开始游戏。" }
-            else { translated += 1; status = "翻译服务正常" }
+            translated += 1
         } else {
             failedJobs += 1
             let body = (try? JSONSerialization.jsonObject(with: reply.body)) as? [String: Any]
             lastFailure = ["code": body?["error"] as? String ?? "unknown", "source": job.request.from, "target": job.request.to]
-            status = "\(body?["message"] as? String ?? "翻译失败")"
         }
         publishDiagnostics()
         job.completion(reply)
@@ -188,28 +176,46 @@ import Translation
         mailbox?.continuation.yield(job)
     }
 
-    func prepareLanguages() {
-        guard !preparing else { return }
-        preparing = true
-        enqueue(TranslationRequest(text: "Language preparation", from: source, to: target, id: nil), prepareOnly: true) { [weak self] _ in
-            self?.preparing = false
+    func prepareLanguages(_ pair: LanguagePair) {
+        guard packDownload == nil else { return }
+        packDownloadNotice = "正在准备 \(pair.label)，请按 macOS 提示操作。"
+        packDownload = LanguagePackDownload(pair: pair)
+    }
+
+    func finishPreparation(_ download: LanguagePackDownload, installed: Bool, error: String? = nil) {
+        guard packDownload?.id == download.id else { return }
+        packDownload = nil
+        if installed {
+            if missingPack == download.pair { missingPack = nil }
+            packDownloadNotice = "\(download.pair.label) 已可翻译。"
+        } else {
+            packDownloadNotice = error ?? "请等待 macOS 完成下载，然后刷新语言包状态。"
         }
+        packRevision += 1
     }
 
     func runTest() {
-        let request = TranslationRequest(text: testInput, from: source, to: target, id: "manual-test")
+        let id = UUID().uuidString
+        testID = id
+        let request = TranslationRequest(text: testInput, from: source, to: target, id: id)
         do { try request.validate() }
         catch let failure as HTTPFailure { testOutput = failure.message; return }
         catch { return }
         testOutput = "正在翻译…"
-        enqueue(request, prepareOnly: false) { [weak self] reply in
+        enqueue(request) { [weak self] reply in
+            guard let self, self.testID == id else { return }
             if let response = try? JSONDecoder().decode(TranslationResult.self, from: reply.body) {
-                self?.testOutput = response.translation
+                self.testOutput = response.translation
             } else {
                 let body = (try? JSONSerialization.jsonObject(with: reply.body)) as? [String: Any]
-                self?.testOutput = body?["message"] as? String ?? "翻译失败"
+                self.testOutput = body?["message"] as? String ?? "翻译失败"
             }
         }
+    }
+
+    func resetTestOutput() {
+        testID = nil
+        testOutput = ""
     }
 }
 
@@ -217,7 +223,7 @@ struct TranslationWorker: View {
     let mailbox: TranslationWorkerMailbox
     @ObservedObject var model: TranslatorModel
     private var configuration: TranslationSession.Configuration {
-        .init(source: mailbox.source == "auto" ? nil : Locale.Language(identifier: mailbox.source), target: Locale.Language(identifier: mailbox.target))
+        .init(source: Locale.Language(identifier: mailbox.source), target: Locale.Language(identifier: mailbox.target))
     }
     var body: some View {
         Color.clear.frame(width: 1, height: 1)
@@ -228,15 +234,9 @@ struct TranslationWorker: View {
                     guard !Task.isCancelled else { return }
                     guard model.active?.id == job.id else { continue }
                     do {
-                        if job.prepareOnly {
-                            try await session.prepareTranslation()
-                            guard !Task.isCancelled else { return }
-                            model.finish(job.id, reply: .json(200, ["status": "prepared"]))
-                        } else {
-                            let result = try await session.translate(job.request.text)
-                            guard !Task.isCancelled else { return }
-                            model.finish(job.id, reply: .translated(TranslationResult(translation: result.targetText, sourceLanguage: result.sourceLanguage.minimalIdentifier, targetLanguage: result.targetLanguage.minimalIdentifier, id: job.request.id)))
-                        }
+                        let result = try await session.translate(job.request.text)
+                        guard !Task.isCancelled else { return }
+                        model.finish(job.id, reply: .translated(TranslationResult(translation: result.targetText, sourceLanguage: result.sourceLanguage.minimalIdentifier, targetLanguage: result.targetLanguage.minimalIdentifier, id: job.request.id)))
                     } catch is CancellationError {
                         return
                     } catch {
@@ -250,7 +250,9 @@ struct TranslationWorker: View {
 
 struct ContentView: View {
     @ObservedObject var model: TranslatorModel
-    let languages = [("en", "英语"), ("zh-Hans", "简体中文"), ("zh-Hant", "繁体中文"), ("ja", "日语"), ("ko", "韩语"), ("fr", "法语"), ("de", "德语"), ("es", "西班牙语"), ("it", "意大利语"), ("pt", "葡萄牙语"), ("ru", "俄语"), ("ar", "阿拉伯语"), ("hi", "印地语"), ("th", "泰语"), ("vi", "越南语"), ("id", "印度尼西亚语"), ("uk", "乌克兰语"), ("pl", "波兰语"), ("nl", "荷兰语"), ("tr", "土耳其语")]
+    @State private var tab = "packs"
+    @State private var packTarget = "zh"
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 12) {
@@ -270,48 +272,69 @@ struct ContentView: View {
                     HStack { Label("已翻译 \(model.translated) 条", systemImage: "checkmark.bubble"); Spacer(); Text("等待：\(model.queued)") }.font(.caption).foregroundStyle(.secondary)
                 }.padding(8)
             }
-            HStack {
-                Picker("原文", selection: $model.source) { ForEach(languages, id: \.0) { Text($0.1).tag($0.0) } }.frame(width: 225)
-                Image(systemName: "arrow.right")
-                Picker("译文", selection: $model.target) { ForEach(languages, id: \.0) { Text($0.1).tag($0.0) } }.frame(width: 225)
+            if let pair = model.missingPack {
+                HStack {
+                    Label("最近缺少语言包：\(pair.label)", systemImage: "arrow.down.circle")
+                    Spacer()
+                    Button("查看语言包") {
+                        packTarget = pair.target
+                        tab = "packs"
+                    }
+                }.font(.callout)
             }
-            HStack {
-                Button(model.preparing ? "正在准备…" : "下载 / 准备语言包") { model.prepareLanguages() }
-                    .disabled(model.preparing || model.source == model.target)
-                Text("首次下载需联网；已安装语言包可在本机翻译。")
-                    .font(.caption).foregroundStyle(.secondary)
+            TabView(selection: $tab) {
+                LanguagePackView(model: model, target: $packTarget)
+                    .tabItem { Label("语言包管理", systemImage: "arrow.down.circle") }.tag("packs")
+                testPane
+                    .tabItem { Label("翻译测试", systemImage: "text.bubble") }.tag("test")
             }
-            Text(model.status).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-            Divider()
-            Text("手动测试").font(.headline)
-            TextEditor(text: $model.testInput).font(.body).frame(height: 72).padding(5).overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-            HStack {
-                Button("翻译测试") { model.runTest() }.buttonStyle(.borderedProminent).disabled(model.testInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Spacer()
-                Text("游戏请求使用自己的语言设置，默认自动检测 → 简体中文。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            ScrollView { Text(model.testOutput.isEmpty ? "译文会显示在这里" : model.testOutput).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
-                .frame(minHeight: 55, maxHeight: 90).padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
-            Text("聊天内容不写入日志；HTTP 仅接受本机 127.0.0.1 的非浏览器请求。支持的语言以系统实际可用情况为准。")
-                .font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+            .frame(height: 380)
         }
         .padding(24).frame(width: 650)
         .background(alignment: .topLeading) {
             ForEach(model.workers) { mailbox in TranslationWorker(mailbox: mailbox, model: model).id(mailbox.id) }
+            if let download = model.packDownload {
+                LanguagePackPreparation(download: download, model: model).id(download.id)
+            }
         }
-        .onAppear { model.start() }
+        .onChange(of: model.source) { model.resetTestOutput() }
+        .onChange(of: model.target) { model.resetTestOutput() }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in model.objectWillChange.send() }
     }
+    private var testPane: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                LanguagePicker(title: "原文", selection: $model.source, languages: LanguagePair.commonLanguages)
+                Image(systemName: "arrow.right")
+                LanguagePicker(title: "译文", selection: $model.target, languages: LanguagePair.commonLanguages)
+            }
+            TextEditor(text: $model.testInput).font(.body).frame(height: 82)
+                .padding(5).overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+            Button("翻译测试") { model.runTest() }.buttonStyle(.borderedProminent)
+                .disabled(model.testInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            ScrollView {
+                Text(model.testOutput.isEmpty ? "译文会显示在这里" : model.testOutput)
+                    .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+            }
+            .padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+            Text("测试语言只用于助手。游戏的翻译目标在 /mct 设置里选择。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(16)
+    }
+
 }
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    let model = TranslatorModel()
     private var helperWindow: NSWindow?
-    private weak var model: TranslatorModel?
 
-    func attach(_ window: NSWindow, model: TranslatorModel) {
-        helperWindow = window; self.model = model
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        model.start()
+    }
+
+    func attach(_ window: NSWindow) {
+        helperWindow = window
         window.isReleasedWhenClosed = false
         window.delegate = self
         if let close = window.standardWindowButton(.closeButton) {
@@ -322,23 +345,23 @@ struct ContentView: View {
     @objc private func minimizeServiceWindow(_ sender: Any?) {
         guard let window = helperWindow else { return }
         window.miniaturize(nil)
-        model?.windowChanged(window)
+        model.windowChanged(window)
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.miniaturize(nil)
-        model?.windowChanged(sender)
+        model.windowChanged(sender)
         return false
     }
     func windowDidMiniaturize(_ notification: Notification) {
-        if let window = notification.object as? NSWindow { model?.windowChanged(window) }
+        if let window = notification.object as? NSWindow { model.windowChanged(window) }
     }
     func windowDidDeminiaturize(_ notification: Notification) {
-        if let window = notification.object as? NSWindow { model?.windowChanged(window) }
+        if let window = notification.object as? NSWindow { model.windowChanged(window) }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard let window = helperWindow ?? sender.windows.first else { return false }
-        window.deminiaturize(nil); window.makeKeyAndOrderFront(nil); model?.windowChanged(window)
+        window.deminiaturize(nil); window.makeKeyAndOrderFront(nil); model.windowChanged(window)
         return true
     }
 }
@@ -363,11 +386,10 @@ private struct HelperWindowAttachment: NSViewRepresentable {
 
 @main struct MinecraftTranslationHelperApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @StateObject private var model = TranslatorModel()
     var body: some Scene {
         Window("Minecraft 双语翻译助手", id: "main") {
-            ContentView(model: model).background(HelperWindowAttachment { window in
-                delegate.attach(window, model: model)
+            ContentView(model: delegate.model).background(HelperWindowAttachment { window in
+                delegate.attach(window)
             }.frame(width: 0, height: 0))
         }
             .windowResizability(.contentSize)

@@ -3,7 +3,6 @@ import Foundation
 struct TranslationJob: Identifiable {
     let id = UUID()
     let request: TranslationRequest
-    let prepareOnly: Bool
     let completion: (HTTPReply) -> Void
 }
 

@@ -74,9 +74,18 @@ for text in ["hi", "GG", "lol"] {
     check(LanguageIdentity.resolvedSource(for: TranslationRequest(text: text, from: "auto", to: "zh-Hans", id: nil)) == "en", "ambiguous short Latin fragment defaults to English: \(text)")
 }
 check(LanguageIdentity.resolvedSource(for: TranslationRequest(text: "hi", from: "en", to: "zh-Hans", id: nil)) == "en", "explicit short-message language remains authoritative")
-for text in ["A faluban sok ember él.", "Witaj na serwerze Minecraft.", "Hello friend"] {
-    check(LanguageIdentity.resolvedSource(for: TranslationRequest(text: text, from: "auto", to: "zh-Hans", id: nil)) == "en", "automatic mode follows English/Chinese-only user preference: \(text)")
+for (text, language) in [
+    ("Gdzie jest najbliższa wioska?", "pl"), ("gdzie jest portal", "pl"),
+    ("cześć", "pl"), ("czesc", "pl"), ("siema", "pl"),
+    ("Hola, ¿dónde está el pueblo más cercano?", "es"),
+    ("Привет, где находится ближайшая деревня?", "ru"),
+    ("日本語を話せますか？", "ja"), ("Hello friend", "en"),
+    ("Hello 世界", "zh-Hans")
+] {
+    check(LanguageIdentity.resolvedSource(for: TranslationRequest(text: text, from: "auto", to: "zh-Hans", id: nil)) == language,
+          "automatic mode resolves \(language): \(text)")
 }
+check(identity("cześć", "auto", "en") == nil, "Polish chat still needs translation to English")
 let scriptResult = LanguageIdentity.chineseScriptTranslation(for: TranslationRequest(text: "我們一起探索村莊吧。", from: "zh-Hant", to: "zh-Hans", id: "script"))
 check(scriptResult?.translation == "我们一起探索村庄吧。" && scriptResult?.id == "script", "Chinese script conversion needs no extra language pair")
 // A held translation must not prevent health responses on the network queue.

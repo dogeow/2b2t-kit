@@ -6,7 +6,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" work/module-cache
 ARCH="$(uname -m)"
 swiftc -O -swift-version 5 -target "$ARCH-apple-macos15.0" \
   -module-cache-path work/module-cache -parse-as-library \
-  Sources/HTTPProtocol.swift Sources/LanguageIdentity.swift Sources/ServiceDiagnostics.swift Sources/TranslationQueue.swift Sources/LocalServer.swift Sources/App.swift \
+  Sources/HTTPProtocol.swift Sources/LanguageIdentity.swift Sources/ServiceDiagnostics.swift Sources/TranslationQueue.swift Sources/LocalServer.swift Sources/LanguagePackView.swift Sources/App.swift \
   -o "$APP/Contents/MacOS/MinecraftBilingualHelper" \
   -framework SwiftUI -framework Translation -framework NaturalLanguage -framework Network -framework AppKit
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -18,8 +18,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>Minecraft Bilingual Helper</string>
   <key>CFBundleDisplayName</key><string>Minecraft 双语翻译助手</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0.4</string>
-  <key>CFBundleVersion</key><string>5</string>
+  <key>CFBundleShortVersionString</key><string>1.0.6</string>
+  <key>CFBundleVersion</key><string>7</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

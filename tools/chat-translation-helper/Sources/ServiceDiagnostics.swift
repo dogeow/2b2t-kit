@@ -4,8 +4,9 @@ import Foundation
 final class ServiceDiagnostics {
     private let lock = NSLock()
     private var state: [String: Any] = [
-        "status": "ok", "service": "Minecraft Bilingual Helper", "version": "1.0.4",
-        "engine": "Apple Translation", "autoLanguagePolicy": "english_chinese",
+        "status": "ok", "service": "Minecraft Bilingual Helper",
+        "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development",
+        "engine": "Apple Translation", "autoLanguagePolicy": "multilingual",
         "requiresLanguagePreparation": true, "busy": false, "queueDepth": 0,
         "lastError": [String: String](), "sessionCreations": 0, "sessionStarts": 0,
         "completedJobs": 0, "failedJobs": 0
