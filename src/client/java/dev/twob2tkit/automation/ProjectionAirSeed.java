@@ -15,6 +15,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.FallingBlock;
+import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.RotatedPillarBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
@@ -69,7 +70,8 @@ final class ProjectionAirSeed {
             &&MushroomStemPlacementPolicy.isolated(expected,target,c.level::getBlockState);
         boolean hopper=expected.is(net.minecraft.world.level.block.Blocks.HOPPER);
         boolean slab=singleSlab(expected);
-        if(expected.isAir()||!hopper&&!slab&&!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty()||axisOnly||isolatedStem,
+        boolean leaves=persistentDryLeaves(expected);
+        if(expected.isAir()||!hopper&&!slab&&!ConfirmedPlacementPacer.safeSimple(expected.getProperties().isEmpty()||axisOnly||isolatedStem||leaves,
                 expected.isCollisionShapeFullBlock(schematic,target),expected.getBlock() instanceof FallingBlock,
                 expected.getBlock() instanceof EntityBlock)||!expected.getFluidState().isEmpty()
                 ||!expected.toString().equals(string(request,"expected_state")))
@@ -129,6 +131,11 @@ final class ProjectionAirSeed {
             ?Direction.fromAxisAndDirection(expected.getValue(RotatedPillarBlock.AXIS),Direction.AxisDirection.POSITIVE)
             :motion.getOpposite();
     }
+    static boolean persistentDryLeaves(BlockState state){
+        return state.getBlock() instanceof LeavesBlock && state.getValue(LeavesBlock.PERSISTENT)
+            && state.getFluidState().isEmpty();
+    }
+
     static boolean singleSlab(BlockState state){
         return state.getBlock() instanceof net.minecraft.world.level.block.SlabBlock
             &&!(state.getBlock() instanceof EntityBlock)&&state.getFluidState().isEmpty()
@@ -205,7 +212,7 @@ final class ProjectionAirSeed {
             throw new IllegalStateException("Air seed main hand does not contain the exact expected block item");
         if(c.player.getEyePosition().distanceTo(Vec3.atCenterOf(target))>c.player.blockInteractionRange()-.2)
             throw new IllegalStateException("Air seed target is outside normal interaction reach");
-        if(expected.is(net.minecraft.world.level.block.Blocks.HOPPER)||singleSlab(expected)){
+        if(expected.is(net.minecraft.world.level.block.Blocks.HOPPER)||singleSlab(expected)||persistentDryLeaves(expected)){
             var hit=new BlockHitResult(Vec3.atCenterOf(target),face,target,false);
             var context=new net.minecraft.world.item.context.BlockPlaceContext(c.player,InteractionHand.MAIN_HAND,held,hit);
             // Use vanilla placement prediction, including powered state. No corrective second click.

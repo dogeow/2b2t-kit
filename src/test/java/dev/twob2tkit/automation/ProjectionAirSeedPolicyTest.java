@@ -68,6 +68,16 @@ class ProjectionAirSeedPolicyTest {
         assertTrue(source.indexOf("getStateForPlacement(context)")<source.indexOf("void sendOnce"));
     }
     @BeforeAll static void bootstrap(){net.minecraft.SharedConstants.tryDetectVersion();net.minecraft.server.Bootstrap.bootStrap();}
+    @Test void projectedLeafSeedRequiresPersistentDryLeaves() {
+        var natural=Blocks.SPRUCE_LEAVES.defaultBlockState();
+        var persistent=natural.setValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT,true);
+        assertFalse(ProjectionAirSeed.persistentDryLeaves(natural));
+        assertTrue(ProjectionAirSeed.persistentDryLeaves(persistent));
+        assertTrue(persistent.isCollisionShapeFullBlock(net.minecraft.world.level.EmptyBlockGetter.INSTANCE,BlockPos.ZERO));
+        assertFalse(ProjectionAirSeed.persistentDryLeaves(
+            persistent.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED,true)));
+        assertFalse(ProjectionAirSeed.persistentDryLeaves(Blocks.COBBLESTONE.defaultBlockState()));
+    }
     @Test void airWoodPreservesEveryProjectedAxisForDirectAndUnstrippedItems(){
         for(var axis:Direction.Axis.values()){
             var wanted=Blocks.STRIPPED_CHERRY_WOOD.defaultBlockState().setValue(RotatedPillarBlock.AXIS,axis);
