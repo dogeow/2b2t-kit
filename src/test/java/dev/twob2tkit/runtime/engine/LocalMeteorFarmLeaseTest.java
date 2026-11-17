@@ -7,4 +7,5 @@ class LocalMeteorFarmLeaseTest {
  @Test void laterUserSettingsArePreservedAndStopTheLease(){var a=new Aura();var l=new LocalMeteorFarmLease();assertTrue(l.acquire(a,"zombified_piglin"));a.range.v=2.5;assertFalse(l.ready());l.close();assertEquals(2.5,a.range.v);assertEquals(true,a.ignorePassive.v);}
  @Test void manualModuleDisableNeverReenablesIt(){var a=new Aura();var l=new LocalMeteorFarmLease();assertTrue(l.acquire(a,"zombified_piglin"));a.active=false;assertFalse(l.ready());l.close();assertFalse(a.active);}
  @Test void missingModuleRefusesWithoutAffectingSettings(){var l=new LocalMeteorFarmLease();assertFalse(l.acquire(new Object(),"zombified_piglin"));l.close();}
+ @Test void hoverLeaseDoesNotBorrowThroughWallRange(){var a=new Aura();a.wallsRange.v=2.5;var l=new LocalMeteorFarmLease();assertTrue(l.acquireVisible(a,"zombified_piglin"));assertEquals(0.0,a.wallsRange.v);l.close();assertEquals(2.5,a.wallsRange.v);}
 }

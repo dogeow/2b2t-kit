@@ -29,5 +29,7 @@ class MeteorFarmAdmissionWiringTest {
         assertTrue(calls.indexOf("scope") < calls.indexOf("readString"),
             "The receipt ledger is read only after scope admission");
         assertEquals(1, calls.stream().filter("prepareMeleeTarget"::equals).count());
+        assertEquals(1, calls.stream().filter("acquireVisible"::equals).count(),
+            "Melee-only stations must use the existing visible, passive-target-capable lease");
     }
 }

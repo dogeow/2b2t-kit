@@ -7,6 +7,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.animal.turtle.Turtle;
 import net.minecraft.world.entity.monster.Enemy;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -14,7 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Read only live server entities, including equipment, without scanning blocks or loading chunks. */
+/** Observe live hostile equipment and nearby turtle breeding state without loading chunks. */
 final class LoadedHostileSurvey {
     static final String SCOPE="current_client_loaded_server_hostile_entities";
     private final AtomicBoolean writing=new AtomicBoolean();
@@ -45,14 +46,25 @@ final class LoadedHostileSurvey {
                     server,state.get("server").getAsString(),dimension,state.get("dimension").getAsString())
                     ||!EngineBuildVersion.VALUE.equals(state.get("runtime_version").getAsString()))return;
             String world=state.get("world_session").getAsString();UUID.fromString(world);
-            var rows=new JsonArray();boolean truncated=false;
+            var rows=new JsonArray();var turtles=new JsonArray();
+            boolean truncated=false,turtlesTruncated=false;
             for(var entity:c.level.entitiesForRendering()){
-                if(!(entity instanceof LivingEntity living)||!(entity instanceof Enemy)||entity.isRemoved()||!entity.isAlive()
+                if(!(entity instanceof LivingEntity living)||!(entity instanceof Enemy||entity instanceof Turtle)
+                        ||entity.isRemoved()||!entity.isAlive()
                         ||c.level.getEntity(entity.getId())!=entity)continue;
                 var pos=entity.blockPosition();var chunk=c.level.getChunkSource().getChunk(Math.floorDiv(pos.getX(),16),
                         Math.floorDiv(pos.getZ(),16),net.minecraft.world.level.chunk.status.ChunkStatus.FULL,false);
                 if(!LoadedServerChunkEvidence.isServerChunk(c.level,chunk))continue;
-                if(rows.size()>=256){truncated=true;break;}
+                if(entity instanceof Turtle turtle){
+                    if(turtles.size()>=32){turtlesTruncated=true;continue;}
+                    var row=new JsonObject();row.addProperty("uuid",turtle.getUUID().toString());
+                    row.add("pos",point(turtle.getX(),turtle.getY(),turtle.getZ()));
+                    row.addProperty("is_baby",turtle.isBaby());
+                    row.addProperty("has_egg",turtle.hasEgg());row.addProperty("laying_egg",turtle.isLayingEgg());
+                    turtles.add(row);
+                    continue;
+                }
+                if(rows.size()>=256){truncated=true;continue;}
                 var row=new JsonObject();row.addProperty("id",entity.getId());row.addProperty("uuid",entity.getUUID().toString());
                 row.addProperty("type",BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
                 row.addProperty("alive",entity.isAlive());row.addProperty("hostile",true);row.addProperty("is_baby",living.isBaby());
@@ -74,6 +86,7 @@ final class LoadedHostileSurvey {
             result.addProperty("runtime_version",EngineBuildVersion.VALUE);result.addProperty("runtime_generation",state.get("runtime_generation").getAsInt());
             result.addProperty("world_entered_at",enteredAt);result.addProperty("truncated",truncated);result.add("hostiles",rows);
             result.addProperty("equipment_scope","current_client_entity_equipment_not_predicted_drops");
+            result.addProperty("turtles_truncated",turtlesTruncated);result.add("turtles",turtles);
             if(!writing.compareAndSet(false,true))return;
             CompletableFuture.runAsync(()->{
                 var temporary=root.resolve("loaded-hostile-survey.tmp-"+observer);

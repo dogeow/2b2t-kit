@@ -5,6 +5,9 @@ import java.util.concurrent.CompletableFuture;
 import net.minecraft.client.multiplayer.ClientLevel;import net.minecraft.client.Minecraft;import net.minecraft.world.entity.monster.zombie.ZombifiedPiglin;import net.minecraft.world.entity.player.Player;import net.minecraft.world.entity.projectile.Projectile;import net.minecraft.world.item.Items;import net.minecraft.world.level.GameType;
 /** Explicit, bounded stationary-farm intent. All attacks remain Meteor actions. */
 final class MeteorFarmAssist {
+ private final ExperienceBottleUse experienceBottleUse = new ExperienceBottleUse();
+ private final LocalMeteorFarmLease hoverMelee=new LocalMeteorFarmLease();
+ private boolean hovering;
  private final FarmBowModules bow=new FarmBowModules();private final BorerCargoModules criticals=new BorerCargoModules();private dev.twob2tkit.runtime.api.BorerHost leasedHost;private String owner="",blocked="";private boolean armed,drawing;private int previous=-1,peak,spent;private long nextWrite,nextShot,drawStarted;private String reason="idle";
  private record Frame(JsonObject intent, JsonObject status, long observedAt) {}
  private ClientLevel observedLevel;
@@ -30,12 +33,12 @@ final class MeteorFarmAssist {
  }
 
  boolean active(){return armed;}
- String status(){return "定点农场 · "+(drawing?"Meteor引怪":"Meteor击杀")+" · 已用箭 "+spent+"/4";}
- void close(Minecraft c,boolean restoreSlot){bow.close();criticals.close();if(leasedHost!=null){leasedHost.releaseMeleeTarget();leasedHost=null;}if(restoreSlot&&previous>=0&&c.player!=null&&c.player.getMainHandItem().is(Items.BOW))c.player.getInventory().setSelectedSlot(previous);previous=-1;drawing=false;peak=0;armed=false;}
+ String status(){return hovering?"定点农场 · Meteor悬停近战":"定点农场 · "+(drawing?"Meteor引怪":"Meteor击杀")+" · 已用箭 "+spent+"/4";}
+ void close(Minecraft c,boolean restoreSlot){hoverMelee.close();hovering=false;bow.close();criticals.close();if(leasedHost!=null){leasedHost.releaseMeleeTarget();leasedHost=null;}if(restoreSlot&&previous>=0&&c.player!=null&&c.player.getMainHandItem().is(Items.BOW))c.player.getInventory().setSelectedSlot(previous);previous=-1;drawing=false;peak=0;armed=false;}
  private void save(Path p,JsonObject j)throws Exception{Path t=p.resolveSibling(p.getFileName()+".tmp");Files.writeString(t,j.toString());Files.move(t,p,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}
  private long number(JsonObject j,String k){return j.get(k).getAsLong();}
  void tick(Minecraft c,dev.twob2tkit.runtime.api.BorerHost host,Runnable pauseDefense){
-  if(c.player==null||c.level==null||c.getCurrentServer()==null||!"simpcraft.com".equals(c.getCurrentServer().ip)){
+  if(c.player==null||c.level==null||c.getCurrentServer()==null||!FarmStationPolicy.acceptsEndpoint(c.getCurrentServer().ip)){
    close(c,false);observedLevel=null;reading=null;frame=null;nextRead=0;return;
   }
   if(observedLevel!=c.level){
@@ -43,6 +46,7 @@ final class MeteorFarmAssist {
   }
   Path root=c.gameDirectory.toPath().resolve("config/twob2tkit/automation");
   long now=System.currentTimeMillis();
+  experienceBottleUse.tick(c,root,now);
   String id=owner;
   try{
    if(reading!=null&&reading.isDone()){
@@ -56,7 +60,8 @@ final class MeteorFarmAssist {
     return;
    }
    JsonObject r=frame.intent(),s=frame.status();
-   if(!r.has("schema")||r.get("schema").getAsInt()!=1||!r.has("mode")||!r.get("mode").getAsString().equals("stationary_meteor_xp"))throw new IllegalArgumentException("Explicit farm intent required");
+   String mode=r.get("mode").getAsString();boolean hover=mode.equals("hover_meteor_melee");
+   if(r.get("schema").getAsInt()!=1||!hover&&!mode.equals("stationary_meteor_xp"))throw new IllegalArgumentException("Explicit farm intent required");
    id=r.get("id").getAsString();
    if(!id.matches("[a-zA-Z0-9_-]{1,80}")||id.equals(blocked)){close(c,false);return;}
    boolean sameRevision=number(s,"control_revision")==number(r,"expected_revision");
@@ -74,6 +79,11 @@ final class MeteorFarmAssist {
     return projectile.isAlive()&&FarmStationPolicy.incoming(projectile.getOwner()==c.player,
      velocity.x,velocity.y,velocity.z,eye.x-projectile.getX(),eye.y-projectile.getY(),eye.z-projectile.getZ());
    }).isEmpty();
+   if(armed&&(hover!=hovering||hover&&!id.equals(owner))){blocked=id;close(c,sameInput);return;}
+   if(hover){
+    tickHover(c,s,sx,sy,sz,number(r,"expires_at")-now,incoming,id,pauseDefense);
+    publish(root,now,id);return;
+   }
    ready&=!incoming&&c.player.position().distanceToSqr(new net.minecraft.world.phys.Vec3(sx,sy,sz))<64*64&&!c.player.isOnFire()&&!c.player.isUnderWater();boolean stationed=FarmStationPolicy.station(c.player.getX(),c.player.getY(),c.player.getZ(),sx,sy,sz,c.player.onGround(),s.get("flight").getAsBoolean());boolean maintenance=r.has("maintenance_until")&&number(r,"maintenance_until")>=now&&number(r,"maintenance_until")-now<=60000;ready&=stationed||maintenance;
    if(!ready){if(drawing){blocked=id;nextShot=now+30000;}reason=incoming?"incoming_projectile_normal_defense_retained":"farm_scope_or_station_not_ready";close(c,sameInput);publish(root,now,id);return;}
    if(!id.equals(owner)){
@@ -84,16 +94,29 @@ final class MeteorFarmAssist {
     spent=Files.exists(ledger)?JsonParser.parseString(Files.readString(ledger)).getAsJsonObject().get("shots_started").getAsInt():0;
     owner=id;nextShot=now+3000;
    }
+   boolean meleeOnly=stationed&&!r.has("maintenance_until")&&r.get("arrow_budget").getAsInt()==0;
+   if(meleeOnly&&(!s.get("guard_armed").getAsBoolean()||!s.get("guard_pve_only").getAsBoolean()
+       ||s.get("guard_busy").getAsBoolean()
+       ||s.has("supervision_lease")&&!s.get("supervision_lease").isJsonNull()
+       ||armed&&!hoverMelee.ready())){
+    reason="visible_station_melee_precondition_ended";blocked=id;close(c,sameInput);publish(root,now,id);return;
+   }
    if(!armed){
     pauseDefense.run();
     var piglin=net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getValue(
      net.minecraft.resources.Identifier.parse("minecraft:zombified_piglin"));
-    if(!host.prepareMeleeTarget(piglin))
-     throw new IllegalStateException("Farm target lease refused");
-    leasedHost=host;armed=true;
+    if(meleeOnly){
+     if(!hoverMelee.acquireVisible(FarmBowModules.module("KillAura"),piglin))
+      throw new IllegalStateException("Visible station melee lease refused");
+    }else{
+     if(!host.prepareMeleeTarget(piglin))throw new IllegalStateException("Farm target lease refused");
+     leasedHost=host;
+    }
+    armed=true;
    }
    if(stationed){criticals.pause(FarmBowModules.module("Criticals"));if(!maintenance&&!drawing&&!c.player.isUsingItem()&&!c.player.getMainHandItem().is(net.minecraft.tags.ItemTags.SWORDS)){for(int i=0;i<9;i++)if(c.player.getInventory().getItem(i).is(Items.NETHERITE_SWORD)){c.player.getInventory().setSelectedSlot(i);break;}}}
-   if(drawing){
+   if(meleeOnly)reason="Meteor_KillAura_visible_station_melee";
+   else if(drawing){
     if(!stationed||!bow.ready()||!c.player.getMainHandItem().is(Items.BOW)){reason="bow_scope_changed_preserve_unknown_shot";close(c,sameInput);nextShot=now+30000;publish(root,now,id);return;}
     if(c.player.isUsingItem())peak=Math.max(peak,c.player.getTicksUsingItem());if(FarmStationPolicy.released(peak,c.player.isUsingItem(),c.player.getTicksUsingItem())){reason="one_meteor_bow_release_observed";bow.close();if(previous>=0&&c.player.getMainHandItem().is(Items.BOW))c.player.getInventory().setSelectedSlot(previous);previous=-1;drawing=false;peak=0;nextShot=now+25000;}
     else if(now-drawStarted>6000){reason="bow_release_unconfirmed_no_replay";close(c,true);blocked=id;}
@@ -106,6 +129,36 @@ final class MeteorFarmAssist {
    }else reason=maintenance&&!stationed?"owned_station_maintenance":"Meteor_KillAura_station";
    publish(root,now,id);
   }catch(Exception failure){reason="farm_helper_refused_"+failure.getClass().getSimpleName();close(c,true);try{publish(root,now,id,true);}catch(Exception ignored){}}
+ }
+ private void tickHover(Minecraft c,JsonObject status,double sx,double sy,double sz,long remainingMs,
+                        boolean incoming,String id,Runnable pauseDefense)throws ReflectiveOperationException{
+  var player=c.player;
+  boolean guarded=status.get("guard_armed").getAsBoolean()&&status.get("guard_pve_only").getAsBoolean();
+  boolean conflict=(status.has("supervision_lease")&&!status.get("supervision_lease").isJsonNull())
+   ||status.get("guard_busy").getAsBoolean()||status.get("navigating").getAsBoolean();
+  boolean hazard=incoming||player.hurtTime>0||player.isOnFire()||player.isInWater()
+   ||c.level.players().stream().anyMatch(p->p!=player&&p.distanceTo(player)<64);
+  boolean pose=FarmStationPolicy.hoverMelee(player.getX(),player.getY(),player.getZ(),sx,sy,sz,
+   status.get("flight").getAsBoolean(),player.onGround(),remainingMs,guarded,conflict,hazard);
+  var feet=player.blockPosition();
+  boolean clearFloor=c.level.getBlockState(feet.below(4)).is(net.minecraft.world.level.block.Blocks.MAGMA_BLOCK);
+  for(int depth=1;clearFloor&&depth<=3;depth++)clearFloor=c.level.getBlockState(feet.below(depth)).isAir();
+  var near=c.level.getEntities(player,player.getBoundingBox().inflate(8),e->e.isAlive()&&e instanceof net.minecraft.world.entity.monster.Enemy);
+  boolean danger=near.stream().anyMatch(e->!(e instanceof ZombifiedPiglin)||e.getY()>player.getY()-3.1);
+  var target=near.stream().filter(e->e instanceof ZombifiedPiglin p&&FarmStationPolicy.hoverTarget(
+   Math.hypot(p.getX()-player.getX(),p.getZ()-player.getZ()),player.getY()-p.getY(),player.hasLineOfSight(p),!p.isBaby(),!p.hasCustomName())).findFirst();
+  if(!pose||!clearFloor||danger||target.isEmpty()||!player.getMainHandItem().is(net.minecraft.tags.ItemTags.SWORDS)||armed&&!hoverMelee.ready()){
+   if(armed)blocked=id;
+   reason="hover_melee_precondition_ended";close(c,false);return;
+  }
+  if(!armed){
+   pauseDefense.run();
+   if(!hoverMelee.acquireVisible(FarmBowModules.module("KillAura"),target.get().getType())){
+    blocked=id;reason="hover_melee_lease_refused";return;
+   }
+   owner=id;spent=0;hovering=true;armed=true;
+  }
+  reason="Meteor_KillAura_visible_hover_melee";
  }
  private void publish(Path root,long now,String id)throws Exception{publish(root,now,id,false);}
  private void publish(Path root,long now,String id,boolean force)throws Exception{if(!force&&now<nextWrite)return;nextWrite=now+500;var j=new JsonObject();j.addProperty("time",now);j.addProperty("id",id);j.addProperty("active",armed);j.addProperty("reason",reason);j.addProperty("bow_cycle",drawing);j.addProperty("draw_peak_ticks",peak);j.addProperty("shots_started",spent);j.addProperty("melee_executor","Meteor KillAura");j.addProperty("ranged_executor","Meteor BowAimbot + BowSpam");j.addProperty("autolog_unchanged",true);save(root.resolve("meteor-farm-state.json"),j);}

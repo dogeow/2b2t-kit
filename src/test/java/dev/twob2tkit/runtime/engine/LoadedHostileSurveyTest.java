@@ -30,6 +30,8 @@ class LoadedHostileSurveyTest {
                     "setHealth","addFreshEntity","setItemSlot","startRiding","stopRiding").contains(call.name),call.name);
         }
         assertTrue(names.containsAll(Set.of("entitiesForRendering","getEntity","isServerChunk","getMainHandItem","getOffhandItem","getItemBySlot")));
+        assertTrue(names.containsAll(Set.of("hasEgg","isLayingEgg")));
+        assertFalse(names.contains("getHomePos"),"The server does not synchronize a turtle's home position");
     }
     @Test void normalWorldObservationRunsHostileSurvey()throws Exception{
         var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/runtime/engine/DefaultTunnelBorerEngine.class")){
