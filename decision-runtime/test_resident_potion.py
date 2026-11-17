@@ -2,7 +2,7 @@ import unittest
 import json,tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from resident_potion import request_for,previous_dose_resolved,dose
+from resident_potion import request_for,previous_dose_resolved,dose,VERIFIED_LOADED_ENGINE_SHA256,preserve_independent_prior,retained_patient_fence
 class PotionRequestTest(unittest.TestCase):
  def fixture(self):
   s=dict(runtime_version='1.8.30',health=20,screen='',manual_movement=False,guard_armed=True,guard_pve_only=True,guard_busy=False,phase='done',connected=True,world_session='w',control_revision=2,time=1000,selected_slot=5,hand=dict(item='minecraft:splash_potion',count=1),player_uuid='p',pos=[1,64,2],supervision_lease=dict(kind='materials',world_session='w',id='l',job_session='t',revision=2),loaded_villagers={'villagers':[dict(uuid='v',is_baby=False,health=11.39,pos=[1,64,3])]})
@@ -13,6 +13,12 @@ class PotionRequestTest(unittest.TestCase):
   s,p=self.fixture();s['runtime_version']='1.8.58';self.assertEqual(11.39,self.run_request(s,p)['expected_health'])
   s['runtime_version']='1.8.59'
   with self.assertRaises(ValueError):self.run_request(s,p)
+ def test_171_requires_exact_audited_loaded_engine_hash(self):
+  s,p=self.fixture();s['runtime_version']='1.8.71'
+  for h in (None,'0'*64):
+   with self.subTest(hash=h),self.assertRaises(ValueError):
+    request_for(s,p,'v','minecraft:healing',1000,'00000000-0000-4000-8000-000000000001',loaded_engine_sha256=h)
+  self.assertEqual(11.39,request_for(s,p,'v','minecraft:healing',1000,'00000000-0000-4000-8000-000000000001',loaded_engine_sha256=VERIFIED_LOADED_ENGINE_SHA256['1.8.71'])['expected_health'])
  def test_wrong_slot_effect_and_custom_effects_refused(self):
   for value in [{'potion':'minecraft:poison'},{'potion':'minecraft:healing','custom_effects':[]}]:
    s,p=self.fixture();p['potions'][0]['potion_contents']=value
@@ -42,3 +48,18 @@ class PotionRequestTest(unittest.TestCase):
    c=SimpleNamespace(q=SimpleNamespace(root=root),n=root)
    with self.assertRaisesRegex(RuntimeError,'Previous dose remains unresolved'):
     dose(c,'v','minecraft:healing')
+ def test_unknown_other_patient_is_archived_and_remains_fenced(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);ident='00000000-0000-4000-8000-000000000001';world='00000000-0000-4000-8000-000000000002';old={'id':ident,'world_session':world,'target_uuid':'old-patient'}
+   (root/'resident-potion.json').write_text(json.dumps(old));claims=root/'resident-potion-claims'/world;claims.mkdir(parents=True);(claims/(ident+'.json')).write_text(json.dumps({**old,'use_may_have_been_sent':True}));(root/'resident-potion-state.json').write_text(json.dumps({'id':ident,'phase':'rejected_preflight'}))
+   before=(root/'resident-potion.json').read_bytes();path=preserve_independent_prior(root,'new-patient','new-world');record=json.loads(path.read_text())
+   self.assertEqual(record['outcome'],'unknown');self.assertEqual(record['healing_credit'],0);self.assertFalse(record['replayed']);self.assertEqual(before,(root/'resident-potion.json').read_bytes())
+   with self.assertRaises(RuntimeError):retained_patient_fence(root,'old-patient')
+   retained_patient_fence(root,'new-patient')
+   with self.assertRaises(RuntimeError):preserve_independent_prior(root,'old-patient','new-world')
+   with self.assertRaises(RuntimeError):preserve_independent_prior(root,'new-patient',world)
+ def test_independent_prior_requires_original_possible_use_claim(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);ident='00000000-0000-4000-8000-000000000001';world='00000000-0000-4000-8000-000000000002';old={'id':ident,'world_session':world,'target_uuid':'old-patient'}
+   (root/'resident-potion.json').write_text(json.dumps(old));claims=root/'resident-potion-claims'/world;claims.mkdir(parents=True);(claims/(ident+'.json')).write_text(json.dumps({**old,'use_may_have_been_sent':False}))
+   with self.assertRaises(RuntimeError):preserve_independent_prior(root,'new-patient','new-world')
