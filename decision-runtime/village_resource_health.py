@@ -38,7 +38,7 @@ def record_health_failure(directory, error):
     return path
 
 
-def check(state, world, protected_uuids, home_min, home_max, *, owned_menu=None):
+def check(state, world, protected_uuids, home_min, home_max, *, owned_menu=None, known_health_floors=None):
     menu = state.get('menu') or {}
     lease = state.get('supervision_lease') or {}
     certified_type = (owned_menu or {}).get('type')
@@ -90,10 +90,10 @@ def check(state, world, protected_uuids, home_min, home_max, *, owned_menu=None)
             or state.get('health_recovery_hold')
             or state.get('safety_hold', {}).get('active')):
         raise RuntimeError('Resource trip lost healthy current player control')
-    return check_residents(state,protected_uuids,home_min,home_max)
+    return check_residents(state,protected_uuids,home_min,home_max,known_health_floors=known_health_floors)
 
 
-def check_residents(state,protected_uuids,home_min,home_max):
+def check_residents(state,protected_uuids,home_min,home_max,*,known_health_floors=None):
     """Same NPC scope during an independently owned transaction/interface."""
     if (not isinstance(protected_uuids, (set, frozenset)) or not protected_uuids
             or any(not isinstance(v, str) or not v for v in protected_uuids)
@@ -101,12 +101,18 @@ def check_residents(state,protected_uuids,home_min,home_max):
             or any(type(v) is not int for v in (*home_min, *home_max))
             or any(a > b for a, b in zip(home_min, home_max))):
         raise ValueError('Witnessed cohort and exact home bounds required')
+    floors = {} if known_health_floors is None else known_health_floors
+    if (not isinstance(floors, dict) or any(uid not in protected_uuids or type(value) not in (int,float)
+            or not math.isfinite(value) or not 0 < value <= 20 for uid,value in floors.items())):
+        raise ValueError('Explicit protected resident health floors must be finite and positive')
     for row in state.get('loaded_villagers', {}).get('villagers', []):
         pos = row.get('pos')
         if (not isinstance(row.get('uuid'), str) or not isinstance(pos, list)
                 or len(pos) != 3 or any(type(v) not in (int, float) or not math.isfinite(v) for v in pos)):
             raise RuntimeError('Cannot scope an incomplete villager observation')
         at_home = all(a <= v < b + 1 for a, v, b in zip(home_min, pos, home_max))
-        if (row['uuid'] in protected_uuids or at_home) and row.get('health') != 20:
-            raise ProtectedResidentHealthError(row, state)
+        if row['uuid'] in protected_uuids or at_home:
+            health=row.get('health');minimum=floors.get(row['uuid'],20)
+            if type(health) not in (int,float) or not math.isfinite(health) or health < minimum or health > 20:
+                raise ProtectedResidentHealthError(row, state)
     return state

@@ -21,6 +21,19 @@ class ResourceHealthTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Protected village'):
             self.checked(self.state)
 
+    def test_explicit_health_floor_preserves_protection_for_known_injury(self):
+        from village_resource_health import check_residents
+        self.state['loaded_villagers']['villagers'][0].update(uuid='founder', health=11)
+        args=(self.state,{'founder'},[984,63,804],[1034,69,818])
+        self.assertIs(check_residents(*args,known_health_floors={'founder':11}),self.state)
+        self.state['loaded_villagers']['villagers'][0]['health']=10
+        with self.assertRaisesRegex(RuntimeError,'Protected village'):
+            check_residents(*args,known_health_floors={'founder':11})
+        with self.assertRaises(ValueError):
+            check_residents(*args,known_health_floors={'foreign':11})
+        with self.assertRaises(ValueError):
+            check_residents(*args,known_health_floors={'founder':float('nan')})
+
     def test_resident_only_guard_keeps_the_same_scope_during_owned_transaction(self):
         from village_resource_health import check_residents
         self.state['screen']='MerchantScreen'
