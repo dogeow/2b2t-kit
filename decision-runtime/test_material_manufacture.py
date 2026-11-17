@@ -12,6 +12,26 @@ from craft_grid import InventoryCapacity
 from recipe_catalog import RecipeCatalog
 
 
+class CraftingReceiptTest(unittest.TestCase):
+    def test_staggered_ingredient_return_does_not_retry_the_craft(self):
+        from craft_recipe import wait_craft_balance
+        from unittest.mock import Mock
+
+        plank='minecraft:dark_oak_planks';boat='minecraft:dark_oak_boat'
+        def observation(wood):
+            return {'menu':{'id':90,'cursor':{'count':0},'slots':[{'count':0} for _ in range(10)]},
+                    'inventory':[{'slot':0,'item':plank,'count':wood},{'slot':1,'item':boat,'count':1}]}
+
+        initial=observation(12);settled=observation(14)
+        client=Mock();client.status.side_effect=[observation(12),settled]
+        with patch('craft_recipe.k',client),patch('craft_recipe.time.sleep'):
+            receipt,made=wait_craft_balance(initial,90,{plank:[1,3,4,5,6]},{plank:19},boat,0,1)
+        self.assertIs(receipt,settled)
+        self.assertEqual(made,1)
+        self.assertEqual(client.status.call_count,2)
+        client.checked.assert_not_called()
+
+
 class CherryBatchCapacityTest(unittest.TestCase):
     def test_gray_dye_inventory_batch_fills_eight_rounds_and_keeps_ingredient_remainders(self):
         slots=[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1}for i in range(45)]

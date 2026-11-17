@@ -49,6 +49,24 @@ def wait_grid_placed(state, menu_id, item, slots, count_each):
 def bounded_rounds(output, proposed):
     return min(proposed, 1) if safe_single_round(output) else proposed
 
+
+def wait_craft_balance(state, menu_id, recipe, before, output, old_output, per_recipe):
+    """Wait for returned grid ingredients and the output to agree without another click."""
+    deadline=time.monotonic()+6
+    while True:
+        menu=state['menu']
+        if menu['id']!=menu_id or menu['cursor']['count']:
+            raise RuntimeError('Crafting menu or cursor changed during receipt observation')
+        made=count(state,output)-old_output
+        if (made>0 and made%per_recipe==0
+                and all(not menu['slots'][i]['count'] for cells in recipe.values() for i in cells)
+                and all(before[i]-count(state,i)==made//per_recipe*len(cells) for i,cells in recipe.items())):
+            return state,made
+        if time.monotonic()>=deadline:
+            raise RuntimeError('Ingredient/output counts differ after settling; no repeated craft')
+        time.sleep(.15);state=k.status()
+
+
 def pin_chest_planks(plan, item):
     """Pin every tag-resolved chest cell to one ample plank type, without losing cells."""
     cells=sorted(slot for ingredient,positions in plan['ingredients'].items() for slot in positions)
@@ -153,10 +171,7 @@ def mixed(recipe,output,output_per_recipe,target_total):
         for cells in recipe.values():
             for slot in cells:
                 if s['menu']['slots'][slot]['item']!='minecraft:air':s=click(s,slot,'quick_move')
-        made=count(s,output)-old_output
-        if made<=0 or made%output_per_recipe:raise RuntimeError('Output not verified')
-        executed=made//output_per_recipe
-        if any(before[i]-count(s,i)!=executed*len(cells) for i,cells in recipe.items()):raise RuntimeError('Ingredient/output counts differ')
+        s,made=wait_craft_balance(s,m['id'],recipe,before,output,old_output,output_per_recipe)
         print(json.dumps({'recipe':output,'produced':made,'inventory_total':count(s,output),'verified':True}),flush=True)
 
 
