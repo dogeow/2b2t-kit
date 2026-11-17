@@ -75,6 +75,43 @@ class VillagerTradingTests(unittest.TestCase):
                 self.assertEqual(c.menu['slots'][4]['count'],64-24*expected)
                 self.assertTrue(all(row['opening_request_id']=='one-opening' for row in sold['sales']))
 
+    def test_tripwire_hook_sales_reuse_window_and_stop_on_price_change(self):
+        for price_changes,expected in ((False,2),(True,1)):
+            with self.subTest(price_changes=price_changes), tempfile.TemporaryDirectory() as tmp:
+                c=Merchant(tmp)
+                c.offer.update(cost_a=stack('minecraft:tripwire_hook',8,max_stack=64,
+                                            stack_data={'id':'minecraft:tripwire_hook','count':8}),cost_b=stack(),
+                               result=stack('minecraft:emerald',1,max_stack=64,
+                                            stack_data={'id':'minecraft:emerald','count':1}),max_uses=2)
+                c.menu['merchant']['opening_request_id']='one-opening'
+                c.menu['slots'][3]=dict(slot=3,**stack('minecraft:emerald',5,max_stack=64))
+                c.menu['slots'][4]=dict(slot=4,**stack('minecraft:tripwire_hook',64,max_stack=64))
+
+                def click(op,**params):
+                    c.calls.append((op,params)); c.last='r'+str(len(c.calls))
+                    m=c.menu
+                    if op=='merchant_select_trade':
+                        m['slots'][4]['count']-=8
+                        m['slots'][0].update(stack('minecraft:tripwire_hook',8))
+                        m['slots'][2].update(stack('minecraft:emerald',1))
+                    elif params['slot']==2:
+                        m['slots'][0].update(stack())
+                        m['slots'][2].update(stack())
+                        m['cursor']=stack('minecraft:emerald',1)
+                    else:
+                        m['slots'][3]['count']+=1
+                        m['cursor']=stack()
+                        if price_changes:c.offer['cost_a']['count']=9
+                    return {'phase':'done','id':c.last}
+
+                c.checked=click
+                sold=sell_many(c,0,4,Path(tmp)/'batch')
+                self.assertEqual(sold['sold'],expected)
+                self.assertEqual(len(c.calls),3*expected)
+                self.assertEqual(c.menu['slots'][3]['count'],5+expected)
+                self.assertEqual(c.menu['slots'][4]['count'],64-8*expected)
+                self.assertTrue(all(row['opening_request_id']=='one-opening' for row in sold['sales']))
+
     def test_plain_emerald_sale_merges_output_without_consuming_another_slot(self):
         with tempfile.TemporaryDirectory()as tmp:
             c=Merchant(tmp)

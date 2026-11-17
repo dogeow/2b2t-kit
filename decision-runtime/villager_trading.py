@@ -380,7 +380,7 @@ def sell_many(c,index,limit,out):
     offer=deepcopy(info['offers'][index])
     payment,extra,result=(offer[k] for k in ('cost_a','cost_b','result'))
     item=payment['item'];price=payment['count']
-    if (item not in {'minecraft:paper','minecraft:stick','minecraft:iron_ingot','minecraft:flint',
+    if (item not in {'minecraft:paper','minecraft:stick','minecraft:iron_ingot','minecraft:flint','minecraft:tripwire_hook',
                      'minecraft:wheat','minecraft:rotten_flesh'}
             or type(price)is not int or not 1<=price<=payment['max_stack']
             or extra['count']!=0 or result['item']!='minecraft:emerald' or result['count']!=1):
