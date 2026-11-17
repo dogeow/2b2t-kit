@@ -194,6 +194,25 @@ public final class AutomationBridge {
         return c.player!=null&&KitKeys.manualMovementDown(c)&&idleManualWorld.equals(session(c))
             &&supervisionLease==null&&active==null&&nativeMaterialOwner==null;
     }
+    private static long manualMaterialPauseUntil;
+    private static String manualMaterialPauseLease="";
+
+    private static boolean idleExternalMaterialScope(Minecraft c){
+        return c.player!=null&&c.level!=null&&active==null&&pendingScan==null
+            &&nativeMaterialOwner==null&&supervisionLease!=null
+            &&"materials".equals(str(supervisionLease,"kind"))
+            &&str(supervisionLease,"world_session").equals(session(c))
+            &&supervisionLease.has("revision")
+            &&supervisionLease.get("revision").getAsLong()==controlRevision
+            &&guardArmed()&&pveOnly()&&!guardBusy&&!healthRecoveryHold
+            &&c.player.getHealth()>=19&&!dev.twob2tkit.combat.EmergencyExit.held(c)
+            &&!KitClient.anyAfkAuto();
+    }
+
+    private static boolean manualMaterialPaused(Minecraft c){
+        return idleExternalMaterialScope(c)&&manualMaterialPauseLease.equals(str(supervisionLease,"id"))
+            &&System.currentTimeMillis()<manualMaterialPauseUntil;
+    }
     public static boolean idleHandoffThisTick(Minecraft c){
         return idleHandoffTick==ticks&&idleYieldAck!=null&&!"MANUAL_MOVEMENT".equals(str(idleYieldAck,"reason"))
             &&str(idleYieldAck,"world_session").equals(session(c))
@@ -905,7 +924,16 @@ public final class AutomationBridge {
             boolean quiet=logoutQuiet.ready(now,guardBusy||c.player.isUsingItem()||nearThreat,KitClient.config().lastAttackTimeEpochMillis);
             boolean keepGuard=str(lease,"remote_finish").equals("guard")&&!lowHealth
                 &&(!material||highGuardPark(c,lease)||reanchorHealthyHover(c,lease));
-            var action=dev.twob2tkit.builder.BuildSupervisorSafety.decide(same,KitKeys.manualMovementDown(c),local,lowHealth || controllerFinished || now-lastSupervisionHeartbeat>15000,complete,!keepGuard);
+            boolean manual=KitKeys.manualMovementDown(c);
+            var action=dev.twob2tkit.builder.BuildSupervisorSafety.decide(same,manual&&!manualMaterialPaused(c),local,lowHealth || controllerFinished || now-lastSupervisionHeartbeat>15000,complete,!keepGuard);
+            if(ParkingLeasePolicy.releaseAfterManualTakeover(same,idleExternalMaterialScope(c),
+                    manualMaterialPauseLease.equals(str(lease,"id")),
+                    controllerFinished||now-lastSupervisionHeartbeat>15000,lowHealth)){
+                // The user already took over this idle scope. Do not disconnect
+                // them when its controller subsequently finishes or expires.
+                supervisionLease=null;manualMaterialPauseLease="";manualMaterialPauseUntil=0;
+                releaseMaterialMiningLease();phase="stopped";detail="手动接管，保持在线防护";writeStatus(c);return;
+            }
             // An owned, motionless and safe worksite can remain online under PvE guard.
             // Do not apply this to low health, combat, liquid/fire, open screens or unsupported positions.
             BlockPos support=c.player.blockPosition().below();
@@ -915,12 +943,16 @@ public final class AutomationBridge {
             boolean safeBody=!c.player.isInWater()&&!c.player.isUnderWater()&&!c.player.isInLava()
                 &&!c.player.isOnFire()&&c.level.noCollision(c.player,c.player.getBoundingBox());
             boolean still=Math.hypot(motion.x,motion.z)<.03&&Math.abs(motion.y)<.12;
+            boolean userScreen=idleExternalMaterialScope(c)&&c.gui.screen()!=null
+                &&(c.player.containerMenu==c.player.inventoryMenu
+                    ||ownedMaterialMenu!=c.player.containerMenu.containerId);
             if(action==dev.twob2tkit.builder.BuildSupervisorSafety.Action.LOGOUT
                     &&ParkingLeasePolicy.stayOnline(same,str(lease,"remote_finish").equals("guard"),
                         KitKeys.manualMovementDown(c),lowHealth,guardArmed()&&pveOnly(),
-                        nearThreat||guardBusy,safeBody,supported,still,c.gui.screen()==null,
+                        nearThreat||guardBusy,safeBody,supported,still,c.gui.screen()==null||userScreen,
                         c.player.getFoodData().getFoodLevel())){
-                KitClient.stopWork("安全工位完成，保留在线防护");
+                // The user owns this screen. Release only the idle lease, without touching the menu.
+                if(!userScreen)KitClient.stopWork("安全工位完成，保留在线防护");
                 supervisionLease=null;releaseMaterialMiningLease();armPveGuard(c);
                 phase="stopped";detail="安全工位待命，防护持续";writeStatus(c);return;
             }
@@ -1097,6 +1129,12 @@ public final class AutomationBridge {
         if(!guardArmed() || !KitKeys.manualMovementDown(c))return false;
         if(preemptIdleForManual(c)||idleManualHolding(c)){
             KitKeys.restorePhysicalMovement(c);return true;
+        }
+        if(idleExternalMaterialScope(c)&&c.gui.screen()==null&&c.player.containerMenu==c.player.inventoryMenu){
+            manualMaterialPauseLease=str(supervisionLease,"id");
+            manualMaterialPauseUntil=System.currentTimeMillis()+1500;
+            KitKeys.restorePhysicalMovement(c);
+            return true;
         }
         KitClient.emergencyStop("手动移动接管");
         return true;
@@ -1850,7 +1888,16 @@ public final class AutomationBridge {
                 if(Files.isRegularFile(f) && Files.size(f)<=131072){
                     JsonObject r=JsonParser.parseString(Files.readString(f)).getAsJsonObject();String id=str(r,"id");
                     if(!id.isBlank() && !id.equals(lastId)){
-                        if(interfacePaused(c)&&!interfaceReadOrStop(str(r,"op"))){deferInterfaceRequest(c,r);}
+                        if(manualMaterialPaused(c)&&!interfaceReadOrStop(str(r,"op"))){
+                            lastId=id;
+                            var refusal=snapshot(c);
+                            refusal.addProperty("id",id);
+                            refusal.addProperty("phase","error");
+                            refusal.addProperty("detail","Manual movement paused the material task before dispatch");
+                            save(root(c).resolve("reply-"+safeId(id)+".json"),refusal);
+                            statusId=id;phase="error";detail="手动操作暂停，旧动作未执行";writeStatus(c);
+                        }
+                        else if(interfacePaused(c)&&!interfaceReadOrStop(str(r,"op"))){deferInterfaceRequest(c,r);}
                         else{
                             resumeInterfaceRequest(c,r);
                             lastId=id;
@@ -2331,7 +2378,23 @@ public final class AutomationBridge {
                 c.player.getX(),c.player.getY(),c.player.getZ(),
                 point.get(0).getAsDouble(),point.get(1).getAsDouble(),point.get(2).getAsDouble());
         }
-        if(guardBusy && !Set.of("guard","use_item","air_return_set").contains(command) && !defensiveRise)throw new IllegalStateException("Construction guard is defending or eating; wait before changing items or starting work");
+        boolean recoveryFoodSelection=command.equals("select_item")&&r.has("recovery_food");
+        if(recoveryFoodSelection){
+            var flag=r.get("recovery_food");
+            var slot=r.get("slot");
+            if(!flag.isJsonPrimitive()||!flag.getAsJsonPrimitive().isBoolean()||!flag.getAsBoolean()
+                    ||slot==null||!slot.isJsonPrimitive()||!slot.getAsJsonPrimitive().isNumber()
+                    ||slot.getAsDouble()!=slot.getAsInt()||slot.getAsInt()<0||slot.getAsInt()>=36
+                    ||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty()
+                    ||!AutomationFoodPolicy.maySelectRecoveryFood(str(r,"item"),
+                        currentMaterialRequest(c,r)&&guardArmed()&&pveOnly(),loadedHostileNearby(c),
+                        c.gui.screen()!=null,KitKeys.manualMovementDown(c),
+                        c.player.onGround()&&!c.player.isInWater()&&!c.player.isInLava()
+                            &&!c.player.isOnFire()&&c.player.hurtTime==0&&!c.player.isUsingItem(),
+                        c.player.getHealth(),c.player.getFoodData().getFoodLevel()))
+                throw new IllegalStateException("Recovery food selection requires a safe owned stance and ordinary food");
+        }
+        if(guardBusy && !Set.of("guard","use_item","air_return_set").contains(command) && !defensiveRise&&!recoveryFoodSelection)throw new IllegalStateException("Construction guard is defending or eating; wait before changing items or starting work");
         statusId=lastId;
         if(command.equals("gravel_start")||command.equals("gravel_config")){
             gravelScope(c,r);
@@ -4667,7 +4730,9 @@ public final class AutomationBridge {
         j.addProperty("fisher_deposit_allowed",KitClient.fisher()!=null&&KitClient.fisher().depositAllowed());
         if(supervisionLease!=null)j.add("supervision_lease",supervisionLease.deepCopy());if(lastSafetyEvent!=null)j.add("supervision_safety",lastSafetyEvent.deepCopy());
         j.add("safety_hold",dev.twob2tkit.combat.EmergencyExit.snapshot(c));
+        j.addProperty("manual_material_paused",manualMaterialPaused(c));
         j.addProperty("interface_pause_protocol",1);j.addProperty("interface_paused",interfacePaused(c));j.addProperty("inventory_interface_pause_protocol",1);j.addProperty("inventory_interface_paused",inventoryInterfacePause.held()&&!nativeAirReturnActive);
+        j.addProperty("recovery_food_selection_protocol",1);
         j.addProperty("gui_width",c.getWindow().getGuiScaledWidth());j.addProperty("gui_height",c.getWindow().getGuiScaledHeight());j.addProperty("game_paused",c.isPaused());if(c.getSingleplayerServer()!=null)j.addProperty("server_game_time",c.getSingleplayerServer().overworld().getGameTime());j.addProperty("job_hud_protocol",1);j.addProperty("quarry_protocol",1);j.addProperty("raw_iron_block_quarry_protocol",1);j.addProperty("tree_survey_protocol",1);j.addProperty("snow_biome_survey_protocol",SnowBiomeSurvey.PROTOCOL);j.addProperty("snow_seed_locator_protocol",SnowSeedExpedition.PROTOCOL);j.addProperty("snow_seed_locator_available",KitClient.seedScout()!=null&&KitClient.seedScout().hasStoredWorldSeed());j.addProperty("material_protocol",2);j.addProperty("air_return_protocol",1);j.addProperty("horse_nudge_protocol",1);j.addProperty("inventory_cursor_precondition_protocol",1);j.add("inventory_isolation",CraftingCompatibility.snapshot());j.addProperty("material_mining_isolation_protocol",1);j.addProperty("material_mining_cleanup_pending",materialMiningCleanupPending);j.add("material_mining_isolation",MaterialMiningLease.snapshot(materialMiningLease,!materialMiningScope(c).isEmpty()&&materialMiningScope(c).equals(materialMiningOwner)));j.addProperty("supervision_protocol",1);j.addProperty("supply_protocol",1);j.addProperty("freefall_protocol",1);j.addProperty("kit_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("twob2tkit").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));j.addProperty("bridge_version",4);j.addProperty("runtime_reload_protocol",1);j.addProperty("runtime_host_api",3);j.addProperty("runtime_generation",KitClient.borer().runtimeGeneration());j.addProperty("runtime_version",KitClient.borer().runtimeVersion());j.addProperty("navigation_runtime_version",KitClient.borer().buildNavigation().version());j.addProperty("world_session",session(c));j.addProperty("control_revision",controlRevision);j.addProperty("manual_movement",KitKeys.manualMovementDown(c));j.addProperty("window_active",c.isWindowActive());j.addProperty("screen",c.gui.screen()==null?"":c.gui.screen().getClass().getSimpleName());j.addProperty("connected",c.player!=null && c.level!=null);
         j.addProperty("fixed_tree_chop_protocol",1);
         j.addProperty("dry_roof_mining_protocol",1);

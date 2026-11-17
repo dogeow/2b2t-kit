@@ -17,4 +17,11 @@ class AutomationFoodPolicyTest {
         assertFalse(AutomationFoodPolicy.allow(false,true,false,false,false,13.9f,14));
         assertFalse(AutomationFoodPolicy.allow(false,true,false,false,false,19.5f,20));
     }
+
+    @Test void busyGuardMayStageOrdinaryFoodOnlyOnSafeOwnedFooting() {
+        assertTrue(AutomationFoodPolicy.maySelectRecoveryFood("minecraft:cooked_salmon",true,false,false,false,true,14.7f,15));
+        assertFalse(AutomationFoodPolicy.maySelectRecoveryFood("minecraft:golden_apple",true,false,false,false,true,14.7f,15));
+        assertFalse(AutomationFoodPolicy.maySelectRecoveryFood("minecraft:cooked_salmon",true,true,false,false,true,14.7f,15));
+        assertFalse(AutomationFoodPolicy.maySelectRecoveryFood("minecraft:cooked_salmon",true,false,false,false,false,14.7f,15));
+    }
 }

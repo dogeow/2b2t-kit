@@ -31,6 +31,13 @@ final class ParkingLeasePolicy {
             &&solidSupport&&still&&screenClear&&food>=18;
     }
 
+    /** A user who took over an idle material lease keeps the live session. */
+    static boolean releaseAfterManualTakeover(boolean same, boolean idleOwnedScope,
+                                               boolean manualSeenInLease, boolean ending,
+                                               boolean lowHealth) {
+        return same && idleOwnedScope && manualSeenInLease && ending && !lowHealth;
+    }
+
     /** A combat/quiet-window wait is still a closing material lease, never verified parking. */
     static QuietWait quietWait(boolean logoutRequested,boolean lowHealth,boolean quiet,
                                boolean alreadyWaiting) {

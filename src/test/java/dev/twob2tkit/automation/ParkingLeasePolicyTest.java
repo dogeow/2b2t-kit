@@ -63,6 +63,20 @@ final class ParkingLeasePolicyTest {
         }
     }
 
+    @Test void anIdleManualPauseScopesInputAdmissionAndTheWatchdog() throws Exception {
+        var node=new ClassNode();
+        try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/AutomationBridge.class")){
+            assertNotNull(in);new ClassReader(in).accept(node,0);
+        }
+        for(String methodName:new String[]{"tick","tickSupervision","snapshot"}){
+            var method=node.methods.stream().filter(m->m.name.equals(methodName)).findFirst().orElseThrow();
+            var calls=new HashSet<String>();
+            for(var instruction:method.instructions)
+                if(instruction instanceof MethodInsnNode call)calls.add(call.owner+"."+call.name);
+            assertTrue(calls.contains("dev/twob2tkit/automation/AutomationBridge.manualMaterialPaused"),methodName);
+        }
+    }
+
 	@Test void verifiedCurrentHoverReplacesAStaleResidualDriftTarget(){
 		assertFalse(GuardParkingPolicy.ready(109.0,95,200.5,100.5,95,200.5,
 			65,20,true,true));
@@ -85,6 +99,29 @@ final class ParkingLeasePolicyTest {
 		assertFalse(ParkingLeasePolicy.guardRebase("materials",true,true,false,true,true,true));
 		assertFalse(ParkingLeasePolicy.guardRebase("parking",true,true,false,true,true,false));
 	}
+    @Test void completedIdleManualTakeoverReleasesWithoutLogout(){
+        assertTrue(ParkingLeasePolicy.releaseAfterManualTakeover(true,true,true,true,false));
+        assertFalse(ParkingLeasePolicy.releaseAfterManualTakeover(false,true,true,true,false));
+        assertFalse(ParkingLeasePolicy.releaseAfterManualTakeover(true,false,true,true,false));
+        assertFalse(ParkingLeasePolicy.releaseAfterManualTakeover(true,true,false,true,false));
+        assertFalse(ParkingLeasePolicy.releaseAfterManualTakeover(true,true,true,false,false));
+        assertFalse(ParkingLeasePolicy.releaseAfterManualTakeover(true,true,true,true,true));
+    }
+    @Test void watchdogChecksManualTakeoverBeforeItsFinishLogout() throws Exception {
+        var node=new ClassNode();
+        try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/AutomationBridge.class")){
+            assertNotNull(in);new ClassReader(in).accept(node,0);
+        }
+        var tick=node.methods.stream().filter(m->m.name.equals("tickSupervision")).findFirst().orElseThrow();
+        int manual=-1,finishLogout=-1,i=0;
+        for(var instruction:tick.instructions){
+            if(instruction instanceof MethodInsnNode call){
+                if(call.owner.equals("dev/twob2tkit/automation/ParkingLeasePolicy")&&call.name.equals("releaseAfterManualTakeover"))manual=i;
+                if(manual>=0&&finishLogout<0&&call.owner.equals("dev/twob2tkit/KitClient")&&call.name.equals("safeLogout"))finishLogout=i;
+            }i++;
+        }
+        assertTrue(manual>=0&&finishLogout>manual);
+    }
     @Test void transientFlightLossInAnOtherwiseVerifiedParkCanBeRestored(){
         assertTrue(ParkingLeasePolicy.recoverFlight("parking",true,true,false,false,true,true));
         assertFalse(ParkingLeasePolicy.recoverFlight("parking",true,true,false,true,true,true));
