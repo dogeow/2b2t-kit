@@ -16,6 +16,15 @@ class UnsupportedReadTests(unittest.TestCase):
      sent.append(value);(q.out/value['id']).mkdir();write_json(q.out/value['id']/'result.json',dict(phase='done',world_session='w'))
    with patch('village_queue.write_json',side_effect=owner):q.observe_unsupported_readonly_native()
    self.assertEqual([x['op']for x in sent],['snapshot']);self.assertEqual(original,(q.out/'old/error.json').read_bytes())
+ def test_unsupported_projection_load_is_only_observed_not_replayed(self):
+  with tempfile.TemporaryDirectory()as d:
+   q,s,error=self.fixture(d);write_json(q.out/'command.json',dict(id='old',action='native',op='projection_load'));sent=[]
+   def owner(path,value):
+    write_json(path,value)
+    if path.name=='command.json':
+     sent.append(value);(q.out/value['id']).mkdir();write_json(q.out/value['id']/'result.json',dict(phase='done',world_session='w'))
+   with patch('village_queue.write_json',side_effect=owner):q.observe_unsupported_readonly_native()
+   self.assertEqual([x['op'] for x in sent],['snapshot'])
  def test_unknown_request_position_revision_or_mutating_op_rejected(self):
   for mode in ['unknown','request','position','revision','op']:
    with self.subTest(mode=mode),tempfile.TemporaryDirectory()as d:

@@ -33,38 +33,6 @@ class VillageQueue:
         from action_efficiency import ActionEfficiency
         self.efficiency=ActionEfficiency(self.out,prefix,self.world)
     def close(self):self.lock.close()
-    def observe_packed_pad_refusal(self):
-        """Observe an empty-pad preflight failure before any box was moved."""
-        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
-        if (command.get('action')!='take_packed_materials' or not (d/'error.json').exists()
-                or (d/'result.json').exists() or not (d/'intent.json').exists()
-                or (self.out/'control/unconfirmed-native-request.json').exists()
-                or (self.out/'control/packed-transfer-active.json').exists()):
-            raise RuntimeError('No unstarted packed-pad refusal')
-        error=json.loads((d/'error.json').read_text())
-        events=[json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
-        start=(d/'intent.json').stat().st_mtime
-        segment=[e for e in events if e.get('time',0)>=start-.1]
-        last=segment[-1] if segment else {}
-        allowed={'scan','snapshot','approach_block','interact','close_menu'}
-        profile=json.loads(Path(command['profile']).read_text())
-        if (error.get('error')!='Temporary shulker pad is not empty or its verified dry support changed'
-                or error.get('type')!='RuntimeError' or error.get('native_inflight') is not None
-                or error.get('unconfirmed_native_request') is not None or not segment
-                or any(e.get('op') not in allowed or e.get('phase') not in (None,'done')
-                   or e.get('world_session')!=self.world or e.get('inventory_delta')!={}
-                   or e.get('params',{}).get('task_session')!=self.lease.get('job_session')
-                   or e.get('op')=='interact' and e.get('params',{}).get('pos')!=profile.get('ender_chest')
-                   for e in segment)
-                or last.get('op')!='scan' or last.get('request_id')!=error.get('last_request')
-                or last.get('request_id')!=state.get('last_request') or last.get('revision_after')!=state.get('control_revision')
-                or last.get('position_after')!=state.get('pos') or state.get('screen')!=''
-                or state.get('health')!=20 or state.get('navigating') or state.get('pending_scan')):
-            raise RuntimeError('Packed-pad refusal does not prove the box was untouched')
-        self._storage_record_read=command['id']
-        try:return self.native('snapshot')
-        finally:self._storage_record_read=None
-
     def observe_sleeping_merchant_timeout(self):
         return self.observe_idle_merchant_timeout()
     def observe_paid_lock_reopen_timeout(self):
@@ -80,7 +48,8 @@ class VillageQueue:
         if purchase!=lock.get('purchase'):raise RuntimeError('Original purchase receipts differ')
         events=[json.loads(v)for v in(self.out/'control/events.jsonl').read_text().splitlines()]
         event=next((v for v in reversed(events)if v.get('request_id')==error.get('last_request')),None)
-        host=self.root.parents[2]/'mods'/('twob2tkit-'+state['kit_version']+'.jar')
+        from installed_kit_host import find
+        host=find(self.root.parents[2]/'mods',state['kit_version'])
         host_sha256=hashlib.sha256(host.read_bytes()).hexdigest()
         if not observable_paid_reopen(command,error,lock,opening,event,state,read(self.root,state),self.world,self.lease['job_session'],host_sha256):
             raise RuntimeError('Paid trade or nested opening remains unresolved; no replay')
@@ -118,8 +87,31 @@ class VillageQueue:
         state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
         if not(d/'error.json').exists()or(d/'result.json').exists()or(self.out/'control/unconfirmed-native-request.json').exists():raise RuntimeError('No known merchant range refusal')
         error=json.loads((d/'error.json').read_text());opening=json.loads((d/'actual-normal-merchant-open/open.json').read_text());events=[json.loads(line)for line in(self.out/'control/events.jsonl').read_text().splitlines()];event=next((e for e in reversed(events)if e.get('request_id')==error.get('last_request')),None);flags=read(self.root,state)
-        host=self.root.parents[2]/'mods'/('twob2tkit-'+state['kit_version']+'.jar')
+        from installed_kit_host import find
+        host=find(self.root.parents[2]/'mods',state['kit_version'])
         if not observable_reach(command,error,opening,event,state,flags,self.world,self.lease['job_session'],hashlib.sha256(host.read_bytes()).hexdigest()):raise RuntimeError('Merchant opening is not a proved pre-input range refusal')
+        self._sleeping_merchant_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._sleeping_merchant_read=None
+    def observe_merchant_hand_preflight_failure(self):
+        """Resolve only a proved pre-interaction hand-settlement failure."""
+        state=self.status(); command=json.loads((self.out/'command.json').read_text()); d=self.out/command['id']
+        error=json.loads((d/'error.json').read_text()); opening=json.loads((d/'actual-normal-merchant-open/open.json').read_text())
+        events=[json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        event=next((v for v in reversed(events) if v.get('request_id')==error.get('last_request')),None)
+        trace=error.get('traceback','')
+        if not (command.get('action')=='merchant_open' and error.get('error')=='Post-purchase hand or inventory changed; no merchant interaction sent'
+                and 'in _settle_purchase_hand' in trace and 'in settled' in trace
+                and error.get('native_inflight') is None and error.get('unconfirmed_native_request') is None
+                and not (self.out/'control/unconfirmed-native-request.json').exists()
+                and opening=={'uuid':command.get('actor',{}).get('uuid'),'world_session':self.world,'pending':True}
+                and event and event.get('op') in ('select_item','scan') and event.get('phase')=='done'
+                and event.get('request_id')==state.get('last_request')==error.get('last_request')
+                and event.get('world_session')==self.world and event.get('params',{}).get('task_session')==self.lease['job_session']
+                and event.get('revision_before')==event.get('revision_after')==state.get('control_revision')
+                and event.get('inventory_delta')=={} and not state.get('screen')
+                and not state.get('menu',{}).get('cursor',{}).get('count') and state.get('manual_movement') is False):
+            raise RuntimeError('Merchant preflight failure is not fully established; retain original action')
         self._sleeping_merchant_read=command['id']
         try:return self.native('snapshot')
         finally:self._sleeping_merchant_read=None
@@ -248,22 +240,63 @@ class VillageQueue:
         self._food_guard_read=command['id']
         try:return self.native('snapshot')
         finally:self._food_guard_read=None
-    def observe_unsupported_readonly_native(self):
-        """Observe an exact project pre-dispatch rejection, never retry its op."""
+    def observe_projection_model_selection_refusal(self):
+        """Observe an exact read-only selection refusal without retrying it."""
         state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
-        if (command.get('action')!='native' or command.get('op')!='scan_snow_biomes'
+        if (command.get('action')!='native' or command.get('op') not in ('projection_model','projection_load')
+                or (d/'error.json').exists() or not (d/'result.json').exists()
+                or (self.out/'control/unconfirmed-native-request.json').exists()):
+            raise RuntimeError('No exact projection model refusal')
+        reply=json.loads((d/'result.json').read_text())
+        events=[json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        last=events[-1] if events else {}
+        owner_matches=last.get('params',{}).get('task_session')==self.lease.get('job_session')
+        if command['op']=='projection_load' and 'task_session' not in last.get('params',{}):
+            kernel=self.out/'transport-kernel.json'
+            identity=json.loads(kernel.read_text()) if kernel.exists() else {}
+            owner_matches=(identity.get('world_session')==self.world
+                           and identity.get('task_session')==self.lease.get('job_session')
+                           and last.get('params')==command.get('params'))
+        expected_details={'projection_model':{'请只启用本次要建造的一份投影'},
+                          'projection_load':{'Unsupported projection-load field: task_session',
+                                             'Projection import needs an idle, healthy, current world/controller and unexpired explicit request'}}[command['op']]
+        if (reply.get('phase')!='error' or reply.get('detail') not in expected_details
+                or reply.get('world_session')!=self.world or reply.get('id')!=state.get('last_request')
+                or last.get('request_id')!=reply.get('id') or last.get('op')!=command['op']
+                or last.get('phase')!='error' or last.get('world_session')!=self.world
+                or not owner_matches
+                or last.get('revision_after')!=state.get('control_revision')
+                or last.get('position_after')!=state.get('pos') or last.get('inventory_delta')!={}):
+            raise RuntimeError('Projection refusal is not a settled read-only observation')
+        self._projection_model_refusal_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._projection_model_refusal_read=None
+
+    def observe_unsupported_readonly_native(self):
+        """Observe a pinned pre-dispatch rejection; dispatch only a snapshot."""
+        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
+        if (command.get('action')!='native' or command.get('op') not in ('scan_snow_biomes','projection_load')
                 or not(d/'error.json').exists() or (d/'result.json').exists()
                 or (self.out/'control/unconfirmed-native-request.json').exists()):
             raise RuntimeError('No exact unsupported read-only project rejection')
         error=json.loads((d/'error.json').read_text())
         events=[json.loads(line)for line in(self.out/'control/events.jsonl').read_text().splitlines()]
         last=events[-1]if events else{}
+        completed_model=False
+        if last.get('op')=='projection_model' and last.get('phase') is None:
+            for candidate in self.out.glob('*/result.json'):
+                try: prior=json.loads(candidate.read_text())
+                except (OSError,ValueError):continue
+                if (prior.get('id')==last.get('request_id') and prior.get('world_session')==self.world
+                    and prior.get('control_revision')==state.get('control_revision') and prior.get('pos')==state.get('pos')
+                    and isinstance(prior.get('projection_model'),dict)):
+                    completed_model=True;break
         if (error.get('error')!='Native operation is outside this village project'
                 or error.get('type')!='ValueError'
                 or 'native_inflight'not in error or error['native_inflight']is not None
                 or 'unconfirmed_native_request'not in error or error['unconfirmed_native_request']is not None
                 or error.get('last_request')!=state.get('last_request')
-                or last.get('request_id')!=state.get('last_request')or last.get('phase')!='done'
+                or last.get('request_id')!=state.get('last_request')or (last.get('phase')!='done' and not completed_model)
                 or last.get('world_session')!=self.world
                 or last.get('params',{}).get('task_session')!=self.lease.get('job_session')
                 or last.get('revision_after')!=state.get('control_revision')
@@ -359,6 +392,95 @@ class VillageQueue:
         self._iron_quick_read=command['id']
         try:return self.native('snapshot')
         finally:self._iron_quick_read=None
+    def observe_packed_workspace_refusal(self):
+        """Settle a packed withdrawal rejected before the box was moved."""
+        state = self.status()
+        command = json.loads((self.out/'command.json').read_text())
+        directory = self.out/command['id']
+        error = json.loads((directory/'error.json').read_text())
+        profile = json.loads(Path(command['profile']).read_text())
+        events = [json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        start = (directory/'intent.json').stat().st_mtime
+        segment = [event for event in events if event.get('time', 0) >= start-.1]
+        if (command.get('action') != 'take_packed_materials'
+                or error.get('type') != 'PackedWorkspaceRequired'
+                or error.get('native_inflight') is not None or error.get('unconfirmed_native_request') is not None
+                or (self.out/'control/unconfirmed-native-request.json').exists()
+                or (directory/'result.json').exists() or not segment
+                or any(event.get('op') not in ('scan','snapshot','walk','select_item','approach_block','interact','close_menu')
+                       or event.get('phase') not in (None,'done') or event.get('inventory_delta') != {}
+                       or event.get('world_session') != self.world
+                       or event.get('params', {}).get('task_session') != self.lease['job_session']
+                       or event.get('op') == 'interact' and event.get('params', {}).get('pos') != profile['ender_chest']
+                       for event in segment)
+                or segment[-1].get('op') != 'close_menu' or segment[-1].get('request_id') != state.get('last_request')
+                or state.get('screen') or state.get('menu', {}).get('cursor', {}).get('count')):
+            raise RuntimeError('Packed workspace refusal is not a verified no-withdrawal result')
+        self._indoor_stand_read = command['id']
+        try:
+            return self.native('snapshot')
+        finally:
+            self._indoor_stand_read = None
+
+    def observe_packed_pad_refusal(self):
+        """Observe an empty-pad preflight failure before any box was moved."""
+        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
+        if (command.get('action')!='take_packed_materials' or not (d/'error.json').exists()
+                or (d/'result.json').exists() or not (d/'intent.json').exists()
+                or (self.out/'control/unconfirmed-native-request.json').exists()
+                or (self.out/'control/packed-transfer-active.json').exists()):
+            raise RuntimeError('No unstarted packed-pad refusal')
+        error=json.loads((d/'error.json').read_text())
+        events=[json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        start=(d/'intent.json').stat().st_mtime
+        segment=[e for e in events if e.get('time',0)>=start-.1]
+        last=segment[-1] if segment else {}
+        allowed={'scan','snapshot','approach_block','interact','close_menu'}
+        profile=json.loads(Path(command['profile']).read_text())
+        if (error.get('error')!='Temporary shulker pad is not empty or its verified dry support changed'
+                or error.get('type')!='RuntimeError' or error.get('native_inflight') is not None
+                or error.get('unconfirmed_native_request') is not None or not segment
+                or any(e.get('op') not in allowed or e.get('phase') not in (None,'done')
+                   or e.get('world_session')!=self.world or e.get('inventory_delta')!={}
+                   or e.get('params',{}).get('task_session')!=self.lease.get('job_session')
+                   or e.get('op')=='interact' and e.get('params',{}).get('pos')!=profile.get('ender_chest')
+                   for e in segment)
+                or last.get('op')!='scan' or last.get('request_id')!=error.get('last_request')
+                or last.get('request_id')!=state.get('last_request') or last.get('revision_after')!=state.get('control_revision')
+                or last.get('position_after')!=state.get('pos') or state.get('screen')!=''
+                or state.get('health')!=20 or state.get('navigating') or state.get('pending_scan')):
+            raise RuntimeError('Packed-pad refusal does not prove the box was untouched')
+        self._storage_record_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._storage_record_read=None
+
+    def observe_depot_landing_refusal(self):
+        """Observe an exact obstructed landing without retrying the exchange."""
+        from material_plan import inventory_counts
+        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
+        prefix,number=command['id'].rsplit('-',1);prior=self.out/(prefix+'-'+str(int(number)-1).zfill(len(number)))
+        if (command.get('action')!='exchange' or not (d/'error.json').exists() or (d/'result.json').exists()
+                or not (prior/'result.json').exists() or (self.out/'control/unconfirmed-native-request.json').exists()):
+            raise RuntimeError('No exact depot landing refusal')
+        error=json.loads((d/'error.json').read_text());baseline=json.loads((prior/'result.json').read_text());intent=json.loads((prior/'intent.json').read_text())
+        events=[json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        start=next((i for i,e in enumerate(events) if e.get('request_id')==baseline.get('id')),None)
+        segment=events[start+1:] if start is not None else [];last=segment[-1] if segment else {}
+        if (error.get('error')!='Chest landing column is obstructed' or error.get('type')!='OutdoorChestLandingBlocked'
+                or error.get('native_inflight') is not None or error.get('unconfirmed_native_request') is not None
+                or intent.get('action')!='native' or intent.get('op')!='walk' or baseline.get('phase')!='done'
+                or baseline.get('world_session')!=self.world or inventory_counts(baseline)!=inventory_counts(state)
+                or not segment or any(e.get('op')!='scan' or e.get('phase')!='done'
+                   or e.get('world_session')!=self.world or e.get('inventory_delta')!={}
+                   or e.get('params',{}).get('task_session')!=self.lease.get('job_session') for e in segment)
+                or last.get('request_id')!=error.get('last_request') or last.get('request_id')!=state.get('last_request')
+                or last.get('revision_after')!=state.get('control_revision') or last.get('position_after')!=state.get('pos')
+                or state.get('screen')!='' or state.get('health')!=20 or state.get('navigating') or state.get('pending_scan')):
+            raise RuntimeError('Depot refusal does not prove an unchanged preflight')
+        self._storage_record_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._storage_record_read=None
+
     def observe_storage_corridor_refusal(self):
         """Read an entry-path rejection only if no chest use/transfer was sent."""
         from material_plan import inventory_counts
@@ -510,6 +632,26 @@ class VillageQueue:
         finally:self._projection_stage_read=None
         proof=reconcile(stage,model,frame,self.status());record.update(pending=False,proof=proof,scan_id=frame['id']);write_json(path,record)
         return dict(proof=proof,scene=frame)
+    def observe_unaffordable_merchant_preflight(self):
+        """Observe a purchase rejected before its transaction journal or selection."""
+        from material_plan import inventory_counts
+        state=self.status(observing=True);command=json.loads((self.out/'command.json').read_text());d=self.out/command['id'];error=json.loads((d/'error.json').read_text())
+        menu=state.get('menu')or{};merchant=menu.get('merchant')or{};offers=merchant.get('offers')or[];index=command.get('index');slots=menu.get('slots')or[]
+        counts=inventory_counts(state)
+        if not (command.get('action')=='merchant_buy_one' and type(index) is int and 0<=index<len(offers)
+                and error.get('error')=='Actual payment or stock is unavailable; no trade sent'
+                and error.get('native_inflight') is None and error.get('unconfirmed_native_request') is None
+                and not(d/'result.json').exists() and not(d/'actual-one-trade/one-trade.json').exists()
+                and not(self.out/'control/unconfirmed-native-request.json').exists()
+                and error.get('last_request')==state.get('last_request')==merchant.get('opening_request_id')
+                and merchant.get('owned') is True and merchant.get('owner_task')==self.lease.get('job_session')
+                and menu.get('type')=='MerchantMenu' and len(slots)>=3 and not menu.get('cursor',{}).get('count')
+                and all(not v.get('count') for v in slots[:3])
+                and any(c.get('count',0)>counts[c.get('item')] for c in (offers[index]['cost_a'],offers[index]['cost_b']) if c.get('item')!='minecraft:air')):
+            raise RuntimeError('Purchase preflight cannot be proved unissued')
+        self._merchant_abort_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._merchant_abort_read=None
     def observe_refused_merchant_purchase(self):
         """Observe one exact native refusal before its output click was dispatched."""
         from merchant_preflight_abort import observable
@@ -750,6 +892,72 @@ class VillageQueue:
         self._shulker_storage_click=signature(state,params,self.world)
         try:return self.native('slot_click',**params)
         finally:self._shulker_storage_click=None
+    def exact_enchanted_book_click(self,expected,**params):
+        """Quick-move one exact book from a witnessed owned chest."""
+        from enchanted_book_storage_click import signature
+        return self._exact_storage_click(expected,signature,**params)
+    def exact_equipment_click(self,expected,**params):
+        """Quick-move one matching full-durability item from a witnessed owned chest."""
+        from enchanted_book_storage_click import equipment_signature
+        return self._exact_storage_click(expected,equipment_signature,**params)
+    def exact_equipment_deposit(self,expected,**params):
+        """Deposit one exact item into a witnessed shulker with verified contents."""
+        from enchanted_book_storage_click import equipment_deposit_signature
+        return self._exact_storage_click(expected,equipment_deposit_signature,**params)
+    def _exact_storage_click(self,expected,signature,**params):
+        deadline=time.monotonic()+3;observed=[];last_stamp=None
+        while True:
+            state=self.status(observing=True)
+            stamp=signature(state,params,self.world,self.lease['job_session'],expected)
+            if stamp is not None and self._owned_menu(state,observing=True):
+                if stamp!=last_stamp:observed=[];last_stamp=stamp
+                if not observed or state['time']>observed[-1]:observed.append(state['time'])
+                if len(observed)>=2:break
+            else:observed=[];last_stamp=None
+            if time.monotonic()>deadline:raise RuntimeError('Exact item or owned chest not stable; no click')
+            time.sleep(.05)
+        self._exact_storage_approval=(stamp,dict(expected),signature)
+        try:return self.native('slot_click',**params)
+        finally:self._exact_storage_approval=None
+    def exact_potion_click(self,potion,**params):
+        """Move one freshly identified potion from an owned chest."""
+        from potion_storage_click import signature
+        deadline=time.monotonic()+8;observed=[];last_stamp=None
+        while True:
+            state=self.status(observing=True)
+            try:evidence=json.loads((self.root/'loaded-villager-events.json').read_text())
+            except (OSError,ValueError):evidence={}
+            stamp=signature(state,evidence,params,self.world,self.lease['job_session'],potion)
+            if stamp is not None and self._owned_menu(state,observing=True):
+                if last_stamp is not None and stamp!=last_stamp:observed=[]
+                last_stamp=stamp
+                if not observed or state['time']>observed[-1]:observed.append(state['time'])
+                if len(observed)>=2:break
+            elif (state.get('world_session')!=self.world or state.get('menu',{}).get('id')!=params.get('menu_id')
+                  or state.get('manual_movement') or state.get('health')!=20):
+                observed=[];last_stamp=None
+            if time.monotonic()>deadline:raise RuntimeError('Exact potion or owned chest not stable; no click')
+            time.sleep(.05)
+        self._exact_potion_click=stamp;self._exact_potion_expected=potion
+        try:return self.native('slot_click',**params)
+        finally:self._exact_potion_click=None;self._exact_potion_expected=None
+    def brewing_slot_click(self,**params):
+        """Move one witnessed brewing item within the owned stand."""
+        from brewing_slot_click import signature
+        deadline=time.monotonic()+4;observed=[];previous=None
+        while True:
+            state=self.status(observing=True);stamp=signature(state,params,self.world,self.lease['job_session'])
+            if stamp is not None and self._owned_menu(state,observing=True):
+                if previous is not None and stamp!=previous:observed=[]
+                previous=stamp
+                if not observed or state['time']>observed[-1]:observed.append(state['time'])
+                if len(observed)>=2:break
+            else:observed=[];previous=None
+            if time.monotonic()>deadline:raise RuntimeError('Owned brewing item not stable; no click')
+            time.sleep(.05)
+        self._brewing_slot_click=stamp
+        try:return self.native('slot_click',**params)
+        finally:self._brewing_slot_click=None
     def observe_acknowledged_empty_shulker(self,menu_id):
         """Read an already-open native-owned empty box after a nonempty-content timeout."""
         state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
@@ -978,18 +1186,158 @@ class VillageQueue:
         self._exchange_shortage_read=command['id']
         try:return self.native('snapshot')
         finally:self._exchange_shortage_read=None
+    def observe_settled_inventory_craft_failure(self, failure_path, quarantined_missing=None):
+        """Quarantine one failed craft after observing its empty settled inventory."""
+        from craft_failure_observation import settled
+        command=json.loads((self.out/'command.json').read_text());directory=self.out/command['id']
+        error=json.loads((directory/'error.json').read_text());failure=json.loads(Path(failure_path).read_text())
+        if (directory/'result.json').exists() or (self.out/'control/unconfirmed-native-request.json').exists():
+            raise RuntimeError('Craft outcome remains unresolved')
+        events=[json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        event=next((v for v in reversed(events) if v.get('request_id')==error.get('last_request')), {})
+        first=self.status();deadline=time.monotonic()+3
+        while time.monotonic()<deadline:
+            second=self.status()
+            if settled(command,error,failure,event,first,second,self.world,self.lease['job_session'],quarantined_missing):
+                write_json(self.out/(command['id']+'-craft-observation.json'),{'original_command':command,'original_error':error,'failure_path':str(failure_path),'observed_times':[first['time'],second['time']],'quarantined_missing':quarantined_missing or {},'original_request_replayed':False})
+                self._craft_failure_read=command['id']
+                try:return self.native('snapshot')
+                finally:self._craft_failure_read=None
+            time.sleep(.1)
+        raise RuntimeError('Craft state is not independently settled; no replay')
+
+    def observe_missing_manufacture_profile(self):
+        """Observe a manufacture request rejected before any crafting input."""
+        state = self.status()
+        command = json.loads((self.out/'command.json').read_text())
+        directory = self.out/command['id']
+        error = json.loads((directory/'error.json').read_text())
+        events = [json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        last = events[-1]
+        if (command.get('action') != 'manufacture' or 'profile' in command
+                or error.get('type') != 'KeyError' or error.get('error') != "'profile'"
+                or error.get('native_inflight') is not None or error.get('unconfirmed_native_request') is not None
+                or (self.out/'control/unconfirmed-native-request.json').exists()
+                or (directory/'result.json').exists() or state.get('screen')
+                or state.get('menu', {}).get('cursor', {}).get('count')
+                or last.get('request_id') != state.get('last_request') or last.get('request_id') != error.get('last_request')
+                or last.get('phase') != 'done' or last.get('inventory_delta') != {}
+                or last.get('world_session') != self.world or last.get('revision_after') != state.get('control_revision')
+                or last.get('params', {}).get('task_session') != self.lease.get('job_session')):
+            raise RuntimeError('Manufacture profile refusal is not a verified pre-input failure')
+        self._indoor_stand_read = command['id']
+        try:
+            return self.native('snapshot')
+        finally:
+            self._indoor_stand_read = None
+
+    def observe_empty_packed_material_search(self):
+        """Observe a closed Ender menu after a search that withdrew no box."""
+        state = self.status()
+        command = json.loads((self.out/'command.json').read_text())
+        result = json.loads((self.out/command['id']/'result.json').read_text())
+        events = [json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        last = events[-1]
+        if (command.get('action') != 'take_packed_materials'
+                or result != {'complete': False, 'reason': 'No currently observed ender shulker contains requested stock'}
+                or last.get('request_id') != state.get('last_request') or last.get('op') != 'close_menu'
+                or last.get('phase') != 'done' or last.get('inventory_delta') != {}
+                or last.get('world_session') != self.world or last.get('revision_after') != state.get('control_revision')
+                or last.get('params', {}).get('task_session') != self.lease.get('job_session')
+                or state.get('screen') or state.get('menu', {}).get('cursor', {}).get('count')
+                or (self.out/'control/unconfirmed-native-request.json').exists()):
+            raise RuntimeError('Packed search did not settle as an empty read')
+        self._empty_packed_search_read = command['id']
+        try:
+            return self.native('snapshot')
+        finally:
+            self._empty_packed_search_read = None
+
+    def observe_anvil_safe_hand_preflight(self):
+        """Observe an anvil preview refused before any input or menu action."""
+        from anvil_enchant_preview import stack_key
+        state=self.status(observing=True);command=json.loads((self.out/'command.json').read_text());d=self.out/command['id'];error=json.loads((d/'error.json').read_text())
+        events=[json.loads(v) for v in (self.out/'control/events.jsonl').read_text().splitlines()];last=next((v for v in reversed(events) if v.get('request_id')==error.get('last_request')),None)
+        held={v['slot']:v for v in state.get('inventory',[]) if v.get('count') and v.get('slot',99)<36}
+        if not (command.get('action')=='anvil_enchant_preview' and error.get('error')=='Select an existing safe container hand before binding input slots'
+                and error.get('native_inflight') is None and error.get('unconfirmed_native_request') is None
+                and not (d/'result.json').exists() and not (d/'actual-zero-xp-anvil-preview').exists()
+                and not (self.out/'control/unconfirmed-native-request.json').exists()
+                and all(command.get(side+'_slot') in held and stack_key(held[command[side+'_slot']])==stack_key(command['expected_'+side]) for side in ('left','right'))
+                and last and last.get('request_id')==state.get('last_request') and last.get('world_session')==self.world
+                and last.get('phase')=='done' and last.get('params',{}).get('task_session')==self.lease.get('job_session')
+                and last.get('revision_after')==state.get('control_revision') and not state.get('screen') and not state.get('menu',{}).get('cursor',{}).get('count')):
+            raise RuntimeError('Anvil hand refusal is not proved pre-input')
+        self._indoor_stand_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._indoor_stand_read=None
+
+    def observe_anvil_full_inventory_preflight(self):
+        """Observe an anvil combine rejected before opening or moving inputs."""
+        from anvil_enchant_preview import stack_key
+        state=self.status(observing=True);command=json.loads((self.out/'command.json').read_text());d=self.out/command['id'];error=json.loads((d/'error.json').read_text())
+        events=[json.loads(v) for v in (self.out/'control/events.jsonl').read_text().splitlines()];last=next((v for v in reversed(events) if v.get('request_id')==error.get('last_request')),None)
+        held={v['slot']:v for v in state.get('inventory',[]) if v.get('count') and v.get('slot',99)<36}
+        if not (command.get('action')=='anvil_enchant_combine' and error.get('error')=='Reserve an empty carried output slot before combining'
+                and error.get('native_inflight') is None and error.get('unconfirmed_native_request') is None
+                and not(d/'result.json').exists() and not(d/'actual-one-planned-anvil-output').exists()
+                and not(self.out/'control/unconfirmed-native-request.json').exists() and len(held)==36
+                and all(command.get(side+'_slot') in held and stack_key(held[command[side+'_slot']])==stack_key(command['expected_'+side]) for side in ('left','right'))
+                and last and last.get('request_id')==state.get('last_request') and last.get('world_session')==self.world
+                and last.get('phase')=='done' and last.get('params',{}).get('task_session')==self.lease.get('job_session')
+                and last.get('revision_after')==state.get('control_revision') and not state.get('screen') and not state.get('menu',{}).get('cursor',{}).get('count')):
+            raise RuntimeError('Anvil capacity refusal is not proved pre-input')
+        self._indoor_stand_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._indoor_stand_read=None
+    def observe_anvil_combine_slot_refusal(self):
+        """Observe a combine rejected before opening after a preview relocated inputs."""
+        from anvil_enchant_preview import stack_key
+        state = self.status()
+        command = json.loads((self.out/'command.json').read_text())
+        directory = self.out/command['id']
+        error = json.loads((directory/'error.json').read_text())
+        events = [json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        event = events[-1]
+        held = {row['slot']: row for row in state['inventory'] if row.get('count') and row['slot'] < 36}
+        inputs = [(command[f'{side}_slot'], stack_key(command[f'expected_{side}'])) for side in ('left', 'right')]
+        relocated = (all(sum(stack_key(row) == key for row in held.values()) == 1 for _, key in inputs)
+                     and any(slot not in held or stack_key(held[slot]) != key for slot, key in inputs))
+        if (command.get('action') != 'anvil_enchant_combine' or not relocated
+                or error.get('error') != 'Exact carried inputs, adequate levels and a clean owned stance required'
+                or (directory/'actual-one-planned-anvil-output').exists() or (directory/'result.json').exists()
+                or error.get('native_inflight') is not None or error.get('unconfirmed_native_request') is not None
+                or (self.out/'control/unconfirmed-native-request.json').exists()
+                or state.get('screen') or state.get('menu', {}).get('cursor', {}).get('count')
+                or event.get('op') != 'close_menu' or event.get('phase') != 'done'
+                or event.get('request_id') != error.get('last_request') or event.get('request_id') != state.get('last_request')
+                or event.get('world_session') != self.world or event.get('revision_after') != state.get('control_revision')
+                or event.get('params', {}).get('task_session') != self.lease.get('job_session')):
+            raise RuntimeError('Anvil combine refusal lacks exact no-input evidence')
+        self._indoor_stand_read = command['id']
+        try:
+            return self.native('snapshot')
+        finally:
+            self._indoor_stand_read = None
+
     def observe_indoor_stand_refusal(self):
         """Observe a documented chest preflight that sent no interaction."""
         state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
         error=json.loads((d/'error.json').read_text());proof=json.loads((self.out/'control/indoor-stand-refusal.json').read_text());old=proof.get('state',{})
         events=[json.loads(line)for line in(self.out/'control/events.jsonl').read_text().splitlines()];event=next((e for e in reversed(events)if e.get('request_id')==error.get('last_request')),None)
+        closed_menu = (event and event.get('op') == 'close_menu'
+                       and event.get('detail') == 'menu closed'
+                       and event.get('inventory_delta') == {}
+                       and event.get('position_before') == event.get('position_after') == old.get('pos') == state.get('pos')
+                       and not old.get('screen') and not state.get('screen')
+                       and not state.get('menu', {}).get('cursor', {}).get('count'))
         if(command.get('action')!='open_chest_from_pose'or error.get('error')!='Indoor chest registered grounded pose or controller changed; no interaction'
                 or proof.get('interaction_sent')is not False or proof.get('pose')!=command.get('pose')or proof.get('pos')!=command.get('pos')
                 or old.get('world_session')!=self.world or old.get('control_revision')!=state.get('control_revision')
                 or old.get('supervision_lease')!=state.get('supervision_lease')
                 or error.get('native_inflight')is not None or error.get('unconfirmed_native_request')is not None
                 or(self.out/'control/unconfirmed-native-request.json').exists()or(d/'result.json').exists()
-                or not event or event.get('op')not in('scan','snapshot','walk','navigate')or event.get('phase')not in(None,'done')
+                or not event or (event.get('op')not in('scan','snapshot','walk','navigate') and not closed_menu)or event.get('phase')not in(None,'done')
                 or event.get('world_session')!=self.world or error.get('last_request')!=state.get('last_request')
                 or event.get('revision_after')!=state.get('control_revision')
                 or event.get('params',{}).get('task_session')!=self.lease.get('job_session')
@@ -1009,6 +1357,25 @@ class VillageQueue:
         if not observable(command,error,baseline,events[-1]if events else None,state,self.world,self.lease['job_session']):
             raise RuntimeError('Brewer pose refusal is not an unchanged no-input terminal')
         write_json(self.out/(command['id']+'-pre-input-pose-observation.json'),{'original_command':command,'original_error':error,'brewer_opened':False,'original_request_replayed':False})
+        self._storage_record_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._storage_record_read=None
+    def observe_missing_indoor_container(self):
+        """Observe one proved empty one-cell pre-interaction container scan."""
+        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
+        error=json.loads((d/'error.json').read_text());reply=json.loads((self.root/('reply-'+str(error.get('last_request'))+'.json')).read_text())
+        events=[json.loads(v) for v in (self.out/'control/events.jsonl').read_text().splitlines()];event=next((v for v in reversed(events) if v.get('request_id')==error.get('last_request')),None);pos=command.get('pos')
+        if not (command.get('action')=='open_chest_from_pose' and error.get('error')=='Indoor chest scan is incomplete; no interaction'
+                and error.get('native_inflight') is None and error.get('unconfirmed_native_request') is None
+                and not(self.out/'control/unconfirmed-native-request.json').exists() and not(d/'result.json').exists()
+                and reply.get('phase')=='done' and reply.get('id')==state.get('last_request')==error.get('last_request')
+                and reply.get('world_session')==self.world and reply.get('scan_cells_read')==reply.get('scan_total_cells')==1 and reply.get('blocks')==[]
+                and event and event.get('op')=='scan' and event.get('phase')=='done' and event.get('world_session')==self.world
+                and event.get('params',{}).get('min')==event.get('params',{}).get('max')==pos
+                and event.get('params',{}).get('task_session')==self.lease.get('job_session')
+                and event.get('inventory_delta')=={} and event.get('revision_before')==event.get('revision_after')==state.get('control_revision')
+                and event.get('position_before')==event.get('position_after')==state.get('pos') and not state.get('screen')):
+            raise RuntimeError('Container pre-input absence not established')
         self._storage_record_read=command['id']
         try:return self.native('snapshot')
         finally:self._storage_record_read=None
@@ -1323,15 +1690,36 @@ class VillageQueue:
                                  and state.get('health')==20 and state.get('on_ground')is True and state.get('flight')is False)
         ordinary_stop=(reply.get('phase')=='waiting'and reply.get('detail')in(
                        'time limit reached; inspect progress before resuming','unsafe drop ahead; choose another walking waypoint'))
+        stable_flight = (state.get('flight') is True and reply.get('pos') == state.get('pos')
+                         and isinstance(state.get('velocity'), list) and len(state['velocity']) == 3
+                         and abs(state['velocity'][0]) < .01 and abs(state['velocity'][2]) < .01
+                         and abs(state['velocity'][1]) < .1)
+        refused_step=(reply.get('phase')=='error' and reply.get('detail')=='Ordinary walking requires a supported step within 1.1 blocks; Flight was not disabled'
+                      and state.get('health')==20 and (state.get('on_ground') is True and state.get('flight') is False or stable_flight)
+                      and event and event.get('revision_before')==event.get('revision_after'))
+        refused_coast=False
+        if refused_step and reply.get('pos')!=state.get('pos'):
+            import math
+            if (isinstance(reply.get('pos'),list) and isinstance(state.get('pos'),list)
+                    and len(reply['pos'])==len(state['pos'])==3 and math.dist(reply['pos'],state['pos'])<=.1):
+                deadline=time.monotonic()+1.5
+                while time.monotonic()<deadline:
+                    fresh=self.status()
+                    if (fresh.get('time')!=state.get('time') and fresh.get('pos')==state.get('pos')
+                            and fresh.get('on_ground') is True and fresh.get('flight') is False
+                            and fresh.get('health')==20 and fresh.get('control_revision')==state.get('control_revision')
+                            and fresh.get('movement_keys')==state.get('movement_keys')):
+                        state=fresh;refused_coast=True;break
+                    time.sleep(.05)
         if(command.get('action')!='native'or command.get('op')!='walk'
-                or not(ordinary_stop or timed_out_before_waiting)
+                or not(ordinary_stop or timed_out_before_waiting or refused_step)
                 or reply.get('world_session')!=self.world or reply.get('id')!=state.get('last_request')
                 or state.get('navigating')or state.get('native_material_busy')or state.get('pending_scan')
                 or not isinstance(state.get('movement_keys'),dict)or any(state['movement_keys'].values())
                 or not event or event.get('op')!='walk'or event.get('phase')!=reply.get('phase')
                 or event.get('detail')!=reply['detail']or event.get('world_session')!=self.world
                 or event.get('inventory_delta')!={}or event.get('health_before')!=20 or event.get('health_after')!=20
-                or event.get('position_after')!=reply.get('pos')or(reply.get('pos')!=state.get('pos')and not settled_coast)
+                or event.get('position_after')!=reply.get('pos')or(reply.get('pos')!=state.get('pos')and not(settled_coast or refused_coast))
                 or type(event.get('revision_after'))is not int or event['revision_after']!=state.get('control_revision')
                 or(state.get('supervision_lease')or{}).get('revision')!=event['revision_after']
                 or event.get('params',{}).get('task_session')!=self.lease.get('job_session')
@@ -1406,6 +1794,47 @@ class VillageQueue:
     def observe_refused_air_path(self):
         """Observe one exact zero-movement navigation refusal; never retry it."""
         return self._observe_refused_input('navigate','Air-only navigation requires the current material lease and a loaded clear dry path','_refused_air_read')
+    def observe_roof_pickup_air_refusal(self,roof):
+        """Observe one unmoved air refusal coincident with the confirmed roof drop pickup."""
+        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id'];reply=json.loads((d/'result.json').read_text())
+        events=[json.loads(v) for v in (self.out/'control/events.jsonl').read_text().splitlines()];event=next((v for v in reversed(events) if v.get('request_id')==reply.get('id')),None)
+        previous=events[events.index(event)-1] if event and events.index(event)>0 else None
+        if not (not(d/'error.json').exists() and not(self.out/'control/unconfirmed-native-request.json').exists()
+                and command.get('action')=='native' and command.get('op')=='navigate' and command.get('params',{}).get('air_only') is True
+                and reply.get('phase')=='error' and reply.get('detail')=='Air-only navigation requires the current material lease and a loaded clear dry path'
+                and reply.get('id')==state.get('last_request') and reply.get('world_session')==self.world
+                and event and event.get('op')=='navigate' and event.get('phase')=='error' and event.get('world_session')==self.world
+                and event.get('position_before')==event.get('position_after')==state.get('pos')==reply.get('pos')
+                and event.get('inventory_delta')=={'minecraft:dark_oak_planks':1}
+                and event.get('revision_before')==event.get('revision_after')==state.get('control_revision')
+                and event.get('params',{}).get('task_session')==self.lease.get('job_session')
+                and previous and previous.get('op')=='mine_block' and previous.get('phase')=='done'
+                and previous.get('params',{}).get('pos')==roof and previous.get('params',{}).get('expected_state')=='Block{minecraft:dark_oak_planks}'
+                and previous.get('revision_after')==event.get('revision_before') and previous.get('world_session')==self.world
+                and not state.get('navigating') and not state.get('native_material_busy')):
+            raise RuntimeError('Roof pickup and air refusal are not fully established')
+        self._refused_air_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._refused_air_read=None
+    def observe_refused_walk_range(self):
+        """Observe the host's unmoved distance rejection without retrying it."""
+        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
+        if (d/'error.json').exists() or (self.out/'control/unconfirmed-native-request.json').exists():raise RuntimeError('Walk outcome unresolved')
+        reply=json.loads((d/'result.json').read_text())
+        events=[json.loads(v) for v in (self.out/'control/events.jsonl').read_text().splitlines()]
+        event=next((v for v in reversed(events) if v.get('request_id')==reply.get('id')),None)
+        if not (command.get('action')=='native' and command.get('op')=='walk' and reply.get('phase')=='error'
+                and reply.get('detail')=='Walking waypoint must be within 32 blocks' and reply.get('world_session')==self.world
+                and reply.get('id')==state.get('last_request') and event and event.get('world_session')==self.world
+                and event.get('op')=='walk' and event.get('phase')=='error' and event.get('detail')==reply['detail']
+                and event.get('position_before')==event.get('position_after')==state.get('pos')==reply.get('pos')
+                and event.get('inventory_delta')=={} and event.get('params',{}).get('task_session')==self.lease.get('job_session')
+                and type(event.get('revision_before')) is int and event.get('revision_after')==event['revision_before']+2==state.get('control_revision')
+                and not state.get('navigating') and not state.get('native_material_busy') and not state.get('pending_scan')):
+            raise RuntimeError('Walk range refusal is not a stationary terminal')
+        self._refused_air_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._refused_air_read=None
     def observe_refused_worksite_navigation(self):
         """Read the host's stopped, unmoved site rejection; never widen its bounds.
 
@@ -1420,22 +1849,30 @@ class VillageQueue:
         reply=json.loads((directory/'result.json').read_text())
         events=[json.loads(line)for line in(self.out/'control/events.jsonl').read_text().splitlines()]
         event=events[-1]if events else{}
+        walk_refusal = False
+        if command.get('op') == 'walk' and event:
+            import math
+            before, after = event.get('position_before'), event.get('position_after')
+            walk_refusal = (isinstance(before, list) and isinstance(after, list)
+                            and len(before) == len(after) == 3 and math.dist(before, after) <= .5
+                            and event.get('revision_before') == event.get('revision_after')
+                            and state.get('on_ground') is True and state.get('flight') is False)
         if(state.get('health')!=20 or state.get('manual_movement')is not False
                 or state.get('phase')!='error' or state.get('screen')
                 or state.get('navigating')or state.get('native_material_busy')or state.get('pending_scan')
-                or command.get('action')!='native'or command.get('op')!='navigate'
-                or command.get('params',{}).get('air_only')is not True
+                or command.get('action')!='native'or command.get('op') not in ('navigate','walk')
+                or command.get('op') == 'navigate' and command.get('params',{}).get('air_only')is not True
                 or reply.get('phase')!='error'or reply.get('detail')!='Target outside worksite'
                 or reply.get('world_session')!=self.world or reply.get('id')!=state.get('last_request')
                 or event.get('request_id')!=reply.get('id')or event.get('world_session')!=self.world
-                or event.get('op')!='navigate'or event.get('phase')!='error'
+                or event.get('op')!=command.get('op')or event.get('phase')!='error'
                 or event.get('detail')!=reply['detail']or event.get('inventory_delta')!={}
                 or event.get('params',{}).get('task_session')!=self.lease.get('job_session')
                 or any(event.get('params',{}).get(k)!=v for k,v in command['params'].items())
-                or state.get('pos')!=reply.get('pos')or state.get('pos')!=event.get('position_before')
+                or state.get('pos')!=reply.get('pos')or (state.get('pos')!=event.get('position_before') and not walk_refusal)
                 or state.get('pos')!=event.get('position_after')
                 or type(event.get('revision_before'))is not int
-                or event.get('revision_after')!=event['revision_before']+2
+                or (event.get('revision_after')!=event['revision_before']+2 and not walk_refusal)
                 or state.get('control_revision')!=event.get('revision_after')
                 or reply.get('control_revision')!=state.get('control_revision')
                 or not isinstance(state.get('movement_keys'),dict)or any(state['movement_keys'].values())):
@@ -1603,6 +2040,17 @@ class VillageQueue:
         self._sleeping_bridge_read=command['id']
         try:return self.native('snapshot')
         finally:self._sleeping_bridge_read=None
+    def observe_missing_item_selection(self):
+        """Read back a terminal selection refused before changing the hotbar."""
+        command = json.loads((self.out / 'command.json').read_text())
+        params = command.get('params', {})
+        item = params.get('item')
+        if not isinstance(item, str) or not item.startswith('minecraft:'):
+            raise ValueError('Exact missing item ID required')
+        detail = (f'Missing item: {item}' if 'slot' not in params
+                  else 'Selected material slot no longer holds the expected item')
+        return self._observe_refused_input('select_item', detail, '_missing_item_selection_read')
+
     def observe_refused_held_item(self):
         """Read a hand mismatch rejected before rotation, placement or use."""
         return self._observe_refused_input('interact','Held item changed','_refused_face_read')
@@ -1715,6 +2163,25 @@ class VillageQueue:
         record.update(pending=False,classification='server_air_update_and_conserved_inventory_current_predictions_settled',observation=frame,
                       cleared_mask_request=cleared.get('id'),original_request_not_replayed=True)
         write_json(path,record);return record
+    def observe_uncertain_single_printer(self):
+        """Read the original target only; retain the unresolved placement."""
+        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
+        if (command.get('action')!='native' or command.get('op')!='professional_print'
+            or (d/'error.json').exists() or not(d/'result.json').exists() or (self.out/'control/unconfirmed-native-request.json').exists()):
+            raise RuntimeError('No known bounded printer result to observe')
+        reply=json.loads((d/'result.json').read_text());targets=reply.get('bounded_targets')or[]
+        printer=state.get('professional_printer')or{};mask=state.get('projection_batch')or{}
+        if (reply.get('phase')!='error' or reply.get('outcome_pending') is not True or reply.get('server_confirmed') is not False
+            or len(targets)!=1 or not isinstance(targets[0],list) or len(targets[0])!=3 or any(type(v)is not int for v in targets[0])
+            or reply.get('id')!=state.get('last_request') or reply.get('world_session')!=self.world or state.get('world_session')!=self.world
+            or reply.get('control_revision')!=state.get('control_revision') or state.get('health')!=20 or state.get('manual_movement') is not False
+            or state.get('screen') or state.get('navigating') or state.get('native_material_busy') or state.get('pending_scan')
+            or printer.get('enabled') is not False or printer.get('waiting_for_server') is not False
+            or mask.get('active') is not True or mask.get('count')!=1 or mask.get('placement_key')!=reply.get('placement_key')):
+            raise RuntimeError('Original printer is not settled for a read-only target scan')
+        self._rejected_print_read=command['id']
+        try:return self.native('scan',min=targets[0],max=targets[0],details=True,include_predictions=True)
+        finally:self._rejected_print_read=None
     def _refused_air_after_settled_walk(self,state,command,event,reply,events):
         """Recognise bounded walk inertia before the native air-path preflight.
 
@@ -1798,6 +2265,30 @@ class VillageQueue:
         setattr(self,marker,command['id'])
         try:return self.native('snapshot')
         finally:setattr(self,marker,None)
+    def observe_full_inventory_pickup_refusal(self):
+        """Observe a pickup rejected for capacity without retrying it."""
+        state=self.status();command=json.loads((self.out/'command.json').read_text());d=self.out/command['id']
+        if (command.get('action')!='native' or command.get('op')!='collect_item'
+                or (d/'error.json').exists() or not (d/'result.json').exists()
+                or (self.out/'control/unconfirmed-native-request.json').exists()):
+            raise RuntimeError('No exact full-inventory pickup refusal')
+        reply=json.loads((d/'result.json').read_text())
+        events=[json.loads(line) for line in (self.out/'control/events.jsonl').read_text().splitlines()]
+        last=events[-1] if events else {}
+        if (reply.get('phase')!='error' or reply.get('detail')!='Insufficient room for the observed drop'
+                or reply.get('world_session')!=self.world or reply.get('id')!=state.get('last_request')
+                or last.get('request_id')!=reply.get('id') or last.get('op')!='collect_item'
+                or last.get('phase')!='error' or last.get('world_session')!=self.world
+                or last.get('params',{}).get('task_session')!=self.lease.get('job_session')
+                or last.get('revision_before')!=last.get('revision_after')
+                or last.get('revision_after')!=state.get('control_revision')
+                or last.get('position_before')!=last.get('position_after')
+                or last.get('position_after')!=state.get('pos') or last.get('inventory_delta')!={}):
+            raise RuntimeError('Pickup refusal is not an unchanged owned preflight')
+        self._full_pickup_refusal_read=command['id']
+        try:return self.native('snapshot')
+        finally:self._full_pickup_refusal_read=None
+
     def observe_unconfirmed_pickup_terminal(self):
         """Observe a known settled collector without crediting or replaying pickup."""
         import math
@@ -2077,12 +2568,24 @@ class VillageQueue:
             raise RuntimeError('Completed owned workbench must close before another village action')
         if self._owned_menu(state)and not state.get('menu',{}).get('material_owned'):
             kind=state['menu']['type']
+            from brewing_slot_click import signature as brew_signature
+            brew_click=(action=='native' and params.get('op')=='slot_click' and getattr(self,'_brewing_slot_click',None) is not None
+                        and self._brewing_slot_click==brew_signature(state,params.get('params')or{},self.world,self.lease['job_session']))
             from shulker_storage_click import signature
             box_click=(action=='native'and params.get('op')=='slot_click'
                        and getattr(self,'_shulker_storage_click',None)==signature(state,params.get('params')or{},self.world))
+            approval=getattr(self,'_exact_storage_approval',None)
+            exact_click=(action=='native' and params.get('op')=='slot_click' and approval is not None
+                         and approval[0]==approval[2](state,params.get('params')or{},self.world,self.lease['job_session'],approval[1]))
+            from potion_storage_click import signature as potion_signature
+            potion=getattr(self,'_exact_potion_expected',None)
+            try:potion_evidence=json.loads((self.root/'loaded-villager-events.json').read_text()) if potion is not None else {}
+            except (OSError,ValueError):potion_evidence={}
+            potion_click=(action=='native' and params.get('op')=='slot_click' and potion is not None
+                          and getattr(self,'_exact_potion_click',None)==potion_signature(state,potion_evidence,params.get('params')or{},self.world,self.lease['job_session'],potion))
             permitted=(action=='transfer'and kind in('ChestMenu','ShulkerBoxMenu')or action=='manufacture'and kind=='CraftingMenu'
                        or action=='native'and(params.get('op')in('close_menu','scan','snapshot')or craft_return
-                          or box_click
+                          or box_click or exact_click or potion_click or brew_click
                           or params.get('op')=='slot_click'and getattr(self,'_furnace_glass_click',None)is not None
                              and self._furnace_glass_click==__import__('furnace_glass_click').signature(state,params.get('params')or{},self.world)
                           or params.get('op')=='slot_click'and self._name_tag_click(state,params.get('params')or{})))
@@ -2099,7 +2602,7 @@ class VillageQueue:
                         and params.get('params',{}).get('include_predictions')is True):
                     return self._dispatch(action,params,seconds,state,cleanup)
                 if(action=='native'and params.get('op')=='snapshot'
-                        and previous in (getattr(self,'_sleeping_merchant_read',None),getattr(self,'_food_guard_read',None),getattr(self,'_uncredited_food_read',None),getattr(self,'_food_pose_stop_read',None),getattr(self,'_workbench_route_read',None),getattr(self,'_boat_space_read',None),getattr(self,'_boat_outcome_read',None),getattr(self,'_retained_boat_guard_read',None),getattr(self,'_indoor_stand_read',None),getattr(self,'_bed_entity_read',None),getattr(self,'_storage_record_read',None),getattr(self,'_merchant_abort_read',None),getattr(self,'_harness_output_read',None),getattr(self,'_towing_refusal_read',None),getattr(self,'_deferred_reload_read',None),getattr(self,'_unsupported_readonly_read',None),getattr(self,'_defense_wait_read',None),getattr(self,'_full_transfer_read',None),getattr(self,'_anvil_preview_open_read',None),getattr(self,'_packed_collected_read',None),getattr(self,'_iron_quick_read',None))):
+                        and previous in (getattr(self,'_craft_failure_read',None),getattr(self,'_sleeping_merchant_read',None),getattr(self,'_food_guard_read',None),getattr(self,'_uncredited_food_read',None),getattr(self,'_food_pose_stop_read',None),getattr(self,'_workbench_route_read',None),getattr(self,'_boat_space_read',None),getattr(self,'_boat_outcome_read',None),getattr(self,'_retained_boat_guard_read',None),getattr(self,'_indoor_stand_read',None),getattr(self,'_bed_entity_read',None),getattr(self,'_storage_record_read',None),getattr(self,'_merchant_abort_read',None),getattr(self,'_harness_output_read',None),getattr(self,'_towing_refusal_read',None),getattr(self,'_deferred_reload_read',None),getattr(self,'_unsupported_readonly_read',None),getattr(self,'_defense_wait_read',None),getattr(self,'_full_transfer_read',None),getattr(self,'_anvil_preview_open_read',None),getattr(self,'_packed_collected_read',None),getattr(self,'_iron_quick_read',None))):
                     return self._dispatch(action,params,seconds,state,cleanup)
                 if action=='pause'and previous_command.get('action')=='feed_village_founders'and(directory/'error.json').exists()and(directory/'feeding.json').exists()and not(self.out/'control/unconfirmed-native-request.json').exists():
                     from failed_food_release import allowed
@@ -2117,7 +2620,7 @@ class VillageQueue:
 
             refused_air_read=(action=='native'and params.get('op')=='snapshot'
                               and getattr(self,'_refused_air_read',None)==previous
-                              and previous_command.get('op')=='navigate'
+                              and previous_command.get('op') in ('navigate','walk')
                               and previous_result.get('phase')=='error'
                               and previous_result.get('id')==state.get('last_request')
                               and previous_result.get('world_session')==self.world
@@ -2155,7 +2658,8 @@ class VillageQueue:
             stopped_walk_read=(action=='native'and params.get('op')=='snapshot'
                                and previous_command.get('op')=='walk'
                                and(getattr(self,'_stopped_walk_read',None)==previous and(previous_result.get('phase')=='waiting'
-                                      or previous_result.get('phase')=='stopped'and previous_result.get('detail')=='脚本任务达到时间上限')
+                                      or previous_result.get('phase')=='stopped'and previous_result.get('detail')=='脚本任务达到时间上限'
+                                      or previous_result.get('phase')=='error'and previous_result.get('detail')=='Ordinary walking requires a supported step within 1.1 blocks; Flight was not disabled')
                                    or getattr(self,'_stopped_pickup_read',None)==previous and previous_result.get('phase')=='stopped'
                                       and previous_result.get('detail')=='脚本任务达到时间上限')
                                and previous_result.get('id')==state.get('last_request')
@@ -2169,6 +2673,7 @@ class VillageQueue:
                                and (previous_command.get('op'),previous_result.get('detail')) in (
                                    ('projection_air_seed','Air seed requires the current healthy idle guarded material lease'),
                                    ('interact','Target interaction face is occluded or out of reach'),
+                                   ('interact','Target block changed'),
                                    ('interact','Held item changed'),
                                    ('interact_entity','Entity out of reach'),
                                    ('interact_entity','Entity is occluded'),
@@ -2240,6 +2745,14 @@ class VillageQueue:
                                and previous_result.get('phase')=='stopped'and previous_result.get('detail')=='chopper stopped'
                                and previous_result.get('id')==state.get('last_request')and previous_result.get('world_session')==self.world
                                and not(self.out/'control/unconfirmed-native-request.json').exists())
+            if (action == 'native' and params.get('op') == 'snapshot'
+                    and getattr(self, '_missing_item_selection_read', None) == previous
+                    and previous_command.get('op') == 'select_item'
+                    and previous_result.get('phase') == 'error'
+                    and previous_result.get('id') == state.get('last_request')
+                    and previous_result.get('world_session') == self.world
+                    and not (self.out / 'control/unconfirmed-native-request.json').exists()):
+                return self._dispatch(action, params, seconds, state, cleanup)
             fixed_tree_selection_read=(action=='native'and params.get('op')=='snapshot'
                                and getattr(self,'_fixed_tree_selection_read',None)==previous
                                and previous_command.get('action')=='native'and previous_command.get('op')=='chop'
@@ -2247,7 +2760,12 @@ class VillageQueue:
                                and previous_result.get('id')==state.get('last_request')and previous_result.get('world_session')==self.world
                                and not(self.out/'control/unconfirmed-native-request.json').exists())
             readback_observation=(readback_observation and previous_command==readback['original_command'])
-            if not(readback_observation or stopped_air_pause or food_budget_read or pickup_terminal_read or missing_drop_read or refused_air_read or stopped_air_read or stopped_walk_read or exchange_shortage_read or unstarted_processing_read or unloaded_furnace_close or refused_face_read or bridged_abort_read or sleeping_bridge_read or scan_volume_read or settled_print_read or empty_workbench_read or unstarted_mine_read or lectern_preflight_read or rejected_print_read or partial_scan_read or stopped_chop_read or fixed_tree_selection_read)and(previous_result.get('phase')not in(None,'done')or previous_result.get('complete')is False):
+            projection_model_refusal_read=(action=='native' and params.get('op')=='snapshot' and getattr(self,'_projection_model_refusal_read',None)==previous and previous_command.get('op') in ('projection_model','projection_load') and previous_result.get('phase')=='error')
+            full_pickup_refusal_read=(action=='native' and params.get('op')=='snapshot' and getattr(self,'_full_pickup_refusal_read',None)==previous and previous_command.get('op')=='collect_item' and previous_result.get('phase')=='error')
+            if (action == 'native' and params.get('op') == 'snapshot'
+                    and getattr(self, '_empty_packed_search_read', None) == previous):
+                return self._dispatch(action, params, seconds, state, cleanup)
+            if not(readback_observation or stopped_air_pause or food_budget_read or pickup_terminal_read or missing_drop_read or refused_air_read or stopped_air_read or stopped_walk_read or exchange_shortage_read or unstarted_processing_read or unloaded_furnace_close or refused_face_read or bridged_abort_read or sleeping_bridge_read or scan_volume_read or settled_print_read or empty_workbench_read or unstarted_mine_read or lectern_preflight_read or rejected_print_read or partial_scan_read or stopped_chop_read or fixed_tree_selection_read or projection_model_refusal_read or full_pickup_refusal_read)and(previous_result.get('phase')not in(None,'done')or previous_result.get('complete')is False):
                 raise RuntimeError('Original queued result is not complete; no new plan command')
             # Immediate projection reads return data without a DONE phase. The
             # retained native owner deliberately requires an exact terminal for
