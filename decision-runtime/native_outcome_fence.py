@@ -44,7 +44,7 @@ def never_dispatched_mining(receipt, request_id, world, target):
         and type(receipt.get('server_ack_sequence'))is int and receipt['server_ack_sequence']==-1)
 
 
-def exact_idle_terminal(client, state):
+def exact_idle_terminal(client, state, *, allow_manual=False):
     terminal = getattr(client, 'last_terminal_evidence', None) or {}
     lease = state.get('supervision_lease') or {}
     phase = terminal.get('phase')
@@ -62,7 +62,9 @@ def exact_idle_terminal(client, state):
                 and type(terminal.get('revision_after')) is int
                 and terminal['revision_after'] == state.get('control_revision')
                 and state.get('connected') is True and state.get('world_session') == client.world
-                and state.get('last_request') == client.last and state.get('manual_movement') is False
+                and state.get('last_request') == client.last
+                and (state.get('manual_movement') is False
+                     or allow_manual and state.get('manual_material_paused') is True)
                 and state.get('pending_scan') is None and not state.get('navigating')
                 and not state.get('native_material_busy') and not client.native_inflight
                 and lease.get('kind') == 'materials' and lease.get('id') == client.heartbeat.id

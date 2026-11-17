@@ -1,7 +1,7 @@
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest import TestCase
-from village_interface_wait import idle_foreign_merchant,idle_interface_transition
+from village_interface_wait import idle_foreign_merchant,idle_interface_transition,idle_manual_transition
 
 
 def fixture():
@@ -23,6 +23,18 @@ class IdleForeignMerchantTests(TestCase):
         c,s=fixture();s['screen']='';s['menu']={'type':'InventoryMenu','material_owned':False}
         original=deepcopy(s)
         self.assertTrue(idle_interface_transition(c,s));self.assertEqual(original,s)
+
+    def test_external_chest_and_native_manual_cooldown_keep_idle_owner(self):
+        c,s=fixture()
+        s.update(screen='ContainerScreen',menu={'type':'ChestMenu','material_owned':False})
+        self.assertTrue(idle_interface_transition(c,s))
+        s.update(screen='',manual_movement=True,manual_material_paused=True)
+        self.assertTrue(idle_manual_transition(c,s))
+        self.assertTrue(idle_manual_transition(c,{**s,'manual_movement':False}))
+        self.assertFalse(idle_manual_transition(c,{**s,'manual_material_paused':False}))
+        self.assertFalse(idle_manual_transition(c,s,retained_failure=True))
+        c.unconfirmed_native_request={'request_id':'original'}
+        self.assertFalse(idle_manual_transition(c,s))
 
     def test_other_unowned_processing_windows_can_wait_without_adoption(self):
         for screen,kind in [('MerchantScreen','MerchantMenu'),('LoomScreen','LoomMenu'),('StonecutterScreen','StonecutterMenu')]:
