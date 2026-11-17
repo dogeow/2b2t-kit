@@ -74,6 +74,20 @@ class ContainerAccessTest(unittest.TestCase):
         bind.assert_called_once_with(c,opened,pos,'minecraft:barrel')
         self.assertEqual('interact',c.checked.call_args.args[0])
 
+    def test_registered_oxidized_copper_chest_checks_and_binds_exact_block(self):
+        c,s,scan,pos,pose=self.indoor_client()
+        scan['blocks'][0]['state']='Block{minecraft:oxidized_copper_chest}[facing=east,type=left,waterlogged=false]'
+        opened={'menu':{'id':8,'type':'ChestMenu','cursor':{'count':0}}}
+        with self.assertRaises(OutdoorChestChanged):open_chest_from_pose(c,pos,pose,'east')
+        c.checked.assert_not_called()
+        with patch('container_access.wait_container_contents',return_value=opened) as wait, \
+             patch('container_access.verify_opened_chest') as verify,patch('material_storage_index.bind_source') as bind:
+            result=open_chest_from_pose(c,pos,pose,'east',block_id='minecraft:oxidized_copper_chest',allow_empty=True)
+        c.checked.assert_called_once_with('interact',pos=pos,face='east',expected_state=scan['blocks'][0]['state'],expected_hand='minecraft:diamond_sword')
+        wait.assert_called_once_with(c,'ChestMenu',require_nonempty=False)
+        verify.assert_called_once_with(c,result['_verified_chest'])
+        bind.assert_called_once_with(c,opened,pos,'minecraft:oxidized_copper_chest')
+
     def test_explicit_visible_top_keeps_registered_grounded_pose_and_server_menu_checks(self):
         c,s,scan,pos,pose=self.indoor_client();opened={'menu':{'id':8,'type':'ChestMenu','cursor':{'count':0}}}
         with patch('container_access.wait_container_contents',return_value=opened)as wait,patch('container_access.verify_opened_chest')as verify,patch('material_storage_index.bind_source'):

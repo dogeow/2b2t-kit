@@ -99,8 +99,8 @@ def open_chest_from_pose(client,pos,pose,face,*,allow_empty=False,block_id='mine
     This function never finds a route, descends onto a roof, or moves the player.
     The caller supplies a registered stand; an exposed top face is opt-in.
     """
-    if block_id not in ('minecraft:chest','minecraft:barrel','minecraft:ender_chest'):
-        raise ValueError('Registered indoor pose supports only ordinary, Ender chests or barrels')
+    if block_id not in ('minecraft:chest','minecraft:barrel','minecraft:ender_chest','minecraft:oxidized_copper_chest'):
+        raise ValueError('Unsupported registered container type')
     if type(allow_top_face)is not bool:raise ValueError('Top face opt-in must be boolean')
     if type(allow_hover)is not bool:raise ValueError('Hover pose opt-in must be boolean')
     faces=('north','south','west','east','up')if allow_top_face else('north','south','west','east')
