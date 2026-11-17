@@ -2,6 +2,7 @@ import copy,json,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 from furnace_batches import collect,distribution,load,recipe_balance,wait_loading_balance
+from craft_grid import InventoryCapacity
 from test_inventory_session import Client as InventoryClient
 
 
@@ -74,23 +75,25 @@ class FurnaceBatchTest(unittest.TestCase):
     self.assertTrue(json.loads(path.read_text())['complete']);self.assertEqual(0,client.state['menu']['cursor']['count'])
     with self.assertRaisesRegex(RuntimeError,'reconciled'):
      load(client,[pos],'minecraft:sand','minecraft:glass',8,path)
- def test_raw_iron_batch_requires_conservation_and_collects_once(self):
-  with tempfile.TemporaryDirectory() as d:
-   client=GlassBankClient(raw=(8,),coal=(1,));path=Path(d)/'iron.json';pos=[1,2,3]
-   client.state['menu']['slots'][3]['item']='minecraft:raw_iron'
-   with patch('furnace_batches.snapshot',side_effect=lambda c,p:c.open(p)):
-    job=load(client,[pos],'minecraft:raw_iron','minecraft:iron_ingot',8,path)
-    self.assertEqual((8,1,'loaded'),tuple(job['furnaces'][0][k]for k in ('loaded_source','loaded_fuel','stage')))
-    furnace=client.furnaces[tuple(pos)]
-    furnace[0].update(item='minecraft:raw_iron',count=4);furnace[1].update(item='minecraft:air',count=0);furnace[2].update(item='minecraft:iron_ingot',count=4)
-    self.assertFalse(collect(client,path))
-    furnace=client.furnaces[tuple(pos)];furnace[0].update(item='minecraft:air',count=0);furnace[2].update(item='minecraft:iron_ingot',count=7)
-    with self.assertRaisesRegex(RuntimeError,'balance|changed|conserv'):
-     collect(client,path)
-    furnace=client.furnaces[tuple(pos)];furnace[2].update(count=8)
-    self.assertTrue(collect(client,path));self.assertEqual(8,sum(v['count']for v in client.state['menu']['slots'][3:]if v['item']=='minecraft:iron_ingot'))
-    self.assertTrue(collect(client,path));self.assertEqual(8,sum(v['count']for v in client.state['menu']['slots'][3:]if v['item']=='minecraft:iron_ingot'))
-    self.assertTrue(json.loads(path.read_text())['complete'])
+ def test_ore_batch_requires_conservation_and_collects_once(self):
+  for source,output in (('minecraft:raw_iron','minecraft:iron_ingot'),
+                        ('minecraft:raw_copper','minecraft:copper_ingot')):
+   with self.subTest(source=source), tempfile.TemporaryDirectory() as d:
+    client=GlassBankClient(raw=(8,),coal=(1,));path=Path(d)/'ore.json';pos=[1,2,3]
+    client.state['menu']['slots'][3]['item']=source
+    with patch('furnace_batches.snapshot',side_effect=lambda c,p:c.open(p)):
+     job=load(client,[pos],source,output,8,path)
+     self.assertEqual((8,1,'loaded'),tuple(job['furnaces'][0][k]for k in ('loaded_source','loaded_fuel','stage')))
+     furnace=client.furnaces[tuple(pos)]
+     furnace[0].update(item=source,count=4);furnace[1].update(item='minecraft:air',count=0);furnace[2].update(item=output,count=4)
+     self.assertFalse(collect(client,path))
+     furnace=client.furnaces[tuple(pos)];furnace[0].update(item='minecraft:air',count=0);furnace[2].update(item=output,count=7)
+     with self.assertRaisesRegex(RuntimeError,'balance|changed|conserv'):
+      collect(client,path)
+     furnace=client.furnaces[tuple(pos)];furnace[2].update(count=8)
+     self.assertTrue(collect(client,path));self.assertEqual(8,sum(v['count']for v in client.state['menu']['slots'][3:]if v['item']==output))
+     self.assertTrue(collect(client,path));self.assertEqual(8,sum(v['count']for v in client.state['menu']['slots'][3:]if v['item']==output))
+     self.assertTrue(json.loads(path.read_text())['complete'])
  def test_unapproved_smelting_pair_rejected_before_opening_or_journal(self):
   with tempfile.TemporaryDirectory()as d:
    path=Path(d)/'unknown.json'
@@ -256,6 +259,22 @@ class FurnaceBatchTest(unittest.TestCase):
    self.assertFalse(json.loads(path.read_text())['complete'])
 
 class FurnaceCollectionTest(unittest.TestCase):
+ def test_rejects_partial_output_collection_before_the_click(self):
+  with tempfile.TemporaryDirectory() as d:
+   path=Path(d)/'iron.json';pos=[1,2,3]
+   job={'world_session':'w','amount':60,'source':'minecraft:raw_iron','output':'minecraft:iron_ingot',
+        'furnaces':[{'pos':pos,'amount':60,'stage':'loaded','pending':None}]}
+   path.write_text(json.dumps(job));c=GlassBankClient(raw=(),coal=())
+   for row in c.state['menu']['slots'][3:]:row.update(item='minecraft:stone',count=64)
+   c.state['menu']['slots'][3].update(item='minecraft:iron_ingot',count=56)
+   c.furnaces[tuple(pos)]=[{'slot':i,'item':'minecraft:air','count':0} for i in range(3)]
+   c.furnaces[tuple(pos)][2].update(item='minecraft:iron_ingot',count=60)
+   with patch('furnace_batches.snapshot',side_effect=lambda client,p:client.open(p)):
+    with self.assertRaises(InventoryCapacity):collect(c,path)
+   self.assertEqual([],c.calls)
+   self.assertEqual(60,c.furnaces[tuple(pos)][2]['count'])
+   self.assertEqual(job,json.loads(path.read_text()))
+
  def test_completed_output_is_collected_and_journaled_once(self):
   import tempfile,json
   from pathlib import Path
@@ -263,7 +282,7 @@ class FurnaceCollectionTest(unittest.TestCase):
   from furnace_batches import collect
   with tempfile.TemporaryDirectory() as d:
    p=Path(d)/'batch.json';p.write_text(json.dumps({'world_session':'w','amount':20,'source':'minecraft:stone','output':'minecraft:smooth_stone','furnaces':[{'pos':[1,2,3],'amount':20,'stage':'loaded'}]}))
-   state={'inventory':[],'menu':{'id':1,'type':'FurnaceMenu','slots':[{'item':'minecraft:air','count':0},{'item':'minecraft:air','count':0},{'item':'minecraft:smooth_stone','count':20}]}}
+   state={'inventory':[{'slot':0,'item':'minecraft:air','count':0}],'menu':{'id':1,'type':'FurnaceMenu','slots':[{'item':'minecraft:air','count':0},{'item':'minecraft:air','count':0},{'item':'minecraft:smooth_stone','count':20}]}}
    class Client:
     world='w'
     def status(self):return state

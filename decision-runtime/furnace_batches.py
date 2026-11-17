@@ -11,6 +11,7 @@ from container_access import wait_container_contents
 from smelting_fuel import FuelCatalog, policy as fuel_policy, select_fuels, recipe_jar_for_client
 from types import SimpleNamespace
 from container_hand import select_container_hand
+from craft_grid import InventoryCapacity, output_room
 
 
 def _furnace_row(client,pos,*,same_world=False):
@@ -155,8 +156,9 @@ def wait_loading_balance(client,state,source,output,loaded_source,loaded_fuel,me
 
 def load(client,positions,source,output,amount,journal,*,keep=None,recipe_jar=None,fuel_allow_items=None):
     if (source,output) not in [('minecraft:cobblestone','minecraft:stone'),('minecraft:stone','minecraft:smooth_stone'),
-                               ('minecraft:sand','minecraft:glass'),('minecraft:raw_iron','minecraft:iron_ingot')]:
-        raise ValueError('Only approved construction or raw-iron furnace recipes are enabled')
+                               ('minecraft:sand','minecraft:glass'),('minecraft:raw_iron','minecraft:iron_ingot'),
+                               ('minecraft:raw_copper','minecraft:copper_ingot')]:
+        raise ValueError('Only approved construction, raw-iron or raw-copper furnace recipes are enabled')
     if not 1<=amount<=len(positions)*64:raise ValueError('Batch does not fit the supplied furnace bank')
     journal=Path(journal)
     if journal.exists():raise RuntimeError('An existing furnace batch must be reconciled, not overwritten')
@@ -215,6 +217,14 @@ def distribution(amount,count):
     return [q+(i<r) for i in range(count)]
 
 
+def _require_collection_room(client, state, source):
+    if output_room(state, source['item'], source.get('max_stack', 64)) < source['count']:
+        # Shift-click transfers a partial stack when the backpack is full.
+        # Close the owned menu before returning, with no click to reconcile.
+        client.checked('close_menu')
+        raise InventoryCapacity(f"No backpack space for {source['count']} {source['item']} from the furnace")
+
+
 def collect(client,journal):
     journal=Path(journal);job=json.loads(journal.read_text())
     if job['world_session']!=client.world:raise RuntimeError('Reconfirm furnace ownership after a world transition')
@@ -240,6 +250,7 @@ def collect(client,journal):
                 raise RuntimeError('Journaled furnace contents changed')
             if slots[0]['count'] or slots[2]['count']!=entry['amount']:
                 client.checked('close_menu');return False
+            _require_collection_room(client, state, slots[2])
             before=stocks(state).get(job['output'],0)
             entry.update(stage='output_collecting',pending={'item':job['output'],'count':entry['amount'],'inventory_before':before})
             write_json(journal,job)
@@ -256,6 +267,7 @@ def collect(client,journal):
             raise RuntimeError('Collected furnace or remaining fuel changed')
         remaining=slots[1]['count']
         if remaining:
+            _require_collection_room(client, state, slots[1])
             before_fuel=stocks(state).get(fuel_item,0)
             entry.update(stage='fuel_returning',pending={'item':fuel_item,'count':remaining,'inventory_before':before_fuel})
             write_json(journal,job);state=session.click(state,1,'quick_move')
