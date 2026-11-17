@@ -162,4 +162,9 @@ public final class BorerCenterPolicy {
 	public static boolean stayAndClimb(int horizontalManhattan, boolean needsVertical) {
 		return needsVertical && horizontalManhattan <= 2;
 	}
+
+	/** 矿在正上/正下方、任何朝向都缩不短水平距离：原地等够久就跳过，不能无限静止。 */
+	public static boolean skipWithoutApproachHeading(int heldTicks, int timeoutTicks) {
+		return heldTicks >= timeoutTicks;
+	}
 }

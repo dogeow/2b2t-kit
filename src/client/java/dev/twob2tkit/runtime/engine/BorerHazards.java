@@ -10,7 +10,6 @@ import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -100,7 +99,7 @@ public final class BorerHazards {
 
 	/** 该格是否为水。 */
 	public static boolean isWater(Minecraft client, BlockPos pos) {
-		return client.level != null && client.level.getBlockState(pos).getFluidState().is(Fluids.WATER);
+		return client.level != null && client.level.getBlockState(pos).getFluidState().is(net.minecraft.tags.FluidTags.WATER);
 	}
 
 	/** 是否实心地板。 */
@@ -117,7 +116,7 @@ public final class BorerHazards {
 		BlockState state = client.level.getBlockState(pos);
 		if (state.is(Blocks.MAGMA_BLOCK)) return false;
 		var fluid = state.getFluidState();
-		return !fluid.isEmpty() && fluid.is(Fluids.LAVA);
+		return !fluid.isEmpty() && fluid.is(net.minecraft.tags.FluidTags.LAVA);
 	}
 
 	/** 该格是否为熔岩块。 */
@@ -147,7 +146,17 @@ public final class BorerHazards {
 
 	/** 挖掉该方块后会露出的相邻岩浆，含正上方（岩浆下的承重块）。 */
 	public static BlockPos lavaOpenedByMining(Minecraft client, BlockPos target) {
-		return fluidNeighbor(client, target, true, false);
+		BlockPos adjacent = fluidNeighbor(client, target, true, false);
+		if (adjacent != null || client.level == null || target == null) return adjacent;
+		// 六面不贴岩浆，但旁边的空腔连着岩浆：挖穿后岩浆会顺着空腔流进通道。
+		return LavaSeepPolicy.upstreamLava(target, pos -> seepCell(client, pos), LavaSeepPolicy.MAX_OPEN_STEPS);
+	}
+
+	private static LavaSeepPolicy.Cell seepCell(Minecraft client, BlockPos pos) {
+		if (isLavaFluid(client, pos)) return LavaSeepPolicy.Cell.LAVA;
+		BlockState state = client.level.getBlockState(pos);
+		boolean open = state.getFluidState().isEmpty() && state.getCollisionShape(client.level, pos).isEmpty();
+		return open ? LavaSeepPolicy.Cell.OPEN : LavaSeepPolicy.Cell.SOLID;
 	}
 
 	/** 挖这块会让岩浆留下来或流进通道：岩浆正下方、或六面贴着岩浆。 */
@@ -191,11 +200,13 @@ public final class BorerHazards {
 	}
 
 	/** 正在下落的沙子/沙砾实体会砸到玩家。 */
-	public static boolean fallingEntityThreat(Minecraft client, LocalPlayer player) {
-		if (client.level == null) return false;
+	static BlockPos fallingEntityThreatColumn(Minecraft client, LocalPlayer player) {
+		if (client.level == null) return null;
 		AABB search = player.getBoundingBox().inflate(0.7, 3.2, 0.7);
-		return !client.level.getEntitiesOfClass(FallingBlockEntity.class, search, entity ->
-			entity.isAlive() && entity.getY() + 0.1 >= player.getY()).isEmpty();
+		return client.level.getEntitiesOfClass(FallingBlockEntity.class, search, entity ->
+			entity.isAlive() && entity.getY() + 0.1 >= player.getY()).stream()
+			.min(java.util.Comparator.comparingDouble(player::distanceToSqr))
+			.map(FallingBlockEntity::blockPosition).orElse(null);
 	}
 
 	/** 挖掉 target 后，上方沙子/沙砾会掉进玩家所在列。 */
@@ -226,7 +237,7 @@ public final class BorerHazards {
 	}
 
 	/** 玩家头顶即将失去支撑的沙子/沙砾。 */
-	public static BlockPos unsupportedFallingAbove(Minecraft client, LocalPlayer player, BlockPos miningTarget) {
+	public static BlockPos unsupportedFallingAbove(Minecraft client, LocalPlayer player) {
 		if (client.level == null) return null;
 		BlockPos feet = player.blockPosition();
 		for (int dy = 1; dy <= 5; dy++) {
@@ -237,8 +248,7 @@ public final class BorerHazards {
 					if (!isFallingType(client, pos)) continue;
 					BlockPos below = pos.below();
 					BlockState under = client.level.getBlockState(below);
-					boolean open = under.isAir() || under.canBeReplaced() || under.liquid()
-						|| miningTarget != null && below.equals(miningTarget);
+					boolean open = under.isAir() || under.canBeReplaced() || under.liquid();
 					if (open) return pos.immutable();
 				}
 			}

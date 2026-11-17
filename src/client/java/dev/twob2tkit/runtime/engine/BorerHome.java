@@ -33,8 +33,8 @@ final class BorerHome {
 		movementLook = new RotationAim.Look(player.getYRot(), player.getXRot());
 	}
 
-	static boolean canResumeWalking(boolean ownedFlight, double goalDeltaY, int landingDrop) {
-		return ownedFlight && goalDeltaY <= .05 && landingDrop >= 0 && landingDrop <= 1;
+	static boolean landingCanContinueOnFoot(int landingDrop, int landingYRelativeToGoal) {
+		return landingDrop >= 0 && landingDrop <= 1 && landingYRelativeToGoal >= 0;
 	}
 
 	/** 推进回家/回门；已接管返回 true。 */
@@ -54,6 +54,7 @@ final class BorerHome {
 			: engine.trail.arrivedHome(client, player);
 		if (dest == null || arrived) {
 			engine.trail.save(client);
+			if (flight.isFollowing() && !player.onGround()) engine.meteorFlightHeldByEngine = false;
 			if (engine.pendingLogoutReason != null) {
 				String why = engine.pendingLogoutReason;
 				engine.pendingLogoutReason = null;
@@ -66,19 +67,26 @@ final class BorerHome {
 		}
 		if (engine.returningToPortal || BorerItems.allMiningToolsWorn(player)) {
 			engine.returningToPortal = true;
-			return flyTowardPortal(client, player, dest);
+			return flyTowardWaypoint(client, player, dest);
 		}
-		// The temporary lift has reached the next floor. Leaving Flight on would
-		// permanently bypass the ground pathfinder and drive straight into bends.
-		if (canResumeWalking(engine.meteorFlightHeldByEngine, dest.getY() - player.getY(),
-			BorerHazards.safeFallDepth(client, player.blockPosition()))) {
-			engine.releaseMine(client);
-			client.options.keyShift.setDown(false);
-			engine.releaseMeteorFlightIfHeld(client);
-			engine.walkRoute.clear();
-			engine.status = "回程已越过台阶，落稳后继续沿通道走";
-			return true;
+		// The flight planner owns its route across turns and elevation changes.
+		// An inherited lift can land only if the floor is at the waypoint height or higher.
+		if (engine.meteorFlightHeldByEngine && !flight.isFollowing()) {
+			BlockPos feet = player.blockPosition();
+			int landingDrop = BorerHazards.safeFallDepth(client, feet);
+			if (landingCanContinueOnFoot(landingDrop, feet.getY() - landingDrop - dest.getY())) {
+				engine.releaseMine(client);
+				client.options.keyShift.setDown(false);
+				engine.releaseMeteorFlightIfHeld(client);
+				engine.walkRoute.clear();
+				engine.status = "回程已越过台阶，落稳后继续沿通道走";
+				return true;
+			}
 		}
+		// Walking paths intentionally refuse flight. In a mine, the straight
+		// fallback can hit the floor of a higher column before entering it.
+		if (BorerFlight.isFlying(player)) return flyTowardWaypoint(client, player, dest);
+		flight.close();
 		// Recorded points can straddle a corner. Follow open body columns before
 		// trying to mine a straight ray to the distant point.
 		if (engine.walkRoute.walkHome(client, dest)) {
@@ -106,11 +114,11 @@ final class BorerHome {
 		}
 		engine.releaseMine(client);
 		boolean moving = Math.hypot(dx, dz) > 0.35 || Math.abs(dy) > 0.6;
-		if (dy > 1.1) engine.enableMeteorFlight(player);
-		if (moving && engine.unsafeToWalk(client, player) && !BorerFlight.isFlying(player)) {
+		if (dy > 1.1 && engine.enableMeteorFlight(player)) return flyTowardWaypoint(client, player, dest);
+		if (moving && engine.unsafeToWalk(client, player)) {
 			if (alignWalk(client, player, dx, dz)) moving = true;
 			else if (dy < -0.4 && engine.safeShortDropTowardLoot(client, player)) moving = true;
-			else if (dy > 0.6 && engine.enableMeteorFlight(player)) moving = true;
+			else if (dy > 0.6 && engine.enableMeteorFlight(player)) return flyTowardWaypoint(client, player, dest);
 			else if (engine.place.shouldBridgeDrops(player) && engine.place.placeWalkingSupport(client, player)
 				&& !engine.unsafeToWalk(client, player)) {
 				moving = true;
@@ -119,8 +127,8 @@ final class BorerHome {
 		engine.faceForward(player);
 		rememberLook(player);
 		client.options.keyUp.setDown(moving);
-		client.options.keyJump.setDown(BorerFlight.isFlying(player) ? dy > 0.4 : player.onGround() && dy > 0.55);
-		client.options.keyShift.setDown(BorerFlight.isFlying(player) && dy < -0.4);
+		client.options.keyJump.setDown(player.onGround() && dy > 0.55);
+		client.options.keyShift.setDown(false);
 		engine.attemptedForward = moving;
 		int remain = engine.trail.remainingTowardHome(client, player);
 		boolean connected = engine.trail.connectedToTrail(client, player);
@@ -174,7 +182,8 @@ final class BorerHome {
 	}
 
 	/** Follow the immediate collision-checked segment; lookahead must never steer around a hidden corner. */
-	private boolean flyTowardPortal(Minecraft client, LocalPlayer player, BlockPos dest) {
+	private boolean flyTowardWaypoint(Minecraft client, LocalPlayer player, BlockPos dest) {
+		if (engine.currentTarget != null) engine.clearMiningTarget(client, "home-flight-route");
 		boolean handled = flight.tick(client, dest);
 		if (engine.active) rememberLook(player);
 		return handled;

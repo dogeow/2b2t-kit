@@ -74,7 +74,7 @@ final class BorerLiquids {
 		boolean area = engine.mode == DefaultTunnelBorerEngine.Mode.AREA;
 		int waterN = waterNeighbors(client, liquid);
 		int solidN = solidNeighbors(client, liquid);
-		boolean leak = BorerLiquidPolicy.isSmallLeak(waterN, solidN);
+		boolean leak = BorerLiquidPolicy.isWaterLeak("岩浆".equals(kind), waterN, solidN);
 		if (engine.liquidSealFailPos == null || !engine.liquidSealFailPos.equals(liquid)) {
 			engine.liquidSealFailPos = liquid.immutable();
 			engine.liquidSealFails = 0;
@@ -403,6 +403,7 @@ final class BorerLiquids {
 			if (chosen < 0) chosen = i;
 		}
 		if (chosen >= 0) {
+			landForSneak(client, player);
 			BlockPos pos = exits[chosen];
 			if (!pos.equals(engine.currentTarget)) {
 				engine.forward = exitDirections[chosen];
@@ -420,9 +421,26 @@ final class BorerLiquids {
 			engine.overlay(client, engine.status, 0xFFFF55);
 			return true;
 		}
+		if (MagmaFlightEscape.consumeStall()) {
+			client.options.keyJump.setDown(false);
+			landForSneak(client, player);
+			MagmaFlightEscape.suppressLift();
+			engine.fileLog(client, "magma-lift-stalled landed-to-sneak pos=" + BorerText.precise(player));
+		}
 		engine.status = "脚下岩浆块，已潜行停烫，正在找路离开";
 		engine.overlay(client, engine.status, 0xFFFF55);
 		return false;
+	}
+
+	/** 飞行中无法蹲下，蹲不下就挡不住岩浆块烫伤：站在岩浆块上要蹲着挖或等待时先关飞行。 */
+	private void landForSneak(Minecraft client, LocalPlayer player) {
+		if (!MagmaLiftPolicy.mustLandToSneak(BorerFlight.isFlying(player), BorerHazards.playerOnMagma(client, player))) return;
+		BorerFlight.ensureFlying(player, false);
+		engine.meteorFlightHeldByEngine = false;
+		client.options.keyJump.setDown(false);
+		client.options.keyShift.setDown(true);
+		MagmaFlightEscape.suppressLift();
+		engine.fileLog(client, "magma-land-to-sneak pos=" + BorerText.precise(player));
 	}
 
 	/** 尝试从岩浆块上下来。 */

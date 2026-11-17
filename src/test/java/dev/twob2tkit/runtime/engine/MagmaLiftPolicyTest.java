@@ -16,4 +16,17 @@ class MagmaLiftPolicyTest {
         assertFalse(MagmaLiftPolicy.hasClearance(true,false,true));
         assertFalse(MagmaLiftPolicy.hasClearance(true,true,false));
     }
+    @Test void liftThatNeverRisesIsDetectedAsStalledAndRiseResetsIt() {
+        int ticks = 0;
+        for (int i = 0; i < MagmaLiftPolicy.STALL_LIMIT_TICKS - 1; i++) ticks = MagmaLiftPolicy.nextStall(ticks, 31.0, 31.0);
+        assertFalse(MagmaLiftPolicy.stalled(ticks));
+        ticks = MagmaLiftPolicy.nextStall(ticks, 31.0, 31.0);
+        assertTrue(MagmaLiftPolicy.stalled(ticks));
+        assertEquals(0, MagmaLiftPolicy.nextStall(ticks, 31.0, 31.2));
+    }
+    @Test void flyingOnMagmaMustLandBeforeSneakCanProtect() {
+        assertTrue(MagmaLiftPolicy.mustLandToSneak(true, true));
+        assertFalse(MagmaLiftPolicy.mustLandToSneak(false, true));
+        assertFalse(MagmaLiftPolicy.mustLandToSneak(true, false));
+    }
 }

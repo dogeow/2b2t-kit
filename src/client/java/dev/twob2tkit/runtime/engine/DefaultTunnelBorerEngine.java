@@ -43,6 +43,7 @@ import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -124,6 +125,10 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	final BorerLoot loot = new BorerLoot(this);
 	final BorerWalkRoute walkRoute = new BorerWalkRoute(this);
 	private RotationAim.Look oreMoveLook;
+	private final BorerOreCenteringFlight oreCenteringFlight = new BorerOreCenteringFlight(
+		BorerFlight::readFlightSpeed, BorerFlight::writeFlightSpeed);
+	private boolean oreCenteringThisTick;
+	private boolean oreCenteringSpeedUnavailable;
 	final BorerHome home = new BorerHome(this);
 	final BorerMobs mobs = new BorerMobs(this);
 	final BorerEngagement engagement = new BorerEngagement();
@@ -361,6 +366,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		blockedOreTargets.clear();
 		suppressedMiningTargets.clear();
 		reappearance.clear();
+		fallingDodgeTicks = 0;
 		vertical.resetAscent();
 		aimMissTarget = null;
 		aimMissTicks = 0;
@@ -418,6 +424,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 停止盾构并松开所有按键。 */
 	@Override
 	public void stop(Minecraft client, String reason) {
+		oreCenteringFlight.release();
 		vertical.releaseScaffold();
         guardMagmaSneak.close(client);
         idleThermalAscent.cancel(client,"stopped",false);
@@ -481,6 +488,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		blockedOreTargets.clear();
 		suppressedMiningTargets.clear();
 		reappearance.clear();
+		fallingDodgeTicks = 0;
 		vertical.resetAscent();
 		aimMissTarget = null;
 		aimMissTicks = 0;
@@ -1029,6 +1037,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			netherObserverReady = true;
 			wasInNether = nether;
 			if (!active && BorerFlight.meteorFlightActive() != null) {
+				recoverOreCenteringFlight(client);
 				try { home.prepareFlight(client); areaRunner.prepareFlight(client); }
 				catch (IllegalStateException e) { fileLog(client, "area-flight-recover-failed " + e.getMessage()); }
 			}
@@ -1164,6 +1173,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 每客户端 tick：避岩浆、封液体、挖挡路、走近矿石并拾取勾选掉落物。 */
 	@Override
 	public void tick(Minecraft client) {
+		beginOreCenteringTick();
 		if (scenery.active()) { scenery.tick(client); return; }
 		oreMoveLook = null;
 		if (!active) return;
@@ -2048,6 +2058,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			if (active && client.player != null && client.options != null && sneakOnMagma(client, client.player)) {
 				client.options.keyShift.setDown(true);
 			}
+			finishOreCenteringTick(client);
 			presentStatusHud(client);
 		}
 	}
@@ -2777,33 +2788,73 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		return !client.level.getBlockState(pos).getCollisionShape(client.level, pos).isEmpty();
 	}
 
-	/** 沙子/沙砾会砸下来时：能挖柱顶就先挖，来不及就开飞行躲开。 */
+	private int fallingDodgeTicks;
+
+	/** Keep a supported stack intact until it is safe to mine from the side or top. */
 	private boolean handleFallingSand(Minecraft client, LocalPlayer player) {
-		if (BorerHazards.fallingEntityThreat(client, player)) {
-			dodgeFallingSand(client, player, "沙子/沙砾正在下落，已开飞行躲开");
+		BlockPos falling = BorerHazards.fallingEntityThreatColumn(client, player);
+		BlockPos loose = BorerHazards.unsupportedFallingAbove(client, player);
+		if (falling != null || loose != null) {
+			dodgeFallingSand(client, player, falling != null ? falling : loose);
 			return true;
 		}
-		BlockPos loose = BorerHazards.unsupportedFallingAbove(client, player, currentTarget);
-		if (loose == null) return false;
-		if (canPlanMine(client, loose) && inMiningReach(player, loose)
-			&& canSeeBlock(client, player, loose)) {
-			replaceMiningTarget(client, loose, "falling-block-threat");
+		if (fallingDodgeTicks > 0) releaseMine(client);
+		fallingDodgeTicks = 0;
+		if (!BorerHazards.wouldCrushPlayer(client, player, currentTarget)
+			|| client.level.getBlockState(currentTarget).isAir()
+			|| miningConfirmation.pending(client.level, currentTarget)) return false;
+		BlockPos support = currentTarget;
+		BlockPos top = BorerHazards.topFallingBlock(client, support.above(), 8);
+		if (top != null && canPlanMine(client, top) && inMiningReach(player, top)
+			&& canSeeBlock(client, player, top)) {
+			replaceMiningTarget(client, top, "falling-stack-clear-top");
 			client.options.keyUp.setDown(false);
 			return false;
 		}
-		dodgeFallingSand(client, player, "头顶沙子/沙砾要掉下来，已开飞行躲开");
+		releaseMine(client);
+		suppressMiningTarget(client, support, SIDE_WALL_SUPPRESS_TICKS, "supported-falling-stack");
+		clearMiningTarget(client, "supported-falling-stack");
+		status = "头顶沙砾仍有支撑，保留支撑并改找安全挖掘位置";
+		overlay(client, status, 0xFFFF55);
 		return true;
 	}
 
-	/** 躲开下落沙砾。 */
-	private void dodgeFallingSand(Minecraft client, LocalPlayer player, String reason) {
+	/** Evade a real falling block horizontally, with a bounded wait if boxed in. */
+	private void dodgeFallingSand(Minecraft client, LocalPlayer player, BlockPos threat) {
 		releaseMine(client);
-		enableMeteorFlight(player);
-		client.options.keyJump.setDown(true);
-		client.options.keyUp.setDown(false);
 		client.options.keyShift.setDown(false);
-		client.options.keyAttack.setDown(false);
-		overlay(client, reason, 0xFFFF55);
+		if (++fallingDodgeTicks >= 20) {
+			// Stopping the miner must not drop a hovering player into the shaft.
+			if (isFlying(player)) meteorFlightHeldByEngine = false;
+			stop(client, "落砂持续挡路，已停挖保留现场");
+			return;
+		}
+		AABB body = player.getBoundingBox();
+		for (Direction side : Direction.Plane.HORIZONTAL) {
+			Vec3 step = new Vec3(side.getStepX(), 0, side.getStepZ()).scale(1.0);
+			if (BorerHazards.fallingColumnIntersectsPlayer(body.move(step), threat)) continue;
+			AABB swept = body.expandTowards(step);
+			if (!client.level.noCollision(player, swept) || !fallingEscapeDry(client, swept)) continue;
+			if (!enableMeteorFlight(player)) break;
+			RotationAim.apply(player, RotationAim.yawToward(step.x, step.z), 0);
+			client.options.keyUp.setDown(true);
+			status = "正在横移躲开下落沙砾";
+			overlay(client, status, 0xFFFF55);
+			return;
+		}
+		status = "没有安全横移空间，停步等落砂通过";
+		overlay(client, status, 0xFFFF55);
+	}
+
+	private boolean fallingEscapeDry(Minecraft client, AABB swept) {
+		for (BlockPos pos : BlockPos.betweenClosed(BlockPos.containing(swept.minX, swept.minY, swept.minZ),
+			BlockPos.containing(swept.maxX, swept.maxY, swept.maxZ))) {
+			var chunk = client.level.getChunkSource().getChunk(pos.getX() >> 4, pos.getZ() >> 4,
+				net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false);
+			if (!LoadedServerChunkEvidence.isServerChunk(client.level, chunk)
+				|| !client.level.getFluidState(pos).isEmpty() || BorerHazards.isMagma(client, pos)) return false;
+		}
+		return true;
 	}
 
 	/** 躲开或处理头顶下落方块堆。 */
@@ -3453,11 +3504,46 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 居中后按前进。 */
 	void walkForwardCentered(Minecraft client, LocalPlayer player) {
 		boolean centering = mode == Mode.ORE && offColumnCenter(client, player);
+		if (centering && Boolean.TRUE.equals(BorerFlight.meteorFlightActive())) {
+			if (!oreCenteringFlight.limit(oreCenteringReceipt(client))) {
+				releaseMine(client);
+				oreCenteringSpeedUnavailable = true;
+				return;
+			}
+			oreCenteringThisTick = true;
+		}
 		if (centering) faceForward(player); else faceTowardPathCenter(player);
 		nudgeToColumnCenter(client, player);
 		client.options.keyUp.setDown(!centering);
 		attemptedForward = !centering;
 		rememberOreMove(player);
+	}
+
+	private static Path oreCenteringReceipt(Minecraft client) {
+		return client.gameDirectory.toPath().resolve("config/twob2tkit/ore-centering-flight-speed.bak");
+	}
+
+	private void recoverOreCenteringFlight(Minecraft client) {
+		try { oreCenteringFlight.recover(oreCenteringReceipt(client)); }
+		catch (java.io.IOException e) { fileLog(client, "ore-centering-flight-recover-failed " + e.getMessage()); }
+	}
+
+	private void beginOreCenteringTick() {
+		// Restore the preceding movement tick's speed before protection or another task takes over.
+		oreCenteringFlight.release();
+		oreCenteringThisTick = false;
+		oreCenteringSpeedUnavailable = false;
+	}
+
+	private void finishOreCenteringTick(Minecraft client) {
+		if (!active) return;
+		if (oreCenteringSpeedUnavailable) {
+			// Keep an airborne player supported when precision movement cannot be acquired.
+			meteorFlightHeldByEngine = false;
+			stop(client, "无法设置 Meteor 飞行低速，已停挖保留当前位置");
+		} else if (oreCenteringThisTick) {
+			status = "飞行减速，对准矿道中心";
+		}
 	}
 
 	void rememberOreMove(LocalPlayer player) {
@@ -3527,11 +3613,24 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			lockHeadingToward(feet, goal);
 			if (!BorerCenterPolicy.headingReducesDistance(forward.getStepX(), forward.getStepZ(), dx, dz)) {
 				client.options.keyUp.setDown(false);
+				// 矿在正上/正下方：没有可走的朝向。必须刷新状态并限时跳过，
+				// 否则 HUD 一直停在上一条（如「确认服务器已挖掉」）且原地永远不动。
+				noApproachHeadingTicks++;
+				if (BorerCenterPolicy.skipWithoutApproachHeading(noApproachHeadingTicks, ROUTE_TIMEOUT_TICKS)) {
+					noApproachHeadingTicks = 0;
+					ores.skipActive(client, "矿点在正" + (goal.getY() > feet.getY() ? "上方" : "下方") + "，没有可接近的方向");
+					return true;
+				}
+				status = "矿在正" + (goal.getY() > feet.getY() ? "上方" : "下方") + "，正在找接近方向 " + format(goal);
+				overlay(client, status, 0xFFFF55);
 				return true;
 			}
 		}
+		noApproachHeadingTicks = 0;
 		return false;
 	}
+
+	private int noApproachHeadingTicks;
 
 	/** 是否偏出格子中心。 */
 	private boolean offColumnCenter(Minecraft client, LocalPlayer player) {

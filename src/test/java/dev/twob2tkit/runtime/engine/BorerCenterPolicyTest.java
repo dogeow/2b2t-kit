@@ -125,6 +125,16 @@ final class BorerCenterPolicyTest {
 	}
 
 	@Test
+	void oreDirectlyBelowFeetHasNoApproachHeadingAndTimesOut() {
+		// 94851 30 99436 就在脚下：dx=dz=0，四个朝向都缩不短距离。
+		for (Direction dir : Direction.Plane.HORIZONTAL) {
+			assertFalse(BorerCenterPolicy.headingReducesDistance(dir.getStepX(), dir.getStepZ(), 0, 0));
+		}
+		assertFalse(BorerCenterPolicy.skipWithoutApproachHeading(79, 80));
+		assertTrue(BorerCenterPolicy.skipWithoutApproachHeading(80, 80));
+	}
+
+	@Test
 	void twistedOreHeadingMustNotDropSelectedFront() {
 		// 朝北选出 382809 100 311178：along=1, lateral=0
 		assertFalse(BorerCenterPolicy.isOffCorridorWall(1, 0, 1));

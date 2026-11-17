@@ -22,6 +22,11 @@ public final class BorerLiquidPolicy {
 		return waterNeighbors <= LEAK_MAX_WATER_NEIGHBORS && solidNeighbors >= 1;
 	}
 
+	/** 只有水才算“漏水”；岩浆不能走近去堵，更不能当水处理。 */
+	public static boolean isWaterLeak(boolean lava, int waterNeighbors, int solidNeighbors) {
+		return !lava && isSmallLeak(waterNeighbors, solidNeighbors);
+	}
+
 	/** 湖中间的水不要拿来封；贴身湖水也别填，换井。 */
 	public static boolean ignoreLakeCandidate(boolean area, int waterNeighbors) {
 		return area && isLake(waterNeighbors);

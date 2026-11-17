@@ -17,6 +17,7 @@ final class BorerHomeFlight {
 	private double best = Double.POSITIVE_INFINITY;
 	BorerHomeFlight(DefaultTunnelBorerEngine engine) { this.engine = engine; }
 	void prepare(Minecraft c) { flight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/home-flight-speed.bak")); }
+	boolean isFollowing() { return goal != null; }
 	void close() {
 		flight.closeKeepingFlight(); // A stop in midair must not drop the player or disable user-owned Flight.
 		path = List.of(); goal = null; index = idle = replans = 0; best = Double.POSITIVE_INFINITY;
@@ -28,7 +29,7 @@ final class BorerHomeFlight {
 		try {
 			prepare(c);
 			String error = flight.acquire(p);
-			if (error != null) { engine.stop(c, "回程飞行：" + error); return true; }
+			if (error != null) return stopInFlight(c, "回程飞行：" + error);
 			if (!target.equals(goal)) {
 				goal = target.immutable(); path = List.of(); index = idle = replans = 0; best = Double.POSITIVE_INFINITY;
 			}
@@ -37,7 +38,7 @@ final class BorerHomeFlight {
 				var route = BorerFlyPath.find(b -> cache.computeIfAbsent(b, v -> clear(c, v)), p.blockPosition(), target, 12, 2400);
 				if (route.nodes().isEmpty()) {
 					flight.hover(); engine.fileLog(c, "home-flight-blocked goal=" + target + " expanded=" + route.expanded() + " player=" + BorerText.precise(p));
-					engine.stop(c, "回程下一段没有可通行空间 " + BorerText.block(target) + "，已停下并保留路线"); return true;
+					return stopInFlight(c, "回程下一段没有可通行空间 " + BorerText.block(target) + "，已停下并保留路线");
 				}
 				path = route.nodes(); index = 0; idle = 0; best = Double.POSITIVE_INFINITY;
 				engine.fileLog(c, "home-flight-path goal=" + target + " steps=" + path.size() + " expanded=" + route.expanded() + " player=" + BorerText.precise(p));
@@ -61,7 +62,7 @@ final class BorerHomeFlight {
 			if (!safe || idle >= 80) {
 				flight.hover();
 				engine.fileLog(c, "home-flight-replan reason=" + (!safe ? "body-blocked" : "no-progress") + " goal=" + target + " node=" + node + " idle=" + idle + " player=" + BorerText.precise(p));
-				if (++replans >= 2) { engine.stop(c, "回程在 " + BorerText.block(node) + " 受阻，已停下并保留路线"); return true; }
+				if (++replans >= 2) return stopInFlight(c, "回程在 " + BorerText.block(node) + " 受阻，已停下并保留路线");
 				path = List.of(); return true;
 			}
 			RotationAim.apply(p, input.yaw(), 0);
@@ -71,7 +72,13 @@ final class BorerHomeFlight {
 			engine.status = "沿通道飞回 · 剩" + engine.trail.remainingTowardHome(c, p) + "路点 · " + BorerText.block(target);
 			engine.overlay(c, engine.status, 0x55FF55);
 			return true;
-		} catch (IllegalStateException failure) { engine.stop(c, "回程飞行已停止：" + failure.getMessage()); return true; }
+		} catch (IllegalStateException failure) { return stopInFlight(c, "回程飞行已停止：" + failure.getMessage()); }
+	}
+	private boolean stopInFlight(Minecraft client, String reason) {
+		// An ordinary home return can also be hovering over a drop on an engine-owned lift.
+		engine.meteorFlightHeldByEngine = false;
+		engine.stop(client, reason);
+		return true;
 	}
 	static boolean reached(Vec3 p, Vec3 target) {
 		return Math.abs(p.x - target.x) <= .07 && Math.abs(p.y - target.y) <= .07 && Math.abs(p.z - target.z) <= .07;

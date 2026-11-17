@@ -22,6 +22,13 @@ final class BorerLiquidPolicyTest {
 	}
 
 	@Test
+	void lavaIsNeverTreatedAsAWaterLeak() {
+		assertTrue(BorerLiquidPolicy.isWaterLeak(false, 2, 2));
+		assertFalse(BorerLiquidPolicy.isWaterLeak(true, 2, 2));
+		assertFalse(BorerLiquidPolicy.shouldWalkToLeak(BorerLiquidPolicy.isWaterLeak(true, 1, 4), false, 9.0, false));
+	}
+
+	@Test
 	void walkOverToPlugAFarLeakAndGiveUpAfterRetries() {
 		assertTrue(BorerLiquidPolicy.shouldWalkToLeak(true, false, 1.0, false));
 		assertFalse(BorerLiquidPolicy.shouldWalkToLeak(true, true, 4.0, false));
