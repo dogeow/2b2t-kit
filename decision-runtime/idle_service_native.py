@@ -428,8 +428,14 @@ class NativeRunner:
             raise RuntimeError('Native scoped fisher did not confirm active with automatic deposit disabled')
         self.started=self.service.clock();return {'phase':'active','pending':False,'native_receipt':{k:reply.get(k) for k in ('id','phase','time')}}
     def should_finish(self,state):
-        return (self.service.clock()-self.started>=self.service.profile['fishing']['duration_seconds']
-                or free_slots(state)<4 or state.get('fisher_active') is not True or state.get('fisher_deposit_allowed') is not False)
+        finished = (self.service.clock() - self.started >= self.service.profile['fishing']['duration_seconds']
+                    or free_slots(state) < 4 or state.get('fisher_active') is not True
+                    or state.get('fisher_deposit_allowed') is not False)
+        # The service has already checked fresh health, player input and native
+        # conflicts. Fishing sends no further commands until this interval ends.
+        if not finished and self.owns(state):
+            self.client.heartbeat.touch()
+        return finished
     def has_unknown(self):
         if self.ledger.get('pending') or self.ledger.get('cleanup_pending') or self.ledger.get('opening_pending'):return True
         paths=list(self.out.rglob('*.json'))

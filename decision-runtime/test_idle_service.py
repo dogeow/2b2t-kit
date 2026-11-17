@@ -143,6 +143,21 @@ class IdleTests(unittest.TestCase):
         self.assertTrue(self.fake.state['fisher_active']);self.assertEqual('fish',self.service.book['active_job'])
     def op_count(self,op):return sum(name==op for name,_ in self.fake.calls)
 
+    def test_active_fishing_polls_renew_only_the_current_lease(self):
+        with self.service.worker_lock():
+            self.activate()
+            heartbeat = self.service.runner.client.heartbeat
+            heartbeat.touch.reset_mock()
+            for _ in range(3):
+                self.clock.step(8)
+                self.service.tick()
+            self.assertEqual(3, heartbeat.touch.call_count)
+            self.assertTrue(self.fake.state['fisher_active'])
+            self.fake.state['manual_movement'] = True
+            self.clock.step(1)
+            self.service.tick()
+            self.assertEqual(3, heartbeat.touch.call_count)
+
     def test_busy_stops_idle_input_before_formal_admission_then_waits_and_resumes_after_idle(self):
         with self.service.worker_lock():
             self.activate();self.assertEqual(1,self.op_count('fisher_start'))
