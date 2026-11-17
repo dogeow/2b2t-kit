@@ -394,6 +394,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 登录时捕获种子哈希。 */
 	public static void captureSpawnSeed(CommonPlayerSpawnInfo info) {
+		if (info != null) dev.twob2tkit.storage.StorageLifecycle.worldMark(info.seed(), info.isFlat());
 		if (instance != null && instance.seedScout != null) instance.seedScout.captureSpawnInfo(info);
 	}
 
