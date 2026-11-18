@@ -18,6 +18,10 @@ public final class MeteorCombatTargetLease {
 
     /** True only when Meteor accepted the target and can attack without held mining input. */
     public boolean prepare(Object module, Object entityType) {
+        return prepare(module,entityType,"piglin".equals(entityType) || "zombified_piglin".equals(entityType));
+    }
+
+    public boolean prepare(Object module, Object entityType, boolean piglinTarget) {
         if (module == null || entityType == null) return false;
         if (aura != null && aura != module) release();
         if (aura != null && !ready()) return false; // Respect changes made during the lease.
@@ -34,7 +38,8 @@ public final class MeteorCombatTargetLease {
             borrow("autoSwitch", true);
             borrow("swapBack", true);
             // Meteor 26.1.2-42 filters non-aggressive Piglins here, even when their type is selected.
-            borrow("ignorePassive", true);
+            if (piglinTarget) borrow("ignorePassive", true);
+            else restore("ignorePassive");
             target = entityType;
             if (!isActive(module)) {
                 module.getClass().getMethod("toggle").invoke(module);
@@ -92,6 +97,10 @@ public final class MeteorCombatTargetLease {
         // Record before writing, so partially accepted writes can also be restored on failure.
         borrowed.put(name, new Borrowed(option, original, copy(written)));
         write(option, written);
+    }
+    private void restore(String name) throws ReflectiveOperationException {
+        Borrowed entry=borrowed.remove(name);
+        if(entry!=null && Objects.equals(read(entry.setting()),entry.written()))write(entry.setting(),copy(entry.original()));
     }
     private static Object copy(Object value) {
         return value instanceof Set<?> set ? new LinkedHashSet<>(set) : value;

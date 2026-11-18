@@ -16,7 +16,14 @@ public final class MeteorModules {
 
 	/** Scope a detected melee threat without replacing the user's entity selections. */
 	public static boolean prepareMeleeTarget(net.minecraft.world.entity.EntityType<?> type) {
-		return meleeTargetLease.prepare(module(KILL_AURA), type);
+		if(type==null)return false;
+		var id=net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(type).toString();
+		var c=net.minecraft.client.Minecraft.getInstance();
+		boolean nearby=c.player!=null&&c.level!=null&&!c.level.getEntities(c.player,c.player.getBoundingBox().inflate(8),
+			e->e.isAlive()&&(e instanceof net.minecraft.world.entity.monster.piglin.Piglin
+				||e instanceof net.minecraft.world.entity.monster.zombie.ZombifiedPiglin)).isEmpty();
+		return meleeTargetLease.prepare(module(KILL_AURA), type,
+			dev.twob2tkit.combat.PveAuraPolicy.filterPassiveForPiglin(id,nearby));
 	}
 
 	public static void releaseMeleeTarget() { meleeTargetLease.release(); }
@@ -67,20 +74,20 @@ public final class MeteorModules {
 		} catch (ReflectiveOperationException ignored) { return false; }
 	}
 
-    /** Requested unattended PvE: never include players, livestock or neutral piglins/endermen. */
+    /** Preserve the user's zombified-piglin and passive-filter choices. */
     public static boolean enablePveAura(){
         Object aura=module(KILL_AURA);if(aura==null)return false;
         if(meleeTargetLease.active())return meleeTargetLease.ready();
         try{
-            var targets=new java.util.HashSet<net.minecraft.world.entity.EntityType<?>>();
-            for(var type:net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE){
-                String id=net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(type).toString();
-                if(dev.twob2tkit.combat.PveAuraPolicy.allowed(id))targets.add(type);
-            }
+            var field=aura.getClass().getDeclaredField("entities");field.setAccessible(true);
+            Object option=field.get(aura);Object value=option.getClass().getMethod("get").invoke(option);
+            if(!(value instanceof java.util.Set<?> selected))throw new IllegalStateException("Invalid Meteor entities setting");
+            var registry=net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE;
+            var targets=dev.twob2tkit.combat.PveAuraPolicy.targets(registry,selected,type->registry.getKey(type).toString());
             if(targets.isEmpty())throw new IllegalStateException("No hostile targets resolved");
             set(aura,"entities",targets);set(aura,"onlyOnClick",false);set(aura,"onlyOnLook",false);
             set(aura,"autoSwitch",true);set(aura,"swapBack",true);set(aura,"pauseOnUse",true);
-            set(aura,"ignorePassive",true);set(aura,"ignoreTamed",true);
+            set(aura,"ignoreTamed",true);
             enable(KILL_AURA);return isActive(KILL_AURA);
         }catch(ReflectiveOperationException e){throw new IllegalStateException("Cannot verify Meteor PvE settings",e);}
     }

@@ -6,6 +6,26 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class MeteorCombatTargetLeaseTest {
+    @Test void ordinaryHostileDoesNotChangeTheUsersPassiveFilter() {
+        FakeAura aura = new FakeAura(true);
+        aura.ignorePassive.value = false;
+        MeteorCombatTargetLease lease = new MeteorCombatTargetLease();
+        assertTrue(lease.prepare(aura, "zombie", false));
+        assertFalse((Boolean) aura.ignorePassive.get());
+        lease.release();
+        assertFalse((Boolean) aura.ignorePassive.get());
+    }
+    @Test void leavingPiglinTargetRestoresPassiveFilterDuringSameLease() {
+        FakeAura aura = new FakeAura(true);
+        aura.ignorePassive.value = false;
+        MeteorCombatTargetLease lease = new MeteorCombatTargetLease();
+        assertTrue(lease.prepare(aura, "piglin", true));
+        assertTrue((Boolean) aura.ignorePassive.get());
+        assertTrue(lease.prepare(aura, "zombie", false));
+        assertFalse((Boolean) aura.ignorePassive.get());
+        lease.release();
+        assertFalse((Boolean) aura.ignorePassive.get());
+    }
     @Test void addsDetectedPiglinWithoutReplacingUserSelectionsAndRestoresThem() {
         FakeAura aura = new FakeAura(false);
         Set<Object> original = new LinkedHashSet<>(Set.of("skeleton", "enderman"));
