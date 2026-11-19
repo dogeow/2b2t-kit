@@ -48,7 +48,7 @@ def equipment_deposit_signature(state, params, world, task, expected):
     from anvil_enchant_preview import stack_key
     if not isinstance(expected,dict) or set(expected)!={'item','contents'}:return None
     item=expected['item']; contents=expected['contents']
-    if not isinstance(item,dict) or item.get('item') not in ('minecraft:bow','minecraft:diamond_axe') or item.get('count')!=1:return None
+    if not isinstance(item,dict) or item.get('item') not in ('minecraft:bow','minecraft:diamond_axe','minecraft:diamond_shovel') or item.get('count')!=1:return None
     maximum=item.get('max_durability')
     if type(maximum)is not int or maximum<=0 or item.get('durability')!=maximum or not isinstance(contents,list):return None
     menu=state.get('menu')or{}; rows=menu.get('slots')or[]; lease=state.get('supervision_lease')or{}
