@@ -2,8 +2,8 @@
 
 写 twob2tkit 新功能之前先查这里，别再造已经有的轮子。
 
-来源是本机 `meteor-client-source/`（面向 **26.2**，twob2tkit 是 **26.1.2**，API 签名可能对不上，
-但**有没有这个功能**这件事是准的）。要确认细节就直接看：
+来源是本机 `meteor-client-source/`。它的 Minecraft 版本可能与 twob2tkit 当前版本（见 `gradle.properties`）不同，
+API 签名使用前要核对，但**有没有这个功能**这件事是准的。要确认细节就直接看：
 
 ```text
 meteor-client-source/src/main/java/meteordevelopment/meteorclient/systems/modules/<分类>/<模块>.java

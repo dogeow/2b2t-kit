@@ -26,5 +26,5 @@
 
 - JDK 25 离线 `test jar verifyRuntimeEngineJar` 通过；383 项测试，0 失败，新增 25 项：原生进食判断与动态设置、跨食物间隔、进食超时、工具精确门槛、背包与副手备用镐、工具列表、控制分支与排队下线接线。
 - 只部署 `config/twob2tkit/runtime/twob2tkit-engine.jar` 1.7.13；主包 1.8.16 和 API 2 不变。旧引擎备份在 `config/twob2tkit/backups/2026-09-06-eat-tools/`。
-- 本次更改可用 `/twob2tkit reload` 热加载。检查时最新日志仍是主包 1.8.11、加载快照 1.7.11；上一轮 1.8.16 主包崩溃保护必须完整重启后才生效，参见 `CRASH-2026-09-06.md`。
+- 本次更改可用 `/twob2tkit reload` 热加载。检查时最新日志仍是主包 1.8.11、加载快照 1.7.11；上一轮 1.8.16 主包崩溃保护必须完整重启后才生效，参见 `../reviews/CRASH-2026-09-06.md`。
 - 尚未在服务器里实测进食和最后一把镐的下线。实测时关注 `meteor-eat-pause/resume/blocked`、`tool-switch`、`tools-protected-logout`；需要确认恢复后仍在原井、工具耐久与 Meteor 门槛一致、断线不崩溃。

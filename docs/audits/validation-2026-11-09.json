@@ -1,0 +1,35 @@
+{
+  "date": "2026-11-09",
+  "base_commit": "fef3f4708b496ef75491986b4d27bfa9e4febdbc",
+  "scope": "local worktree including pre-existing uncommitted changes and the audit fixes",
+  "minecraft_version": "26.2",
+  "java": {
+    "command": "./gradlew test jar verifyRuntimeEngineJar --offline",
+    "initial_tests": 2671,
+    "initial_failures": 3,
+    "tests": 2671,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "jar_built": true,
+    "runtime_engine_jar_verified": true
+  },
+  "python": {
+    "command": "python -B -m unittest discover -s decision-runtime",
+    "minecraft_client_jar": "26.2.jar",
+    "initial_tests": 6059,
+    "initial_errors": 4,
+    "tests": 6059,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 197.494
+  },
+  "sha256": {
+    "built_mod": "98feb21bc2b944226c10997fa328cc8cc35661481fcc1c5bcd386fab946025c8",
+    "built_runtime_engine": "8a84d9d338f30e2eb75207422c47bf660a5d86570b2ca050c25b2a247639514f",
+    "installed_mod": "2fc144e3163193a0bb90c9ec518c5ce28df3b6d2ffe54830a358787e934451dd",
+    "installed_runtime_engine": "cb0e14b7c027e42c9aef2896334be430079d221156082de353404e0b591beb17"
+  },
+  "deployed": false,
+  "live_game_validation": false
+}
