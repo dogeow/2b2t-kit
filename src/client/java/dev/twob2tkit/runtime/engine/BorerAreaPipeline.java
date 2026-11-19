@@ -27,6 +27,18 @@ final class BorerAreaPipeline {
 		if (!canClick(tick) || contains(p)) throw new IllegalStateException("区域挖待确认队列已满或方块重复");
 		pending.put(p.immutable(), new Pending(tick)); lastClick = tick;
 	}
+	/** A single ore-tunnel slice may submit its other, vertically adjacent face in this tick. */
+	void submitTunnelClick(BlockPos pos, long tick) {
+		if (pending.size()==1 && tick==lastClick) {
+			BlockPos first=pending.keySet().iterator().next();
+			if (first.above().equals(pos) || first.below().equals(pos)) {
+				pending.put(pos.immutable(),new Pending(tick));
+				return;
+			}
+		}
+		submitted(pos,tick);
+	}
+
 	List<BlockPos> update(long tick, Function<BlockPos, Observation> observations) {
 		var confirmed = new ArrayList<BlockPos>();
 		var it = pending.entrySet().iterator();
@@ -49,5 +61,6 @@ final class BorerAreaPipeline {
 	boolean blocksRay(Vec3 eye, Vec3 hit, BlockPos except) {
 		return pending.keySet().stream().filter(p -> !p.equals(except)).anyMatch(p -> new AABB(p).inflate(.001).clip(eye,hit).isPresent());
 	}
+	void discardCorrected(BlockPos pos) { pending.remove(pos); }
 	void clear() { pending.clear(); lastClick = Long.MIN_VALUE; }
 }

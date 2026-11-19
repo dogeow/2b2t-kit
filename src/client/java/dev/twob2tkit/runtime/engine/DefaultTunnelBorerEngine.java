@@ -67,7 +67,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
     final BorerSurroundWait surroundWait = new BorerSurroundWait();
 	final BorerMiningConfirmation miningConfirmation = new BorerMiningConfirmation();
 	final BorerStepCycle stepCycle = new BorerStepCycle();
-	private final BorerMiningModules miningModules = new BorerMiningModules();
+	final BorerMiningModules miningModules = new BorerMiningModules();
 	boolean areaInstantRebreakRequested() { return mode == Mode.AREA && miningModules.instantRebreakRequested(); }
     private final RecoveryAscent recoveryAscent = new RecoveryAscent();
     private final IdleThermalAscent idleThermalAscent = new IdleThermalAscent();
@@ -129,7 +129,10 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		BorerFlight::readFlightSpeed, BorerFlight::writeFlightSpeed);
 	private boolean oreCenteringThisTick;
 	private boolean oreCenteringSpeedUnavailable;
+	private final BorerLavaPotion lavaPotion = new BorerLavaPotion();
+	final BorerOreTunnel oreTunnel = new BorerOreTunnel(this);
 	final BorerHome home = new BorerHome(this);
+	final BorerHomeFlight pocketFlight = new BorerHomeFlight(this);
 	final BorerMobs mobs = new BorerMobs(this);
 	final BorerEngagement engagement = new BorerEngagement();
 	final BorerOreScan ores = new BorerOreScan(this);
@@ -356,6 +359,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		oreTargetPos = null;
 		sideOreTargetPos = null;
 		ores.resetState();
+		ores.resetBlockedRouteSkips();
 		liquidSettleTicks = 0;
 		liquidSealFails = 0;
 		liquidSealFailPos = null;
@@ -424,6 +428,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	/** 停止盾构并松开所有按键。 */
 	@Override
 	public void stop(Minecraft client, String reason) {
+		oreTunnel.clearClicks();
+		lavaPotion.reset(client);
 		oreCenteringFlight.release();
 		vertical.releaseScaffold();
         guardMagmaSneak.close(client);
@@ -435,6 +441,9 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
         meteorFarmAssist.close(Minecraft.getInstance(),true);
 		stopSafetyNote="";
 		home.reset();
+		pocketFlight.close();
+		oreTunnel.reset();
+		ores.resetBlockedRouteSkips();
 		stepCycle.reset();
 		try { miningModules.release(); }
 		catch (RuntimeException error) { fileLog(client, "mining-module-restore-failed " + error); }
@@ -841,6 +850,9 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		returningToPortal = flyToPortal;
 		trail.resetFollow();
 		home.reset();
+		pocketFlight.close();
+		oreTunnel.reset();
+		ores.resetBlockedRouteSkips();
 		clearMiningTarget(client, "begin-return-home");
 		loot.clear();
 		oreTargetPos = null;
@@ -1206,6 +1218,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
             fileLog(client,"surround-abort health="+player.getHealth()+" reason=damaged-or-timeout; shelter suppressed for this mining session");
         }
         if (flyToggleCooldown > 0) flyToggleCooldown--;
+        if (lavaPotion.tick(client, player, this)) return;
+        if (mode == Mode.AREA && player.isInLava() && liquids.handleLavaContact(client, player)) return;
         // Physical contact escape has priority over food and combat; its escape
         // jump/crouch is applied after combat releases input and survives this tick.
         if (mode != Mode.AREA && handleMiningContactRescue(client, player)) return;
@@ -1259,7 +1273,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			releaseMine(client);
 			return;
 		}
-		if (!loot.active() && !goingHome) {
+		if (!loot.active() && !goingHome && !pocketFlight.isFollowing() && !oreTunnel.active()) {
 			ores.updateTarget(client, player);
 			ores.updateSideTarget(client, player);
 		}
@@ -1290,9 +1304,6 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		}
 		sealTarget = null;
 
-		if (!loot.active() && mode == Mode.ORE && (oreTargetPos != null || sideOreTargetPos != null)) {
-			if (liquids.skipOrDetour(client, player)) return;
-		}
 
 		Creeper creeper = mobs.findCreeper(client, player);
 		if (mobs.creeperImminent(player, creeper)) {
@@ -1345,6 +1356,10 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 		mobs.lowerShield(client);
 		mobs.releaseCombatMove(client);
+		if (pocketFlight.tickPocketEscape(client)) {
+			oreMoveLook = null;
+			return;
+		}
 		// A confirmed clearance is real progress even before this tick's normal
 		// mining completion branch runs; do not classify its landing as a loop.
 		if (currentTarget != null && client.level.getBlockState(currentTarget).isAir()
@@ -1354,6 +1369,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			stop(client, "同一台阶连续两次升高又回退，已停挖保留进度");
 			return;
 		}
+		if (oreTunnel.awaitClicks(client)) return;
 		if (waitForMiningConfirmation(client)) return;
 		if (!goingHome && !loot.active() && place.continueDescentBridgeAdvance(client, player)) return;
 		if (goingHome) {
@@ -1366,14 +1382,13 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			if (loot.active() && handleLootCollection(client, player)) return;
 			if (mode == Mode.ORE && !loot.active()) {
 				BlockPos goal = sideOreTargetPos != null ? sideOreTargetPos : oreTargetPos;
-				if (goal != null && !walkRoute.hasSupportRoute(goal)
-					&& (currentTarget == null || !wantedBlock(client.level.getBlockState(currentTarget)))
-					&& !(BorerAim.inReach(player, goal) && canSeeBlock(client, player, goal))
-					&& walkRoute.walk(client, Vec3.atCenterOf(goal), false)) {
-					clearMiningTarget(client, "existing-open-route"); return;
-				}
+				// Allow the original confirmed ore break to finish and credit its drops.
+				boolean awaitingOreReceipt = currentTarget != null && miningSelectedOre
+					&& isReplaceable(client, currentTarget);
+				if (!awaitingOreReceipt && oreTunnel.tick(client, goal)) return;
 			}
-			if (mode == Mode.ORE && !loot.active() && oreTargetPos == null && sideOreTargetPos == null) {
+			if (mode == Mode.ORE && !loot.active() && oreTargetPos == null && sideOreTargetPos == null
+				&& !(currentTarget != null && miningSelectedOre && isReplaceable(client, currentTarget))) {
 				clearMiningTarget(client, "no-ore-goal");
 				frontOccluded = false;
 				occludedTicks = 0;
@@ -1478,9 +1493,15 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 		}
 
 		if (currentTarget == null) {
+			if (mode == Mode.ORE && !goingHome && !loot.active()) {
+				releaseMine(client);
+				return; // Let the full planner select the next approach before issuing another dig.
+			}
 			frontOccluded = false;
 			if (mode == Mode.FORWARD) tryTurnAroundLava(client, player);
 			BlockPos planned = nextTarget(client, player);
+			if (mode==Mode.FORWARD && !goingHome && effectiveWidth()==1 && effectiveHeight()==2
+					&& oreTunnel.tryStraightPair(client,planned)) return;
 			if (planned != null) setMiningTarget(client, player, planned, "planner");
 			if (currentTarget == null && mode == Mode.ORE && !goingHome && !loot.active()
 				&& player.onGround() && !isFlying(player) && liquidDetourPos == null) {
@@ -1948,6 +1969,13 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 					? "最前层仍有方块，但当前没有可挖视线，已原地等待"
 					: routeIssue + "，已原地等待";
 				if (occludedTicks >= ROUTE_TIMEOUT_TICKS) {
+					BlockPos ore = sideOreTargetPos != null ? sideOreTargetPos : oreTargetPos;
+					if (mode == Mode.ORE && BorerVertical.NO_DESCENT.equals(routeIssue)
+							&& liquids.tryWideBypass(client, ore, true)) {
+						occludedTicks = 0;
+						frontOccluded = false;
+						return;
+					}
 					if (mode == Mode.ORE) ores.skipActive(client,
 						routeIssue.isBlank() ? "目标路径连续 4 秒没有可挖视线" : routeIssue);
 					else stop(client, "最前层被遮挡，已释放手动挖掘");
@@ -3127,7 +3155,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	}
 
 	/** 可见命中结果。 */
-	private BlockHitResult visibleHitResult(Minecraft client, LocalPlayer player, BlockPos pos) {
+	BlockHitResult visibleHitResult(Minecraft client, LocalPlayer player, BlockPos pos) {
 		return BorerAim.visibleHit(client, player, pos, minePos -> shouldMine(client, minePos));
 	}
 
@@ -3397,7 +3425,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	}
 
 	/** 轴向能打到就轴向；打不到但可见面能打到就对着可见面。 */
-	private void lookAtMiningHit(Minecraft client, LocalPlayer player, BlockHitResult hit) {
+	void lookAtMiningHit(Minecraft client, LocalPlayer player, BlockHitResult hit) {
 		if (hit == null) return;
 		if (mode == Mode.AREA && BorerAreaPolicy.freeAimMining()) {
 			BorerAim.lookAtBlockCenter(player, hit.getBlockPos());
@@ -3733,7 +3761,8 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	}
 
 	/** 按记忆应用点/按挖矿节奏。 */
-	private void applyMineCadence(Minecraft client, LocalPlayer player, BlockPos pos, boolean newTarget, boolean retry) {
+	void applyMineCadence(Minecraft client, LocalPlayer player, BlockPos pos, boolean newTarget, boolean retry) {
+		if (newTarget && mode==Mode.ORE && !goingHome && oreTunnel.trySingleTap(client,pos)) return;
 		float progress = destroyProgress(player, pos);
 		if (newTarget || timingKey == null || !timingActive) {
 			timingKey = mineTimingKey(player, pos);
@@ -3891,6 +3920,11 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 				+ " ticks=" + aimMissTicks + " crosshair=" + crosshairLabel(client));
 		}
 		if (aimMissTicks < MINING_STALL_TICKS) return false;
+		if (mode == Mode.ORE && !goingHome && !loot.active() && reason.equals("aim-miss-unsafe")
+				&& pocketFlight.beginPocketEscape(client, false)) {
+			resetAimMissProgress();
+			return true;
+		}
 		boolean selectedOre = wantedBlock(client.level.getBlockState(pos));
 		resetAimMissProgress();
 		if (selectedOre) {
@@ -3900,6 +3934,12 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			suppressMiningTarget(client, pos, STALLED_BLOCK_SUPPRESS_TICKS, "10s-real-aim-miss");
 		}
 		return false;
+	}
+
+	void escapeRepeatedBedrock(Minecraft client) {
+		resetAimMissProgress();
+		clearMiningTarget(client, "bedrock-skip-loop");
+		pocketFlight.beginPocketEscape(client, true);
 	}
 
 	/** 瞄准进度。 */

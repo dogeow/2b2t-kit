@@ -9,6 +9,7 @@ import net.minecraft.world.phys.AABB;
 
 /** 矿石不在同一层时的台阶、1×2 开口、跳跃和攀爬落差。 */
 final class BorerVertical {
+	static final String NO_DESCENT = "向下寻路没有安全落脚方块";
 	private static final int JUMP_PRESS_TICKS = 3;
 	private static final int JUMP_RETRY_COOLDOWN_TICKS = 12;
 	private static final int MAX_JUMP_ATTEMPTS_PER_BLOCK = 2;
@@ -85,7 +86,7 @@ final class BorerVertical {
 			if (ascending && placeTemporaryStep(client, player, feet)) return null;
 			engine.routeIssue = ascending
 				? "向上寻路没有可站立地面，也无法用背包方块补临时台阶"
-				: "向下寻路没有安全落脚方块";
+				: NO_DESCENT;
 			engine.frontOccluded = true;
 			return null;
 		}
@@ -107,7 +108,7 @@ final class BorerVertical {
 				engine.resetJumpControl();
 				return gap;
 			}
-			engine.routeIssue = "向下寻路没有安全落脚方块";
+			engine.routeIssue = NO_DESCENT;
 			engine.frontOccluded = true;
 			return null;
 		}

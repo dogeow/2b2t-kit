@@ -19,6 +19,7 @@ final class BorerLiquids {
 	private final DefaultTunnelBorerEngine engine;
 	private BlockPos approachTarget;
 	private int approachStartTick;
+	private final MagmaExitProgress magmaExit = new MagmaExitProgress();
 
 	BorerLiquids(DefaultTunnelBorerEngine engine) {
 		this.engine = engine;
@@ -337,7 +338,8 @@ final class BorerLiquids {
 			return false;
 		}
 		engine.lavaContactTicks++;
-		if (!engine.turnAroundLava() && engine.host.borerStopOnLava()) {
+		boolean protectedByPotion = player.hasEffect(net.minecraft.world.effect.MobEffects.FIRE_RESISTANCE);
+		if (!protectedByPotion && !engine.turnAroundLava() && engine.host.borerStopOnLava()) {
 			engine.stop(client, "已接触岩浆 " + BorerText.block(player.blockPosition()) + "，直线隧道已停");
 			return true;
 		}
@@ -352,6 +354,13 @@ final class BorerLiquids {
 		if (BorerLiquidPolicy.preferGroundRetreatFromLava(true, tryStepOffMagma(client, player))) {
 			engine.status = "踩到岩浆，地面退到安全格";
 			engine.overlay(client, engine.status, 0xFFFF55);
+			return true;
+		}
+		if (protectedByPotion && client.level.noCollision(player, player.getBoundingBox().expandTowards(0,.5,0))
+				&& BorerHazards.isLavaFluid(client, player.blockPosition().above())) {
+			client.options.keyShift.setDown(false);
+			client.options.keyJump.setDown(true);
+			engine.overlay(client, "抗火已生效，正在上浮撤离岩浆池", 0x55FFFF);
 			return true;
 		}
 		if (engine.tryTurnAroundLava(client, player, true)) {
@@ -380,6 +389,7 @@ final class BorerLiquids {
 	boolean handleMagmaBurn(Minecraft client, LocalPlayer player) {
 		if (!BorerHazards.playerOnMagma(client, player)) return false;
 		client.options.keyShift.setDown(true);
+		if (engine.oreTunnel.active()) engine.oreTunnel.reset();
 		if (tryStepOffMagma(client, player)) return true;
 		BlockPos feet = player.blockPosition();
 		Direction[] exitDirections = {
@@ -446,13 +456,28 @@ final class BorerLiquids {
 	/** 尝试从岩浆块上下来。 */
 	private boolean tryStepOffMagma(Minecraft client, LocalPlayer player) {
 		BlockPos feet = player.blockPosition();
+		magmaExit.observe(feet, player.position(), player.tickCount);
 		Direction[] dirs = {engine.forward, engine.forward.getClockWise(), engine.forward.getCounterClockWise(), engine.forward.getOpposite()};
+		boolean flying = BorerFlight.isFlying(player);
 		for (Direction dir : dirs) {
+			if (magmaExit.blocked(dir, player.tickCount)) continue;
 			BlockPos next = feet.relative(dir);
 			BlockPos floor = next.below();
-			if (engine.isLava(client, next) || engine.isLava(client, floor) || BorerHazards.isMagma(client, floor)) continue;
-			if (!BorerFlight.isFlying(player) && !engine.isStandable(client, floor)) continue;
-			if (engine.hasCollision(client, next) && !engine.isReplaceable(client, next)) continue;
+			if (!client.level.hasChunkAt(floor) || BorerHazards.isMagma(client, floor)
+					|| !client.level.getFluidState(floor).isEmpty()
+					|| !client.level.getBlockState(floor).isFaceSturdy(client.level, floor, Direction.UP)) continue;
+			var swept = player.getBoundingBox().expandTowards(dir.getStepX(), 0, dir.getStepZ()).deflate(.0001);
+			if (!client.level.noCollision(player, swept)) continue;
+			boolean dry = true;
+			for (var b : BlockPos.betweenClosed(BlockPos.containing(swept.minX,swept.minY,swept.minZ),
+					BlockPos.containing(swept.maxX,swept.maxY,swept.maxZ))) {
+				if (!client.level.hasChunkAt(b) || !client.level.getFluidState(b).isEmpty()
+						|| client.level.getBlockState(b).is(Blocks.FIRE) || client.level.getBlockState(b).is(Blocks.SOUL_FIRE)) {
+					dry = false;
+					break;
+				}
+			}
+			if (!dry) continue;
 			if (dir != engine.forward) {
 				engine.clearMiningTarget(client, "step-off-magma-turn");
 				boolean clockwise = dir == engine.forward.getClockWise();
@@ -462,10 +487,13 @@ final class BorerLiquids {
 				engine.turnedThisTick = true;
 			}
 			engine.releaseMine(client);
-			client.options.keyShift.setDown(true);
+			engine.faceForward(player);
+			engine.rememberOreMove(player);
+			magmaExit.attempt(dir, player.position(), player.tickCount);
+			client.options.keyShift.setDown(!flying);
 			client.options.keyUp.setDown(true);
 			engine.attemptedForward = true;
-			engine.status = "脚下岩浆块，潜行走开 " + BorerText.direction(dir);
+			engine.status = (flying ? "脚下岩浆块，水平飞离 " : "脚下岩浆块，潜行走开 ") + BorerText.direction(dir);
 			engine.overlay(client, engine.status, 0x55FFFF);
 			return true;
 		}
@@ -530,7 +558,18 @@ final class BorerLiquids {
 		}
 		String kind = BorerHazards.isLavaFluid(client, liquid) || BorerHazards.lavaOpenedByMining(client, liquid) != null
 			? "岩浆" : "水";
-		return engine.ores.skipActive(client, kind + " " + BorerText.block(liquid) + " 挡住通往矿脉的通路，提前改挖别处");
+		if (tryWideBypass(client, goal, false)) return true;
+		return engine.ores.skipLiquidRoute(client, player, kind + " " + BorerText.block(liquid) + " 挡住通往矿脉的通路");
+	}
+
+	boolean tryWideBypass(Minecraft client, BlockPos goal, boolean needDescent) {
+		if (goal == null || engine.goingHome || engine.loot.active()) return false;
+		int startY = client.player.blockPosition().getY();
+		boolean found = engine.pocketFlight.beginLiquidBypass(client, goal,
+			feet -> (!needDescent || feet.getY() < startY)
+				&& onTunnelLine(client, feet, goal, DefaultTunnelBorerEngine.LAVA_LOOK_BLOCKS) == null);
+		if (found) engine.clearMiningTarget(client, "wide-bypass");
+		return found;
 	}
 
 	/** 选一条干绕路点。 */
@@ -548,7 +587,7 @@ final class BorerLiquids {
 			for (int ahead : aheads) {
 				BlockPos via = from.relative(right, side).relative(along, ahead);
 				if (!client.level.hasChunkAt(via)) continue;
-				if (inStandColumn(client, via, BorerLiquidPolicy.ignoreLiquidUnderFloor(engine.magmaMining(), goal.getY() - from.getY())) != null) continue;
+				if (inStandColumn(client, via, retainsDryFloor(client, via.below())) != null) continue;
 				if (onTunnelLine(client, from, via, ahead + Math.abs(side)) != null) continue;
 				return via.immutable();
 			}
@@ -563,16 +602,24 @@ final class BorerLiquids {
 		int steps = Math.max(Math.abs(gx), Math.abs(gz));
 		boolean floorKept = BorerLiquidPolicy.ignoreLiquidUnderFloor(engine.magmaMining(), to.getY() - from.getY());
 		if (steps <= 0) return inStandColumn(client, from, floorKept);
-		steps = Math.min(steps, Math.max(1, maxSteps));
-		for (int i = 1; i <= steps; i++) {
+		int limit = Math.min(steps, Math.max(1, maxSteps));
+		for (int i = 1; i <= limit; i++) {
 			int x = from.getX() + gx * i / steps;
 			int z = from.getZ() + gz * i / steps;
 			BlockPos col = new BlockPos(x, from.getY(), z);
 			if (!client.level.hasChunkAt(col)) continue;
-			BlockPos hit = inStandColumn(client, col, floorKept);
+			BlockPos hit = inStandColumn(client, col, floorKept || retainsDryFloor(client, col.below()));
 			if (hit != null) return hit;
 		}
 		return null;
+	}
+
+	/** A horizontal probe keeps this floor; actual excavation still checks its own block. */
+	private boolean retainsDryFloor(Minecraft client, BlockPos floor) {
+		var state = client.level.getBlockState(floor);
+		return state.getFluidState().isEmpty()
+			&& !engine.miningConfirmation.pending(client.level, floor)
+			&& state.isFaceSturdy(client.level, floor, Direction.UP);
 	}
 
 	/** 在立足柱内找液体或挖开会露出的液体；地面不挖时只看地面本身是不是液体。 */

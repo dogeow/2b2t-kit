@@ -8,6 +8,25 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BorerAreaPipelineTest {
 	private final BlockPos a = new BlockPos(1,1,0), b = new BlockPos(1,0,0);
+	@Test void oneCorrectedTunnelClickDoesNotDiscardTheOtherOutstandingPrediction() {
+		var q=new BorerAreaPipeline();
+		q.submitTunnelClick(a,10); q.submitTunnelClick(b,10);
+		q.discardCorrected(a);
+		assertEquals(List.of(b),q.positions());
+		assertTrue(q.update(11,p->new BorerAreaPipeline.Observation(true,true)).isEmpty());
+		assertTrue(q.update(12,p->new BorerAreaPipeline.Observation(true,false)).isEmpty());
+		assertEquals(List.of(b),q.update(13,p->new BorerAreaPipeline.Observation(true,false)));
+	}
+	@Test void tunnelPairAcceptsOnlyTheVerticalCompanionAndConfirmsEachFaceSeparately() {
+		var q=new BorerAreaPipeline();
+		q.submitTunnelClick(a,5);
+		assertThrows(IllegalStateException.class,()->q.submitTunnelClick(a.east(),5));
+		assertThrows(IllegalStateException.class,()->q.submitTunnelClick(a,5));
+		q.submitTunnelClick(b,5);
+		assertThrows(IllegalStateException.class,()->q.submitTunnelClick(b.below(),5));
+		for(int t=6;t<=7;t++) q.update(t,p->new BorerAreaPipeline.Observation(true,p.equals(a)));
+		assertEquals(List.of(a),q.positions());
+	}
 	@Test void secondIndependentClickCanBeSentWhileFirstAwaitsConfirmation() {
 		var q=new BorerAreaPipeline();q.submitted(a,0);
 		assertFalse(q.canClick(1));assertTrue(q.canClick(2));q.submitted(b,2);

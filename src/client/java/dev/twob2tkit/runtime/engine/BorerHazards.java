@@ -47,6 +47,21 @@ public final class BorerHazards {
 		return -1;
 	}
 
+	/** Pickup movement requires a loaded, sturdy floor and rejects unconfirmed block breaks. */
+	static int pickupFallDepth(Minecraft client, BlockPos column, BorerMiningConfirmation confirmation) {
+		if (client.level == null || !client.level.hasChunkAt(column)) return -1;
+		int depth = safeFallDepth(client, column);
+		if (depth < 0) return -1;
+		for (int offset = 1; offset >= -depth - 1; offset--) {
+			if (confirmation.pending(client.level, column.offset(0, offset, 0))) return -1;
+		}
+		BlockPos floor = column.below(depth + 1);
+		var state = client.level.getBlockState(floor);
+		if (state.is(Blocks.CAMPFIRE) || state.is(Blocks.SOUL_CAMPFIRE)
+				|| !state.isFaceSturdy(client.level, floor, Direction.UP)) return -1;
+		return depth;
+	}
+
 	/** 脚前方柱是否可走或安全落下。 */
 	public static boolean canWalkOrFallInto(Minecraft client, BlockPos feetColumn) {
 		return safeFallDepth(client, feetColumn) >= 0;

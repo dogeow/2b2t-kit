@@ -1,5 +1,10 @@
 package dev.twob2tkit.runtime.engine;
 
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.AABB;
+
+import java.util.function.ToIntFunction;
+
 /**
  * 找矿捡掉落物。只改这一处。
  * <p>
@@ -34,7 +39,31 @@ public final class BorerLootPolicy {
 	static boolean canStackDrop(boolean sameComponents, int count, int maximum) { return sameComponents && count < maximum; }
 	static int verticalSearchRadius(boolean noFall) { return Math.max(10, BorerFallPolicy.maxSafeFallBlocks(noFall) + 2); }
 	static boolean safeHop(boolean hop, boolean ceilingBlocked) { return hop && !ceilingBlocked; }
+	/** Only center on a tile the current footprint overlaps, at the actual foot height. */
+	static boolean canRecenter(AABB body, BlockPos support) {
+		if (Math.abs(body.minY-support.getY()) > .01) return false;
+		int x=support.getX(), z=support.getZ();
+		return body.maxX>x+.0001 && body.minX<x+1-.0001
+			&& body.maxZ>z+.0001 && body.minZ<z+1-.0001
+			&& (body.minX<x-.0001 || body.maxX>x+1+.0001 || body.minZ<z-.0001 || body.maxZ>z+1+.0001);
+	}
+
+	/** Every column under the movement footprint needs a verified landing. */
+	static boolean safeApproach(AABB footprint, int feetY, int allowedDrop, ToIntFunction<BlockPos> fallDepth) {
+		BlockPos min = BlockPos.containing(footprint.minX + 1e-5, feetY, footprint.minZ + 1e-5);
+		BlockPos max = BlockPos.containing(footprint.maxX - 1e-5, feetY, footprint.maxZ - 1e-5);
+		for (BlockPos column : BlockPos.betweenClosed(min, max)) {
+			int depth = fallDepth.applyAsInt(column);
+			if (depth < 0 || depth > allowedDrop) return false;
+		}
+		return true;
+	}
+
 	/** A high drop does not justify jumping while movement or the raised body is blocked. */
+	static boolean needsPickupHop(boolean blocked, double itemHeight, boolean atDropRim) {
+		return blocked && (itemHeight > .45 || atDropRim);
+	}
+
 	static boolean groundHop(boolean grounded, boolean moving, boolean supported, boolean bodyClear, boolean needed) {
 		return grounded && moving && supported && bodyClear && needed;
 	}

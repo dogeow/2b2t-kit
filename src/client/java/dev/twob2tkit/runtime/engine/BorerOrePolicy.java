@@ -1,5 +1,7 @@
 package dev.twob2tkit.runtime.engine;
 
+import net.minecraft.world.phys.Vec3;
+
 /**
  * 找矿时「矿已经在身旁」的判定。只改这一处。
  * <p>
@@ -8,6 +10,33 @@ package dev.twob2tkit.runtime.engine;
  */
 public final class BorerOrePolicy {
 	private BorerOrePolicy() {
+	}
+
+	/** Count blocked targets at the same position, even when they point toward different walls. */
+	static final class BlockedRouteSkips {
+		private Vec3 anchor;
+		private long firstTick;
+		private int skips;
+
+		boolean record(Vec3 position, long tick) {
+			observePosition(position);
+			if (anchor == null || tick < firstTick || tick - firstTick >= 600) {
+				reset();
+				anchor = position;
+				firstTick = tick;
+			}
+			return ++skips >= 3;
+		}
+
+		void observePosition(Vec3 position) {
+			if (anchor != null && (Math.abs(position.y - anchor.y) >= 1
+					|| Math.hypot(position.x - anchor.x, position.z - anchor.z) >= 1.5)) reset();
+		}
+
+		void reset() {
+			anchor = null;
+			skips = 0;
+		}
 	}
 
 	/**

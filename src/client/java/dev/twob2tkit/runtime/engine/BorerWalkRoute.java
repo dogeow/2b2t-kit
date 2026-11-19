@@ -87,6 +87,16 @@ final class BorerWalkRoute {
 		if (!c.level.noCollision(p, p.getBoundingBox().move(input.probeX(), dy, input.probeZ()))) {
 			invalidate(c, "body-blocked"); return false;
 		}
+		if (pickup && input.forward()) {
+			var footprint = p.getBoundingBox().expandTowards(input.probeX(), 0, input.probeZ());
+			int feetY = p.blockPosition().getY() + (int) dy;
+			int allowedDrop = Math.max(0, feetY - node.getY());
+			if (!BorerLootPolicy.safeApproach(footprint, feetY, Math.max((int) dy, allowedDrop),
+					column -> BorerHazards.pickupFallDepth(c, column, engine.miningConfirmation))) {
+				invalidate(c, "unsafe-pickup-landing");
+				return false;
+			}
+		}
 		RotationAim.apply(p, input.yaw(), 0);
 		engine.rememberOreMove(p);
 		c.options.keyUp.setDown(input.forward()); engine.attemptedForward = input.forward();

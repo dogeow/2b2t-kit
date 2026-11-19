@@ -1,5 +1,6 @@
 package dev.twob2tkit.runtime.engine;
 
+import net.minecraft.world.phys.AABB;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -12,6 +13,35 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 2026-08-25 13624 -53 9217，19→21 remaining=false，14 tick 收工，1.6 格外还掉着。
  */
 final class BorerLootPolicyTest {
+	@Test void clearGroundAndUnobstructedDropsNeverPulseJump() {
+		assertFalse(BorerLootPolicy.needsPickupHop(false,0,false));
+		assertFalse(BorerLootPolicy.needsPickupHop(false,-1,true));
+		assertFalse(BorerLootPolicy.needsPickupHop(true,0,false));
+		assertTrue(BorerLootPolicy.needsPickupHop(true,1,false));
+	}
+
+	@Test void straddlingThePitLipAllowsCenteringOnlyOnTheOverlappedSupport() {
+		var edge = new AABB(95203.62,11,99603.275,95204.22,12.8,99603.875);
+		var support = new net.minecraft.core.BlockPos(95204,11,99603);
+		assertTrue(BorerLootPolicy.canRecenter(edge,support));
+		assertFalse(BorerLootPolicy.canRecenter(edge,support.east()));
+		assertFalse(BorerLootPolicy.canRecenter(edge,support.below()));
+		assertFalse(BorerLootPolicy.canRecenter(edge.move(.58,0,0),support));
+	}
+
+	@Test void pickupRejectsADeepLavaColumnEvenWhenTheItemHasASafeFloor() {
+		// At Y=-52 the forward probe spans X=760965..760967.
+		// X=760966 has lava at Y=-55 and X=760968 has a solid floor under the item.
+		AABB stride = new AABB(760965.577, -52, 797930.347, 760966.177, -50.2, 797930.947)
+			.expandTowards(.85, 0, 0);
+		assertFalse(BorerLootPolicy.safeApproach(stride, -52, 0, p -> p.getX() == 760966 ? -1 : 0));
+		assertFalse(BorerLootPolicy.safeApproach(stride, -52, 3, p -> p.getX() == 760966 ? -1 : 0));
+		assertFalse(BorerLootPolicy.safeApproach(stride, -52, 0, p -> p.getX() == 760966 ? 2 : 0));
+		assertTrue(BorerLootPolicy.safeApproach(stride, -52, 2, p -> p.getX() == 760966 ? 2 : 0));
+		assertTrue(BorerLootPolicy.safeApproach(stride, -52, 0, p -> 0));
+	}
+
+
 	@Test void highDropCannotTriggerAJumpAgainstABlockedBodyOrMissingFooting() {
 		assertFalse(BorerLootPolicy.groundHop(true, false, true, true, true));
 		assertFalse(BorerLootPolicy.groundHop(true, true, false, true, true));

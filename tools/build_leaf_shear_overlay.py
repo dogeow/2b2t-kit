@@ -6,7 +6,7 @@ def sha(data):return hashlib.sha256(data).hexdigest()
 def build(base,expected,classpath,asm,jdk,out,version):
     repo=Path(__file__).resolve().parents[1];data=base.read_bytes()
     if sha(data)!=expected:raise ValueError('Installed baseline hash changed')
-    if not re.fullmatch(r'\d+\.\d+\.\d+',version):raise ValueError('Invalid engine version')
+    if not re.fullmatch(r'(?:\d+\.\d+\.\d+|\d{4}\.\d{2}\.\d{2}\.[1-9]\d*)',version):raise ValueError('Invalid engine version')
     name='dev/twob2tkit/runtime/engine/';default=name+'DefaultTunnelBorerEngine.class'
     with tempfile.TemporaryDirectory(prefix='leaf-overlay-') as directory:
         root=Path(directory);classes=root/'classes';classes.mkdir();original=root/'original.class'

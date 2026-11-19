@@ -10,6 +10,17 @@ public final class BorerMiningModules {
 	private final List<Module> owned = new ArrayList<>();
 	private boolean acquired, preservingSpeedMine;
 	private boolean repeatRequested;
+	private Module pausedSpeedMine;
+
+	boolean hasPausedSpeedMine() { return pausedSpeedMine != null; }
+
+	boolean withSpeedMine(java.util.function.BooleanSupplier clicks) {
+		Module module=pausedSpeedMine;
+		if (module==null || module.active()) return clicks.getAsBoolean();
+		module.enable();
+		try { return clicks.getAsBoolean(); }
+		finally { module.disable(); }
+	}
 	boolean instantRebreakRequested() { return repeatRequested; }
 	public BorerMiningModules() { this(BorerMiningModules::find); }
 	BorerMiningModules(Lookup lookup) { this.lookup = lookup; }
@@ -24,8 +35,12 @@ public final class BorerMiningModules {
 			for (String name : List.of("SpeedMine", "InstantRebreak")) {
 				if (preserveSpeedMine && name.equals("SpeedMine")) continue;
 				Module module = lookup.find(name);
-				if (preserveSpeedMine && name.equals("InstantRebreak")) repeatRequested = module != null && module.active();
-				if (module != null && module.active()) { owned.add(module); module.disable(); }
+				if (name.equals("InstantRebreak")) repeatRequested = module != null && module.active();
+				if (module != null && module.active()) {
+					owned.add(module);
+					if (name.equals("SpeedMine")) pausedSpeedMine=module;
+					module.disable();
+				}
 			}
 			acquired = true; preservingSpeedMine = preserveSpeedMine;
 			return owned.size();
@@ -38,6 +53,7 @@ public final class BorerMiningModules {
 		owned.clear();
 		acquired = false;
 		repeatRequested = false;
+		pausedSpeedMine = null;
 		if (failure != null) throw failure;
 	}
 	private static Module find(String name) throws ReflectiveOperationException {

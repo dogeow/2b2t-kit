@@ -4,6 +4,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.phys.Vec3;
 import java.util.*;
+import java.util.function.Predicate;
+import java.util.function.ToDoubleFunction;
 
 /** Bounded flight through open two-block body columns; never invent a diagonal through a corner. */
 public final class BorerFlyPath {
@@ -17,18 +19,43 @@ public final class BorerFlyPath {
 		return find(world,start,target,radius,budget,0);
 	}
 	private static Result find(World world, BlockPos start, BlockPos target, int radius, int budget, double arrival) {
+		return search(world, start, radius, budget, p -> distance(p, target) <= arrival,
+			p -> Math.max(0, distance(p, target) - arrival));
+	}
+	/** Find the nearest reachable landing above a pocket, even if the first leg goes sideways. */
+	static Result escapePocket(World world, BlockPos start, Predicate<BlockPos> supported) {
+		return search(world, start, 8, 512,
+			p -> p.getY() >= start.getY() + 3 && supported.test(p), p -> 0);
+	}
+	/** Search through open body columns to a supported approach, allowing turns away from the ore. */
+	static final int BYPASS_RADIUS = 48;
+	static final int BYPASS_BUDGET = 12288;
+
+	static Result liquidBypass(World world, BlockPos start, BlockPos ore, Predicate<BlockPos> usable) {
+		double initial = approachCost(start, ore);
+		return search(world, start, BYPASS_RADIUS, BYPASS_BUDGET,
+			p -> approachCost(p, ore) <= initial - 2 && usable.test(p),
+			p -> Math.max(0, (approachCost(p, ore) - initial + 2) / 3));
+	}
+	private static double approachCost(BlockPos p, BlockPos ore) {
+		return Math.hypot(p.getX() - ore.getX(), p.getZ() - ore.getZ())
+			+ 3 * Math.abs(p.getY() - ore.getY());
+	}
+
+	private static Result search(World world, BlockPos start, int radius, int budget,
+			Predicate<BlockPos> arrival, ToDoubleFunction<BlockPos> heuristic) {
 		if (!open(world, start)) return new Result(List.of(), 0);
 		Map<BlockPos, Integer> costs = new HashMap<>();
 		Map<BlockPos, BlockPos> parent = new HashMap<>();
 		PriorityQueue<Node> queue = new PriorityQueue<>(Comparator.comparingDouble(Node::priority)
 			.thenComparingInt(Node::cost).thenComparingLong(n -> n.pos.asLong()));
-		queue.add(new Node(start, 0, distance(start, target))); costs.put(start, 0);
+		queue.add(new Node(start, 0, heuristic.applyAsDouble(start))); costs.put(start, 0);
 		int expanded = 0;
 		while (!queue.isEmpty() && expanded < budget) {
 			Node n = queue.remove();
 			if (n.cost != costs.get(n.pos)) continue;
 			expanded++;
-			if (distance(n.pos, target) <= arrival) {
+			if (arrival.test(n.pos)) {
 				LinkedList<BlockPos> path = new LinkedList<>();
 				for (BlockPos p = n.pos; p != null; p = parent.get(p)) path.addFirst(p);
 				return new Result(List.copyOf(path), expanded);
@@ -40,7 +67,7 @@ public final class BorerFlyPath {
 				int cost = n.cost + 1;
 				if (cost >= costs.getOrDefault(next, Integer.MAX_VALUE)) continue;
 				costs.put(next, cost); parent.put(next, n.pos);
-				queue.add(new Node(next, cost, cost + Math.max(0, distance(next, target) - arrival)));
+				queue.add(new Node(next, cost, cost + heuristic.applyAsDouble(next)));
 			}
 		}
 		return new Result(List.of(), expanded);

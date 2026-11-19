@@ -18,6 +18,23 @@ final class BorerOreScan {
 	static final int LAYERS_PER_TICK = 4;
 
 	private final DefaultTunnelBorerEngine engine;
+	private final BorerOrePolicy.BlockedRouteSkips bedrockSkips = new BorerOrePolicy.BlockedRouteSkips();
+
+	private final BorerOrePolicy.BlockedRouteSkips liquidSkips = new BorerOrePolicy.BlockedRouteSkips();
+
+	void resetBlockedRouteSkips() {
+		bedrockSkips.reset();
+		liquidSkips.reset();
+	}
+
+	boolean skipLiquidRoute(Minecraft client, LocalPlayer player, String reason) {
+		if (!engine.goingHome && !engine.loot.active()
+				&& liquidSkips.record(player.position(), client.level.getGameTime())) {
+			engine.stop(client, reason + "；同一位置连续没有安全绕路，已停挖");
+			return true;
+		}
+		return skipActive(client, reason + "，提前改挖别处");
+	}
 
 	BorerOreScan(DefaultTunnelBorerEngine engine) {
 		this.engine = engine;
@@ -25,6 +42,8 @@ final class BorerOreScan {
 
 	/** 分批扫描已加载区块，锁定最近的勾选矿石。 */
 	void updateTarget(Minecraft client, LocalPlayer player) {
+		bedrockSkips.observePosition(player.position());
+		liquidSkips.observePosition(player.position());
 		if (engine.mode != DefaultTunnelBorerEngine.Mode.ORE) {
 			engine.oreTargetPos = null;
 			engine.sideOreTargetPos = null;
@@ -34,10 +53,6 @@ final class BorerOreScan {
 		pruneBlocked(client);
 		if (engine.oreTargetPos != null && !isBlocked(engine.oreTargetPos)
 			&& engine.wantedBlock(client.level.getBlockState(engine.oreTargetPos))) {
-			if (!reachableAtCurrentHeight(client, player, engine.oreTargetPos)) {
-				skipActive(client, "矿石 " + BorerText.block(engine.oreTargetPos) + " 低于当前站立高度，脚下已是基岩，不再往下绕");
-				return;
-			}
 			if (engine.currentTarget == null) {
 				engine.lockHeadingToward(player.blockPosition(), engine.oreTargetPos);
 			}
@@ -76,7 +91,6 @@ final class BorerOreScan {
 					engine.oreScanCheckedBlocks++;
 					if (isBlocked(pos) || !engine.wantedBlock(client.level.getBlockState(pos))) continue;
 					if (BorerHazards.wouldOpenLava(client, pos) || BorerHazards.wouldOpenWater(client, pos)) continue;
-					if (!reachableAtCurrentHeight(client, player, pos)) continue;
 					if (!hostiles.isEmpty() && engine.mobs.nearCached(hostiles, pos, 5.0)) continue;
 					double score = approachScore(feet, pos);
 					if (score < best) {
@@ -164,7 +178,6 @@ final class BorerOreScan {
 					BlockPos pos = feet.offset(dx, dy, dz);
 					if (!client.level.hasChunkAt(pos) || isBlocked(pos) || !engine.wantedBlock(client.level.getBlockState(pos))) continue;
 					if (BorerHazards.wouldOpenLava(client, pos) || BorerHazards.wouldOpenWater(client, pos)) continue;
-					if (!reachableAtCurrentHeight(client, player, pos)) continue;
 					double distance = approachScore(feet, pos);
 					if (distance < best) {
 						best = distance;
@@ -178,12 +191,16 @@ final class BorerOreScan {
 
 	/** 暂时跳过当前矿脉并改找其它勾选矿石。拾取中不跳过，避免残骸掉落被清掉。 */
 	boolean skipActive(Minecraft client, String reason) {
+		return skipActive(client, reason, 200);
+	}
+
+	boolean skipActive(Minecraft client, String reason, int retryTicks) {
 		if (engine.loot.active()) return false;
 		BlockPos blocked = engine.sideOreTargetPos != null ? engine.sideOreTargetPos : engine.oreTargetPos;
 		if (blocked == null || client.level == null) return false;
 		if (client.player != null) engine.logDiagnostic(client, client.player, "skip-ore");
 		engine.fileLog(client, "skip goal=" + BorerText.block(blocked) + " reason=" + reason);
-		int blockedCount = blockCluster(client, blocked, client.level.getGameTime() + 200L);
+		int blockedCount = blockCluster(client, blocked, client.level.getGameTime() + retryTicks);
 		if (blocked.equals(engine.sideOreTargetPos)) engine.sideOreTargetPos = null;
 		if (blocked.equals(engine.oreTargetPos)) engine.oreTargetPos = null;
 		engine.clearMiningTarget(client, "skip-active-ore");
@@ -255,6 +272,11 @@ final class BorerOreScan {
 		}
 		BlockPos wall = unbreakableBlockingToward(client, player, goal);
 		if (wall == null) return false;
+		if (!engine.goingHome && !engine.loot.active() && bedrockSkips.record(player.position(), client.level.getGameTime())) {
+			engine.fileLog(client, "bedrock-skip-loop wall=" + BorerText.block(wall) + " player=" + BorerText.precise(player));
+			engine.escapeRepeatedBedrock(client);
+			return true;
+		}
 		return skipActive(client, "基岩挡住通路 " + BorerText.block(wall) + "，不贴着基岩绕路");
 	}
 

@@ -261,6 +261,7 @@ final class BorerLoot {
 		if (!inPickup && !embedded && engine.walkRoute.walk(client, loot.position(), true)) {
 			engine.clearMiningTarget(client, "loot-existing-open-route"); return true;
 		}
+		if (!inPickup && centerOnSupport(client, player)) return true;
 		BlockPos dropCol = BlockPos.containing(loot.getX(), player.getY(), loot.getZ());
 		boolean feetPassable = !hasCollision(client, dropCol);
 		BlockPos dropHead = dropCol.above();
@@ -316,10 +317,7 @@ final class BorerLoot {
 		}
 
 		if (engine.currentTarget == null) engine.releaseMine(client);
-		if (!walkToward(client, player, loot, dropSafe, inPickup, horiz)) return false;
-		engine.overlay(client, String.format(Locale.ROOT, "正在拾取%s掉落物（距离 %.1f） %s",
-			wanted.label, distance, precise(loot)), 0xFFFF55);
-		return true;
+		return walkToward(client, player, loot, inPickup, horiz);
 	}
 
 	/** 拾取 HUD 详情行。 */
@@ -391,8 +389,38 @@ final class BorerLoot {
 		return true;
 	}
 
+	/** Recover onto the floor already supporting the player before planning a ground pickup. */
+	private boolean centerOnSupport(Minecraft c, LocalPlayer p) {
+		if (!p.onGround() || BorerFlight.isFlying(p)) return false;
+		BlockPos support = engine.standingColumn(c, p);
+		AABB body = p.getBoundingBox();
+		if (!BorerLootPolicy.canRecenter(body, support)
+				|| BorerHazards.pickupFallDepth(c, support, engine.miningConfirmation) != 0) return false;
+		if (BorerLootPolicy.safeApproach(body, support.getY(), 0,
+				col -> BorerHazards.pickupFallDepth(c, col, engine.miningConfirmation))) return false;
+		double dx = support.getX()+.5-p.getX(), dz = support.getZ()+.5-p.getZ();
+		var swept = body.expandTowards(dx,0,dz).deflate(.0001);
+		if (!c.level.noCollision(p,swept)) return false;
+		for (BlockPos b : BlockPos.betweenClosed(BlockPos.containing(swept.minX,swept.minY,swept.minZ),
+				BlockPos.containing(swept.maxX,swept.maxY,swept.maxZ))) {
+			if (!c.level.hasChunkAt(b) || !c.level.getFluidState(b).isEmpty()
+					|| !c.level.getBlockState(b).isAir()) return false;
+		}
+		var input = BorerCenterPolicy.walkInput(dx,dz);
+		engine.releaseMine(c);
+		p.setYRot(input.yaw());
+		p.setYHeadRot(input.yaw());
+		c.options.keySprint.setDown(false);
+		p.setSprinting(false);
+		c.options.keyShift.setDown(true);
+		c.options.keyUp.setDown(true);
+		engine.rememberOreMove(p);
+		engine.overlay(c,"拾取前潜行回到脚下支撑块中心",0xFFFF55);
+		return true;
+	}
+
 	/** 转向掉落物并按走/飞策略靠近；false 交回引擎挖起跳空间。 */
-	private boolean walkToward(Minecraft client, LocalPlayer player, ItemEntity loot, boolean dropSafe, boolean inPickup, double horiz) {
+	private boolean walkToward(Minecraft client, LocalPlayer player, ItemEntity loot, boolean inPickup, double horiz) {
 		double dx = loot.getX() - player.getX();
 		double dz = loot.getZ() - player.getZ();
 		double dy = loot.getY() - player.getY();
@@ -406,10 +434,10 @@ final class BorerLoot {
 		boolean blocked = collisionInYaw(client, player, yaw);
 		boolean lavaAhead = lavaInYaw(client, player, yaw);
 		boolean yawDrop = !lavaAhead && safeDropInYaw(client, player, yaw);
-		boolean canDrop = !lavaAhead && BorerLootPolicy.shouldWalkIntoLootDrop(dy, dropSafe || yawDrop);
+		boolean canDrop = BorerLootPolicy.shouldWalkIntoLootDrop(dy, yawDrop);
 		boolean moving = horiz > 0.12 || Math.abs(dy) > 0.35;
 		boolean hopRim = BorerLootPolicy.shouldHopOffRim(player.onGround(), canDrop, horiz, inPickup);
-		boolean hopNeeded = hopRim || dy > 0.45 || stuckTicks > 10 && stuckTicks % 16 < 3;
+		boolean hopNeeded = BorerLootPolicy.needsPickupHop(blocked, dy, hopRim);
 		boolean ceilingAbove = jumpBlocked(client, player, dy);
 		AABB ascent = hopBody(player.getBoundingBox(), yaw);
 		boolean bodyClear = !ceilingAbove && client.level.noCollision(player, ascent);
@@ -424,6 +452,9 @@ final class BorerLoot {
 				ascent = straight;
 				bodyClear = true;
 				blocked = collisionInYaw(client, player, yaw);
+				lavaAhead = lavaInYaw(client, player, yaw);
+				canDrop = BorerLootPolicy.shouldWalkIntoLootDrop(dy,
+					!lavaAhead && safeDropInYaw(client, player, yaw));
 			}
 		}
 		BlockPos dest = ahead(player, yaw);
@@ -441,21 +472,25 @@ final class BorerLoot {
 			engine.releaseMine(client);
 			engine.clearMiningTarget(client, "loot-clearance-no-longer-needed");
 		}
-		boolean safeAscent = hopNeeded && supported && bodyClear;
-		if (moving && (lavaAhead || blocked && !canDrop && !safeAscent) && !BorerFlight.isFlying(player)) {
+		boolean safeAscent = hopNeeded && supported && bodyClear
+			&& BorerLootPolicy.safeApproach(ascent, player.blockPosition().getY() + 1, 1,
+				column -> BorerHazards.pickupFallDepth(client, column, engine.miningConfirmation));
+		boolean flying = BorerFlight.isFlying(player);
+		boolean walkSafe = flying || !blocked && safeGroundInYaw(client, player, yaw, 0);
+		if (!flying && moving && (lavaAhead || !(walkSafe || canDrop || safeAscent))) {
 			if (!lavaAhead && dy >= -0.25 && engine.place.shouldBridgeDrops(player)) {
 				engine.place.placeWalkingSupport(client, player);
 			}
 			moving = false;
 		}
 
-		if (BorerFlight.isFlying(player)) {
+		if (flying) {
 			client.options.keyJump.setDown(dy > 0.2);
 			client.options.keyShift.setDown(dy < -0.2);
 		} else {
 			client.options.keyShift.setDown(false);
 			boolean allowed = BorerLootPolicy.groundHop(player.onGround(), moving || canDrop,
-				!lavaAhead && supported, bodyClear, hopNeeded);
+				!lavaAhead && supported, bodyClear, canDrop ? hopNeeded : safeAscent);
 			client.options.keyJump.setDown(hops.press(client.level.getGameTime(), player.getX(), player.getY(), player.getZ(), allowed));
 		}
 		client.options.keyUp.setDown(moving || canDrop);
@@ -463,6 +498,11 @@ final class BorerLoot {
 		client.options.keyRight.setDown(false);
 		client.options.keyDown.setDown(false);
 		engine.rememberOreMove(player);
+		if (moving || canDrop) {
+			engine.overlay(client, String.format(Locale.ROOT, "正在靠近%s掉落物（距离 %.1f）", wanted.label, player.distanceTo(loot)), 0xFFFF55);
+		} else {
+			engine.overlay(client, "拾取路线受阻，等待安全落点", 0xFFFF55);
+		}
 		return true;
 	}
 
@@ -499,7 +539,7 @@ final class BorerLoot {
 	private float firstSafeExitYaw(Minecraft client, LocalPlayer player, float fallback) {
 		float[] candidates = {fallback, fallback + 90.0F, fallback - 90.0F, fallback + 180.0F};
 		for (float yaw : candidates) {
-			if (safeDropInYaw(client, player, yaw) || !collisionInYaw(client, player, yaw)) return yaw;
+			if (safeDropInYaw(client, player, yaw)) return yaw;
 		}
 		return Float.NaN;
 	}
@@ -544,10 +584,14 @@ final class BorerLoot {
 
 	/** 该偏航方向落差是否安全。 */
 	private boolean safeDropInYaw(Minecraft client, LocalPlayer player, float yaw) {
-		BlockPos dest = ahead(player, yaw);
-		if (BorerHazards.isLavaFluid(client, dest) || BorerHazards.isLavaFluid(client, dest.above())) return false;
-		if (hasCollision(client, dest) || hasCollision(client, dest.above())) return false;
-		return BorerHazards.canWalkOrFallInto(client, dest);
+		return safeGroundInYaw(client, player, yaw, BorerHazards.maxSafeFallBlocks());
+	}
+
+	private boolean safeGroundInYaw(Minecraft client, LocalPlayer player, float yaw, int allowedDrop) {
+		double radians = Math.toRadians(yaw);
+		AABB footprint = player.getBoundingBox().expandTowards(-Math.sin(radians) * .85, 0, Math.cos(radians) * .85);
+		return BorerLootPolicy.safeApproach(footprint, player.blockPosition().getY(), allowedDrop,
+			column -> BorerHazards.pickupFallDepth(client, column, engine.miningConfirmation));
 	}
 
 	/** 该偏航前方一格。 */

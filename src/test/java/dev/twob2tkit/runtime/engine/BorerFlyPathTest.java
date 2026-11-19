@@ -8,6 +8,57 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BorerFlyPathTest {
+	@Test void smallHeightDriftAtHorizontalTurnsCanCorrectOnlyWithinClearSpace() {
+		for (double feetY : new double[]{44.202, 37.998}) {
+			double waypointY = feetY > 40 ? 44.1 : 38.1;
+			Vec3 start = new Vec3(.65, feetY, .45);
+			Vec3 end = new Vec3(1.5, waypointY, .5);
+			var input = BorerHomeFlight.clearanceInput(start, end, 0, d -> d.x == 0 && d.z == 0);
+			assertNotNull(input);
+			assertTrue(input.delta().y * (waypointY - feetY) > 0);
+			assertNull(BorerHomeFlight.clearanceInput(start, end, 0, d -> false));
+		}
+	}
+
+	@Test void collisionsSeparatedByConfirmedTravelGetIndependentReplans() {
+		var blocked = new BorerHomeFlight.Obstructions();
+		assertFalse(blocked.repeated(new Vec3(95052.652,44.202,99615.456)));
+		var second = new Vec3(95075.346,37.998,99621.456);
+		assertFalse(blocked.repeated(second));
+		assertTrue(blocked.repeated(second.add(.1,0,0)));
+	}
+
+	@Test void bypassCanCrossTheOldRadiusToFindALowerLandingBehindALavaBarrier() {
+		Set<BlockPos> air = new HashSet<>();
+		for (int x = 0; x <= 32; x++) {
+			air.add(new BlockPos(x, 0, 0));
+			air.add(new BlockPos(x, -4, 0));
+		}
+		for (int y = -4; y <= 0; y++) air.add(new BlockPos(32, y, 0));
+		for (BlockPos p : List.copyOf(air)) air.add(p.above());
+		var landing = new BlockPos(8, -4, 0);
+		var route = BorerFlyPath.liquidBypass(air::contains, BlockPos.ZERO, new BlockPos(0,-8,0), landing::equals);
+		assertEquals(landing, route.nodes().getLast());
+		assertTrue(route.nodes().contains(new BlockPos(32, 0, 0)));
+	}
+
+	@Test void widerLiquidDetourCanStartByMovingAwayAndResumeCloserToOre() {
+		Set<BlockPos> air = new HashSet<>();
+		for (int z = 0; z <= 7; z++) {
+			air.add(new BlockPos(0, 0, z));
+			air.add(new BlockPos(12, 0, z));
+		}
+		for (int x = 0; x <= 12; x++) air.add(new BlockPos(x, 0, 7));
+		for (BlockPos p : List.copyOf(air)) air.add(p.above());
+		BlockPos landing = new BlockPos(12, 0, 0);
+		var ore = landing.east(3);
+		var route = BorerFlyPath.liquidBypass(air::contains, BlockPos.ZERO, ore, landing::equals);
+		assertEquals(landing, route.nodes().getLast());
+		assertTrue(route.nodes().contains(new BlockPos(0, 0, 7)));
+		air.remove(new BlockPos(5, 1, 7));
+		assertTrue(BorerFlyPath.liquidBypass(air::contains, BlockPos.ZERO, ore, landing::equals).nodes().isEmpty());
+	}
+
 	@Test void capturedNetherStallHasARealOpenRouteAndNeverCutsThroughSolidBlocks() throws Exception {
 		Set<BlockPos> air = new HashSet<>();
 		try (var in = new BufferedReader(new InputStreamReader(getClass().getResourceAsStream("/nether-return-air.txt")))) {
@@ -44,6 +95,29 @@ class BorerFlyPathTest {
 			assertTrue(ticks < 100, "failed to reach " + node);
 		}
 	}
+	@Test void bedrockPocketRequiresASideStepBeforeClimbingToSupportedGround() {
+		BlockPos start = new BlockPos(0, -62, 0);
+		BlockPos landing = new BlockPos(1, -58, 2);
+		Set<BlockPos> air = new HashSet<>(List.of(start, start.above(),
+			new BlockPos(1, -62, 0), new BlockPos(1, -61, 0), new BlockPos(1, -60, 0),
+			new BlockPos(1, -59, 0), new BlockPos(1, -60, 1), new BlockPos(1, -59, 1),
+			new BlockPos(1, -58, 1), new BlockPos(1, -58, 2), new BlockPos(1, -57, 2)));
+		// The last two cells are accessible only from the higher part of the turning corridor.
+		air.add(new BlockPos(1, -57, 1));
+		var route = BorerFlyPath.escapePocket(air::contains, start, landing::equals);
+		assertFalse(route.nodes().isEmpty());
+		assertEquals(start.east(), route.nodes().get(1));
+		assertEquals(landing, route.nodes().getLast());
+		for (int i = 1; i < route.nodes().size(); i++) {
+			BlockPos next = route.nodes().get(i);
+			assertTrue(air.contains(next) && air.contains(next.above()));
+			assertEquals(1, next.distManhattan(route.nodes().get(i - 1)));
+		}
+		assertTrue(BorerFlyPath.escapePocket(air::contains, start, p -> false).nodes().isEmpty());
+		air.remove(start.east());
+		assertTrue(BorerFlyPath.escapePocket(air::contains, start, landing::equals).nodes().isEmpty());
+	}
+
 	@Test void flightCanAscendARealShaftButCannotFlyThroughItsCeiling() {
 		Set<BlockPos> air = new HashSet<>();
 		for (int y = 0; y <= 6; y++) air.add(new BlockPos(0,y,0));

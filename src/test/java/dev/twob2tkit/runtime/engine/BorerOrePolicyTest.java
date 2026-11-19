@@ -1,5 +1,6 @@
 package dev.twob2tkit.runtime.engine;
 
+import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -10,6 +11,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 来源：2026-08-18 绿宝石在 382733 111，人在 382732 112，前方 1×2 已是空气。
  */
 final class BorerOrePolicyTest {
+	@Test void threeBedrockRejectionsAtTheSameSiteTriggerEscape() {
+		var skips = new BorerOrePolicy.BlockedRouteSkips();
+		var pocket = new Vec3(760968.532, -61, 797914.428);
+		assertFalse(skips.record(pocket, 100));
+		assertFalse(skips.record(pocket, 101));
+		assertTrue(skips.record(pocket, 102));
+	}
+
+	@Test void leavingTheSiteOrWaitingOutTheWindowStartsANewSequence() {
+		var skips = new BorerOrePolicy.BlockedRouteSkips();
+		assertFalse(skips.record(Vec3.ZERO, 0));
+		assertFalse(skips.record(Vec3.ZERO, 1));
+		skips.observePosition(new Vec3(0, 1, 0));
+		assertFalse(skips.record(Vec3.ZERO, 2));
+		assertFalse(skips.record(Vec3.ZERO, 3));
+		assertFalse(skips.record(new Vec3(1.5, 0, 0), 4));
+		assertFalse(skips.record(new Vec3(1.5, 0, 0), 5));
+		assertFalse(skips.record(new Vec3(1.5, 0, 0), 604));
+	}
+
 	@Test
 	void adjacentOreOneBlockDownIsMinedNotWaited() {
 		assertTrue(BorerOrePolicy.mineAdjacentInsteadOfWait(1, -1));
