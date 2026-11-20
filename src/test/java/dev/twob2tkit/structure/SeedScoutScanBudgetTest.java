@@ -55,6 +55,6 @@ final class SeedScoutScanBudgetTest {
         assertTrue(source.contains("client.gui.screen()==scanScreen"));
         assertTrue(source.indexOf("shouldScan(")<source.indexOf("scanNearby(client)"));
         String screen=Files.readString(Path.of("src/client/java/dev/twob2tkit/structure/NearbyStructuresScreen.java"));
-        assertTrue(screen.contains("config.seedScoutEnabled=value"));assertTrue(screen.contains("scout.requestScanningFor(page)"));
+        assertTrue(screen.contains("config.seedScoutEnabled = value"));assertTrue(screen.contains("scout.requestScanningFor(page)"));
     }
 }

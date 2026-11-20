@@ -588,9 +588,7 @@ public final class KitClient implements ClientModInitializer {
 			return;
 		}
 		if (client.gui.screen() == null) {
-			client.gui.setScreen(instance.config.clickGui
-				? new ClickGuiScreen(instance.config, instance.controller)
-				: KitTab.home(instance.config, instance.controller));
+			client.gui.setScreen(new KitWorkspaceScreen(instance.config, instance.controller));
 		}
 	}
 

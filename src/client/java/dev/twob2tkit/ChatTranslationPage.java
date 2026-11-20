@@ -87,11 +87,7 @@ public final class ChatTranslationPage {
             if (page.finishEdits()) BilingualClient.checkHealth();
         });
 
-        if (parent instanceof ClickGuiScreen gui) {
-            gui.showDetail(page);
-        } else {
-            Minecraft.getInstance().gui.setScreen(page);
-        }
+        Minecraft.getInstance().gui.setScreen(page.bind(KitClient.config()));
     }
 
     /** Preserve a manually configured language tag instead of displaying the wrong language. */

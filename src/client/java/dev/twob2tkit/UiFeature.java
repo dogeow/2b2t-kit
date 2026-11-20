@@ -40,12 +40,10 @@ public enum UiFeature {
     SURVIVAL(Category.SAFETY, "生存提醒", "补给、护甲、图腾和鞘翅提醒", "血量 食物 耐久"),
     HEALING(Category.SAFETY, "治疗物资", "选择计入提醒的食物与药水", "回血 补给"),
     TRUSTED(Category.SAFETY, "玩家白名单", "可信玩家与警戒例外", "信任 好友"),
-    CHAT_TRANSLATION(Category.SETTINGS, "聊天翻译 /mct", "启动本地翻译、按需翻译与防刷屏设置", "双语 翻译 translate ignore 屏蔽 聊天 mct 按需"),
-    SETTINGS(Category.SETTINGS, "通用设置", "风格、配方、兼容与运行引擎", "版本 热更新 菜单"),
-    LOCAL_DECISION(Category.SETTINGS, "本地决策模型", "常驻 Ollama、阶段决策与游戏画面", "AI Clef Nimble Ollama 图片 决策"),
-    SINGLEPLAYER_TRIAL(Category.SETTINGS, "单人通关试验", "独立生存世界、打龙目标、死亡复活与经验复用", "Clef 模型 单人 经验 学习 通关 打龙 目标"),
+    SETTINGS(Category.SETTINGS, "通用设置", "界面配色、自动补货与配方提示", "菜单 外观 补货 配方"),
     KEYBINDS(Category.SETTINGS, "按键绑定", "查看和修改快捷键", "快捷键 热键 紧急停止"),
-    DIAGNOSTICS(Category.SETTINGS, "运行与兼容", "当前版本、依赖与诊断信息", "日志 Meteor Fabric" );
+    CHAT_TRANSLATION(Category.SETTINGS, "聊天翻译 /mct", "启动本地翻译、按需翻译与防刷屏设置", "双语 翻译 translate ignore 屏蔽 聊天 mct 按需"),
+    DIAGNOSTICS(Category.SETTINGS, "运行与兼容", "版本、依赖、运行引擎热加载与日志", "日志 Meteor Fabric 版本 热更新 引擎");
 
     public enum Category {
         HOME("首页"), MINING("挖掘"), TRAVEL("出行"), PRODUCTION("生产"), STORAGE("仓储"), SAFETY("保护"), SETTINGS("设置");
@@ -107,42 +105,40 @@ public enum UiFeature {
         while (c.recentUiFeatures.size() > 10) c.recentUiFeatures.removeLast(); c.save();
         switch (this) {
             case AREA -> mc.gui.setScreen(new AreaSetupScreen(parent, c));
-            case ORE, FORWARD, DOWN -> ClickGuiPages.mining(parent, c, TunnelBorer.Mode.valueOf(name()));
-            case GRAVEL -> ClickGuiPages.gravel(parent, c);
+            case ORE, FORWARD, DOWN -> MiningPages.mining(parent, c, TunnelBorer.Mode.valueOf(name()));
+            case GRAVEL -> MiningPages.gravel(parent, c);
             case CARETAKER -> dev.twob2tkit.material.CaretakerPages.open(parent,c);
             case MATERIALS -> dev.twob2tkit.material.MaterialJobPages.open(parent, c);
-            case ROUTE -> ClickGuiPages.routes(parent, c);
-            case BORER_SAFETY -> ClickGuiPages.miningSafety(parent, c);
-            case CRUISE -> ClickGuiPages.cruise(parent, c, controller);
-            case CRUISE_OPTIONS -> ClickGuiPages.cruiseOptions(parent, c);
+            case ROUTE -> MiningPages.routes(parent, c);
+            case BORER_SAFETY -> MiningPages.miningSafety(parent, c);
+            case CRUISE -> TravelPages.cruise(parent, c, controller);
+            case CRUISE_OPTIONS -> TravelPages.cruiseOptions(parent, c);
             case PLACES -> KitRecordPages.places(parent, c);
-            case SCENERY -> ClickGuiPages.scenery(parent, c);
+            case SCENERY -> TravelPages.scenery(parent, c);
             case STRUCTURES -> mc.gui.setScreen(new dev.twob2tkit.structure.NearbyStructuresScreen(parent, c, controller, KitClient.seedScout()));
             case STRUCTURE_MARKS -> KitRecordPages.marks(parent, c);
-            case DEATH -> ClickGuiPages.death(parent, c, controller);
-            case CHOPPER -> ClickGuiPages.chopper(parent, c);
-            case PLANTER -> ClickGuiPages.planter(parent, c);
-            case FEEDER -> ClickGuiPages.feeder(parent, c);
-            case FISHER -> ClickGuiPages.fisher(parent, c);
-            case SURROUND -> ClickGuiPages.surround(parent, c);
-            case BRAWLER -> ClickGuiPages.brawler(parent, c);
-            case CONCRETE -> ClickGuiPages.concrete(parent, c);
+            case DEATH -> TravelPages.death(parent, c, controller);
+            case CHOPPER -> ProductionPages.chopper(parent, c);
+            case PLANTER -> ProductionPages.planter(parent, c);
+            case FEEDER -> ProductionPages.feeder(parent, c);
+            case FISHER -> ProductionPages.fisher(parent, c);
+            case SURROUND -> SafetyPages.surround(parent, c);
+            case BRAWLER -> ProductionPages.brawler(parent, c);
+            case CONCRETE -> ProductionPages.concrete(parent, c);
             case SKILLS -> KitSkillPages.open(parent, c);
-            case BUILDER -> ClickGuiPages.builder(parent, c);
-            case VILLAGER -> ClickGuiPages.villagers(parent, c);
+            case BUILDER -> ProductionPages.builder(parent, c);
+            case VILLAGER -> ProductionPages.villagers(parent, c);
             case STORAGE -> KitRecordPages.storage(parent, c);
             case CHECKLIST -> KitPreparationPages.checklists(parent, c);
             case RECIPES -> KitRecipePages.open(parent, c, "");
-            case GUARD -> ClickGuiPages.guard(parent, c);
-            case SURVIVAL -> ClickGuiPages.survival(parent, c);
+            case GUARD -> SafetyPages.guard(parent, c);
+            case SURVIVAL -> SafetyPages.survival(parent, c);
             case HEALING -> KitPreparationPages.healing(parent, c);
             case TRUSTED -> KitRecordPages.trusted(parent, c);
-            case LOCAL_DECISION -> dev.twob2tkit.material.LocalDecisionPages.open(parent,c);
-            case SINGLEPLAYER_TRIAL -> dev.twob2tkit.trial.SingleplayerTrialPages.open(parent,c);
             case KEYBINDS -> mc.gui.setScreen(new KitKeyBindsScreen(parent));
             case CHAT_TRANSLATION -> ChatTranslationPage.open(parent);
-            case SETTINGS -> ClickGuiPages.settings(parent, c);
-            case DIAGNOSTICS -> ClickGuiPages.diagnostics(parent, c);
+            case SETTINGS -> SettingsPages.settings(parent, c);
+            case DIAGNOSTICS -> SettingsPages.diagnostics(parent, c);
         }
     }
 }

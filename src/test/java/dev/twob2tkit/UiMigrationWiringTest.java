@@ -9,24 +9,17 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** Assertions on the active new UI paths, rather than tests of retired legacy widget code. */
 class UiMigrationWiringTest {
-    @Test void nativeAndCompactEntryPointsShareTheSameWorkspace() throws Exception {
-        assertEquals("dev/twob2tkit/KitWorkspaceScreen", node("ClickGuiScreen").superName);
-        assertTrue(types(method("KitTab", "home")).contains("dev/twob2tkit/KitWorkspaceScreen"));
-        assertFalse(calls(method("KitTab", "home")).contains("create"));
+    @Test void openGuiAlwaysUsesTheSingleWorkspace() throws Exception {
+        assertTrue(types(method("KitClient", "openGui")).contains("dev/twob2tkit/KitWorkspaceScreen"));
+        for (String retired : List.of("KitTab", "ClickGuiScreen", "ClickGuiPanelScreen", "SettingsHomeScreen", "KitScreen"))
+            assertNull(UiMigrationWiringTest.class.getResource("/dev/twob2tkit/" + retired + ".class"), retired);
     }
     @Test void workspaceOnlyNavigatesOrStopsAndNeverStartsAutomation() throws Exception {
         for (MethodNode m : node("KitWorkspaceScreen").methods)
             for (String call : calls(m)) assertFalse(List.of("start", "toggle", "resume", "toggleBorer", "toggleCruiseFromKey").contains(call), m.name + ":" + call);
         assertTrue(node("KitWorkspaceScreen").methods.stream().anyMatch(m -> calls(m).contains("open")));
     }
-    @Test void oldFunctionScreensRedirectBeforeTheirOldWidgetsAreBuilt() throws Exception {
-        for (String type : List.of("KitScreen", "SettingsHomeScreen", "GuardHomeScreen", "DeathPointScreen", "KitSavedPlacesScreen", "KitTrustedPlayersScreen",
-                "chopper/ChopperScreen", "planter/PlanterScreen", "feeder/FeederScreen", "fisher/FisherScreen", "surround/SurroundScreen",
-                "survival/SurvivalAlertsScreen", "piglin/PiglinBrawlerScreen", "cruise/CruiseOptionsScreen", "borer/BorerSafetyScreen",
-                "SceneryScreen", "TechHomeScreen", "borer/BorerRouteScreen", "villager/VillagerScanScreen", "storage/StorageRecordsScreen",
-                "structure/StructureMarksScreen", "adventure/ActivityChecklistScreen", "combat/HealingItemsScreen", "recipe/RecipeGuideScreen")) {
-            var m = method(type, "init"); assertEquals("redirect", calls(m).getFirst(), type);
-        }
+    @Test void retainedRecordScreensRedirectToUnifiedPages() throws Exception {
         assertEquals("projects", calls(method("borer/AreaProjectsScreen", "init")).getFirst());
         assertEquals("openUnifiedSearch", calls(method("structure/NearbyStructuresScreen", "init")).getFirst());
         assertEquals("openUnifiedEditor", calls(method("structure/StructureNoteScreen", "init")).getFirst());

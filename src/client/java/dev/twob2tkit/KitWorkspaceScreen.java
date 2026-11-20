@@ -101,6 +101,4 @@ public class KitWorkspaceScreen extends KitHudScreen {
         String status = !notice.isEmpty() ? notice : running.isEmpty() ? "共 "+featureCount+" 项 · "+(contentHeight>bodyHeight?"滚轮查看更多 · ":"")+"☆ 收藏到首页 · Esc 返回游戏" : "正在运行：" + running;
         KitUi.text(g, font, KitUi.fit(font, status, layout.width()), layout.left(), layout.footer() - 14, notice.isEmpty() ? 0xAABBCC : noticeColor);
     }
-    public void showDetail(KitFormScreen screen) { minecraft.gui.setScreen(screen.bind(config)); }
-    public void switchToPages() { config.clickGui = false; config.save(); minecraft.gui.setScreen(new KitWorkspaceScreen(config, controller, UiFeature.Category.SETTINGS)); }
 }

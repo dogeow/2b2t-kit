@@ -14,10 +14,8 @@ import net.minecraft.network.chat.Component;
 public abstract class KitHudScreen extends Screen {
 	@Override
 	public void extractRenderState(net.minecraft.client.gui.GuiGraphicsExtractor g, int x, int y, float delta) {
-		if (!(this instanceof ClickGuiPanelScreen)) {
-			boolean compactColors = KitClient.config() != null && KitClient.config().clickGui;
-			g.fill(0, 0, this.width, Math.max(0, this.height - 56), compactColors ? 0xEC192534 : 0xEC141D28);
-		}
+		boolean compactColors = KitClient.config() != null && KitClient.config().clickGui;
+		g.fill(0, 0, this.width, Math.max(0, this.height - 56), compactColors ? 0xEC192534 : 0xEC141D28);
 		super.extractRenderState(g, x, y, delta);
 	}
 	/** 字段上方标签间距、行距、区块间距、状态行与底栏按钮间距。 */
@@ -154,64 +152,21 @@ public abstract class KitHudScreen extends Screen {
 		return rowBelow - LABEL_ABOVE_FIELD - CONTROL_ROW_STEP;
 	}
 
-	/** 当前顶栏标签；无标签的子页返回 null。 */
-	protected KitTab currentTab() {
-		return null;
-	}
-
-	/** 主内容区相对旧版统一下移，避免贴顶或与顶栏重叠。 */
+	/** 主内容区相对旧版统一下移，避免贴顶。 */
 	private static final int CONTENT_DROP = 14;
 
-	/** 顶栏占位后的内容顶边。 */
-	protected int tabContentTop() {
-		int base = currentTab() == null ? 8 : (tabBarRows() > 1 ? 56 : 34);
-		return base + CONTENT_DROP;
-	}
-
-	/** 有顶栏 tab 时内容区顶边；嵌套子页在 whenNested 上加 CONTENT_DROP。 */
+	/** 子页内容区顶边。 */
 	protected int bodyTop(int whenNested) {
-		return currentTab() != null ? tabContentTop() + 8 : whenNested + CONTENT_DROP;
+		return whenNested + CONTENT_DROP;
 	}
 
-	/** 标题文字 Y：有顶栏时紧贴内容区上方，嵌套子页用 whenNested。 */
+	/** 子页标题文字 Y。 */
 	protected int headerY(int whenNested) {
-		return currentTab() != null ? tabContentTop() + 2 : whenNested + CONTENT_DROP;
+		return whenNested + CONTENT_DROP;
 	}
 
-	/** 首行控件顶边：顶栏页 tabContentTop+8，嵌套子页 bodyTop(24)。 */
+	/** 首行控件顶边。 */
 	protected int contentTop() {
-		return currentTab() != null ? tabContentTop() + 8 : bodyTop(24);
-	}
-
-	/** 标签过多时两行排布。 */
-	protected int tabBarRows() {
-		return KitTab.values().length > 7 ? 2 : 1;
-	}
-
-	/** 画顶栏标签按钮并切换页。 */
-	protected void addTabBar(KitTab selected) {
-		KitTab[] tabs = KitTab.values();
-		int rows = tabBarRows();
-		int cols = (tabs.length + rows - 1) / rows;
-		int gap = 2;
-		int avail = this.width - 12;
-		int width = Math.max(40, Math.min(58, (avail - gap * (cols - 1)) / cols));
-		int totalW = cols * width + (cols - 1) * gap;
-		int x0 = panelLeft(totalW);
-		for (int i = 0; i < tabs.length; i++) {
-			KitTab tab = tabs[i];
-			int row = i / cols;
-			int col = i % cols;
-			int x = x0 + col * (width + gap);
-			int y = 8 + row * 22;
-			Button button = addRenderableWidget(Button.builder(
-				tab == selected
-					? Component.literal("▸ ").withColor(0x55FF55).append(Component.literal(tab.label).withColor(0x55FF55))
-					: Component.literal(tab.label),
-				ignored -> {
-					if (tab != selected) KitTab.open(this.minecraft, tab);
-				}).bounds(x, y, width, 20).build());
-			button.setTooltip(Tooltip.create(Component.literal(tab.tooltip())));
-		}
+		return bodyTop(24);
 	}
 }

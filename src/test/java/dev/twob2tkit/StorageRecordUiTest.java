@@ -46,16 +46,6 @@ final class StorageRecordUiTest {
         assertFalse(calls.contains("dev/twob2tkit/KitConfig$StorageSnapshot.key"));
     }
 
-    @Test void retainedLegacyFallbackCannotGuideToInvalidRecordsOrDeleteOtherServers() throws Exception {
-        assertTrue(calls(method("storage/StorageRecordsScreen", "startGuide"))
-            .contains("dev/twob2tkit/storage/StorageLifecycle.canGuide"));
-        var calls = new ArrayList<String>();
-        for (var method : node("storage/StorageRecordsScreen").methods)
-            if (method.name.equals("delete") || method.name.startsWith("lambda$delete$")) calls.addAll(calls(method));
-        assertTrue(calls.contains("dev/twob2tkit/KitConfig$StorageSnapshot.scopedKey"));
-        assertFalse(calls.contains("dev/twob2tkit/KitConfig$StorageSnapshot.key"));
-    }
-
     private static ClassNode node(String type) throws Exception {
         var node = new ClassNode();
         try (var stream = StorageRecordUiTest.class.getResourceAsStream("/dev/twob2tkit/" + type + ".class")) {

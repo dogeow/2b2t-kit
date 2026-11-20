@@ -62,6 +62,8 @@ public final class KitFormScreen extends KitHudScreen {
             showNotice("已填入草稿，尚未保存", 0x77DDCC); return;
         }
     }
+    /** Toggles and choices are immediate preferences: every bound page persists them the same way. */
+    private void persist() { if (config != null) config.save(); }
     private boolean settingsLocked() { return active.getAsBoolean() || locked.getAsBoolean(); }
     public KitFormScreen section(String title) { rows.add(new Section(title)); return this; }
     public KitFormScreen note(String text) {
@@ -86,7 +88,7 @@ public final class KitFormScreen extends KitHudScreen {
             text(label, y + 6, 0xEEEEEE, layout.labelWidth());
             Button b = Button.builder(Component.literal(get.getAsBoolean() ? "开启" : "关闭"), ignored -> {
                 if (settingsLocked()) return;
-                set.accept(!get.getAsBoolean()); showNotice("已保存：" + label, 0x77DDCC); rebuildWidgets();
+                set.accept(!get.getAsBoolean()); persist(); showNotice("已保存：" + label, 0x77DDCC); rebuildWidgets();
             }).bounds(layout.fieldX(), y, layout.fieldWidth(), 20).tooltip(Tooltip.create(Component.literal(tip + "\n此开关即时保存；运行时请先停止再修改。"))).build();
             place(b, y, true); return 28;
         }); return this;
@@ -95,7 +97,7 @@ public final class KitFormScreen extends KitHudScreen {
         rows.add((s, y) -> {
             text(label, y + 6, 0xEEEEEE, layout.labelWidth());
             int current = Math.floorMod(get.getAsInt(), options.length);
-            place(Button.builder(Component.literal(options[current] + " ›"), b -> { if (!settingsLocked()) { set.accept((current + 1) % options.length); rebuildWidgets(); } })
+            place(Button.builder(Component.literal(options[current] + " ›"), b -> { if (!settingsLocked()) { set.accept((current + 1) % options.length); persist(); rebuildWidgets(); } })
                 .bounds(layout.fieldX(), y, layout.fieldWidth(), 20).tooltip(Tooltip.create(Component.literal(tip + "\n点击切换并立即保存。"))).build(), y, true);
             return 28;
         }); return this;

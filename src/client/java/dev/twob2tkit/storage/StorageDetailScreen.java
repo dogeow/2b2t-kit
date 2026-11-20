@@ -78,7 +78,7 @@ public final class StorageDetailScreen extends KitHudScreen {
 		int center = this.width / 2;
 		KitUi.centered(graphics, this.font, StorageLabels.headline(snapshot), center, headerY(12), 0xFFFFFF);
 		KitUi.centered(graphics, this.font,
-			StorageRecordsScreen.dimensionLabel(snapshot.dimension) + "  X " + snapshot.x + "  Y " + snapshot.y + "  Z " + snapshot.z,
+			StorageLabels.dimensionLabel(snapshot.dimension) + "  X " + snapshot.x + "  Y " + snapshot.y + "  Z " + snapshot.z,
 			center, headerY(27), 0x55FFFF);
 
 		if (snapshot.items.isEmpty()) {
@@ -112,7 +112,7 @@ public final class StorageDetailScreen extends KitHudScreen {
 			var detail = new dev.twob2tkit.KitFormScreen(list, item.name, "仓库快照，不是实时库存").bind(config).id("storage-item:" + snapshot.scopedKey() + ":" + item.id);
 			detail.note(item.id + " · 记录数量 " + item.count);
 			detail.note(StorageLabels.evidenceSummary(snapshot));
-			detail.note("箱子位置：X " + snapshot.x + " Y " + snapshot.y + " Z " + snapshot.z + "；" + StorageRecordsScreen.dimensionLabel(snapshot.dimension));
+			detail.note("箱子位置：X " + snapshot.x + " Y " + snapshot.y + " Z " + snapshot.z + "；" + StorageLabels.dimensionLabel(snapshot.dimension));
 			detail.action("查看相关配方", "只查询本地配方。", () -> dev.twob2tkit.KitRecipePages.open(detail, config, item.name));
 			minecraft.gui.setScreen(detail);
 		});

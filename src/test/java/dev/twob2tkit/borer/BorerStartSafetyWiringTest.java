@@ -21,7 +21,7 @@ class BorerStartSafetyWiringTest {
 
     @Test
     void miningButtonReportsTheBlockAfterApplyingSettings() throws IOException {
-        MethodNode run = method("ClickGuiPages", "lambda$bindMiningRun$", true);
+        MethodNode run = method("MiningPages", "lambda$bindMiningRun$", true);
         assertNull(call(run, "prepareForBorer"));
         var start = call(run, "start");
         var reason = call(run, "manualStartBlock");

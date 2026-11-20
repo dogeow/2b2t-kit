@@ -50,7 +50,7 @@ public final class KitPreparationPages {
         list.add("添加物品", () -> inventory(list, c, activity));
         list.footer("清单设置", () -> {
             var p = new KitFormScreen(list, activity.label + " · 设置", "查看清单不会自动更换正在使用的补货清单。").bind(c).recordDraft().id("checklist-options:" + activity.id);
-            p.bool("开箱后按清单自动补货", "这是所有行动共用的补货开关。", () -> c.autoRestockFromOpenedContainers, v -> { c.autoRestockFromOpenedContainers = v; c.save(); });
+            p.bool("开箱后按清单自动补货", "这是所有行动共用的补货开关。", () -> c.autoRestockFromOpenedContainers, v -> c.autoRestockFromOpenedContainers = v);
             p.action("使用这份清单", "设为当前活动清单。", () -> { c.activityProfile = activity.id; c.save(); p.showNotice("已启用：" + activity.label, 0x77DDCC); });
             p.danger(ActivityRequirements.isBuiltin(activity) ? "恢复默认条目" : "清空条目", "将替换这份清单的物资需求，不改变背包。", () -> {
                 activity.needs = ActivityRequirements.isBuiltin(activity) ? new ArrayList<>(ActivityRequirements.defaultNeedsForId(activity.id)) : new ArrayList<>(); c.save();

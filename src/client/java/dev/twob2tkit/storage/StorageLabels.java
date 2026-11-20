@@ -308,4 +308,14 @@ public final class StorageLabels {
 	private static boolean blank(String value) {
 		return value == null || value.isBlank();
 	}
+
+	/** 维度中文名。 */
+	public static String dimensionLabel(String dimension) {
+		return switch (dimension) {
+			case "minecraft:overworld" -> "主世界";
+			case "minecraft:the_nether" -> "下界";
+			case "minecraft:the_end" -> "末地";
+			default -> dimension;
+		};
+	}
 }
