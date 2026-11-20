@@ -24,7 +24,6 @@ final class SafetyPages {
 		p.bool("恶魂防护", "独立恶魂防护；具体射程和反弹设置见自动打猪人。", () -> c.ghastGuardEnabled, v -> c.ghastGuardEnabled = v);
 		p.action("挂机离线条件", "血量、玩家警戒等当前设置。", () -> TravelPages.cruiseOptions(p, c));
 		p.action("挖矿反击条件", "主动威胁、盾牌和苦力怕保护。", () -> MiningPages.miningSafety(p, c));
-		p.action("玩家白名单", "编辑可信玩家。", () -> UiFeature.TRUSTED.open(p));
 		open(parent, p);
 	}
 

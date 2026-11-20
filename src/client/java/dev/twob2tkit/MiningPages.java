@@ -50,8 +50,6 @@ final class MiningPages {
 		p.liveLine(()->b==null?"":b.preparationSummary());
 		p.bool("轴向瞄准", "仅沿轴向处理眼前通道。", () -> c.borerAxisAim, v -> c.borerAxisAim = v);
 		p.action("挖矿物资清单", "检查工具、食物、封水方块等。", () -> UiFeature.CHECKLIST.open(p));
-		p.action("安全与反击", "液体、怪物与卸货选项。", () -> miningSafety(p, c));
-		p.action("挖矿路线", "回家、返回地狱门和显示路线。", () -> UiFeature.ROUTE.open(p));
 		open(parent, p);
 	}
 

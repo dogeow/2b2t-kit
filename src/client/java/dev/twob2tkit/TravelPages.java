@@ -40,12 +40,8 @@ final class TravelPages {
 			panel.draftValue("目标 X", KitUi.formatNumber(coords.x())); panel.draftValue("目标 Z", KitUi.formatNumber(coords.z()));
 			if (coords.y() != null) panel.draftValue("巡航 Y", KitUi.formatNumber(coords.y()));
 		});
-		panel.section("收藏与出行");
-		panel.action("地点收藏", "编辑收藏不会改变当前目标；按前往才起飞。", () -> UiFeature.PLACES.open(panel));
+		panel.section("出行");
 		panel.action("继续上次巡航", "使用控制器保存的目标，不把本页草稿当成新目标。", () -> { if (!controller.isActive() && controller.resume(mc())) mc().gui.setScreen(null); });
-		panel.action("巡航选项", "绕障、到达和挂机保护。", () -> cruiseOptions(panel, config));
-		panel.action("附近结构", "查看候选位置与指引。", () -> UiFeature.STRUCTURES.open(panel));
-		panel.action("风景预加载", "独立跑图任务。", () -> UiFeature.SCENERY.open(panel));
 		panel.action("回地狱门", "按已记录的路线返航。", () -> KitClient.goNetherPortal(mc()));
 		open(parent, panel);
 	}
@@ -88,7 +84,6 @@ final class TravelPages {
 				else p.showNotice(b == null ? "模块未就绪" : b.sceneryStatus(), 0xFF7777);
 			}));
 		});
-		p.action("查看依赖与版本", "Bobby、Voxy 和当前引擎版本。", () -> SettingsPages.diagnostics(p, c));
 		open(parent, p);
 	}
 
