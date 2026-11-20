@@ -65,6 +65,11 @@ final class SceneryCoverage {
 		}
 		return best;
 	}
+	/** Largest radius whose circle plus its edge chunk stays inside the border; below MIN_RADIUS means no task fits. */
+	static int maxRadiusInside(double x, double z, double minX, double maxX, double minZ, double maxZ) {
+		double room = Math.min(Math.min(x - minX, maxX - x), Math.min(z - minZ, maxZ - z)) - 17;
+		return (int)Math.max(0, Math.min(MAX_RADIUS, Math.floor(room)));
+	}
 	List<Chunk> chunks() { return List.copyOf(chunks); }
 	long[] checkpoint() { return confirmed.toLongArray(); }
 	void restore(long[] bits) {

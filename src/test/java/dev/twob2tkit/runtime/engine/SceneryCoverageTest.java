@@ -5,6 +5,11 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SceneryCoverageTest {
+	@Test void maxRadiusKeepsTheCircleAndEdgeChunkInsideTheBorder() {
+		assertEquals(983, SceneryCoverage.maxRadiusInside(0, 0, -1000, 1000, -5000, 5000));
+		assertEquals(4096, SceneryCoverage.maxRadiusInside(0, 0, -3e7, 3e7, -3e7, 3e7));
+		assertEquals(0, SceneryCoverage.maxRadiusInside(995, 0, -1000, 1000, -1000, 1000));
+	}
 	@Test void resumeChoosesTheNearbyGapAndKeepsItUntilAccepted() {
 		var plan = new SceneryCoverage(0, 0, 256);
 		var near = new SceneryCoverage.Chunk(12, 0);

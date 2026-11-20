@@ -66,24 +66,33 @@ final class TravelPages {
 		open(parent, panel);
 	}
 
+	/** 主按钮按上次任务能否在当前世界继续而定：能继续就「继续上次」，否则直接「开始新任务」。 */
 	static void scenery(Screen parent, KitConfig c) {
 		var b = KitClient.borer();
-		var p = new KitFormScreen(parent, "风景预加载", "新建使用当前位置；继续上次保留原圆心、半径和进度。").bind(c).id("scenery");
-		p.slider("新任务半径（格）", "16–4096；大半径耗时与磁盘占用更大。不会改变巡航目标。", 16, 4096, () -> c.sceneryRadiusBlocks, v -> c.sceneryRadiusBlocks = v);
-		p.active(() -> b != null && b.isSceneryActive(), () -> {
-			if (b != null && b.isSceneryActive()) b.stop(mc(), "手动停止风景任务，保留进度");
-			else if (!KitClient.startScenery(mc(), c.sceneryRadiusBlocks, true)) p.showNotice(b == null ? "模块未就绪" : b.sceneryStatus(), 0xFF7777);
-		}).runLabels("继续上次", "停止并保留").runUsesDraft(false);
-		p.liveNote(() -> b == null ? "运行引擎未就绪" : b.sceneryStatus());
-		p.note("按实际服务端视距补漏，采用引擎确认的缓存后端；只标记已确认接收并保存的区块。未获知的状态不会显示为完成。");
-		p.action("当前位置新建任务", "替换上次风景任务前需要确认；不改挖矿工程或巡航坐标。", () -> {
+		var saved = ScenerySavedTask.read(mc());
+		boolean resumable = saved != null && saved.belongsTo(ScenerySavedTask.currentWorld(mc()));
+		var p = new KitFormScreen(parent, "风景预加载", "以当前位置为圆心，按半径补齐未加载区块；不会改变巡航目标。").bind(c).id("scenery");
+		p.slider("新任务半径（格）", "16–4096；大半径耗时与磁盘占用更大。", 16, 4096, () -> c.sceneryRadiusBlocks, v -> c.sceneryRadiusBlocks = v);
+		Runnable startNew = () -> {
 			if (b != null && b.isActive()) { p.showNotice("请先停止当前任务，再新建风景任务", 0xFF7777); return; }
 			if (!p.finishEdits()) return;
-			mc().gui.setScreen(new KitConfirmScreen(p, "新建风景任务", "使用当前位置和半径 " + c.sceneryRadiusBlocks + " 格，替换上次风景任务的进度。", () -> {
+			Runnable run = () -> {
 				if (KitClient.startScenery(mc(), c.sceneryRadiusBlocks, false)) mc().gui.setScreen(null);
 				else p.showNotice(b == null ? "模块未就绪" : b.sceneryStatus(), 0xFF7777);
-			}));
-		});
+			};
+			if (saved == null) run.run();
+			else mc().gui.setScreen(new KitConfirmScreen(p, "新建风景任务", "使用当前位置和半径 " + c.sceneryRadiusBlocks + " 格，替换上次（" + saved.place() + "）的进度。", run));
+		};
+		p.active(() -> b != null && b.isSceneryActive(), () -> {
+			if (b != null && b.isSceneryActive()) b.stop(mc(), "手动停止风景任务，保留进度");
+			else if (!resumable) startNew.run();
+			else if (!KitClient.startScenery(mc(), c.sceneryRadiusBlocks, true)) p.showNotice(b == null ? "模块未就绪" : b.sceneryStatus(), 0xFF7777);
+		}).runLabels(resumable ? "继续上次" : "开始新任务", "停止并保留").runUsesDraft(false);
+		if (resumable) p.note("上次任务：圆心 " + saved.x() + ", " + saved.z() + "，半径 " + saved.radius() + " 格。继续会保留原圆心和进度。");
+		else if (saved != null) p.note("上次任务在 " + saved.place() + "，与当前连接或维度不同，不能继续；开始新任务会替换它。");
+		p.liveNote(() -> b == null ? "运行引擎未就绪" : b.sceneryStatus());
+		p.note("按实际服务端视距补漏；只标记已确认接收并保存的区块。");
+		if (resumable) p.action("改为从当前位置新建", "替换上次任务的进度前需要确认；不改挖矿工程或巡航坐标。", startNew);
 		open(parent, p);
 	}
 

@@ -47,7 +47,12 @@ final class SceneryExplorer {
 			var border = c.level.getWorldBorder();
 			if (!border.isWithinBounds(plan.centreX - plan.radius - 16, plan.centreZ - plan.radius - 16)
 				|| !border.isWithinBounds(plan.centreX + plan.radius + 16, plan.centreZ + plan.radius + 16))
-				throw new IllegalStateException("圆形范围或边缘区块越过服务器世界边界，请缩小半径");
+			{
+				int max = SceneryCoverage.maxRadiusInside(plan.centreX, plan.centreZ, border.getMinX(), border.getMaxX(), border.getMinZ(), border.getMaxZ());
+				throw new IllegalStateException(max < SceneryCoverage.MIN_RADIUS
+					? (resume ? "上次范围" : "当前位置") + "离服务器世界边界太近，无法预加载"
+					: "半径 " + plan.radius + " 格越过服务器世界边界；" + (resume ? "上次圆心" : "当前位置") + "最多 " + max + " 格");
+			}
 			if (c.player.getY() > SceneryFlightPolicy.MAX_Y) throw new IllegalStateException("请先降低至 Y512 以下再开始");
 			// Reuse the tested flight lease and its single recovery receipt; mining and scenery are mutually exclusive.
 			flight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/area-flight-speed.bak"));
