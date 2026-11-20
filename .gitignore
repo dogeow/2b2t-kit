@@ -52,3 +52,8 @@ __pycache__/
 
 # Local automation runs, logs, and generated worker bundles
 /work/
+
+# Local probes, FUSE leftovers and ad-hoc run receipts
+/.tsprobe
+.fuse_hidden*
+/villa-map-*/
