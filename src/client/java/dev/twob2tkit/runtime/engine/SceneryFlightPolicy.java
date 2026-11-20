@@ -12,7 +12,7 @@ final class SceneryFlightPolicy {
 		if (Math.abs(vy) > .08) return new Input(yaw, false, false, 0);
 		double distance = Math.hypot(dx, dz);
 		return distance < 1.5 ? new Input(yaw, false, false, 0)
-			: new Input((float)Math.toDegrees(Math.atan2(-dx, dz)), true, false, distance > 8 ? .06 : .015);
+			: new Input((float)Math.toDegrees(Math.atan2(-dx, dz)), true, false, distance > 24 ? .09 : distance > 8 ? .06 : .015);
 	}
 	private SceneryFlightPolicy() {}
 }

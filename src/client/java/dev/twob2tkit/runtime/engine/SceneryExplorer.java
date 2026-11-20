@@ -19,6 +19,7 @@ final class SceneryExplorer {
 	private final SceneryServerView serverView = new SceneryServerView();
 	private SceneryServerView.Limits view;
 	private SceneryCoverage coverage;
+	private SceneryCoverage.Chunk target;
 	private ClientLevel level;
 	private Path progress;
 	private String world, cache, status = "尚未开始风景预加载";
@@ -51,7 +52,7 @@ final class SceneryExplorer {
 			// Reuse the tested flight lease and its single recovery receipt; mining and scenery are mutually exclusive.
 			flight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/area-flight-speed.bak"));
 			String error = flight.acquire(c.player); if (error != null) throw new IllegalStateException(error);
-			this.coverage = plan; this.world = world; this.cache = cache; this.progress = progress; level = c.level;
+			this.coverage = plan; target = null; this.world = world; this.cache = cache; this.progress = progress; level = c.level;
 			ticks = scan = waitTicks = idleTicks = 0; quiet.reset(); lastCovered = plan.confirmed();
 			observed.clear(); goalKey = ""; bestDistance = Double.POSITIVE_INFINITY; altitude = Math.max(160, c.player.getY());
 			active = true;
@@ -76,7 +77,7 @@ final class SceneryExplorer {
 			SceneryServerView.Limits latestView = serverView.read(c.getConnection(), c.options.renderDistance().get());
 			if (!latestView.equals(view)) { view = latestView; scan = 0; engine.fileLog(c, "scenery-server-view " + view); }
 			if (c.gui.screen() != null) { flight.hover(); show(c, "界面打开，已悬停；关闭界面继续"); return; }
-			SceneryCoverage.Chunk target = coverage.next();
+			target = coverage.nextNearest(target, c.player.getX(), c.player.getZ());
 			double x = target == null ? coverage.centreX : target.x() * 16.0 + 8;
 			double z = target == null ? coverage.centreZ : target.z() * 16.0 + 8;
 			double dx = x - c.player.getX(), dz = z - c.player.getZ();
@@ -109,7 +110,7 @@ final class SceneryExplorer {
 			if (!key.equals(goalKey) || distance < bestDistance - .15 || covered > lastCovered) {
 				goalKey = key; bestDistance = distance; idleTicks = 0; lastCovered = covered;
 			} else if (++idleTicks >= 600) throw new IllegalStateException("连续 30 秒无前进进展，可能被服务器限速或挡住；未标记完成");
-			show(c, input.up() ? "保持离地 48 格，升至 Y" + Math.round(altitude) : coverage.complete() ? "覆盖完成，返回圆心上空" : "由内向外补齐未加载区块");
+			show(c, input.up() ? "保持离地 48 格，升至 Y" + Math.round(altitude) : coverage.complete() ? "覆盖完成，返回圆心上空" : "前往附近未加载区块");
 		} catch (Exception | LinkageError error) {
 			engine.fileLog(c, "scenery-error " + error); stop(c, "已停止：" + error.getMessage());
 		}
@@ -180,7 +181,6 @@ final class SceneryExplorer {
 		if (ticks % 10 == 0) c.gui.hud.setOverlayMessage(Component.literal("[风景] " + status).withColor(0x55FFFF), false);
 		if (ticks % 100 == 0) {
 			engine.fileLog(c, "scenery-state backend=" + cacheBackend.name() + " view=" + view + " " + status + " y=" + c.player.getY() + " pending=" + coverage.submitted());
-			SceneryCoverage.Chunk target = coverage.next();
 			if (target != null) {
 				LevelChunk chunk = c.level.getChunkSource().getChunk(target.x(), target.z(), ChunkStatus.FULL, false);
 				long lightKey = SceneryCapturePolicy.lightColumnKey(target.x(), target.z());

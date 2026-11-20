@@ -5,6 +5,16 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SceneryCoverageTest {
+	@Test void resumeChoosesTheNearbyGapAndKeepsItUntilAccepted() {
+		var plan = new SceneryCoverage(0, 0, 256);
+		var near = new SceneryCoverage.Chunk(12, 0);
+		assertEquals(near, plan.nextNearest(null, 200, 8));
+		assertEquals(near, plan.nextNearest(near, 8, 8));
+		plan.accepted(12, 0);
+		assertNotEquals(near, plan.nextNearest(near, 200, 8));
+		plan.commitBatch();
+		assertEquals(new SceneryCoverage.Chunk(0, 0), plan.next());
+	}
 	@Test void everyBlockInsideCircleIncludingNegativeCoordinatesAndEdgesBelongsToAPlannedChunk() {
 		for (double x : new double[]{-32.1, -16, -.25, 0, 15.9, 1234.5}) for (double z : new double[]{-15.9, .1, 16}) {
 			var plan = new SceneryCoverage(x, z, 65);

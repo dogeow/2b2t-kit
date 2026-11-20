@@ -14,6 +14,7 @@ class SceneryFlightPolicyTest {
 		assertTrue(up.up()); assertFalse(up.forward());
 		var coast = SceneryFlightPolicy.input(200, 0, .5, .5, 0); assertFalse(coast.forward());
 		var go = SceneryFlightPolicy.input(200, 0, 0, 0, 0); assertTrue(go.forward()); assertEquals(-90, go.yaw()); assertFalse(go.up());
+		assertTrue(go.speed() > SceneryFlightPolicy.input(16, 0, 0, 0, 0).speed());
 		assertTrue(go.speed() * 15 < 1.5); assertTrue(up.speed() * 5 < 1.2);
 	}
 	@Test void realInputMappingCrossesMountainOnlyAfterGainingRequiredHeight() {

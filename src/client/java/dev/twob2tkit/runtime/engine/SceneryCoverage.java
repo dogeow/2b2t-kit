@@ -47,6 +47,24 @@ final class SceneryCoverage {
 		while (cursor < chunks.size() && (confirmed.get(cursor) || submitted.get(cursor))) cursor++;
 		return cursor == chunks.size() ? null : chunks.get(cursor);
 	}
+	/** Keep the active target until covered; then pick the closest gap from the actual position.
+	 * Keep the original spiral indices because saved checkpoints refer to them. */
+	Chunk nextNearest(Chunk current, double x, double z) {
+		if (current != null && needs(current.x(), current.z())) return current;
+		Chunk best = null;
+		double bestDistance = Double.POSITIVE_INFINITY;
+		for (int i=confirmed.nextClearBit(0); i<chunks.size(); i=confirmed.nextClearBit(i+1)) {
+			if (submitted.get(i)) continue;
+			Chunk candidate=chunks.get(i);
+			double dx=candidate.x()*16.0+8-x, dz=candidate.z()*16.0+8-z;
+			double distance=dx*dx+dz*dz;
+			if (distance < bestDistance) {
+				best=candidate;
+				bestDistance=distance;
+			}
+		}
+		return best;
+	}
 	List<Chunk> chunks() { return List.copyOf(chunks); }
 	long[] checkpoint() { return confirmed.toLongArray(); }
 	void restore(long[] bits) {
