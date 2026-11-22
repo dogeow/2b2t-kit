@@ -14,7 +14,7 @@ public final class BorerAreaMarks {
 	/** 准星取点最远距离（格）。 */
 	public static final int PICK_RANGE = 128;
 	/** 区域水平边长上限。 */
-	public static final int MAX_SPAN = 64;
+	public static final int MAX_SPAN = 128;
 
 	private BorerAreaMarks() {
 	}

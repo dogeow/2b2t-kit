@@ -38,12 +38,13 @@ final class BorerAreaRunner {
 	private int confirmationTicks;
 	private Path progressPath;
 	private String progressWorld;
+	/** Current 4-high slab for standing layers above sea level; -1 for a single shallow or shaft plan. */
+	private int layer = -1, layerAreaBottom;
 	private int saveTicks;
 	private boolean naturalDescent;
 	private int rescueTicks;
 	private final BorerAreaTorch torch = new BorerAreaTorch();
 	private final BorerAreaCargo cargo;
-	private final BorerAreaWater water;
 	private BorerMiningStallAdvisor stallAdvisor;
 	private StallHold stallHold;
 	private AdviceFollowup followup;
@@ -80,12 +81,12 @@ final class BorerAreaRunner {
 		}
 	}
 
-	BorerAreaRunner(DefaultTunnelBorerEngine engine) { this.engine = engine; cargo = new BorerAreaCargo(engine); water = new BorerAreaWater(engine); }
+	BorerAreaRunner(DefaultTunnelBorerEngine engine) { this.engine = engine; cargo = new BorerAreaCargo(engine); }
 	boolean managingInventory() { return cargo.active(); }
 	private boolean directMiningSupported(){try{return engine.host.supportsDirectAreaMining();}catch(LinkageError oldHost){return false;}}
 	boolean ownsMining(){return attacking && directMiningSupported();}
 	boolean ownsInventoryScreen(Minecraft c) { return cargo.ownsScreen(c); }
-	void stopInventory(Minecraft c) { cargo.reset(c); water.reset(c); }
+	void stopInventory(Minecraft c) { cargo.reset(c); }
 
 	void prepareFlight(Minecraft client) {
 		String restored = flight.prepare(client.gameDirectory.toPath().resolve("config/twob2tkit/area-flight-speed.bak"));
@@ -119,7 +120,6 @@ final class BorerAreaRunner {
 		failedFastTarget = null;
 		checkpoint();
 		cargo.reset(Minecraft.getInstance());
-		water.reset(Minecraft.getInstance());
 		flight.close();
 		plan = null;
 		command = null;
@@ -231,17 +231,29 @@ final class BorerAreaRunner {
 				progressPath = client.gameDirectory.toPath().resolve("config/twob2tkit/area-progress.json");
 				progressWorld = worldKey(client);
 				BlockPos min = new BlockPos(engine.areaMin.getX(), bottom, engine.areaMin.getZ());
-				boolean shallow = BorerAreaHorizontal.enabled(min, engine.areaMax);
-				plan = BorerAreaPlan.restore(min, engine.areaMax, pose(player), BorerAreaProgress.read(progressPath, progressWorld,min,engine.areaMax), shallow);
+				int top = engine.areaMax.getY();
+				boolean standing = BorerAreaLayers.standing(bottom, top, client.level.getSeaLevel());
+				boolean shallow = standing || BorerAreaHorizontal.enabled(min, engine.areaMax);
+				layer = -1; layerAreaBottom = bottom;
+				if (standing) {
+					for (int i = 0; i < BorerAreaLayers.count(bottom, top) && plan == null; i++) {
+						plan = BorerAreaPlan.restore(layerMin(i), layerMax(i), pose(player), BorerAreaProgress.read(progressPath, progressWorld, layerMin(i), layerMax(i)), true);
+						if (plan != null) layer = i;
+					}
+				} else plan = BorerAreaPlan.restore(min, engine.areaMax, pose(player), BorerAreaProgress.read(progressPath, progressWorld,min,engine.areaMax), shallow);
 				boolean resumed = plan != null;
-				if (plan == null) {
+				if (plan == null && standing) {
+					layer = BorerAreaLayers.firstWithWork(0, bottom, top, i -> layerHasWork(client, i));
+					if (layer < 0) { stop(client, "区域内没有可挖方块"); return; }
+					plan = new BorerAreaPlan(layerMin(layer), layerMax(layer), pose(player), true);
+				} else if (plan == null) {
 					plan = new BorerAreaPlan(min, engine.areaMax, pose(player), shallow);
 				}
 				if (resumed) engine.fileLog(client, "area-v3-resume " + diagnosticState() + " pos=" + BorerText.precise(player));
 				engine.fileLog(client, "area-v2-start bounds=" + BorerText.block(engine.areaMin) + ".." + BorerText.block(engine.areaMax)
-					+ " columns=" + plan.total() + " bottom=" + bottom + " strategy=" + (shallow ? "SHALLOW_HORIZONTAL" : "VERTICAL_SHAFT")
+					+ " columns=" + plan.total() + " bottom=" + bottom + " strategy=" + (standing ? "STANDING_LAYERS layer=" + layer : shallow ? "SHALLOW_HORIZONTAL" : "VERTICAL_SHAFT")
 					+ " height=" + (engine.areaMax.getY() - bottom + 1) + " breakReach=" + BorerAim.breakReach(player));
-				engine.status=shallow ? "浅层区域：水平清挖" : "深层区域：逐列清挖";
+				engine.status=standing ? "海平面以上：分层站挖" : shallow ? "浅层区域：水平清挖" : "深层区域：逐列清挖";
 			}
 			observeFollowup(client, player);
 			if (player.isInWater() || player.isInLava()) { rescue(client, player); return; }
@@ -249,7 +261,6 @@ final class BorerAreaRunner {
 			if (stallHold != null) { tickStallHold(client, player); return; }
 			if (clearingGrassHit != null) { tickClearingGrass(client, player); return; }
 			if (pipeline.active()) { tickPipeline(client, player); return; }
-			if (water.active()) { sealSideWater(client); return; }
 			if (torch.tick(client, engine)) { flight.fly(); flight.speed(0); stopAttack(client); return; }
 			if(mining!=null && engine.miningConfirmation.pending(client.level,mining)){
 				stopAttack(client);flight.fly();flight.speed(0);naturalDescent=false;
@@ -330,11 +341,11 @@ final class BorerAreaRunner {
 			if (++diagnostics >= 40) { diagnostics = 0; engine.logDiagnostic(client, player, "area-v2"); }
 			switch (command.action()) {
 				case BLOCKED -> stop(client, command.reason() + blockSuffix(command.block()));
-				case DONE -> stop(client, plan.skipped() == 0 ? "区域已复核挖完：" + plan.total() + " 列；" + (plan.horizontal() ? "浅层保留当前位置" : "已返回顶部")
+				case DONE -> { if (!nextLayer(client, player)) stop(client, plan.skipped() == 0 ? "区域已复核挖完：" + plan.total() + " 列；" + (plan.horizontal() ? "浅层保留当前位置" : "已返回顶部")
 					: "可挖部分已结束：挖空 " + plan.completed() + " 列，基岩止挖 " + plan.bedrockColumns()
-						+ " 列，挡水 / 存储保留 " + (plan.skipped() - plan.bedrockColumns()) + " 列；" + (plan.horizontal() ? "浅层保留当前位置" : "已返回顶部"));
+						+ " 列，挡水 / 存储保留 " + (plan.skipped() - plan.bedrockColumns()) + " 列；" + (plan.horizontal() ? "浅层保留当前位置" : "已返回顶部")); }
 				case MINE, MINE_DOWN -> mine(client, player, command.block());
-				case SEAL_WATER -> beginSideWater(client, command.block());
+				case SEAL_WATER -> stop(client, "区域挖不封水；请重新开始以保留临水方块");
 				case WAIT -> {
 					flight.speed(0);
 					stopAttack(client);
@@ -355,7 +366,7 @@ final class BorerAreaRunner {
 			public boolean opensLiquid(BlockPos p) {
 				return BorerHazards.wouldOpenWater(client, p) || BorerHazards.wouldOpenLava(client, p);
 			}
-			public BlockPos sealableSideWater(BlockPos p) { return water.candidate(client, p); }
+			// Area mining never places blocks into water: a block that would open liquid stays as the barrier.
 			public boolean canMine(BlockPos p) { return BorerAim.visibleHit(client, client.player, p, p::equals) != null; }
 		};
 	}
@@ -377,8 +388,47 @@ final class BorerAreaRunner {
 			ay == by ? client.level.getMinY() : Math.min(ay, by), Math.min(engine.host.borerAreaAz(), engine.host.borerAreaBz()));
 		BlockPos max = new BlockPos(Math.max(engine.host.borerAreaAx(), engine.host.borerAreaBx()),
 			Math.max(ay, by), Math.max(engine.host.borerAreaAz(), engine.host.borerAreaBz()));
-		return BorerAreaPlan.restore(min, max, pose(client.player), BorerAreaProgress.read(
-			client.gameDirectory.toPath().resolve("config/twob2tkit/area-progress.json"), worldKey(client),min,max), BorerAreaHorizontal.enabled(min, max)) != null;
+		Path path = client.gameDirectory.toPath().resolve("config/twob2tkit/area-progress.json");
+		if (BorerAreaLayers.standing(min.getY(), max.getY(), client.level.getSeaLevel())) {
+			for (int i = 0; i < BorerAreaLayers.count(min.getY(), max.getY()); i++) {
+				BlockPos lo = new BlockPos(min.getX(), BorerAreaLayers.bottom(min.getY(), max.getY(), i), min.getZ());
+				BlockPos hi = new BlockPos(max.getX(), BorerAreaLayers.top(max.getY(), i), max.getZ());
+				if (BorerAreaPlan.restore(lo, hi, pose(client.player), BorerAreaProgress.read(path, worldKey(client), lo, hi), true) != null) return true;
+			}
+			return false;
+		}
+		return BorerAreaPlan.restore(min, max, pose(client.player), BorerAreaProgress.read(path, worldKey(client),min,max), BorerAreaHorizontal.enabled(min, max)) != null;
+	}
+
+	private BlockPos layerMin(int index) {
+		return new BlockPos(engine.areaMin.getX(), BorerAreaLayers.bottom(layerAreaBottom, engine.areaMax.getY(), index), engine.areaMin.getZ());
+	}
+	private BlockPos layerMax(int index) {
+		return new BlockPos(engine.areaMax.getX(), BorerAreaLayers.top(engine.areaMax.getY(), index), engine.areaMax.getZ());
+	}
+	/** A slab still has work when any block in it is diggable or not yet loaded. */
+	private boolean layerHasWork(Minecraft client, int index) {
+		BlockPos lo = layerMin(index), hi = layerMax(index);
+		for (BlockPos pos : BlockPos.betweenClosed(lo, hi)) {
+			var cell = cell(client, pos);
+			if (cell == BorerAreaPlan.Cell.SOLID || cell == BorerAreaPlan.Cell.UNLOADED) return true;
+		}
+		return false;
+	}
+	/** Finished slab: keep standing and continue with the next slab that still has work. */
+	private boolean nextLayer(Minecraft client, LocalPlayer player) {
+		if (layer < 0) return false;
+		int next = BorerAreaLayers.firstWithWork(layer + 1, layerAreaBottom, engine.areaMax.getY(), i -> layerHasWork(client, i));
+		if (next < 0) return false;
+		engine.fileLog(client, "area-layer-next from=" + layer + " to=" + next + " y=" + layerMin(next).getY() + ".." + layerMax(next).getY()
+			+ " completed=" + plan.completed() + " skipped=" + plan.skipped());
+		stopAttack(client); flight.speed(0);
+		layer = next;
+		plan = new BorerAreaPlan(layerMin(next), layerMax(next), pose(player), true);
+		mining = null; progressKey = lastLogged = "";
+		checkpoint();
+		show(client, "分层站挖：进入 Y " + layerMin(next).getY() + "–" + layerMax(next).getY());
+		return true;
 	}
 
 	private BorerAreaPlan.Cell cell(Minecraft client, BlockPos pos) {
@@ -414,10 +464,8 @@ final class BorerAreaRunner {
 		if (liquid == null) liquid = BorerHazards.lavaOpenedByMining(client, target);
 		if (liquid != null) {
 			if (cargo.active()) { stop(client, "卸货路线头顶有液体，保留挡块并暂停"); return; }
-			if (water.candidate(client, target) != null) { beginSideWater(client, target); return; }
-			engine.fileLog(client, "area-liquid-unsealable barrier=" + target + " liquid=" + liquid
-				+ " water=" + BorerHazards.isWater(client, liquid) + " enabled=" + engine.host.borerSealLiquids()
-				+ " inReach=" + BorerAim.inReach(player, liquid));
+			engine.fileLog(client, "area-liquid-keep-barrier barrier=" + target + " liquid=" + liquid
+				+ " water=" + BorerHazards.isWater(client, liquid));
 			stopAttack(client);
 			flight.speed(0);
 			command = plan.skipLiquid(pose(player), target);
@@ -711,32 +759,6 @@ final class BorerAreaRunner {
 		show(c,"边挖边接近下一格 · 待确认 "+pipeline.size());
 	}
 
-	private void beginSideWater(Minecraft client, BlockPos target) {
-		stopAttack(client); releaseMovement(client); flight.fly(); flight.speed(0); naturalDescent = false; look = null;
-		BlockPos side = water.candidate(client, target);
-		if (side == null) { stop(client, "侧水位置变化或不能安全封堵，保留通道挡块"); return; }
-		water.begin(client, target, side);
-		sealSideWater(client);
-	}
-	private void sealSideWater(Minecraft client) {
-		stopAttack(client); releaseMovement(client); flight.fly(); flight.speed(0); naturalDescent = false; look = null;
-		var result = water.tick(client);
-		// Persist a protective reservation even if the user stops during the confirmation window.
-		// This is not completion: continued mining still waits for DONE below.
-		if (water.observedSolid(client) && !plan.isWaterSeal(water.water())) { plan.rememberWaterSeal(water.water()); checkpoint(); }
-		if (result == BorerWaterSealPolicy.Action.DONE) {
-			BlockPos sealed = water.water(), barrier = water.barrier();
-			if (!plan.isWaterSeal(sealed)) plan.rememberWaterSeal(sealed);
-			engine.fileLog(client, "area-water-confirmed side=" + sealed + " continue=" + barrier);
-			water.end(client); checkpoint(); progressKey = "";
-			show(client, "侧面进水口已封住，保留挡水石并继续开路");
-		} else if (result == BorerWaterSealPolicy.Action.FAIL) {
-			String reason = water.failure();
-			engine.fileLog(client, "area-water-failed side=" + water.water() + " reason=" + reason);
-			water.end(client); stop(client, reason);
-		} else show(client, "正在用石料封住侧水 " + BorerText.block(water.water()) + "，等待封堵生效");
-	}
-
 	private void move(Minecraft client, LocalPlayer player) {
 		stopAttack(client);
 		engine.clearMiningTarget(client, "area-v2-moving");
@@ -797,9 +819,9 @@ final class BorerAreaRunner {
 		boolean acknowledgementUncertain = cause.equals("server_ack") || cause.equals("pipeline_ack");
 		boolean waitOnce = safe && acknowledgementUncertain;
 		boolean retryOnce = safe && !acknowledgementUncertain && !cause.equals("move")
-			&& !cargo.active() && !water.active() && !pipeline.active()
+			&& !cargo.active() && !pipeline.active()
 			&& engine.miningConfirmation.count(client.level) == 0;
-		boolean rescan = safe && !acknowledgementUncertain && !cargo.active() && !water.active()
+		boolean rescan = safe && !acknowledgementUncertain && !cargo.active()
 			&& !pipeline.active() && engine.miningConfirmation.count(client.level) == 0
 			&& plan.phase() != BorerAreaPlan.Phase.SURVEY && plan.phase() != BorerAreaPlan.Phase.BLOCKED;
 		if (stallAdvisor == null) stallAdvisor = new BorerMiningStallAdvisor(

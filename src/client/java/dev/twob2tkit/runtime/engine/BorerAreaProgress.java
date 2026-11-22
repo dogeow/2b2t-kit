@@ -29,7 +29,7 @@ final class BorerAreaProgress {
 	}
 	private static Saved readSaved(Path path){
 		try {
-			if (!Files.isRegularFile(path) || Files.size(path) > 1_000_000) return null;
+			if (!Files.isRegularFile(path) || Files.size(path) > 4_000_000) return null;
 			Saved saved = JSON.fromJson(Files.readString(path), Saved.class);
 			return saved != null && saved.schema == 1 && saved.plan!=null ? saved : null;
 		} catch (IOException | RuntimeException ignored) { return null; }

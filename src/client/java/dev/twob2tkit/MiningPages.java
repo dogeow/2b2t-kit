@@ -99,7 +99,7 @@ final class MiningPages {
 		p.liveLine(()->b==null?"":b.preparationSummary());
 		p.note("水桶用于主世界应急；下界应准备抗火药水。建议带备用镐，区域井底缺光时会尝试补火把。");
 		p.section("液体与撤离");
-		p.bool("尝试封堵液体", "仅在引擎判断可安全封堵时处理；不可封的水或岩浆保留保护。", () -> c.borerSealLiquids, v -> c.borerSealLiquids = v);
+		p.bool("尝试封堵液体", "向前挖、向下挖时在引擎判断可安全封堵时处理；区域挖从不往水里放方块，临水方块直接保留。", () -> c.borerSealLiquids, v -> c.borerSealLiquids = v);
 		p.bool("遇岩浆尝试转向", "用于支持转向的掘进模式。", () -> c.borerTurnAroundLava, v -> c.borerTurnAroundLava = v);
 		p.bool("结束后沿路回家", "只在对应模式支持回家且具备路线时使用。工具耗尽保护可能直接离线。", () -> c.borerHomeOnDone, v -> c.borerHomeOnDone = v);
 		p.section("威胁响应");

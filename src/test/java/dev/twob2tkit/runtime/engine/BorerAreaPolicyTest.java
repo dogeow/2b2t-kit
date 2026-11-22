@@ -18,7 +18,8 @@ final class BorerAreaPolicyTest {
 		assertEquals(40, BorerAreaPolicy.spanInclusive(0, 39));
 		assertEquals(40, BorerAreaPolicy.spanInclusive(100, 61));
 		assertFalse(BorerAreaPolicy.tooLarge(0, 0, 39, 39));
-		assertTrue(BorerAreaPolicy.tooLarge(0, 0, 64, 0));
+		assertFalse(BorerAreaPolicy.tooLarge(0, 0, 127, 127));
+		assertTrue(BorerAreaPolicy.tooLarge(0, 0, 128, 0));
 	}
 
 	@Test

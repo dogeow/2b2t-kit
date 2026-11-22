@@ -7,7 +7,7 @@ import net.minecraft.client.gui.screens.Screen;
 
 /** Single feature inventory used by native navigation, compact appearance, search and legacy routes. */
 public enum UiFeature {
-    AREA(Category.MINING, "区域挖", "分次标 A/B、保存工程、浅层水平／深层竖井", "工程 采石场 AB 黄框"),
+    AREA(Category.MINING, "区域挖", "分次标 A/B、保存工程；海平面以上站着分层挖，水下竖井", "工程 采石场 AB 黄框 站挖 分层 沙滩"),
     ORE(Category.MINING, "自动找矿", "选择矿种、开路采集与拾取", "煤 铁 钻石 找矿"),
     GRAVEL(Category.MINING, "采集沙砾", "水下专用采集；陆地沿用自动找矿设置", "沙砾 海底 水下 陆地 呼吸"),
     FORWARD(Category.MINING, "向前挖", "巷道断面与掘进方向", "隧道 地铁"),

@@ -52,6 +52,18 @@ class BorerAreaWaterPlanTest {
 		for (int i = 0; i < 12 && plan.phase() != Phase.RETURN; i++) assertNotEquals(Action.SEAL_WATER, plan.step(w, p).action());
 		assertEquals(Phase.RETURN, plan.phase()); assertEquals(1, plan.skipped()); assertEquals(Cell.SOLID, w.cell(w.barrier));
 	}
+	@Test void areaRunnerNeverPlacesBlocksIntoWaterAndKeepsTheBarrierInstead() throws Exception {
+		String runner = java.nio.file.Files.readString(Path.of("src/client/java/dev/twob2tkit/runtime/engine/BorerAreaRunner.java"));
+		// No sealable side water is offered to the plan, so every water-adjacent block takes the skipLiquid path.
+		assertFalse(runner.contains("public BlockPos sealableSideWater("));
+		assertFalse(runner.contains("placeSideWater"));
+		assertTrue(runner.contains("plan.skipLiquid(pose(player), target)"));
+		World w = new World(); w.barrier = BlockPos.ZERO; w.water = new BlockPos(1, 0, 0); w.canSeal = false;
+		w.cells.put(w.barrier, Cell.SOLID); w.cells.put(w.water, Cell.LIQUID);
+		Pose p = new Pose(.5, 1.25, .5, 0, 0, 0); var plan = new BorerAreaPlan(BlockPos.ZERO, BlockPos.ZERO, p);
+		for (int i = 0; i < 12; i++) assertNotEquals(Action.SEAL_WATER, plan.step(w, p).action());
+		assertEquals(Cell.SOLID, w.cell(w.barrier));
+	}
 	@Test void waterWallReservationSurvivesRestartAndDoesNotCountAsExcavated(@TempDir Path temp) throws Exception {
 		BlockPos min = BlockPos.ZERO, max = new BlockPos(2, 0, 0), seal = new BlockPos(2, 2, 0);
 		Pose p = new Pose(.5, 1.25, .5, 0, 0, 0); var plan = new BorerAreaPlan(min, max, p);

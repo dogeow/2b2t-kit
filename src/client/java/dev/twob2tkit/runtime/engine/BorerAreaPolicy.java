@@ -13,7 +13,7 @@ import java.util.Locale;
  * 两点 Y 相同则一直往下；Y 不同挖到较低那层换格。
  */
 public final class BorerAreaPolicy {
-	public static final int MAX_SPAN = 64;
+	public static final int MAX_SPAN = 128;
 	public static final int PICK_RANGE = 128;
 	public static final String ORDER_VERTICAL = "vertical";
 	public static final String ORDER_NEAREST = "nearest";
