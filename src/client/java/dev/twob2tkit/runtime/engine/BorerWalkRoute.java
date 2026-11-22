@@ -12,6 +12,10 @@ import java.util.function.Predicate;
 final class BorerWalkRoute {
 	private final DefaultTunnelBorerEngine engine;
 	private List<BlockPos> path = List.of();
+
+    List<BlockPos> mapNext() {
+        return List.copyOf(path.subList(Math.min(index, path.size()), Math.min(index + 24, path.size())));
+    }
 	private BlockPos target;
 	private boolean loot, home, besideSupport;
 	private int index, stall;

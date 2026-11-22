@@ -37,7 +37,7 @@ final class KitCommands {
 				.then(literal("supply").then(supplyCommand("allow",true)).then(supplyCommand("deny",false)))
 				.then(literal("scenery")
 					.executes(context -> { UiFeature.SCENERY.open(null); return 1; })
-					.then(literal("start").then(argument("radius", IntegerArgumentType.integer(16, 4096)).executes(context -> {
+					.then(literal("start").then(argument("radius", IntegerArgumentType.integer(16, 32768)).executes(context -> {
 						int radius = IntegerArgumentType.getInteger(context, "radius");
 						boolean ok = KitClient.startScenery(context.getSource().getClient(), radius, false);
 						if (ok) { config.sceneryRadiusBlocks = radius; config.save(); }

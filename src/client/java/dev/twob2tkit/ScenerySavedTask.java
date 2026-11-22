@@ -17,7 +17,7 @@ record ScenerySavedTask(String world, long x, long z, int radius) {
 	static ScenerySavedTask read(Minecraft client) {
 		try {
 			Path path = client.gameDirectory.toPath().resolve(FILE);
-			if (!Files.isRegularFile(path) || Files.size(path) > 2_000_000) return null;
+			if (!Files.isRegularFile(path) || Files.size(path) > 3_000_000) return null;
 			JsonObject saved = JsonParser.parseString(Files.readString(path)).getAsJsonObject();
 			return new ScenerySavedTask(saved.get("world").getAsString(), Math.round(saved.get("x").getAsDouble()),
 				Math.round(saved.get("z").getAsDouble()), saved.get("radius").getAsInt());

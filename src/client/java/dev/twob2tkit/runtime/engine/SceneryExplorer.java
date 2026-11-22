@@ -20,6 +20,10 @@ final class SceneryExplorer {
 	private SceneryServerView.Limits view;
 	private SceneryCoverage coverage;
 	private SceneryCoverage.Chunk target;
+	private Iterator<SceneryCoverage.Chunk> reuseScan;
+	private final Map<SceneryCoverage.Chunk,java.util.concurrent.CompletableFuture<Boolean>> reusePending = new LinkedHashMap<>();
+	private int reuseChecked, reuseTotal, lastCheckpointTick;
+	private Integer batchX, batchZ;
 	private ClientLevel level;
 	private Path progress;
 	private String world, cache, status = "尚未开始风景预加载";
@@ -32,38 +36,76 @@ final class SceneryExplorer {
 	private record Observed(LevelChunk chunk, int tick) {}
 	private final Map<Long, Observed> observed = new HashMap<>();
 	SceneryExplorer(DefaultTunnelBorerEngine engine) { this.engine = engine; }
+    private ClientLevel mappedLevel;
+    private SceneryCoverage mappedCoverage;
+
+    dev.twob2tkit.runtime.api.MapTaskView.Scenery mapView(Minecraft c, dev.twob2tkit.runtime.api.MapTaskView.Area viewport) {
+        if (c.level == null) return null;
+        SceneryCoverage plan = level == c.level ? coverage : null;
+        if (plan == null) {
+            if (mappedLevel != c.level) {
+                mappedLevel = c.level;
+                try {
+                    mappedCoverage = SceneryProgress.readForMap(
+                        c.gameDirectory.toPath().resolve("config/twob2tkit/scenery-progress.json"), world(c));
+                } catch (java.io.IOException unavailable) { mappedCoverage = null; }
+            }
+            plan = mappedCoverage;
+        }
+        if (plan == null) return null;
+        var bounds = borderBounds(c);
+        if (!active) plan.clipTo(bounds);
+        var current = active ? target : null;
+        boolean preview = !active && viewport == null && c.player != null;
+        if (preview) current = plan.nextNearest(null,c.player.getX(),c.player.getZ());
+        var batch = active && batchX != null ? new dev.twob2tkit.runtime.api.MapTaskView.Area(
+            batchX * 512, batchZ * 512, batchX * 512 + 512, batchZ * 512 + 512) : null;
+        if (preview && current != null && plan.radius > SceneryCoverage.LEGACY_RADIUS) {
+            int x = Math.floorDiv(current.x(),32)*512, z = Math.floorDiv(current.z(),32)*512;
+            batch = new dev.twob2tkit.runtime.api.MapTaskView.Area(x,z,x+512,z+512);
+        }
+        var next = current == null ? null : new BlockPos(current.x() * 16 + 8, 0, current.z() * 16 + 8);
+        String reason = preview ? current == null ? "当前边界内的区块已确认"
+            : "按当前位置预览最近的未确认区块；实际运行时会先核对缓存"
+            : !active ? "已保存的覆盖进度" : current == null ? "等待当前批次核对或返回圆心"
+            : batch == null ? "优先前往离当前位置最近的未确认区块"
+            : "优先补齐当前 512×512 分区内最近的缺块；完成后再选其它分区";
+        var tiles = viewport == null ? new SceneryMapTiles.Tiles(java.util.List.of(),1) : SceneryMapTiles.missing(plan, viewport);
+        return new dev.twob2tkit.runtime.api.MapTaskView.Scenery(plan.centreX, plan.centreZ, plan.radius,
+            plan.confirmed(), plan.total(), batch, next, reason, tiles.areas(), tiles.step());
+    }
+
 	boolean active() { return active; }
 	String status() { return status; }
 
-	boolean start(Minecraft c, int radius, boolean resume) {
+	boolean start(Minecraft c, int radius, boolean resume, double x, double z, boolean expand) {
 		if (c.player == null || c.level == null || c.gameMode == null) return false;
 		try {
 			cacheBackend = SceneryCache.create();
 			String world = world(c), cache = cacheBackend.connect(c.level);
 			view = serverView.read(c.getConnection(), c.options.renderDistance().get());
 			Path progress = c.gameDirectory.toPath().resolve("config/twob2tkit/scenery-progress.json");
-			SceneryCoverage plan = resume ? SceneryProgress.read(progress, world, cache) : new SceneryCoverage(c.player.getX(), c.player.getZ(), radius);
-			if (resume && plan.complete()) { say(c, "上次范围已完成；要刷新地形请从当前位置重新开始"); return false; }
-			var border = c.level.getWorldBorder();
-			if (!border.isWithinBounds(plan.centreX - plan.radius - 16, plan.centreZ - plan.radius - 16)
-				|| !border.isWithinBounds(plan.centreX + plan.radius + 16, plan.centreZ + plan.radius + 16))
-			{
-				int max = SceneryCoverage.maxRadiusInside(plan.centreX, plan.centreZ, border.getMinX(), border.getMaxX(), border.getMinZ(), border.getMaxZ());
-				throw new IllegalStateException(max < SceneryCoverage.MIN_RADIUS
-					? (resume ? "上次范围" : "当前位置") + "离服务器世界边界太近，无法预加载"
-					: "半径 " + plan.radius + " 格越过服务器世界边界；" + (resume ? "上次圆心" : "当前位置") + "最多 " + max + " 格");
-			}
+			SceneryCoverage plan = (resume || expand) ? SceneryProgress.read(progress, world, cache) : new SceneryCoverage(x, z, radius);
+			if (expand) plan=plan.expanded(radius);
+			plan.clipTo(borderBounds(c));
+			if (plan.total()==0) { say(c,"所选范围在世界边界内没有可安全到达的区块"); return false; }
+			if (resume && plan.complete()) { say(c,"上次任务的边界内范围已完成"); return false; }
+			if (plan.skippedOutside()>0) say(c,"所选范围跨过世界边界，将跳过边界外的 "+plan.skippedOutside()+" 个区块");
 			if (c.player.getY() > SceneryFlightPolicy.MAX_Y) throw new IllegalStateException("请先降低至 Y512 以下再开始");
 			// Reuse the tested flight lease and its single recovery receipt; mining and scenery are mutually exclusive.
 			flight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/area-flight-speed.bak"));
 			String error = flight.acquire(c.player); if (error != null) throw new IllegalStateException(error);
-			this.coverage = plan; target = null; this.world = world; this.cache = cache; this.progress = progress; level = c.level;
-			ticks = scan = waitTicks = idleTicks = 0; quiet.reset(); lastCovered = plan.confirmed();
+			this.coverage = plan; target = null;
+			reusePending.clear(); reuseChecked = 0;
+			batchX=batchZ=null;
+			reuseTotal=plan.chunks().size();
+			reuseScan = cacheBackend.supportsReuse() && plan.radius<=SceneryCoverage.LEGACY_RADIUS ? plan.chunks().iterator() : null; this.world = world; this.cache = cache; this.progress = progress; level = c.level;
+			ticks = scan = waitTicks = idleTicks = lastCheckpointTick = 0; quiet.reset(); lastCovered = plan.confirmed();
 			observed.clear(); goalKey = ""; bestDistance = Double.POSITIVE_INFINITY; altitude = Math.max(160, c.player.getY());
 			active = true;
 			SceneryProgress.write(progress, world, cache, coverage);
 			say(c, "已" + (resume ? "继续" : "开始") + "风景预加载（" + cacheBackend.name() + "）：圆心 " + Math.round(plan.centreX) + ", " + Math.round(plan.centreZ)
-				+ "，半径 " + plan.radius + " 格，共 " + plan.total() + " 区块；服务端视距 " + view.server() + " 区块，完成后飞回圆心上空");
+				+ "，半径 " + plan.radius + " 格，共 " + plan.total() + " 区块；服务端视距 " + view.server() + " 区块，完成后飞回圆心附近的安全范围");
 			engine.fileLog(c, "scenery-start backend=" + cacheBackend.name() + " view=" + view + " resume=" + resume + " radius=" + plan.radius + " chunks=" + plan.total());
 			return true;
 		} catch (Exception | LinkageError error) {
@@ -79,12 +121,21 @@ final class SceneryExplorer {
 			ticks++; releaseMovement(c); look = null;
 			String error = flight.acquire(c.player); if (error != null) throw new IllegalStateException(error);
 			cacheBackend.check();
+			if (coverage.clipTo(borderBounds(c))) {
+				batchX=batchZ=null;
+				target=null;
+				say(c,"世界边界已变化，将跳过边界外的 "+coverage.skippedOutside()+" 个区块");
+			}
+			if (coverage.total()==0) { stop(c,"世界边界内已无可达目标"); return; }
 			SceneryServerView.Limits latestView = serverView.read(c.getConnection(), c.options.renderDistance().get());
 			if (!latestView.equals(view)) { view = latestView; scan = 0; engine.fileLog(c, "scenery-server-view " + view); }
 			if (c.gui.screen() != null) { flight.hover(); show(c, "界面打开，已悬停；关闭界面继续"); return; }
-			target = coverage.nextNearest(target, c.player.getX(), c.player.getZ());
-			double x = target == null ? coverage.centreX : target.x() * 16.0 + 8;
-			double z = target == null ? coverage.centreZ : target.z() * 16.0 + 8;
+			if (checkSaved(c)) return;
+			target = nextTarget(c);
+			if (checkSaved(c) || target!=null && !coverage.needs(target.x(),target.z())) return;
+			var border=c.level.getWorldBorder();
+			double x = target == null ? returnCoordinate(coverage.centreX,border.getMinX(),border.getMaxX()) : target.x() * 16.0 + 8;
+			double z = target == null ? returnCoordinate(coverage.centreZ,border.getMinZ(),border.getMaxZ()) : target.z() * 16.0 + 8;
 			double dx = x - c.player.getX(), dz = z - c.player.getZ();
 			Integer surface = terrain(c, dx, dz);
 			if (surface == null) { waiting(c, "等待前方地形数据，不飞进未知障碍"); return; }
@@ -94,7 +145,7 @@ final class SceneryExplorer {
 			if (quiet.observe(coverage.submitted() > 0, cacheBackend.idle())) {
 				cacheBackend.batchCommitted();
 				coverage.commitBatch();
-				SceneryProgress.write(progress, world, cache, coverage);
+				checkpointBatch();
 				engine.fileLog(c, "scenery-confirmed chunks=" + coverage.confirmed() + "/" + coverage.total());
 			}
 			boolean draining = SceneryCapturePolicy.drain(coverage.submitted(), cacheBackend.queued(), target == null, coverage.complete());
@@ -102,7 +153,7 @@ final class SceneryExplorer {
 			var input = SceneryFlightPolicy.input(dx, dz, altitude - c.player.getY(), c.player.getDeltaMovement().y, c.player.getYRot());
 			if (!input.up() && draining) { waiting(c, "等待 " + cacheBackend.name() + " 缓存写入与复核，再继续飞行"); return; }
 			if (coverage.complete() && target == null && Math.hypot(dx, dz) < 1.5 && !input.up() && Math.abs(c.player.getDeltaMovement().y) < .08) {
-				stop(c, "完成：" + coverage.total() + " 区块已加载并由 " + cacheBackend.name() + " 缓存，已回到圆心上空；保留飞行供你接管"); return;
+				stop(c, "完成：" + coverage.total() + " 区块已有有效的 " + cacheBackend.name() + " 缓存，已回到圆心附近的安全范围；保留飞行供你接管"); return;
 			}
 			if (!input.forward() && !input.up() && !coverage.complete()) { waiting(c, captureWait(c, target)); return; }
 			waitTicks = 0;
@@ -111,15 +162,83 @@ final class SceneryExplorer {
 			flight.speed(input.speed()); c.options.keyUp.setDown(input.forward()); c.options.keyJump.setDown(input.up());
 			String key = target == null ? "return" : target.key() + "";
 			double distance = Math.hypot(dx, dz) + Math.max(0, altitude - c.player.getY());
-			int covered = coverage.confirmed() + coverage.submitted();
+			int covered = coverage.confirmed() + coverage.insideSubmitted();
 			if (!key.equals(goalKey) || distance < bestDistance - .15 || covered > lastCovered) {
 				goalKey = key; bestDistance = distance; idleTicks = 0; lastCovered = covered;
 			} else if (++idleTicks >= 600) throw new IllegalStateException("连续 30 秒无前进进展，可能被服务器限速或挡住；未标记完成");
-			show(c, input.up() ? "保持离地 48 格，升至 Y" + Math.round(altitude) : coverage.complete() ? "覆盖完成，返回圆心上空" : "前往附近未加载区块");
+			show(c, input.up() ? "保持离地 48 格，升至 Y" + Math.round(altitude) : coverage.complete() ? "覆盖完成，返回圆心附近" : "前往附近未加载区块");
 		} catch (Exception | LinkageError error) {
 			engine.fileLog(c, "scenery-error " + error); stop(c, "已停止：" + error.getMessage());
 		}
 	}
+	private static SceneryCoverage.ChunkBounds borderBounds(Minecraft c) {
+		var b=c.level.getWorldBorder();
+		return SceneryCoverage.ChunkBounds.inside(b.getMinX(),b.getMaxX(),b.getMinZ(),b.getMaxZ());
+	}
+
+	static double returnCoordinate(double center,double min,double max) {
+		return Math.max(min+3,Math.min(max-3,center));
+	}
+
+	/** Large bitmaps are checkpointed periodically; a graceful stop writes the latest batch. */
+	private void checkpointBatch() throws java.io.IOException {
+		if (coverage.radius>SceneryCoverage.LEGACY_RADIUS && !coverage.complete()
+				&& ticks-lastCheckpointTick<600) return;
+		SceneryProgress.write(progress,world,cache,coverage);
+		lastCheckpointTick=ticks;
+	}
+
+	private SceneryCoverage.Chunk nextTarget(Minecraft c) {
+		double x=c.player.getX(), z=c.player.getZ();
+		if (target!=null && coverage.needs(target.x(),target.z())) return target;
+		if (coverage.radius>SceneryCoverage.LEGACY_RADIUS && batchX!=null) {
+			var nearby=coverage.nearestInRegion(batchX,batchZ,x,z);
+			if (nearby!=null) return nearby;
+		}
+		var next=coverage.nextNearest(null,x,z);
+		if (next!=null && coverage.radius>SceneryCoverage.LEGACY_RADIUS) {
+			batchX=Math.floorDiv(next.x(),32);
+			batchZ=Math.floorDiv(next.z(),32);
+			if (cacheBackend.supportsReuse()) {
+				var missing=coverage.missingInRegion(batchX,batchZ);
+				reuseChecked=0;
+				reuseTotal=missing.size();
+				reuseScan=missing.iterator();
+			}
+		}
+		return next;
+	}
+
+	/** Read at most 64 cached chunks at once. Valid hits need neither a flight nor a new write. */
+	private boolean checkSaved(Minecraft c) throws java.io.IOException {
+		if (reuseScan==null) return false;
+		for (var it=reusePending.entrySet().iterator();it.hasNext();) {
+			var entry=it.next();
+			if (!entry.getValue().isDone()) continue;
+			if (entry.getValue().getNow(false)) coverage.reuse(entry.getKey());
+			reuseChecked++;
+			it.remove();
+		}
+		for (int steps=0;steps<256 && reusePending.size()<64 && reuseScan.hasNext();steps++) {
+			var candidate=reuseScan.next();
+			if (!coverage.needs(candidate.x(),candidate.z())) { reuseChecked++; continue; }
+			var receipt=cacheBackend.hasSaved(candidate);
+			if (receipt.isDone()) {
+				if (receipt.getNow(false)) coverage.reuse(candidate);
+				reuseChecked++;
+			} else reusePending.put(candidate,receipt);
+		}
+		if (!reuseScan.hasNext() && reusePending.isEmpty()) {
+			reuseScan=null;
+			checkpointBatch();
+			engine.fileLog(c,"scenery-cache-reused confirmed="+coverage.confirmed()+"/"+coverage.total());
+			return false;
+		}
+		flight.hover();
+		show(c,"检查本批 Bobby 缓存 "+reuseChecked+"/"+reuseTotal);
+		return true;
+	}
+
 	private void observe(Minecraft c, SceneryCoverage.Chunk target) {
 		int accepted = 0;
 		if (target != null && observeOne(c, target.x(), target.z())) accepted++;
@@ -182,7 +301,7 @@ final class SceneryExplorer {
 		return "等待 " + cacheBackend.name() + " 接收当前区块";
 	}
 	private void show(Minecraft c, String action) {
-		status = action + " · " + (coverage.confirmed() + coverage.submitted()) + "/" + coverage.total() + " 区块 · 服务端 " + view.server();
+		status = action + " · " + (coverage.confirmed() + coverage.insideSubmitted()) + "/" + coverage.total() + " 区块 · 服务端 " + view.server();
 		if (ticks % 10 == 0) c.gui.hud.setOverlayMessage(Component.literal("[风景] " + status).withColor(0x55FFFF), false);
 		if (ticks % 100 == 0) {
 			engine.fileLog(c, "scenery-state backend=" + cacheBackend.name() + " view=" + view + " " + status + " y=" + c.player.getY() + " pending=" + coverage.submitted());
@@ -202,7 +321,7 @@ final class SceneryExplorer {
 		active = false; look = null; releaseMovement(c);
 		try { SceneryProgress.write(progress, world, cache, coverage); }
 		catch (Exception error) { reason += "；进度保存失败：" + error.getMessage(); }
-		closeFlight(c); cacheBackend.close(); observed.clear();
+		closeFlight(c); cacheBackend.close(); observed.clear(); reuseScan=null; reusePending.clear();
 		if (c.options != null) net.minecraft.client.KeyMapping.setAll();
 		say(c, reason);
 		engine.fileLog(c, "scenery-stop confirmed=" + coverage.confirmed() + "/" + coverage.total() + " reason=" + reason);

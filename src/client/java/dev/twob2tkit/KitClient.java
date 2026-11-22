@@ -451,6 +451,41 @@ public final class KitClient implements ClientModInitializer {
 		return instance.tunnelBorer.startScenery(client, radius, resume);
 	}
 
+	public static void openMapArea(Minecraft client, net.minecraft.client.gui.screens.Screen parent,
+			dev.twob2tkit.map.MapAreaSelection.Point a, dev.twob2tkit.map.MapAreaSelection.Point b) {
+		if (instance==null || client.level==null || client.player==null || client.player.isDeadOrDying()) return;
+		var config=config();
+		var draft=dev.twob2tkit.borer.AreaDrafts.open(config,dev.twob2tkit.borer.AreaDrafts.context(client));
+		int y=Math.max(client.level.getMinY()+1,Math.min(client.player.blockPosition().getY(),client.level.getMaxY()-1));
+		var selected=dev.twob2tkit.map.MapAreaSelection.fill(draft,a,b,y,y-1);
+		if (!dev.twob2tkit.borer.AreaDrafts.store(config,draft,selected)) return;
+		config.save();
+		client.gui.setScreen(new dev.twob2tkit.borer.AreaSetupScreen(parent,config));
+	}
+
+	public static void openMapScenery(Minecraft client, net.minecraft.client.gui.screens.Screen parent, int x, int z) {
+		if (instance == null || client.player == null || client.level == null) return;
+		TravelPages.scenery(parent, config(), new TravelPages.MapCentre(client.level,x+.5,z+.5));
+	}
+
+	static boolean expandScenery(Minecraft client, int radius) {
+		if (instance == null || client.player == null || client.player.isDeadOrDying()
+				|| instance.tunnelBorer.isActive()) return false;
+		if (dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_SCENERY_INPUT"))
+			stopWork("扩圈预加载风景");
+		else emergencyStop("扩圈预加载风景，停下其它自动动作");
+		return instance.tunnelBorer.expandScenery(client,radius);
+	}
+
+	static boolean startMapScenery(Minecraft client, int radius, TravelPages.MapCentre center) {
+		if (instance == null || client.player == null || client.player.isDeadOrDying()
+				|| client.level != center.level() || instance.tunnelBorer.isActive()) return false;
+		if (dev.twob2tkit.automation.AutomationBridge.preemptIdleForPlayer(client,"FORMAL_SCENERY_INPUT"))
+			stopWork("开始地图风景预加载");
+		else emergencyStop("开始地图风景预加载，停下其它自动动作");
+		return instance.tunnelBorer.startSceneryAt(client,radius,center.x(),center.z());
+	}
+
 	/** 是否有挂机类自动在跑（巡航/盾构/钓等）。 */
 	public static boolean anyAfkAuto() {
 		if (instance == null) return false;

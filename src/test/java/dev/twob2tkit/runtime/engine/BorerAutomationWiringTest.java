@@ -103,7 +103,8 @@ class BorerAutomationWiringTest {
 		assertTrue(observe.indexOf("ready") < observe.indexOf("accept"));
 		assertTrue(observe.indexOf("accept") < observe.indexOf("accepted"));
 		var tick = calls(method("SceneryExplorer", "tick"));
-		assertTrue(tick.indexOf("commitBatch") < tick.indexOf("write"));
+		assertTrue(tick.indexOf("checkpointBatch") > tick.indexOf("commitBatch"));
+		assertTrue(calls(method("SceneryExplorer", "checkpointBatch")).contains("write"));
 	}
 	@Test void lightChecksUseSectionColumnEncodingInsteadOfTheIncompatibleChunkPacking() throws Exception {
 		for (String name : List.of("observeOne", "captureWait", "show")) {

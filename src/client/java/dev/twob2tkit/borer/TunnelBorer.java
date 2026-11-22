@@ -233,9 +233,23 @@ public final class TunnelBorer {
 	public boolean isActive() {
 		return engine.isActive();
 	}
+    public dev.twob2tkit.runtime.api.MapTaskView.Route mapReturnRoute(Minecraft client) {
+        return engine.mapReturnRoute(client);
+    }
+    public dev.twob2tkit.runtime.api.MapTaskView.Scenery mapScenery(Minecraft client, dev.twob2tkit.runtime.api.MapTaskView.Area viewport) {
+        return engine.mapScenery(client, viewport);
+    }
+
 	public boolean isSceneryActive() { return engine.isSceneryActive(); }
 	public String sceneryStatus() { return engine.sceneryStatus(); }
 	public boolean startScenery(Minecraft client, int radius, boolean resume) { return engine.startScenery(client, radius, resume); }
+	public boolean expandScenery(Minecraft client, int radius) {
+		return engine.expandScenery(client, radius);
+	}
+
+	public boolean startSceneryAt(Minecraft client, int radius, double x, double z) {
+		return engine.startSceneryAt(client, radius, x, z);
+	}
 
 	/** 当前盾构模式。 */
 	public Mode mode() {

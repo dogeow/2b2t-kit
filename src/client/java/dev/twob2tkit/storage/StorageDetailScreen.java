@@ -111,6 +111,7 @@ public final class StorageDetailScreen extends KitHudScreen {
 		list.onOpen(item -> {
 			var detail = new dev.twob2tkit.KitFormScreen(list, item.name, "仓库快照，不是实时库存").bind(config).id("storage-item:" + snapshot.scopedKey() + ":" + item.id);
 			detail.note(item.id + " · 记录数量 " + item.count);
+			if (item.searchTerms != null && !item.searchTerms.isBlank()) detail.note("记录到的附魔 · " + item.searchTerms);
 			detail.note(StorageLabels.evidenceSummary(snapshot));
 			detail.note("箱子位置：X " + snapshot.x + " Y " + snapshot.y + " Z " + snapshot.z + "；" + StorageLabels.dimensionLabel(snapshot.dimension));
 			detail.action("查看相关配方", "只查询本地配方。", () -> dev.twob2tkit.KitRecipePages.open(detail, config, item.name));

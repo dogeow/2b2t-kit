@@ -17,6 +17,8 @@ final class SceneryBobby implements SceneryCache {
 	private Class<?> extension, fakeChunk;
 	private Method nativeSave;
 	private SceneryBobbyBatch batch;
+	private java.nio.file.Path directory;
+	private final java.util.Map<ChunkPos,CompletableFuture<java.util.BitSet>> headers = new java.util.HashMap<>();
 	@Override public String name() { return "Bobby"; }
 	@Override public String connect(Level world) {
 		try {
@@ -50,7 +52,8 @@ final class SceneryBobby implements SceneryCache {
 				}
 			});
 			check();
-			return "bobby|" + field(storage, "directory");
+			directory = java.nio.file.Path.of(field(storage, "directory").toString());
+			return "bobby|" + directory;
 		} catch (ReflectiveOperationException | LinkageError error) { throw new IllegalStateException("当前 Bobby 接口不兼容或缓存无法初始化", error); }
 	}
 	private Object currentStorage() throws ReflectiveOperationException {
@@ -64,6 +67,30 @@ final class SceneryBobby implements SceneryCache {
 				throw new IllegalStateException("Bobby 世界缓存已切换，已停止以免混用进度；请重新开始本世界任务");
 		} catch (ReflectiveOperationException error) { throw new IllegalStateException("无法复核 Bobby 缓存状态", error); }
 	}
+	@Override public boolean supportsReuse() { return true; }
+
+	@Override public CompletableFuture<Boolean> hasSaved(SceneryCoverage.Chunk pos) {
+		var key=new ChunkPos(Math.floorDiv(pos.x(),32),Math.floorDiv(pos.z(),32));
+		var header=headers.computeIfAbsent(key,k->CompletableFuture.supplyAsync(
+			()->readHeader(directory.resolve("r."+k.x()+"."+k.z()+".mca"))));
+		int slot=Math.floorMod(pos.x(),32)+32*Math.floorMod(pos.z(),32);
+		return header.thenCompose(index->!index.get(slot) ? CompletableFuture.completedFuture(false)
+			: ((SimpleRegionStorage) storage).read(new ChunkPos(pos.x(),pos.z()))
+				.thenApply(tag->tag.map(SceneryBobby::saved).filter(s->s.complete() && s.x()==pos.x() && s.z()==pos.z()).isPresent()))
+			.exceptionally(error->false);
+	}
+
+	static java.util.BitSet readHeader(java.nio.file.Path file) {
+		var present=new java.util.BitSet(1024);
+		try (var input=new java.io.DataInputStream(java.nio.file.Files.newInputStream(file))) {
+			for (int slot=0;slot<1024;slot++) {
+				int entry=input.readInt();
+				if (entry>>>8>=2 && (entry&255)>0) present.set(slot);
+			}
+		} catch (java.io.IOException unreadable) { present.clear(); }
+		return present;
+	}
+
 	@Override public boolean isReal(LevelChunk chunk) {
 		return LoadedServerChunkEvidence.isServerChunk(level, chunk, fakeChunk);
 	}

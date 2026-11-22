@@ -35,7 +35,7 @@ public final class LitematicaAccess {
     public record BuildBox(BlockPos min,BlockPos max){
         public boolean contains(BlockPos p){return p.getX()>=min.getX()&&p.getX()<=max.getX()&&p.getY()>=min.getY()&&p.getY()<=max.getY()&&p.getZ()>=min.getZ()&&p.getZ()<=max.getZ();}
     }
-    public record BuildSelection(String name,String key,BlockPos min,BlockPos max,java.util.List<BuildBox> boxes){
+    public record BuildSelection(String name,String key,BlockPos min,BlockPos max,java.util.List<BuildBox> boxes, BlockPos origin, String rotation, String mirror){
         public long volume(){return ((long)max.getX()-min.getX()+1)*((long)max.getY()-min.getY()+1)*((long)max.getZ()-min.getZ()+1);}
         public boolean contains(BlockPos p){return boxes.stream().anyMatch(b->b.contains(p));}
     }
@@ -63,8 +63,12 @@ public final class LitematicaAccess {
             for(var box:boxes){minX=Math.min(minX,box.min.getX());minY=Math.min(minY,box.min.getY());minZ=Math.min(minZ,box.min.getZ());maxX=Math.max(maxX,box.max.getX());maxY=Math.max(maxY,box.max.getY());maxZ=Math.max(maxZ,box.max.getZ());}
             Object range=getRenderLayerRange.invoke(null);String layer=layerKey(range);
             String name=getName.invoke(placement).toString();String key=name+keys+layer;
-            for(String method:List.of("getOrigin","getRotation","getMirror"))key+="/"+placement.getClass().getMethod(method).invoke(placement);
-            return new BuildSelection(name,key,new BlockPos(minX,minY,minZ),new BlockPos(maxX,maxY,maxZ),List.copyOf(boxes));
+            var origin=(BlockPos)placement.getClass().getMethod("getOrigin").invoke(placement);
+            var rotation=placement.getClass().getMethod("getRotation").invoke(placement).toString();
+            var mirror=placement.getClass().getMethod("getMirror").invoke(placement).toString();
+            key+="/"+origin+"/"+rotation+"/"+mirror;
+            return new BuildSelection(name,key,new BlockPos(minX,minY,minZ),new BlockPos(maxX,maxY,maxZ),
+                List.copyOf(boxes),origin,rotation,mirror);
         }catch(ReflectiveOperationException e){throw new IllegalStateException("无法读取投影范围："+e.getMessage(),e);}
     }
 

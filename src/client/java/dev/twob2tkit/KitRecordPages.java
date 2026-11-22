@@ -151,10 +151,10 @@ public final class KitRecordPages {
         list.footer("附近物资", () -> dev.twob2tkit.storage.NearbyInventoryScreen.open(list,c));
         mc().gui.setScreen(list);
     }
-    private static String storageSearch(KitConfig.StorageSnapshot s) {
+    static String storageSearch(KitConfig.StorageSnapshot s) {
         return StorageLabels.headline(s) + " " + s.note + " " + StorageLabels.colorLabel(s.colorId) + " " + KitConfig.dimensionLabel(s.dimension) + " " + s.x + " " + s.y + " " + s.z + " "
             + (s.items == null ? "" : s.items.stream().filter(i -> i != null && i.count > 0)
-                .map(i -> i.name + " " + i.id + " ×" + i.count).collect(java.util.stream.Collectors.joining("、")));
+                .map(i -> i.name + " " + i.id + " " + (i.searchTerms == null ? "" : i.searchTerms) + " ×" + i.count).collect(java.util.stream.Collectors.joining("、")));
     }
 
     public static void marks(Screen parent, KitConfig c) {

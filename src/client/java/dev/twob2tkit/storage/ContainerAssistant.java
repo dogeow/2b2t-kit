@@ -142,13 +142,19 @@ public final class ContainerAssistant {
 			ItemStack stack = slot.getItem();
 			String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
 			ItemTotal total = totals.computeIfAbsent(id, ignored -> new ItemTotal(id, stack.getHoverName().getString()));
-			total.count += stack.getCount();
+            var stored = stack.get(net.minecraft.core.component.DataComponents.STORED_ENCHANTMENTS);
+            if (stored != null) for (var enchantment : stored.entrySet()) {
+                total.searchTerms.add(net.minecraft.world.item.enchantment.Enchantment.getFullname(
+                    enchantment.getKey(), enchantment.getIntValue()).getString());
+                enchantment.getKey().unwrapKey().ifPresent(key -> total.searchTerms.add(key.identifier().getPath()));
+            }
+            total.count += stack.getCount();
 		}
 
 		List<ItemTotal> ordered = new ArrayList<>(totals.values());
 		ordered.sort(Comparator.comparing(total -> total.id));
 		StringBuilder fingerprint = new StringBuilder();
-		for (ItemTotal total : ordered) fingerprint.append(total.id).append('=').append(total.count).append(';');
+		for (ItemTotal total : ordered) fingerprint.append(total.id).append('/').append(total.name).append('=').append(total.count).append(total.searchTerms).append(';');
 		if (fingerprint.toString().equals(lastFingerprint)) {
 			KitConfig.StorageSnapshot labels = new KitConfig.StorageSnapshot();
 			labels.dimension = openedDimension;
@@ -174,7 +180,9 @@ public final class ContainerAssistant {
 		StorageLabels.apply(client.level, openedPosition, snapshot);
         if(!StorageLifecycle.capture(client,openedPosition,snapshot))return;
 		for (ItemTotal total : ordered) {
-			snapshot.items.add(new KitConfig.StoredItem(total.id, total.name, total.count));
+			var item = new KitConfig.StoredItem(total.id, total.name, total.count);
+            item.searchTerms = String.join(" ",total.searchTerms);
+            snapshot.items.add(item);
 		}
 		config.upsertStorageSnapshot(snapshot);
 	}
@@ -261,6 +269,7 @@ public final class ContainerAssistant {
 	private static final class ItemTotal {
 		final String id;
 		final String name;
+        final java.util.Set<String> searchTerms = new java.util.TreeSet<>();
 		int count;
 
 		ItemTotal(String id, String name) {

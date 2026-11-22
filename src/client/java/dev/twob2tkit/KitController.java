@@ -115,6 +115,16 @@ public final class KitController {
 		return phase != Phase.IDLE;
 	}
 
+    /** Immediate horizontal steering targets, as chosen by the live cruise controller. */
+    public java.util.List<Vec3> mapNext(Minecraft client) {
+        if (!isActive() || client.player == null || !config.hasTarget) return java.util.List.of();
+        if (canopyWorld == client.level && canopyIndex < canopyRoute.size()) {
+            return java.util.List.copyOf(canopyRoute.subList(canopyIndex, canopyRoute.size()));
+        }
+        return java.util.List.of(new Vec3(avoidanceActive ? avoidanceX : config.targetX,
+            desiredY(), avoidanceActive ? avoidanceZ : config.targetZ));
+    }
+
 	/** 当前阶段中文标签。 */
 	public String phaseLabel() {
 		return phase.label;

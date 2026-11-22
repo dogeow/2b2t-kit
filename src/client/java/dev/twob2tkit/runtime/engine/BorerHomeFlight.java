@@ -12,6 +12,10 @@ final class BorerHomeFlight {
 	private final DefaultTunnelBorerEngine engine;
 	private final BorerAreaFlightSession flight = new BorerAreaFlightSession();
 	private List<BlockPos> path = List.of();
+
+    List<BlockPos> mapNext() {
+        return List.copyOf(path.subList(Math.min(index, path.size()), Math.min(index + 24, path.size())));
+    }
 	private BlockPos goal;
 	private boolean escapingPocket, bypassingLiquid;
 	private int index, idle;

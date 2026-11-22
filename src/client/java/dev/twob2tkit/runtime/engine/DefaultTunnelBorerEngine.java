@@ -293,8 +293,17 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	@Override public String sceneryStatus() { return scenery.status(); }
 	@Override public boolean startScenery(Minecraft client, int radius, boolean resume) {
 		if (active) stop(client, "开始风景预加载");
-		return scenery.start(client, radius, resume);
+		return client.player!=null && scenery.start(client,radius,resume,client.player.getX(),client.player.getZ(),false);
 	}
+	@Override public boolean startSceneryAt(Minecraft client, int radius, double x, double z) {
+		if (active || scenery.active()) return false;
+		return scenery.start(client,radius,false,x,z,false);
+	}
+	@Override public boolean expandScenery(Minecraft client, int radius) {
+		if (active || scenery.active()) return false;
+		return scenery.start(client,radius,false,0,0,true);
+	}
+
 	@Override public boolean isManagingInventory() { return active && mode == Mode.AREA && areaRunner.managingInventory(); }
 
 	/** 当前模式内部名：FORWARD / DOWN / ORE。 */
@@ -866,6 +875,17 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 	@Override
 	/** 是否正在回家。 */
+    public dev.twob2tkit.runtime.api.MapTaskView.Route mapReturnRoute(Minecraft client) {
+        if (!trail.matchesWorld(client)) return null;
+        return new dev.twob2tkit.runtime.api.MapTaskView.Route(trail.mapSegments(),
+            isGoingHome() || isReturningToPortal() ? home.mapNext() : java.util.List.of());
+    }
+
+    @Override public dev.twob2tkit.runtime.api.MapTaskView.Scenery mapScenery(Minecraft client, dev.twob2tkit.runtime.api.MapTaskView.Area viewport) {
+        return scenery.mapView(client, viewport);
+    }
+
+    @Override
 	public boolean isGoingHome() {
 		return active && goingHome;
 	}

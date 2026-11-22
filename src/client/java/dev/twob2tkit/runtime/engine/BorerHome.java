@@ -13,6 +13,7 @@ import java.util.Locale;
 final class BorerHome {
 	private final DefaultTunnelBorerEngine engine;
 	private RotationAim.Look movementLook;
+    private BlockPos directStep;
 	private final BorerHomeFlight flight;
 
 	BorerHome(DefaultTunnelBorerEngine engine) {
@@ -20,7 +21,13 @@ final class BorerHome {
 		this.flight = new BorerHomeFlight(engine);
 	}
 
-	void reset() { flight.close(); movementLook = null; engine.walkRoute.clear(); }
+    java.util.List<BlockPos> mapNext() {
+        if (flight.isFollowing()) return flight.mapNext();
+        if (directStep != null) return java.util.List.of(directStep);
+        return engine.walkRoute.mapNext();
+    }
+
+	void reset() { flight.close(); movementLook = null; directStep = null; engine.walkRoute.clear(); }
 	void prepareFlight(Minecraft client) { flight.prepare(client); }
 
 	void reapplyLook(Minecraft client) {
@@ -39,6 +46,7 @@ final class BorerHome {
 
 	/** 推进回家/回门；已接管返回 true。 */
 	boolean handle(Minecraft client, LocalPlayer player) {
+        directStep = null;
 		if (engine.waitForMiningConfirmation(client)) return true;
 		if (engine.trail.returnRouteHasGap(client, player)) {
 			engine.stop(client, "前方回程路线缺失，已保留最初起点；请先接回已记录矿道");
@@ -130,6 +138,7 @@ final class BorerHome {
 		client.options.keyJump.setDown(player.onGround() && dy > 0.55);
 		client.options.keyShift.setDown(false);
 		engine.attemptedForward = moving;
+        if (moving) directStep = player.blockPosition().relative(engine.forward);
 		int remain = engine.trail.remainingTowardHome(client, player);
 		boolean connected = engine.trail.connectedToTrail(client, player);
 		if (!connected && moving) {

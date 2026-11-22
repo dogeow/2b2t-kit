@@ -29,8 +29,14 @@ public interface BorerEngine {
 
 	/** Optional scenery capture; old runtime engines remain loadable and explicitly report unsupported. */
 	default boolean startScenery(Minecraft client, int radiusBlocks, boolean resume) { return false; }
+	/** Optional map-centred capture. Older external engines decline without changing saved progress. */
+	default boolean startSceneryAt(Minecraft client, int radiusBlocks, double x, double z) { return false; }
+	default boolean expandScenery(Minecraft client, int radiusBlocks) { return false; }
 	default boolean isSceneryActive() { return false; }
 	default String sceneryStatus() { return "当前引擎不支持风景预加载，请加载新版"; }
+
+    default MapTaskView.Route mapReturnRoute(Minecraft client) { return null; }
+    default MapTaskView.Scenery mapScenery(Minecraft client, MapTaskView.Area viewport) { return null; }
 
 	/** 按模式名启动盾构机。 */
 	void start(Minecraft client, String modeName);

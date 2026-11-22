@@ -56,6 +56,8 @@ public final class KitConfig {
 	public String workspaceCategory = "HOME";
 	public java.util.List<String> recentUiFeatures = new java.util.ArrayList<>();
 	public java.util.Set<String> favoriteUiFeatures = new java.util.LinkedHashSet<>();
+	/** Kit 大地图图层中用户选择隐藏的图层名（KitMapLayers.Layer），每次打开地图沿用。 */
+	public java.util.Set<String> hiddenMapLayers = new java.util.LinkedHashSet<>();
 	/** Deterministic material worker. Empty paths use the installed per-profile worker and local runtime. */
 	public String materialJobsWorker = "";
 	public String materialJobsPython = "";
@@ -741,6 +743,16 @@ public final class KitConfig {
 		return added;
 	}
 
+    void saveMapPlace(String name,double x,double z,double y,String dimension,String scope,String kind) {
+        var place = new SavedPlace(name,x,z,y,dimension);
+        place.mapScope = scope;
+        place.mapKind = kind;
+        savedPlaces.add(place);
+        if ("家".equals(kind)) applyHomeChoice(name);
+        sortSavedPlaces();
+        save();
+    }
+
 	/** 唯一“家”地点；没有设置时返回 null。 */
 	public SavedPlace homePlace() {
 		return savedPlaces.stream().filter(place -> place.home).findFirst().orElse(null);
@@ -1106,6 +1118,8 @@ public final class KitConfig {
 		double z;
 		double cruiseY = 200.0;
 		String dimension = "";
+        String mapScope = "";
+        String mapKind = "";
 		/** 全部收藏中最多一个地点为家。 */
 		boolean home;
 
@@ -1204,6 +1218,7 @@ public final class KitConfig {
 
 	/** 快照里的物品条目。 */
 	public static final class StoredItem {
+        public String searchTerms = "";
 		public String id = "";
 		public String name = "";
 		public int count;

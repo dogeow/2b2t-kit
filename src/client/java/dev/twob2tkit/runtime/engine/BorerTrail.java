@@ -403,6 +403,18 @@ final class BorerTrail {
 		return best;
 	}
 
+    java.util.List<java.util.List<BlockPos>> mapSegments() {
+        var segments = new java.util.ArrayList<java.util.List<BlockPos>>();
+        int start = 0;
+        for (int gap : breaks.stream().sorted().toList()) {
+            if (gap <= start || gap >= points.size()) continue;
+            segments.add(java.util.List.copyOf(points.subList(start, gap)));
+            start = gap;
+        }
+        if (start < points.size()) segments.add(java.util.List.copyOf(points.subList(start, points.size())));
+        return java.util.List.copyOf(segments);
+    }
+
 	/** 导出路点快照字符串。 */
 	String snapshot() {
 		StringBuilder text = new StringBuilder();

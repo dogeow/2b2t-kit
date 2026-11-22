@@ -15,6 +15,10 @@ interface SceneryCache {
 	default boolean isReal(LevelChunk chunk) { return chunk != null; }
 	default void batchCommitted() {}
 	default void close() {}
+	default boolean supportsReuse() { return false; }
+	default java.util.concurrent.CompletableFuture<Boolean> hasSaved(SceneryCoverage.Chunk p) {
+		return java.util.concurrent.CompletableFuture.completedFuture(false);
+	}
 	static SceneryCache create() {
 		boolean bobby;
 		try { Class.forName("de.johni0702.minecraft.bobby.Bobby"); bobby = true; }

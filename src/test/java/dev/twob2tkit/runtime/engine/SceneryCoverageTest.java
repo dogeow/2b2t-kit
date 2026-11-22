@@ -5,9 +5,93 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SceneryCoverageTest {
+	@Test void borderClipsOnlyTheOutsideAndKeepsConfirmedBitsWhenTheBorderExpands() {
+		for (int radius : new int[]{64,20000}) {
+			var plan=new SceneryCoverage(0,0,radius);
+			var outside=new SceneryCoverage.Chunk(1,0);
+			var inside=new SceneryCoverage.Chunk(0,0);
+			plan.reuse(outside);
+			int original=plan.total();
+			plan.clipTo(SceneryCoverage.ChunkBounds.inside(0,16,0,16));
+			assertEquals(1,plan.total());
+			assertEquals(original-1,plan.skippedOutside());
+			assertEquals(0,plan.confirmed());
+			assertEquals(inside,plan.nextNearest(outside,24,8));
+			assertEquals(java.util.List.of(inside),plan.missingInRegion(0,0));
+			plan.reuse(inside);
+			assertTrue(plan.complete());
+			var restored=new SceneryCoverage(0,0,radius);
+			restored.restore(plan.checkpoint());
+			restored.clipTo(SceneryCoverage.ChunkBounds.inside(0,32,0,16));
+			assertEquals(2,restored.confirmed());
+			assertTrue(restored.complete());
+		}
+	}
+
+	@Test void returnUsesAnInsideCoordinateWhenTheChosenCenterIsOutside() {
+		assertEquals(97,SceneryExplorer.returnCoordinate(110,-100,100));
+		assertEquals(20,SceneryExplorer.returnCoordinate(20,-100,100));
+	}
+	@Test void compactIndexMatchesLegacyCircleAtNegativeAndFractionalCentres() {
+		for (double x : new double[]{-17,-16,3.25}) for (double z : new double[]{-3.25,0,16}) {
+			var legacy=new SceneryCoverage(x,z,64);
+			var rows=new SceneryChunkRows(x,z,64);
+			assertEquals(new HashSet<>(legacy.chunks()),new HashSet<>(rows));
+			for (int i=0;i<rows.size();i++) assertEquals(i,rows.indexOf(rows.get(i).x(),rows.get(i).z()));
+		}
+	}
+
+	@Test void tensOfThousandsOfBlocksKeepNearestBatchAndConfirmedCoverage(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+		var plan=new SceneryCoverage(-3.25,19.5,20000);
+		assertTrue(plan.total()>4_900_000);
+		var corner=plan.nextNearest(null,19985,19.5);
+		plan.reuse(corner);
+		var nearby=plan.nextNearest(null,19985,19.5);
+		assertNotEquals(corner,nearby);
+		assertTrue(nearby.x()>=corner.x()-1);
+		var region=plan.missingInRegion(Math.floorDiv(nearby.x(),32),Math.floorDiv(nearby.z(),32));
+		assertTrue(region.size()<=1024);
+		assertTrue(region.contains(nearby));
+		var file=dir.resolve("progress.json");
+		SceneryProgress.write(file,"world","cache",plan);
+		var resumed=SceneryProgress.read(file,"world","cache");
+		assertEquals(1,resumed.confirmed());
+		assertEquals(nearby,resumed.nextNearest(null,19985,19.5));
+		assertFalse(resumed.expanded(30000).needs(corner.x(),corner.z()));
+	}
+
+	@Test void expandingKeepsSameCentreAndOnlyVerifiedCoverage() {
+		var original=new SceneryCoverage(-7.5,3.25,64);
+		var confirmed=original.next();
+		original.reuse(confirmed);
+		original.reuse(confirmed);
+		var pending=original.next();
+		original.accepted(pending.x(),pending.z());
+		var expanded=original.expanded(128);
+		assertEquals(original.centreX,expanded.centreX);
+		assertEquals(original.centreZ,expanded.centreZ);
+		assertTrue(expanded.total()>original.total());
+		assertEquals(1,expanded.confirmed());
+		assertFalse(expanded.needs(confirmed.x(),confirmed.z()));
+		assertTrue(expanded.needs(pending.x(),pending.z()));
+		assertThrows(IllegalArgumentException.class,()->original.expanded(64));
+	}
+
+	@Test void bobbyHeaderCountsOnlyIndexedChunksAndHandlesMissingData(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+		var header=java.nio.ByteBuffer.allocate(4096);
+		header.putInt(0,2<<8|1);
+		header.putInt(4,4<<8);
+		header.putInt(8,1<<8|2);
+		var file=tmp.resolve("r.-1.0.mca");
+		java.nio.file.Files.write(file,header.array());
+		var indexed=SceneryBobby.readHeader(file);
+		assertEquals(1,indexed.cardinality());
+		assertTrue(indexed.get(0));
+		assertTrue(SceneryBobby.readHeader(tmp.resolve("missing")).isEmpty());
+	}
 	@Test void maxRadiusKeepsTheCircleAndEdgeChunkInsideTheBorder() {
 		assertEquals(983, SceneryCoverage.maxRadiusInside(0, 0, -1000, 1000, -5000, 5000));
-		assertEquals(4096, SceneryCoverage.maxRadiusInside(0, 0, -3e7, 3e7, -3e7, 3e7));
+		assertEquals(32768, SceneryCoverage.maxRadiusInside(0, 0, -3e7, 3e7, -3e7, 3e7));
 		assertEquals(0, SceneryCoverage.maxRadiusInside(995, 0, -1000, 1000, -1000, 1000));
 	}
 	@Test void resumeChoosesTheNearbyGapAndKeepsItUntilAccepted() {
@@ -71,9 +155,9 @@ class SceneryCoverageTest {
 	}
 	@Test void invalidRadiusWorldLimitAndOutOfBoundsCheckpointAreRejected() {
 		assertThrows(IllegalArgumentException.class, () -> new SceneryCoverage(0, 0, 0));
-		assertThrows(IllegalArgumentException.class, () -> new SceneryCoverage(0, 0, 4097));
+		assertThrows(IllegalArgumentException.class, () -> new SceneryCoverage(0, 0, 32769));
 		assertThrows(IllegalArgumentException.class, () -> new SceneryCoverage(Double.NaN, 0, 256));
-		assertThrows(IllegalArgumentException.class, () -> new SceneryCoverage(29_999_899, 0, 16));
+		assertThrows(IllegalArgumentException.class, () -> new SceneryCoverage(30_000_000, 0, 16));
 		assertThrows(IllegalArgumentException.class, () -> new SceneryCoverage(0, 0, 16).restore(new long[]{-1L}));
 		assertTrue(new SceneryCoverage(0, 0, 4096).total() < 270_000);
 	}
