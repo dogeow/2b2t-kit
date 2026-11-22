@@ -9,6 +9,12 @@ import java.util.Objects;
 
 /** 区域挖独占的临时 Flight 设置；只在客户端主线程调用，不改其它 Meteor 模块。 */
 public final class BorerAreaFlightSession implements AutoCloseable {
+    /** A flight lease changed or could not be updated. Callers can end just their task. */
+    static final class Interrupted extends IllegalStateException {
+        Interrupted(String message) { super(message); }
+        Interrupted(String message, Throwable cause) { super(message,cause); }
+    }
+
 	private static final String MODULES = "meteordevelopment.meteorclient.systems.modules.Modules";
 	private static final String FLIGHT = "meteordevelopment.meteorclient.systems.modules.movement.Flight";
 	private static final String ANTI_AFK = "meteordevelopment.meteorclient.systems.modules.player.AntiAFK";
@@ -52,7 +58,7 @@ public final class BorerAreaFlightSession implements AutoCloseable {
 			preparedPath = path;
 			return restored != current ? "已恢复 Meteor 手动飞行速度 " + restored + "（清理区域挖临时速度）" : null;
 		} catch (Exception | LinkageError failure) {
-			throw new IllegalStateException("无法恢复区域挖飞行速度备份，未接管飞行", failure);
+			throw new Interrupted("无法恢复区域挖飞行速度备份，未接管飞行", failure);
 		}
 	}
 
@@ -144,7 +150,7 @@ public final class BorerAreaFlightSession implements AutoCloseable {
 		} catch (Exception | LinkageError failure) {
 			if (acquired) closeKeepingFlight();
 			else close();
-			throw new IllegalStateException("区域飞行设置已变化或无法写入，已停止并尝试恢复原设置", failure);
+			throw new Interrupted("区域飞行设置已变化或无法写入，已停止并尝试恢复原设置", failure);
 		}
 	}
 
@@ -177,14 +183,14 @@ public final class BorerAreaFlightSession implements AutoCloseable {
 		try {
 			if (flight.active()) flight.toggle();
 			grounded = true;
-		} catch (ReflectiveOperationException e) { throw new IllegalStateException("无法关闭挖掘飞行", e); }
+		} catch (ReflectiveOperationException e) { throw new Interrupted("无法关闭挖掘飞行", e); }
 	}
 	public void fly() {
 		if (!acquired || !grounded) return;
 		try {
 			if (!flight.active()) { flight.toggle(); enabledByUs |= !originallyActive; }
 			grounded = false;
-		} catch (ReflectiveOperationException e) { throw new IllegalStateException("无法启动返顶飞行", e); }
+		} catch (ReflectiveOperationException e) { throw new Interrupted("无法启动返顶飞行", e); }
 	}
 
 	/** 只关闭自己启动的 Flight；用户后来改过的单项设置不覆盖。可重复调用。 */

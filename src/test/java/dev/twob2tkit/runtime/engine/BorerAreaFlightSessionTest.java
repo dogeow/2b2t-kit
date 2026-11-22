@@ -383,6 +383,42 @@ final class BorerAreaFlightSessionTest {
 		fixture.assertOriginalSettings();
 	}
 
+    @Test
+    void oreRouteStopsWhenFlightIsSwitchedOffInsteadOfCrashingTheClient() {
+        Fixture fixture = new Fixture();
+        BorerAreaFlightSession session = fixture.session();
+        assertNull(session.acquire());
+        fixture.flight.active = false;
+        var reasons = new java.util.ArrayList<String>();
+        assertTrue(BorerOreTunnel.handleFlightInterruption(() -> {
+            String error = session.acquire();
+            if (error != null) throw new BorerAreaFlightSession.Interrupted(error);
+            return false;
+        }, reasons::add));
+        assertEquals(java.util.List.of("Meteor Flight 已关闭，区域飞行已停止"), reasons);
+        assertFalse(fixture.flight.active);
+        assertEquals(1, fixture.flight.toggles);
+        fixture.assertOriginalSettings();
+    }
+
+    @Test
+    void oreRouteAlsoStopsIfFlightSettingsChangeDuringSpeedUpdate() {
+        Fixture fixture = new Fixture();
+        BorerAreaFlightSession session = fixture.session();
+        assertNull(session.acquire());
+        fixture.flight.speed.set(.24);
+        var reasons = new java.util.ArrayList<String>();
+        assertTrue(BorerOreTunnel.handleFlightInterruption(() -> {
+            session.speed(.02);
+            return false;
+        }, reasons::add));
+        assertEquals(1,reasons.size());
+        assertEquals(.24,fixture.flight.speed.get());
+        assertThrows(IllegalStateException.class, () -> BorerOreTunnel.handleFlightInterruption(
+            () -> { throw new IllegalStateException("unrelated error"); }, reasons::add));
+        assertEquals(1,reasons.size());
+    }
+
 	@Test
 	void missingMeteorIsAnExplicitFailureWithoutKeyboardFallback() {
 		BorerAreaFlightSession session = new BorerAreaFlightSession(name -> null);

@@ -6,6 +6,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.FallingBlock;
+import net.minecraft.world.level.block.SnowLayerBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import java.util.*;
 
@@ -83,7 +85,7 @@ final class BorerOreTunnel {
 		if (BorerFlight.isFlying(p)) {
 			flight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/ore-route-flight-speed.bak"));
 			String error=flight.acquire(p);
-			if (error!=null) throw new IllegalStateException(error);
+			if (error!=null) throw new BorerAreaFlightSession.Interrupted(error);
 			flight.digOnFoot();
 		}
 		onFoot=true;
@@ -95,7 +97,7 @@ final class BorerOreTunnel {
 	private void useFlight(Minecraft c) {
 		flight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/ore-route-flight-speed.bak"));
 		String error=flight.acquire(c.player);
-		if (error!=null) throw new IllegalStateException(error);
+		if (error!=null) throw new BorerAreaFlightSession.Interrupted(error);
 		flight.fly();
 		onFoot=false;
 	}
@@ -103,10 +105,15 @@ final class BorerOreTunnel {
 		return b.getY()>=c.level.getMinY() && b.getY()<c.level.getMaxY() && c.level.hasChunkAt(b)
 			&& !engine.miningConfirmation.pending(c.level,b);
 	}
+    static boolean openRouteCell(BlockState state) {
+        // A single snow layer has no player collision. Powder snow is a separate hazard.
+        return state.isAir() || state.is(Blocks.SNOW) && state.getValue(SnowLayerBlock.LAYERS) == 1;
+    }
+
 	private int cell(Minecraft c,BlockPos b) {
 		if (!loaded(c,b)) return -1;
 		var s=c.level.getBlockState(b);
-		if (s.isAir()) return 0;
+		if (openRouteCell(s)) return 0;
 		if (s.hasBlockEntity() || s.getBlock() instanceof FallingBlock || !s.getFluidState().isEmpty()
 			|| s.is(Blocks.FIRE) || s.is(Blocks.SOUL_FIRE) || s.is(Blocks.POWDER_SNOW)
 			|| s.is(Blocks.CACTUS) || s.is(Blocks.MAGMA_BLOCK) || c.level.getBlockState(b.above()).getBlock() instanceof FallingBlock) return -1;
@@ -279,7 +286,22 @@ final class BorerOreTunnel {
 		return reachable ? 1 : occupied ? -1 : 0;
 	}
 
-	boolean tick(Minecraft c, BlockPos ore) {
+    boolean tick(Minecraft c, BlockPos ore) {
+        return handleFlightInterruption(() -> tickRoute(c,ore),
+            reason -> engine.stop(c,"找矿已暂停："+reason));
+    }
+
+    static boolean handleFlightInterruption(java.util.function.BooleanSupplier routeTick,
+            java.util.function.Consumer<String> stop) {
+        try {
+            return routeTick.getAsBoolean();
+        } catch (BorerAreaFlightSession.Interrupted interrupted) {
+            stop.accept(interrupted.getMessage());
+            return true;
+        }
+    }
+
+    private boolean tickRoute(Minecraft c, BlockPos ore) {
 		var p=c.player;
 		if (ore==null) { if (active() || onFoot) reset(); return false; }
 		if (!engine.wantedBlock(c.level.getBlockState(ore))) return fail(c,"目标矿石已经变化，重新选矿");
@@ -294,8 +316,14 @@ final class BorerOreTunnel {
 		}
 		if (!ore.equals(goal)) {
 			if (onFoot) clearPlan(); else reset();
-			goal=ore.immutable(); search=new OreTunnelSearch(p.blockPosition(),goal);
-			engine.clearMiningTarget(c,"plan-full-ore-route");
+            BlockPos start = p.blockPosition();
+            for (BlockPos b : OreTunnelSearch.clearance(start, start)) {
+                if (cell(c,b) == 0) continue;
+                engine.stop(c,"当前站位受阻 "+BorerText.block(b)+"，请移到安全空位后继续挖矿");
+                return true;
+            }
+            goal=ore.immutable(); search=new OreTunnelSearch(start,goal);
+            engine.clearMiningTarget(c,"plan-full-ore-route");
 			if (cell(c,goal)!=1 || !floor(c,goal.below())) return fail(c,"矿石或掉落点未通过安全预检");
 		}
 		if (search!=null) {

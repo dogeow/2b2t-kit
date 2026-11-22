@@ -6,6 +6,19 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class OreTunnelSearchTest {
+    @Test void oneLayerOfSnowDoesNotInvalidateTheStartingStance() {
+        net.minecraft.SharedConstants.tryDetectVersion();
+        net.minecraft.server.Bootstrap.bootStrap();
+        var start = new BlockPos(763537,113,793138);
+        var snow = net.minecraft.world.level.block.Blocks.SNOW.defaultBlockState();
+        var air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        assertTrue(OreTunnelSearch.clearance(start,start).stream()
+            .allMatch(cell -> BorerOreTunnel.openRouteCell(cell.equals(start) ? snow : air)));
+        assertFalse(BorerOreTunnel.openRouteCell(snow.setValue(net.minecraft.world.level.block.SnowLayerBlock.LAYERS,2)));
+        assertFalse(BorerOreTunnel.openRouteCell(net.minecraft.world.level.block.Blocks.POWDER_SNOW.defaultBlockState()));
+        assertFalse(BorerOreTunnel.openRouteCell(net.minecraft.world.level.block.Blocks.WATER.defaultBlockState()));
+    }
+
 	@Test void singleTapFallsBackOnlyForAnObservedUnchangedSolidAfterTheGracePeriod() {
 		assertFalse(BorerOreTunnel.resumeSingleFace(7,true,false,true));
 		assertFalse(BorerOreTunnel.resumeSingleFace(20,false,false,true));
