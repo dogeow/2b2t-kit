@@ -100,6 +100,17 @@ class BorerAreaPipelineTest {
 		assertTrue(pipeline < serial*.7,"serial="+serial+", pipeline="+pipeline);
 		System.out.println("24 independent clicks with 6-tick server delay: serial="+serial+", two-slot="+pipeline);
 	}
+	@Test void thirdIndependentClickCanOverlapAndOnlyConfirmedSlotCanBeReused() {
+		var q = new BorerAreaPipeline(3);
+		q.submitted(a, 0);
+		q.submitted(a.east(), 2);
+		q.submitted(a.north(), 4);
+		assertFalse(q.canClick(6));
+		for (int tick = 6; tick <= 7; tick++)
+			q.update(tick, pos -> new BorerAreaPipeline.Observation(pos.equals(a), false));
+		q.submitted(a.below(), 7);
+		assertEquals(List.of(a.east(), a.north(), a.below()), q.positions());
+	}
 	private int simulate(int limit) {
 		var q=new BorerAreaPipeline();Map<BlockPos,Integer> submitted=new HashMap<>();Set<BlockPos> completed=new HashSet<>();
 		int next=0;

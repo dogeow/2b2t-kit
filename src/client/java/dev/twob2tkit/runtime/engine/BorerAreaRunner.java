@@ -30,9 +30,10 @@ final class BorerAreaRunner {
 	private double bestDistance = Double.POSITIVE_INFINITY;
 	private String progressKey = "", lastLogged = "";
 	private boolean attacking;
-	private final BorerAreaPipeline pipeline = new BorerAreaPipeline();
+	private final BorerAreaPipeline pipeline = new BorerAreaPipeline(3);
 	private final BorerMeteorInstant instant = new BorerMeteorInstant();
 	private BlockPos failedFastTarget;
+	private final java.util.Set<BlockPos> deferredSideTargets = new java.util.HashSet<>();
 	private String pipelineGate = "";
 	private int pipelineGateTick;
 	private int confirmationTicks;
@@ -118,6 +119,7 @@ final class BorerAreaRunner {
 		}
 		pipeline.clear();
 		failedFastTarget = null;
+		deferredSideTargets.clear();
 		checkpoint();
 		cargo.reset(Minecraft.getInstance());
 		flight.close();
@@ -425,7 +427,7 @@ final class BorerAreaRunner {
 		stopAttack(client); flight.speed(0);
 		layer = next;
 		plan = new BorerAreaPlan(layerMin(next), layerMax(next), pose(player), true);
-		mining = null; progressKey = lastLogged = "";
+		mining = null; progressKey = lastLogged = ""; deferredSideTargets.clear();
 		checkpoint();
 		show(client, "分层站挖：进入 Y " + layerMin(next).getY() + "–" + layerMax(next).getY());
 		return true;
@@ -510,7 +512,7 @@ final class BorerAreaRunner {
 		logPipelineGate(client, "repeat=" + repeatClick(client) + " onGround=" + player.onGround()
 			+ " progress=" + client.level.getBlockState(target).getDestroyProgress(player,client.level,target));
 		if (!cargo.active() && directMiningSupported() && (plan.phase() == BorerAreaPlan.Phase.DIG || plan.phase() == BorerAreaPlan.Phase.HORIZONTAL)
-			&& !target.equals(failedFastTarget) && fastClick(client, target) && pipeline.canClick(player.tickCount)) {
+			&& !target.equals(failedFastTarget) && !deferredSideTargets.contains(target) && fastClick(client, target) && pipeline.canClick(player.tickCount)) {
 			if (clickPipeline(client, player, target, actual)) { advanceWhileMining(client,player); return; }
 		}
 		boolean retry = mineIdleTicks > 0 && mineIdleTicks % 40 == 0;
@@ -672,12 +674,15 @@ final class BorerAreaRunner {
 		player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
 		mining = pos; progressKey = ""; moveIdleTicks = mineIdleTicks = 0;
 		engine.fileLog(c,"area-pipeline-click block="+pos+" pending="+pipeline.size()+" mode="+(repeat?"InstantRebreak":"SpeedMine/vanilla")+" onGround="+player.onGround());
-		show(c,"连续点挖 · 待确认 "+pipeline.size()+"/"+BorerAreaPipeline.LIMIT);
+		show(c,"连续点挖 · 待确认 "+pipeline.size()+"/"+areaClickLimit(c));
 		return true;
 	}
 	private void tickPipeline(Minecraft c, LocalPlayer player) {
 		try { tickPipelineWork(c,player); }
 		finally { if (engine.active && pipeline.active() && stallHold == null) advanceWhileMining(c,player); }
+	}
+	private int areaClickLimit(Minecraft c) {
+		return plan.phase() == BorerAreaPlan.Phase.DIG && repeatClick(c) ? 3 : BorerAreaPipeline.LIMIT;
 	}
 	private void tickPipelineWork(Minecraft c, LocalPlayer player) {
 		stopAttack(c); holdForMining(c,player);
@@ -686,7 +691,21 @@ final class BorerAreaRunner {
 		for (var pos : confirmed)
 			engine.fileLog(c,"area-pipeline-confirmed block="+pos);
 		BlockPos expired = pipeline.expired(player.tickCount);
-		if (expired != null) { enterStall(c, player, "pipeline_ack", expired, BorerAreaPipeline.TIMEOUT, "timeout"); return; }
+		while (expired != null) {
+			boolean sideColumn = expired.getX() != plan.column().getX() || expired.getZ() != plan.column().getZ();
+			// A speculative side click can leave the original block solid with no vanilla
+			// prediction. Return it to the normal column pass instead of holding the shaft.
+			// Unloaded cells and outstanding predictions still require the existing hold.
+			if (plan.phase() != BorerAreaPlan.Phase.DIG || !sideColumn
+				|| cell(c, expired) != BorerAreaPlan.Cell.SOLID) {
+				enterStall(c, player, "pipeline_ack", expired, BorerAreaPipeline.TIMEOUT, "timeout");
+				return;
+			}
+			pipeline.discardCorrected(expired);
+			deferredSideTargets.add(expired);
+			engine.fileLog(c, "area-pipeline-deferred-side block=" + expired);
+			expired = pipeline.expired(player.tickCount);
+		}
 		var tool = player.getMainHandItem();
 		boolean toolReady = BorerItems.isMiningTool(tool) && engine.toolPolicy.allows(tool.getItem(),tool.isDamageableItem(),tool.getMaxDamage(),BorerItems.remainingDurability(tool));
 		// Vanilla has one delayed-destroy slot: B's first STOP may be ignored while A still owns it.
@@ -705,19 +724,26 @@ final class BorerAreaRunner {
 				engine.fileLog(c,"area-pipeline-followup block="+pos+" reason=previous-block-confirmed");
 			}
 		}
-		if (!pipeline.canClick(player.tickCount) || cargo.shouldStart(c) || !toolReady || torch.needsService(c)) {
+		int clickLimit = areaClickLimit(c); // Reads a Meteor setting reflectively: once per tick, not per candidate.
+		if (pipeline.size() >= clickLimit || !pipeline.canClick(player.tickCount) || cargo.shouldStart(c) || !toolReady || torch.needsService(c)) {
 			show(c,"核对方块更新 · 待确认 "+pipeline.size()); return;
 		}
 		var candidates = new java.util.ArrayList<BlockPos>();
 		var candidateWorld = world(c);
 		BlockPos base = player.blockPosition();
 		for (BlockPos pos : BlockPos.betweenClosed(base.offset(-4,-4,-4),base.offset(4,4,4))) {
-			if (pipeline.contains(pos) || pos.equals(failedFastTarget) || cell(c,pos) != BorerAreaPlan.Cell.SOLID
+			boolean sideColumn = pos.getX() != plan.column().getX() || pos.getZ() != plan.column().getZ();
+			if (plan.phase() == BorerAreaPlan.Phase.DIG && sideColumn && clickLimit != 3) continue;
+			if (pipeline.contains(pos) || deferredSideTargets.contains(pos) || pos.equals(failedFastTarget) || cell(c,pos) != BorerAreaPlan.Cell.SOLID
 				|| player.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(pos))
 				|| !plan.pipelineAllowed(candidateWorld,pos,pipeline::contains) || BorerHazards.wouldOpenWater(c,pos) || BorerHazards.wouldOpenLava(c,pos)) continue;
 			candidates.add(pos.immutable());
 		}
-		candidates.sort(java.util.Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(player.getEyePosition())));
+		candidates.sort(java.util.Comparator.<BlockPos>comparingInt(pos -> {
+			if (clickLimit != 3) return 0;
+			if (confirmed.contains(pos.above())) return 0;
+			return pos.getY() == plan.cursorY() ? 1 : 2;
+		}).thenComparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(player.getEyePosition())));
 		int attempts = 0;
 		for (var pos : candidates) {
 			if (++attempts > 24) break;

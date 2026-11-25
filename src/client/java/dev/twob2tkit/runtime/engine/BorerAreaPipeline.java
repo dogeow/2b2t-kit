@@ -6,7 +6,7 @@ import net.minecraft.world.phys.Vec3;
 import java.util.*;
 import java.util.function.Function;
 
-/** Two independent clicks may be outstanding; movement never treats them as cleared. */
+/** Track independent clicks until each block is confirmed. */
 final class BorerAreaPipeline {
 	static final int LIMIT = 2, CLICK_INTERVAL = 2, TIMEOUT = 100;
 	record Observation(boolean air, boolean predictionPending) {}
@@ -22,7 +22,10 @@ final class BorerAreaPipeline {
 	boolean contains(BlockPos p) { return pending.containsKey(p); }
 	int size() { return pending.size(); }
 	List<BlockPos> positions() { return List.copyOf(pending.keySet()); }
-	boolean canClick(long tick) { return pending.size() < LIMIT && (lastClick == Long.MIN_VALUE || tick - lastClick >= CLICK_INTERVAL); }
+	private final int limit;
+	BorerAreaPipeline() { this(LIMIT); }
+	BorerAreaPipeline(int limit) { this.limit = limit; }
+	boolean canClick(long tick) { return pending.size() < limit && (lastClick == Long.MIN_VALUE || tick - lastClick >= CLICK_INTERVAL); }
 	void submitted(BlockPos p, long tick) {
 		if (!canClick(tick) || contains(p)) throw new IllegalStateException("区域挖待确认队列已满或方块重复");
 		pending.put(p.immutable(), new Pending(tick)); lastClick = tick;

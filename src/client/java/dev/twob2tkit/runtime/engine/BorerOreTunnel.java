@@ -22,6 +22,7 @@ final class BorerOreTunnel {
 	private BlockPos singleTap, slowFace;
 	private net.minecraft.world.level.block.state.BlockState singleBefore;
 	private int sentTick, airTicks, sampledTick;
+	private boolean singleRepeat, singleRetried;
 
 	private final BorerAreaFlightSession flight = new BorerAreaFlightSession();
 	private BlockPos goal, mining;
@@ -141,6 +142,21 @@ final class BorerOreTunnel {
 				singleTap=null;
 				return false;
 			}
+			if (singleRepeat && !singleRetried && engine.miningModules.instantRebreakRequested()
+					&& instant.repeatAllows(p.getMainHandItem().is(net.minecraft.tags.ItemTags.PICKAXES))
+					&& p.tickCount-sentTick>=20 && loaded
+					&& state.equals(singleBefore) && engine.canPlanMine(c,singleTap)
+					&& !engine.isUnsafeFloorMine(c,p,singleTap)) {
+				var hit = BorerAim.clipView(c,p);
+				if (hit != null && singleTap.equals(hit.getBlockPos()) && BorerAim.hitInReach(p,hit)) {
+					singleRetried = true;
+					try { instant.finishRepeat(singleTap,hit.getDirection()); }
+					catch (IllegalStateException error) {
+						engine.stop(c,"单格点挖已暂停："+error.getMessage()); return true;
+					}
+					engine.fileLog(c,"single-tap-retry block="+singleTap);
+				}
+			}
 			if (p.tickCount-sentTick>=100) engine.stop(c,"单格点挖未获确认，已停挖");
 			else engine.overlay(c,"已点一次，正在核对方块",0x55FFFF);
 			return true;
@@ -171,6 +187,10 @@ final class BorerOreTunnel {
 		return elapsed>=8 && loaded && !pending && originalSolid;
 	}
 
+	static boolean shouldFinishSingleRepeat(boolean repeat, boolean predictedAir) {
+		return repeat && !predictedAir;
+	}
+
 	boolean trySingleTap(Minecraft c, BlockPos b) {
 		var p=c.player;
 		if (clicks.active() || singleTap!=null || b.equals(slowFace) || !engine.canPlanMine(c,b)
@@ -187,8 +207,9 @@ final class BorerOreTunnel {
 				if (!repeat && !instant.allows(state.getBlock(),state.getDestroyProgress(p,c.level,b))) return false;
 				c.options.keyAttack.setDown(false);
 				singleTap=b.immutable(); singleBefore=state; sentTick=p.tickCount; sampledTick=sentTick; airTicks=0;
+				singleRepeat=repeat; singleRetried=false;
 				engine.miningConfirmation.startObservedBreak(c,b,hit.getDirection());
-				if (repeat && !c.level.getBlockState(b).isAir() && !engine.miningConfirmation.pending(c.level,b))
+				if (shouldFinishSingleRepeat(repeat, c.level.getBlockState(b).isAir()))
 					instant.finishRepeat(b,hit.getDirection());
 				p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
 				engine.fileLog(c,"single-tap block="+b+" repeat="+repeat);

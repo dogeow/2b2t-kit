@@ -6,6 +6,13 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BorerToolPolicyTest {
+	@Test void selectedUsablePickaxeRemainsForOrdinaryStone() {
+		assertTrue(BorerToolPolicy.keepSelectedPickaxe(true, true, 5, true, false, false));
+		assertFalse(BorerToolPolicy.keepSelectedPickaxe(true, false, 5, true, false, false));
+		assertFalse(BorerToolPolicy.keepSelectedPickaxe(true, true, 5, true, true, false));
+		assertFalse(BorerToolPolicy.keepSelectedPickaxe(true, true, 5, true, false, true));
+		assertFalse(BorerToolPolicy.keepSelectedPickaxe(true, true, 1.25f, false, false, false)); // sand, dirt, wood
+	}
 	private final BorerToolPolicy tenPercent = new BorerToolPolicy(true, 10, "Blacklist", Set.of());
 	@Test void matchesMeteorIntegerFloorAndStrictBoundary() {
 		assertFalse(tenPercent.allows("diamond", true, 1561, 155));

@@ -151,7 +151,12 @@ final class BorerAreaPlan {
 		if (phase != Phase.DIG && phase != Phase.HORIZONTAL || pos.getX() < min.getX() || pos.getX() > max.getX()
 			|| pos.getZ() < min.getZ() || pos.getZ() > max.getZ() || pos.getY() < min.getY() || pos.getY() > max.getY()
 			|| skipped.contains(key(pos)) || bedrockFloors.containsKey(key(pos)) || isWaterSeal(pos)) return false;
-		if (phase == Phase.DIG) return pos.getX() == column.getX() && pos.getZ() == column.getZ();
+		if (phase == Phase.DIG) {
+			int distance = Math.abs(pos.getX() - column.getX()) + Math.abs(pos.getZ() - column.getZ());
+			if (distance == 0) return true;
+			return distance == 1 && pos.getY() == cursorY && !visited.contains(key(pos))
+				&& world.cell(pos.above()) == Cell.AIR && !outstanding.test(pos.above());
+		}
 		for (int y = min.getY(); y <= max.getY(); y++) {
 			var p = new BlockPos(pos.getX(),y,pos.getZ());
 			if (outstanding.test(p)) continue;

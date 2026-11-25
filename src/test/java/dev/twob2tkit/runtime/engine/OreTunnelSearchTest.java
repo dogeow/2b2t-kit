@@ -19,6 +19,12 @@ class OreTunnelSearchTest {
         assertFalse(BorerOreTunnel.openRouteCell(net.minecraft.world.level.block.Blocks.WATER.defaultBlockState()));
     }
 
+	@Test void instantRebreakSendsStopForSolidPredictedTarget() {
+		assertTrue(BorerOreTunnel.shouldFinishSingleRepeat(true, false));
+		assertFalse(BorerOreTunnel.shouldFinishSingleRepeat(true, true));
+		assertFalse(BorerOreTunnel.shouldFinishSingleRepeat(false, false));
+	}
+
 	@Test void singleTapFallsBackOnlyForAnObservedUnchangedSolidAfterTheGracePeriod() {
 		assertFalse(BorerOreTunnel.resumeSingleFace(7,true,false,true));
 		assertFalse(BorerOreTunnel.resumeSingleFace(20,false,false,true));

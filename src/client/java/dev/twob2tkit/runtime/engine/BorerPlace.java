@@ -68,6 +68,14 @@ final class BorerPlace {
 		BlockState state = client.level.getBlockState(pos);
 		Inventory inventory = player.getInventory();
 		int selected = inventory.getSelectedSlot();
+		ItemStack selectedTool = player.getMainHandItem();
+		// Keep the player's selected pickaxe for ordinary blocks. Ore and gravel
+		// retain their existing enchantment-specific selection rules. Sand, dirt and wood
+		// still switch tools unless instant rebreak makes the pickaxe's own speed irrelevant.
+		if (BorerToolPolicy.keepSelectedPickaxe(selectedTool.is(ItemTags.PICKAXES),
+			usable(selectedTool), toolScore(selectedTool, state),
+			selectedTool.getDestroySpeed(state) > 1 || engine.miningModules.instantRebreakRequested(), OreTarget.fortuneApplies(state),
+			state.is(net.minecraft.world.level.block.Blocks.GRAVEL))) return true;
 		int bestSlot = BorerToolPolicy.choose(candidates(player, state), selected);
 		if (bestSlot < 0) {
 			engine.fileLog(client, "tool-unavailable target=" + pos + " " + engine.toolPolicy.describe());

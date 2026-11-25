@@ -34,6 +34,10 @@ record BorerToolPolicy(boolean antiBreak, int percentage, String listMode, Set<?
 		}
 		return best;
 	}
+	static boolean keepSelectedPickaxe(boolean pickaxe, boolean usable, float score, boolean effective,
+			boolean fortuneOre, boolean gravel) {
+		return pickaxe && usable && score >= 0 && effective && !fortuneOre && !gravel;
+	}
 	/** A fast shovel beats a Silk Touch axe on gravel; Silk Touch only breaks ties between shovels. */
 	static float gravelScoreBonus(boolean shovel, boolean silkTouch) {
 		return shovel ? 1000.0F + (silkTouch ? 0.5F : 0.0F) : 0.0F;
