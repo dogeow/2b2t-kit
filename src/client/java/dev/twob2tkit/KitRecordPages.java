@@ -129,7 +129,7 @@ public final class KitRecordPages {
             s -> "X " + s.x + " Y " + s.y + " Z " + s.z + " · " + KitConfig.dimensionLabel(s.dimension) + "\n"
                 + StorageLabels.quantitySummary(s, "") + "\n" + StorageLabels.evidenceSummary(s) + "；点击查看全部内容",
             KitRecordPages::storageSearch).key(KitConfig.StorageSnapshot::scopedKey)
-            .summary(StorageLabels::cacheSummary).searchHint("搜索物品、名称或坐标；显示缓存数量与内容时间…");
+            .summary(StorageLabels::cacheSummary).searchHint("搜索已确认快照的物品，或按名称、坐标找箱子…");
         dimensionFilters(list, s -> s.dimension);
         list.onOpen(s -> mc().gui.setScreen(new StorageDetailScreen(list, s)));
         list.action("备注", "只修改本地记录。", s -> {
@@ -152,9 +152,7 @@ public final class KitRecordPages {
         mc().gui.setScreen(list);
     }
     static String storageSearch(KitConfig.StorageSnapshot s) {
-        return StorageLabels.headline(s) + " " + s.note + " " + StorageLabels.colorLabel(s.colorId) + " " + KitConfig.dimensionLabel(s.dimension) + " " + s.x + " " + s.y + " " + s.z + " "
-            + (s.items == null ? "" : s.items.stream().filter(i -> i != null && i.count > 0)
-                .map(i -> i.name + " " + i.id + " " + (i.searchTerms == null ? "" : i.searchTerms) + " ×" + i.count).collect(java.util.stream.Collectors.joining("、")));
+        return StorageLabels.searchIndex(s, StorageLifecycle.canGuide(mc(), s));
     }
 
     public static void marks(Screen parent, KitConfig c) {

@@ -96,6 +96,17 @@ public final class StorageLabels {
 		return name;
 	}
 
+    /** Keep historical containers discoverable by label and coordinates, without offering their old stock. */
+    public static String searchIndex(KitConfig.StorageSnapshot snapshot, boolean currentWorld) {
+        String labels = headline(snapshot) + " " + colorLabel(snapshot.colorId) + " "
+            + KitConfig.dimensionLabel(snapshot.dimension) + " " + snapshot.x + " " + snapshot.y + " " + snapshot.z;
+        if (!currentWorld || !StorageLifecycle.ACTIVE.equals(snapshot.status) || snapshot.contentsDirty
+                || snapshot.lastSeenEpochMillis <= 0 || snapshot.items == null) return labels;
+        return labels + " " + snapshot.items.stream().filter(item -> item != null && item.count > 0)
+            .map(item -> item.name + " " + item.id + " " + (item.searchTerms == null ? "" : item.searchTerms))
+            .collect(java.util.stream.Collectors.joining(" "));
+    }
+
 	/** 按完整物品 ID 汇总；搜索命中不同物品时分别显示，数量仅来自开箱缓存。 */
 	public static String quantitySummary(KitConfig.StorageSnapshot snapshot, String query) {
 		var counts = new LinkedHashMap<String, Long>();

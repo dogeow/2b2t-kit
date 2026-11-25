@@ -2,7 +2,7 @@ package dev.twob2tkit;
 
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 import dev.twob2tkit.storage.StorageLabels;
 
 final class StorageLabelsTest {
@@ -14,6 +14,36 @@ final class StorageLabelsTest {
 	private static KitConfig.StoredItem item(String id, String name, int count) {
 		return new KitConfig.StoredItem("minecraft:" + id, name, count);
 	}
+
+    @Test
+    void historyAndOtherWorldsDoNotAdvertiseTheirStock() {
+        var record = snapshot(item("book", "书", 63));
+        record.x = 760991;
+        record.z = 797812;
+        record.lastSeenEpochMillis = 100;
+        record.status = "active";
+        assertTrue(StorageLabels.searchIndex(record,true).contains("minecraft:book"));
+        assertFalse(StorageLabels.searchIndex(record,false).contains("minecraft:book"));
+        record.contentsDirty = true;
+        assertFalse(StorageLabels.searchIndex(record,true).contains("minecraft:book"));
+        record.status = "recheck";
+        String historic = StorageLabels.searchIndex(record,true);
+        assertFalse(historic.contains("书"));
+        assertTrue(historic.contains("797812"));
+        assertEquals(63,record.items.getFirst().count);
+    }
+
+    @Test
+    void freshSnapshotSearchReflectsBothDepositsAndWithdrawals() {
+        var record = snapshot(item("bucket","铁桶",7));
+        record.status = "active";
+        record.lastSeenEpochMillis = 100;
+        assertFalse(StorageLabels.searchIndex(record,true).contains("minecraft:book"));
+        record.items.add(item("book","书",4));
+        assertTrue(StorageLabels.searchIndex(record,true).contains("minecraft:book"));
+        record.items.getLast().count = 0;
+        assertFalse(StorageLabels.searchIndex(record,true).contains("minecraft:book"));
+    }
 
 	@Test
 	void ironSearchShowsEachMatchedTypeWithoutCountingPickaxesAsIngots() {

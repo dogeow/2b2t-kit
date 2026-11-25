@@ -2,6 +2,7 @@ package dev.twob2tkit.storage;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -28,11 +29,11 @@ public final class ContainerAssistant {
 	private static final int CLICK_REMEMBER_TICKS = 60;
 
 	private final KitConfig config;
-	private int currentContainerId = -1;
 	private BlockPos openedPosition;
 	private String openedDimension = "";
 	private String lastFingerprint = "";
 	private AbstractContainerMenu openedMenu;
+	private ClientLevel openedLevel;
 	private String openedTitle = "";
 	private boolean contentsSeen;
 	private int ticksInContainer;
@@ -76,8 +77,9 @@ public final class ContainerAssistant {
 			return;
 		}
 
-		if (currentContainerId != menu.containerId) {
-			currentContainerId = menu.containerId;
+		if (openedMenu != menu || openedLevel != client.level) {
+			resetOpenContainer();
+			openedLevel = client.level;
 			openedPosition = resolveOpenedBlock(client);
 			openedDimension = KitConfig.normalizeDimension(
 				client.level.dimension().identifier().toString());
@@ -168,7 +170,6 @@ public final class ContainerAssistant {
 			config.patchStorageLabels(labels);
 			return;
 		}
-		lastFingerprint = fingerprint.toString();
 
 		KitConfig.StorageSnapshot snapshot = new KitConfig.StorageSnapshot();
 		snapshot.dimension = openedDimension;
@@ -185,6 +186,7 @@ public final class ContainerAssistant {
             snapshot.items.add(item);
 		}
 		config.upsertStorageSnapshot(snapshot);
+		lastFingerprint = fingerprint.toString();
 	}
 
 	/** 按标签从箱补到背包。 */
@@ -243,18 +245,18 @@ public final class ContainerAssistant {
 
 	/** 清当前开箱跟踪。 */
 	private void resetOpenContainer() {
-		if (currentContainerId >= 0 && openedPosition != null) {
+		if (openedMenu != null && openedPosition != null) {
 			// 快照每 10 tick 才记一次；关箱前最后几 tick 的取放在这里补记。
 			Minecraft client = Minecraft.getInstance();
-			if (contentsSeen && openedMenu != null && client.player != null && client.level != null) {
+			if (contentsSeen && client.player != null && client.level == openedLevel) {
 				recordSnapshot(client, openedTitle, openedMenu);
 			}
 			config.save();
 		}
 		openedMenu = null;
+		openedLevel = null;
 		openedTitle = "";
 		contentsSeen = false;
-		currentContainerId = -1;
 		openedPosition = null;
 		openedDimension = "";
 		lastFingerprint = "";

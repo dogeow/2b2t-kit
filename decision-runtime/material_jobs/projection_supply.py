@@ -28,7 +28,12 @@ def direct_air_supply(audit, needed, posts=None):
     block_item_aliases={'minecraft:potatoes':'minecraft:potato',
                         'minecraft:wheat':'minecraft:wheat_seeds',
                         'minecraft:beetroots':'minecraft:beetroot_seeds',
-                        'minecraft:water_cauldron':'minecraft:cauldron'}
+                        'minecraft:water_cauldron':'minecraft:cauldron',
+                        'minecraft:lava_cauldron':'minecraft:cauldron',
+                        'minecraft:redstone_wire':'minecraft:redstone',
+                        'minecraft:redstone_wall_torch':'minecraft:redstone_torch',
+                        'minecraft:dead_tube_coral_wall_fan':'minecraft:dead_tube_coral_fan',
+                        'minecraft:pale_oak_wall_sign':'minecraft:pale_oak_sign'}
     for row in rows:
         if not isinstance(row,dict) or row.get('kind') not in ('missing','occupied','state_only'):
             return {}
@@ -42,7 +47,8 @@ def direct_air_supply(audit, needed, posts=None):
         if not match:
             return {}
         block=match.group(1)
-        if block in ('minecraft:water','minecraft:lava'):
+        if block in ('minecraft:water','minecraft:lava','minecraft:bubble_column',
+                     'minecraft:piston_head','minecraft:soul_fire'):
             continue
         item=block_item_aliases.get(block,block);mapped[item]+=1
         if (row.get('kind')=='missing' and row.get('actual') in ('Block{minecraft:air}','Block{minecraft:cave_air}')
