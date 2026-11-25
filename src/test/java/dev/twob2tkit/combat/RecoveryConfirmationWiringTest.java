@@ -27,6 +27,18 @@ class RecoveryConfirmationWiringTest {
         }
         fail("Expected ordinary dispatch preemption boundary");
     }
+    @Test void blockedTaskIsHandledAtGuiAndShortcutEntryPoints() throws Exception {
+        String rejection = "dev/twob2tkit/automation/AutomationBridge$TaskStartBlocked";
+        for (String[] entry : new String[][]{{"KitClient","onEndTick"}, {"KitHudScreen","mouseClicked"},
+                {"KitHudScreen","keyPressed"}, {"map/XaeroCruiseOption","onAction"}}) {
+            var method = code(entry[0]).methods.stream().filter(m -> m.name.equals(entry[1])).findFirst().orElseThrow();
+            assertTrue(method.tryCatchBlocks.stream().anyMatch(b -> rejection.equals(b.type)), Arrays.toString(entry));
+        }
+        var start = code("KitController").methods.stream().filter(m -> m.name.equals("start")).findFirst().orElseThrow();
+        var calls = calls(start);
+        assertTrue(calls.indexOf("prepareForCruise") >= 0 && calls.indexOf("prepareForCruise") < calls.indexOf("save"));
+    }
+
     ClassNode code(String name)throws Exception{var c=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/"+name+".class")){assertNotNull(in);new ClassReader(in).accept(c,0);}return c;}
     List<String> calls(MethodNode m){var r=new ArrayList<String>();for(var i:m.instructions)if(i instanceof MethodInsnNode c)r.add(c.name);return r;}
     @Test void realDispatchValidatesBeforeAcknowledgingAndArmsDefenseBeforeClosingPause()throws Exception{

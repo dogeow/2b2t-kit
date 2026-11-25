@@ -26,6 +26,9 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.phys.Vec3;
 import dev.twob2tkit.nether.NetherRoofAssist;
+import dev.twob2tkit.structure.EndCitySurvey;
+import dev.twob2tkit.structure.StructureLocator;
+import dev.twob2tkit.combat.EmergencyExit;
 
 /**
  * 高空巡航：升空、转向前进、绕障、到达/离线。
@@ -37,7 +40,8 @@ public final class KitController {
 		IDLE("空闲"),
 		ALTITUDE("调整高度"),
 		CRUISE("巡航"),
-		AVOIDING("绕开障碍");
+		AVOIDING("绕开障碍"),
+        CHECKING_END_CITY("核查末地城");
 
 		private final String label;
 
@@ -48,6 +52,14 @@ public final class KitController {
 
 	private final KitConfig config;
 	private Phase phase = Phase.IDLE;
+    private EndCitySurvey endCitySurvey;
+    private ClientLevel endCityLevel;
+    private int endCityCheckTicks;
+    private double endCityAltitude;
+    private int endCityDescentTicks;
+    private int endCityCoastTicks;
+    private double endCitySampleX, endCitySampleZ;
+    private EndCitySurvey.Observation endCityObservation = EndCitySurvey.Observation.PENDING;
 	private int ticks;
 	private int stationarySeconds;
 	private double sampleX = Double.NaN;
@@ -102,7 +114,9 @@ public final class KitController {
     private java.util.List<Vec3> canopyRoute=java.util.List.of();
     private ClientLevel canopyWorld;
     private int canopyIndex,canopyStarted,canopyRetryAfter;
+    private final CruiseCanopyEscape.Progress canopyProgress = new CruiseCanopyEscape.Progress();
     private double canopyRiseY;
+    private double canopyFailX,canopyFailZ;
     private final BorerAreaFlightSession canopyFlight=new BorerAreaFlightSession();
 
 	public KitController(KitConfig config) {
@@ -117,12 +131,12 @@ public final class KitController {
 
     /** Immediate horizontal steering targets, as chosen by the live cruise controller. */
     public java.util.List<Vec3> mapNext(Minecraft client) {
-        if (!isActive() || client.player == null || !config.hasTarget) return java.util.List.of();
+        if (!isActive() || client.player == null || !hasCruiseTarget()) return java.util.List.of();
         if (canopyWorld == client.level && canopyIndex < canopyRoute.size()) {
             return java.util.List.copyOf(canopyRoute.subList(canopyIndex, canopyRoute.size()));
         }
-        return java.util.List.of(new Vec3(avoidanceActive ? avoidanceX : config.targetX,
-            desiredY(), avoidanceActive ? avoidanceZ : config.targetZ));
+        return java.util.List.of(new Vec3(avoidanceActive ? avoidanceX : cruiseTargetX(),
+            desiredY(), avoidanceActive ? avoidanceZ : cruiseTargetZ()));
     }
 
 	/** 当前阶段中文标签。 */
@@ -132,10 +146,10 @@ public final class KitController {
 
 	/** HUD/指令用的状态一行。 */
 	public String statusLine(Minecraft client) {
-		if (!config.hasTarget) return "当前状态：" + phase.label + "  |  尚未设置目标";
-		String target = String.format(Locale.ROOT, "目标 %.1f, %.1f @ Y %.1f", config.targetX, config.targetZ, config.cruiseY);
+		if (!hasCruiseTarget()) return "当前状态：" + phase.label + "  |  尚未设置目标";
+		String target = String.format(Locale.ROOT, "目标 %.1f, %.1f @ Y %.1f", cruiseTargetX(), cruiseTargetZ(), cruiseAltitude());
 		if (!isActive() || client.player == null) return "当前状态：" + phase.label + "  |  " + target;
-		double remaining = Math.hypot(config.targetX - client.player.getX(), config.targetZ - client.player.getZ());
+		double remaining = Math.hypot(cruiseTargetX() - client.player.getX(), cruiseTargetZ() - client.player.getZ());
 		return "当前状态：" + phase.label + "  |  " + compactProgress(remaining);
 	}
 
@@ -163,6 +177,8 @@ public final class KitController {
 	}
 
 	public void start(Minecraft client, double targetX, double targetZ, double cruiseY) {
+		KitClient.prepareForCruise(client);
+        clearEndCitySurvey();
 		mapCruiseFloor = Double.NaN;
 		config.targetX = targetX;
 		config.targetZ = targetZ;
@@ -173,6 +189,138 @@ public final class KitController {
 		activate(client);
 	}
 
+    public void startEndCitySearch(Minecraft client, java.util.List<StructureLocator.Hit> candidates, double altitude) {
+        if (candidates.isEmpty() || client.player == null || client.level == null
+                || !client.level.dimension().equals(net.minecraft.world.level.Level.END)) return;
+        KitClient.prepareForCruise(client);
+        clearEndCitySurvey();
+        endCityLevel = client.level;
+        endCityAltitude = Math.min(altitude,maxSafeFlyY(client));
+        endCitySurvey = new EndCitySurvey(candidates);
+        var first = endCitySurvey.target();
+        if (!startEndCityLeg(client)) return;
+        message(client,"开始自动核查末地城，首站 "+first.x()+" "+first.z());
+    }
+
+    private boolean startEndCityLeg(Minecraft client) {
+        var border = client.level.getWorldBorder();
+        if (!border.isWithinBounds(cruiseTargetX(),cruiseTargetZ())) {
+            finishEndCitySearch(client,"下一个候选在世界边界外，已停止核查");
+            return false;
+        }
+        try {
+            mapCruiseFloor = Double.NaN;
+            activate(client);
+            exactArrival = true;
+            exactArrivalRadius = 5.0;
+            keepConnectedOnArrival();
+            endCityCheckTicks = 0;
+            endCityDescentTicks = 0;
+            return true;
+        } catch (IllegalStateException failure) {
+            finishEndCitySearch(client,"末地城核查无法继续，"+failure.getMessage());
+            return false;
+        }
+    }
+
+    private boolean hasCruiseTarget() { return endCitySurvey != null || config.hasTarget; }
+    public double cruiseTargetX() { return endCitySurvey == null ? config.targetX : endCitySurvey.target().x()+.5; }
+    public double cruiseTargetZ() { return endCitySurvey == null ? config.targetZ : endCitySurvey.target().z()+.5; }
+    private double cruiseAltitude() { return endCitySurvey == null ? config.cruiseY : endCityAltitude; }
+
+    private void clearEndCitySurvey() {
+        endCitySurvey = null;
+        endCityLevel = null;
+        endCityCheckTicks = 0;
+    }
+
+    private void checkEndCity(Minecraft client) {
+        var site = endCitySurvey.target();
+        var player = client.player;
+        double movement = Math.hypot(player.getX()-endCitySampleX,player.getZ()-endCitySampleZ);
+        endCitySampleX = player.getX();
+        endCitySampleZ = player.getZ();
+        double distance = Math.hypot(site.x()+.5-endCitySampleX,site.z()+.5-endCitySampleZ);
+        ensureMeteorFlight(player); // Hovering over the End void: same per-tick guard as the cruise itself.
+        var position = endCitySurvey.observePosition(distance,movement);
+        if (position != EndCitySurvey.Position.IN_RANGE) {
+            client.options.keyShift.setDown(false);
+            endCityCheckTicks = 0;
+            endCitySurvey.resetObservations();
+            if (position == EndCitySurvey.Position.RECENTER) {
+                CruiseScreenHud.begin("滑出核查范围，正在返回同一候选点");
+                startEndCityLeg(client);
+            } else if (position == EndCitySurvey.Position.LOST || ++endCityCoastTicks > 100) {
+                finishEndCitySearch(client,"飞行位置未能稳定在核查范围内，核查已停止");
+            }
+            return;
+        }
+        endCityCoastTicks = 0;
+        endCityCheckTicks++;
+        if (endCityCheckTicks == 1 || endCityCheckTicks % 10 == 0) endCityObservation = sampleEndCity(client,site);
+        if (endCityObservation == EndCitySurvey.Observation.NO_SHULKERS
+                && player.getY() > endCityObservationY(client)+1.5) {
+            if (++endCityDescentTicks > 360 || !BorerFlight.isFlying(player)
+                    || !clearCruiseSweep(client,player,CruiseCollisionPath.vertical(player.getBoundingBox(),-2.0))) {
+                finishEndCitySearch(client,"无法安全靠近建筑核查潜影贝，已停留");
+                return;
+            }
+            client.options.keyShift.setDown(true);
+            return;
+        }
+        client.options.keyShift.setDown(false);
+        if (endCityCheckTicks % 10 != 0) return;
+        var observation = endCityObservation;
+        var result = endCitySurvey.observe(observation);
+        switch (result) {
+            case WAIT -> {
+                if (endCityCheckTicks % 40 == 10) {
+                    CruiseScreenHud.begin(observation == EndCitySurvey.Observation.PENDING
+                        ? "等待服务器发送核查区块 · "+site.x()+" "+site.z()
+                        : "正在确认末地城及活潜影贝 · "+site.x()+" "+site.z());
+                }
+            }
+            case NEXT -> {
+                var next = endCitySurvey.target();
+                String reason = observation == EndCitySurvey.Observation.NO_CITY ? "此处未发现末地城" : "此处未发现活潜影贝";
+                message(client,reason+"，前往 "+next.x()+" "+next.z());
+                startEndCityLeg(client);
+            }
+            case FOUND -> finishEndCitySearch(client,"发现活潜影贝，已停留在 "+site.x()+" "+site.z()
+                +(site.kind() == StructureLocator.Kind.END_CITY_SHIP ? "，船仍需目视确认" : ""));
+            case EXHAUSTED -> finishEndCitySearch(client,"列表中剩余的候选已核查完，未发现有活潜影贝的末地城");
+        }
+    }
+
+    private static EndCitySurvey.Observation sampleEndCity(Minecraft client, StructureLocator.Hit site) {
+        return switch (StructureLocator.observeEndCity(client.level,site)) {
+            case PENDING -> EndCitySurvey.Observation.PENDING;
+            case ABSENT -> EndCitySurvey.Observation.NO_CITY;
+            case TRACES, PRESENT -> {
+                if (StructureLocator.hasLiveShulker(client.level,site)) yield EndCitySurvey.Observation.LIVE_SHULKER;
+                yield StructureLocator.endCityAreaLoaded(client.level,site)
+                    ? EndCitySurvey.Observation.NO_SHULKERS : EndCitySurvey.Observation.PENDING;
+            }
+        };
+    }
+
+    private static double endCityObservationY(Minecraft client) {
+        var box = client.player.getBoundingBox();
+        int y = 80;
+        for (int x = (int)Math.floor(box.minX); x <= Math.floor(box.maxX); x++) {
+            for (int z = (int)Math.floor(box.minZ); z <= Math.floor(box.maxZ); z++) {
+                y = Math.max(y,client.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE,x,z)+8);
+            }
+        }
+        return y;
+    }
+
+    private void finishEndCitySearch(Minecraft client, String result) {
+        stop(client,result);
+        CruiseScreenHud.finish(result);
+        message(client,result);
+    }
+
 	/** Map navigation uses the click-time altitude as a minimum during this route. */
 	public void startMapCruise(Minecraft client, double targetX, double targetZ, double initialY) {
 		if (!Double.isFinite(initialY)) return;
@@ -182,6 +330,8 @@ public final class KitController {
 
 	/** 死亡返航：到达上方不离线。 */
 	public void startDeathRecovery(Minecraft client, double targetX, double targetZ, double cruiseY) {
+		KitClient.prepareForCruise(client);
+        clearEndCitySurvey();
 		mapCruiseFloor = Double.NaN;
 		config.targetX = targetX;
 		config.targetZ = targetZ;
@@ -196,7 +346,9 @@ public final class KitController {
 	/** 按已存目标继续；无目标返回 false。 */
 	public boolean resume(Minecraft client) {
 		if (!config.hasTarget) return false;
-		if (Double.compare(mapCruiseFloor, config.cruiseY) != 0) mapCruiseFloor = Double.NaN;
+		KitClient.prepareForCruise(client);
+        clearEndCitySurvey();
+		if (Double.compare(mapCruiseFloor, cruiseAltitude()) != 0) mapCruiseFloor = Double.NaN;
 		disconnectOnThisArrival = config.disconnectOnArrival;
 		activate(client);
 		return true;
@@ -204,14 +356,13 @@ public final class KitController {
 
 	/** 停其它模块、进升空阶段并尝试开 Meteor 飞行。 */
 	private void activate(Minecraft client) {
-		clearCanopyRoute();canopyRetryAfter=0;
+		clearCanopyRoute();canopyRetryAfter=0;canopyProgress.reset();
         var canopyBackup=client.gameDirectory.toPath().resolve("config/twob2tkit/cruise-canopy-flight-speed.bak");
         if(java.nio.file.Files.exists(canopyBackup))canopyFlight.prepare(canopyBackup);
 		exactArrival = false;
 		exactArrivalRadius = Double.NaN;
 		arrivalSampleX = client.player == null ? Double.NaN : client.player.getX();
 		arrivalSampleZ = client.player == null ? Double.NaN : client.player.getZ();
-		KitClient.prepareForCruise(client);
 		releaseKeys(client);
 		phase = Phase.ALTITUDE;
 		ticks = 0;
@@ -246,7 +397,7 @@ public final class KitController {
 		pendingDisconnectReason = null;
 		if (client.player != null) {
 			resetMovementSample(client.player);
-			plannedDistance = Math.hypot(config.targetX - client.player.getX(), config.targetZ - client.player.getZ());
+			plannedDistance = Math.hypot(cruiseTargetX() - client.player.getX(), cruiseTargetZ() - client.player.getZ());
 			if (client.player.getHealth() > config.minHealth || hasEdibleFood(client.player)) lowHealthWarned = false;
 		}
 		boolean openedFlight = ensureMeteorFlight(client.player);
@@ -256,11 +407,12 @@ public final class KitController {
 			warning(client, "没开到 Meteor 飞行，升空会跳。请在 Meteor 里打开飞行");
 		} else if (!flightMissing) flightWarningSent = false;
 		CruiseScreenHud.begin(String.format(Locale.ROOT, "巡航 · 调整高度至 Y %.0f", desiredY()));
-		KitClient.LOGGER.debug("[Cruise] start target=({}, {}) y={}", config.targetX, config.targetZ, desiredY());
+		KitClient.LOGGER.debug("[Cruise] start target=({}, {}) y={}", cruiseTargetX(), cruiseTargetZ(), desiredY());
 	}
 
 	/** 停止巡航并松键。 */
 	public void stop(Minecraft client, String reason) {
+        clearEndCitySurvey();
 		clearCanopyRoute();
 		boolean leavingWorld = client.level == null || "离开世界".equals(reason) || "退出游戏".equals(reason);
 		if (!isActive()) {
@@ -284,6 +436,7 @@ public final class KitController {
 
 		LocalPlayer player = client.player;
 		if (player == null || client.level == null) {
+            clearEndCitySurvey();
 			clearCanopyRoute();
 			phase = Phase.IDLE;
 			CruiseScreenHud.hide();
@@ -291,10 +444,19 @@ public final class KitController {
 			return;
 		}
 
-		if (shouldPauseForScreen(client.gui.screen())) {
+        if (endCitySurvey != null && (client.level != endCityLevel || KitKeys.manualMovementDown(client)
+                || EmergencyExit.held(client) || player.isDeadOrDying())) {
+            stop(client,"末地城核查已中止");
+            return;
+        }
+		if (shouldPauseForScreen(client.gui.screen()) || endCitySurvey != null && client.gui.screen() != null) {
 			releaseKeys(client);
 			return;
 		}
+        if (phase == Phase.CHECKING_END_CITY) {
+            checkEndCity(client);
+            return;
+        }
 
 		ticks++;
 		trackTravel(player);
@@ -313,17 +475,17 @@ public final class KitController {
 			return;
 		}
 
-		double finalDx = config.targetX - player.getX();
-		double finalDz = config.targetZ - player.getZ();
+		double finalDx = cruiseTargetX() - player.getX();
+		double finalDz = cruiseTargetZ() - player.getZ();
 		double horizontalDistance = Math.hypot(finalDx, finalDz);
 		double arrivalRadius = exactArrival
 			? (Double.isFinite(exactArrivalRadius) ? exactArrivalRadius : config.arrivalRadius)
 			: dev.twob2tkit.cruise.CruiseArrivalPolicy.manualRadius(config.arrivalRadius);
 		boolean reached = dev.twob2tkit.cruise.CruiseArrivalPolicy.reached(exactArrival,
-			arrivalSampleX, arrivalSampleZ, player.getX(), player.getZ(), config.targetX, config.targetZ, arrivalRadius);
+			arrivalSampleX, arrivalSampleZ, player.getX(), player.getZ(), cruiseTargetX(), cruiseTargetZ(), arrivalRadius);
 		arrivalSampleX = player.getX(); arrivalSampleZ = player.getZ();
 		// A completed destination takes precedence over canopy detours.
-		if (reached && (!exactArrival || Math.abs(config.cruiseY - player.getY()) <= 0.7)) {
+		if (reached && (!exactArrival || Math.abs(cruiseAltitude() - player.getY()) <= 0.7)) {
 			arrive(client);
 			return;
 		}
@@ -339,7 +501,7 @@ public final class KitController {
 		}
 
 		if (avoidanceActive && Math.hypot(avoidanceX - player.getX(), avoidanceZ - player.getZ()) <= 5.0) {
-			if (isPathClear(client, player, config.targetX, config.targetZ)) {
+			if (isPathClear(client, player, cruiseTargetX(), cruiseTargetZ())) {
 				avoidanceActive = false;
 				phase = Phase.CRUISE;
 				bypassSide = 0;
@@ -455,11 +617,11 @@ public final class KitController {
 
 	/** 当前要飞的高度：设定巡航高 ± 临时升降绕障。下界基岩顶下最高飞到 120。 */
 	private double desiredY() {
-		double y = config.cruiseY + altitudeOffset;
+		double y = cruiseAltitude() + altitudeOffset;
 		Minecraft client = Minecraft.getInstance();
 		if (client.level == null) return y;
 		if (NetherRoofAssist.inNether(client) && client.player != null && !NetherRoofAssist.onRoof(client.player)) {
-			y = Math.min(config.cruiseY, NetherRoofAssist.underRoofCruiseY()) + altitudeOffset;
+			y = Math.min(cruiseAltitude(), NetherRoofAssist.underRoofCruiseY()) + altitudeOffset;
 		}
 		return dev.twob2tkit.map.MapCruiseAltitude.floor(Math.min(y, maxSafeFlyY(client)), mapCruiseFloor);
 	}
@@ -488,8 +650,8 @@ public final class KitController {
 	 * 每 tick 只在这里步进一次；写回走 {@link #reapplyNavigationRotation} 只写不步进。
 	 */
 	private float faceDestination(LocalPlayer player) {
-		double navigationX = avoidanceActive ? avoidanceX : config.targetX;
-		double navigationZ = avoidanceActive ? avoidanceZ : config.targetZ;
+		double navigationX = avoidanceActive ? avoidanceX : cruiseTargetX();
+		double navigationZ = avoidanceActive ? avoidanceZ : cruiseTargetZ();
 		return facePoint(player,navigationX,navigationZ);
 	}
 
@@ -545,8 +707,14 @@ public final class KitController {
         if(dev.twob2tkit.automation.AutomationBridge.managedAirOnlyNavigation()){
             clearCanopyRoute();return false;
         }
+        // Failures count against one obstacle; a cruise that has moved on starts fresh.
+        if(canopyProgress.retrying()&&Math.hypot(p.getX()-canopyFailX,p.getZ()-canopyFailZ)>=16)canopyProgress.reset();
         if(canopyRoute.isEmpty()){
-            if(ticks<canopyRetryAfter)return false;
+            if(ticks<canopyRetryAfter){
+                if (!canopyProgress.retrying()) return false;
+                releaseKeys(c);
+                return true;
+            }
             double targetY=desiredY();
             boolean descending=targetY<p.getY()-.6;
             boolean floorBlocked=descending&&!c.level.noCollision(p,
@@ -559,9 +727,12 @@ public final class KitController {
                 CruiseCollisionPath.horizontal(body.move(a.x(),0,a.z()),b.x()-a.x(),b.z()-a.z())),
                 a->clearCruiseSweep(c,p,CruiseCollisionPath.vertical(body.move(a.x(),0,a.z()),probeY-p.getY())));
             canopyRetryAfter=ticks+60;
-            if(offsets.isEmpty())return false;
+            if(offsets.isEmpty()){
+                return canopyProgress.retrying() && retryCanopy(c,"附近没有安全通道");
+            }
             canopyRoute=offsets.stream().map(a->new Vec3(x+a.x(),p.getY(),z+a.z())).toList();
             canopyWorld=c.level;canopyRiseY=y;canopyStarted=ticks;canopyIndex=0;
+            canopyProgress.waypoint(ticks);
             ceilingMiner.release(c);
             try{
                 canopyFlight.prepare(c.gameDirectory.toPath().resolve("config/twob2tkit/cruise-canopy-flight-speed.bak"));
@@ -569,39 +740,64 @@ public final class KitController {
                 if(failure!=null)throw new IllegalStateException(failure);
                 canopyFlight.hover();
             }catch(IllegalStateException unavailable){
-                clearCanopyRoute();releaseKeys(c);warning(c,"树冠脱困暂缓："+unavailable.getMessage());return true;
+                return retryCanopy(c,unavailable.getMessage());
             }
             KitClient.LOGGER.info("[Cruise] canopy escape planned steps={} riseY={}",canopyRoute.size(),y);
         }
-        if(canopyWorld!=c.level||ticks-canopyStarted>250||Math.abs(desiredY()-canopyRiseY)>.5){
-            clearCanopyRoute();releaseKeys(c);return true;
+        if(canopyWorld!=c.level||Math.abs(desiredY()-canopyRiseY)>.5){
+            clearCanopyRoute();releaseKeys(c);canopyProgress.reset();return true;
         }
+        if(ticks-canopyStarted>250)return retryCanopy(c,"绕行超时");
         var point=canopyRoute.get(canopyIndex);
         if(Math.abs(p.getY()-point.y)>.35||!clearCruiseSweep(c,p,
                 CruiseCollisionPath.horizontal(p.getBoundingBox(),point.x-p.getX(),point.z-p.getZ()))){
-            clearCanopyRoute();releaseKeys(c);canopyRetryAfter=ticks+60;return true;
+            return retryCanopy(c,"绕行途中净空不足");
         }
         c.options.keyJump.setDown(false);c.options.keyShift.setDown(false);
         c.options.keyDown.setDown(false);c.options.keyLeft.setDown(false);c.options.keyRight.setDown(false);
         String flightFailure=canopyFlight.acquire(p);
-        if(flightFailure!=null){clearCanopyRoute();releaseKeys(c);warning(c,flightFailure);return true;}
-        if(Math.hypot(point.x-p.getX(),point.z-p.getZ())<=.25){
+        if(flightFailure!=null){return retryCanopy(c,flightFailure);}
+        double gap=Math.hypot(point.x-p.getX(),point.z-p.getZ());
+        boolean finalPoint=canopyIndex+1==canopyRoute.size();
+        boolean verticalClear=finalPoint && gap<=.25 && clearCruiseSweep(c,p,
+            CruiseCollisionPath.vertical(p.getBoundingBox(),
+                CruiseCanopyEscape.columnProbeY(p.getY(),canopyRiseY)-p.getY()));
+        if (CruiseCanopyEscape.reachedWaypoint(gap,finalPoint,verticalClear)){
             c.options.keyUp.setDown(false);canopyFlight.hover();canopyIndex++;
             if(canopyIndex==canopyRoute.size()){
-                clearCanopyRoute();phase=Phase.ALTITUDE;resetMovementSample(p);
+                clearCanopyRoute();canopyProgress.reset();phase=Phase.ALTITUDE;resetMovementSample(p);
+            } else {
+                canopyProgress.waypoint(ticks);
             }
             return true;
         }
+        if(canopyProgress.stalled(ticks,gap))return retryCanopy(c,
+            finalPoint && gap<=.25 ? "出口仍无法安全升降" : "角色未接近绕行点");
         boolean aligned=Math.abs(facePoint(p,point.x,point.z))<5;
-        double speed=aligned?CruiseCanopyEscape.speed(Math.hypot(point.x-p.getX(),point.z-p.getZ())):0;
+        double speed=aligned?CruiseCanopyEscape.speed(gap):0;
         double heading=Math.toRadians(navYaw),step=speed*15;
         if(aligned&&!clearCruiseSweep(c,p,CruiseCollisionPath.horizontal(p.getBoundingBox(),
                 -Math.sin(heading)*step,Math.cos(heading)*step))){
-            clearCanopyRoute();releaseKeys(c);canopyRetryAfter=ticks+60;return true;
+            return retryCanopy(c,"前方绕行路径被挡");
         }
         canopyFlight.speed(speed);
         c.options.keyUp.setDown(aligned);
         if(ticks%10==0)CruiseScreenHud.show("巡航 · "+(canopyRiseY<p.getY()?"离开平台":"离开树冠")+" · "+(canopyIndex+1)+"/"+canopyRoute.size());
+        return true;
+    }
+
+    private boolean retryCanopy(Minecraft client,String reason){
+        clearCanopyRoute();
+        releaseKeys(client);
+        if(!canopyProgress.retrying()&&client.player!=null){canopyFailX=client.player.getX();canopyFailZ=client.player.getZ();}
+        KitClient.LOGGER.info("[Cruise] canopy escape retry: {}",reason);
+        if (canopyProgress.exhausted()){
+            stop(client,"无法安全绕行："+reason);
+            CruiseScreenHud.finish("巡航已停止 · "+reason);
+        }else{
+            canopyRetryAfter=ticks+20;
+            CruiseScreenHud.show("巡航 · 重新检查绕行路线");
+        }
         return true;
     }
 
@@ -659,8 +855,8 @@ public final class KitController {
 
 	/** 在左右侧找可绕开的水平路点。 */
 	private AvoidanceWaypoint findAvoidanceWaypoint(Minecraft client, LocalPlayer player, double obstacleDistance) {
-		double targetDx = config.targetX - player.getX();
-		double targetDz = config.targetZ - player.getZ();
+		double targetDx = cruiseTargetX() - player.getX();
+		double targetDz = cruiseTargetZ() - player.getZ();
 		double targetDistance = Math.hypot(targetDx, targetDz);
 		if (targetDistance < 0.001) return null;
 
@@ -701,7 +897,7 @@ public final class KitController {
 				double candidateX = player.getX() + forwardX * forwardDistance + sideX * offset * side;
 				double candidateZ = player.getZ() + forwardZ * forwardDistance + sideZ * offset * side;
 				if (!isPathClear(client, player, candidateX, candidateZ)) continue;
-				double finalDistance = Math.hypot(config.targetX - candidateX, config.targetZ - candidateZ);
+				double finalDistance = Math.hypot(cruiseTargetX() - candidateX, cruiseTargetZ() - candidateZ);
 				double score = finalDistance + 0.25 * offset;
 				if (preferSide != 0 && side == preferSide) score -= 2.0;
 				if (score < bestScore) {
@@ -717,8 +913,8 @@ public final class KitController {
 
 	/** 绕障点被挡时再往外推。 */
 	private void extendAvoidanceWaypoint(Minecraft client, LocalPlayer player) {
-		double targetDx = config.targetX - player.getX();
-		double targetDz = config.targetZ - player.getZ();
+		double targetDx = cruiseTargetX() - player.getX();
+		double targetDz = cruiseTargetZ() - player.getZ();
 		double targetDistance = Math.hypot(targetDx, targetDz);
 		if (targetDistance < 0.001) {
 			avoidanceActive = false;
@@ -814,7 +1010,7 @@ public final class KitController {
 
 	/** 把巡航目标抬到 probeY：更新高度偏移与绕障状态，必要时切入升空阶段并提示。 */
 	private void applyClimbHeight(Minecraft client, LocalPlayer player, double probeY, String format, boolean riseFirst) {
-		altitudeOffset = probeY - config.cruiseY;
+		altitudeOffset = probeY - cruiseAltitude();
 		dodgeFromX = player.getX();
 		dodgeFromZ = player.getZ();
 		blockedByObstacle = false;
@@ -859,18 +1055,18 @@ public final class KitController {
 		if (!Double.isNaN(dodgeFromX) && Math.hypot(player.getX() - dodgeFromX, player.getZ() - dodgeFromZ) < 8.0) {
 			return;
 		}
-		double dy = config.cruiseY - player.getY();
+		double dy = cruiseAltitude() - player.getY();
 		if (!pathClearAtY(client, player, dy, 20.0)) return;
 		altitudeOffset = 0.0;
 		dodgeFromX = Double.NaN;
 		dodgeFromZ = Double.NaN;
-		CruiseScreenHud.flash(String.format(Locale.ROOT, "恢复巡航高度 Y %.0f", config.cruiseY));
+		CruiseScreenHud.flash(String.format(Locale.ROOT, "恢复巡航高度 Y %.0f", cruiseAltitude()));
 	}
 
 	/** 把碰撞箱垂直平移 dy 后，朝目标方向是否畅通。 */
 	private boolean pathClearAtY(Minecraft client, LocalPlayer player, double dy, double maximumDistance) {
-		double goalX = avoidanceActive ? avoidanceX : config.targetX;
-		double goalZ = avoidanceActive ? avoidanceZ : config.targetZ;
+		double goalX = avoidanceActive ? avoidanceX : cruiseTargetX();
+		double goalZ = avoidanceActive ? avoidanceZ : cruiseTargetZ();
 		double dx = goalX - player.getX();
 		double dz = goalZ - player.getZ();
 		double fullDistance = Math.hypot(dx, dz);
@@ -891,8 +1087,8 @@ public final class KitController {
 
 	/** 把碰撞箱垂直平移 dy 后，朝目标方向第一处障碍的距离；畅通返回 -1。 */
 	private double firstObstacleDistanceAtY(Minecraft client, LocalPlayer player, double dy, double maximumDistance) {
-		double goalX = avoidanceActive ? avoidanceX : config.targetX;
-		double goalZ = avoidanceActive ? avoidanceZ : config.targetZ;
+		double goalX = avoidanceActive ? avoidanceX : cruiseTargetX();
+		double goalZ = avoidanceActive ? avoidanceZ : cruiseTargetZ();
 		double dx = goalX - player.getX();
 		double dz = goalZ - player.getZ();
 		double fullDistance = Math.hypot(dx, dz);
@@ -1033,7 +1229,7 @@ public final class KitController {
 		sampleZ = player.getZ();
 		recentSpeed = recentSpeed == 0.0 ? moved : recentSpeed * 0.7 + moved * 0.3;
 		pushMovedSample(moved);
-		double remaining = Math.hypot(config.targetX - player.getX(), config.targetZ - player.getZ());
+		double remaining = Math.hypot(cruiseTargetX() - player.getX(), cruiseTargetZ() - player.getZ());
 		tickEtaCountdown(remaining);
 
 		if (moved < 0.75) {
@@ -1133,7 +1329,17 @@ public final class KitController {
 	/** 到达目标：停飞并按配置离线。 */
 	private void arrive(Minecraft client) {
 		clearCanopyRoute();
-		String reason = String.format(Locale.ROOT, "已到达目标 %.1f, %.1f（半径 %.1f）", config.targetX, config.targetZ, config.arrivalRadius);
+        if (endCitySurvey != null) {
+            phase = Phase.CHECKING_END_CITY;
+            endCitySurvey.beginArrival();
+            endCityCoastTicks = 0;
+            endCitySampleX = client.player.getX();
+            endCitySampleZ = client.player.getZ();
+            releaseKeys(client);
+            CruiseScreenHud.begin("已到达候选点，正在核查末地城");
+            return;
+        }
+		String reason = String.format(Locale.ROOT, "已到达目标 %.1f, %.1f（半径 %.1f）", cruiseTargetX(), cruiseTargetZ(), config.arrivalRadius);
 		phase = Phase.IDLE;
 		avoidanceActive = false;
 		blockedByObstacle = false;
@@ -1151,6 +1357,7 @@ public final class KitController {
 
 	/** Critical navigation failure: notify once, then let the safe logout path run. */
 	private void disconnect(Minecraft client, String reason) {
+        clearEndCitySurvey();
 		phase = Phase.IDLE;
 		avoidanceActive = false;
 		blockedByObstacle = false;

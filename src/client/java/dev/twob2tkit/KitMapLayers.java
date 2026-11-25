@@ -175,10 +175,9 @@ public final class KitMapLayers {
             drawPath(draw, c.player.position(), next, NEXT);
         }
         var controller = KitClient.controller();
-        var conf = KitClient.config();
-        if (controller != null && controller.isActive() && conf.hasTarget) {
+        if (controller != null && controller.isActive()) {
             Vec3 here = c.player.position();
-            draw.line(here.x, here.z, conf.targetX, conf.targetZ, 0x90F3CA57);
+            draw.line(here.x, here.z, controller.cruiseTargetX(), controller.cruiseTargetZ(), 0x90F3CA57);
             drawPath(draw, here, controller.mapNext(c), NEXT);
         }
     }

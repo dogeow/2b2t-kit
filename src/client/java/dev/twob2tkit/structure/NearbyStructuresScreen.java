@@ -165,11 +165,18 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 		page.action("结构标记", "查看已去过的位置和备注。", () -> dev.twob2tkit.UiFeature.STRUCTURE_MARKS.open(page));
 		minecraft.gui.setScreen(page); return true;
 	}
+    private List<StructureLocator.Hit> visibleCandidates() {
+        return found.stream().filter(hit -> {
+            var mark = config.structureMark(markKind(hit),hit.x(),hit.z());
+            return !config.structureHideVisited || mark == null || !mark.visited;
+        }).toList();
+    }
+
 	private void showUnifiedResults(Screen searchPage) {
 		var list = new dev.twob2tkit.KitCollectionScreen<StructureLocator.Hit>(searchPage, config, "structure-results:" + kind,
 			kind.label + " · 候选结果", truncated ? "最多显示 500 项，可缩小范围" : "打开详情不会自动前往",
-			() -> found.stream().filter(hit -> { var mark = config.structureMark(markKind(hit), hit.x(), hit.z()); return !config.structureHideVisited || mark == null || !mark.visited; }).toList(),
-			hit -> hit.label() + "  " + hit.x() + " " + hit.z() + " · " + hit.distance() + " 格", NearbyStructuresScreen::hitHint,
+			this::visibleCandidates,
+			hit -> (StructureLocator.isEndCity(hit.kind()) ? "待核实 · " : "") + hit.label() + "  " + hit.x() + " " + hit.z() + " · " + hit.distance() + " 格", NearbyStructuresScreen::hitHint,
 			hit -> hit.label() + " " + hit.x() + " " + hit.z() + " " + hit.distance()
 				+ " " + (minecraft.player == null ? "" : CompassDir.bearingLabel(minecraft.player.getBlockX(), minecraft.player.getBlockZ(), hit.x(), hit.z())));
 		list.onOpen(hit -> {
@@ -183,7 +190,9 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 			minecraft.gui.setScreen(detail);
 		});
 		list.action("指引", "只显示方向和距离。", this::startGuide, hit -> currentDimension() == dimension);
-		list.action("前往", "按当前维度巡航高度前往。", this::cruiseTo, hit -> currentDimension() == dimension);
+		list.action("前往", StructureLocator.isEndCity(kind)
+            ? "依序巡航并核查候选。发现活潜影贝后停留。"
+            : "按当前维度巡航高度前往。", this::cruiseTo, hit -> currentDimension() == dimension);
 		list.action("已去", "切换去过状态。", hit -> { var mark = config.ensureStructureMark(markKind(hit), hit.x(), hit.z()); mark.visited = !mark.visited; config.saveStructureMarks(); list.refresh(); }, hit -> true);
 		list.add("搜索设置", () -> minecraft.gui.setScreen(searchPage));
 		list.footer("Chunkbase", this::openChunkbase);
@@ -271,6 +280,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 
 	/** 对命中开 StructureGuide。 */
 	private void startGuide(StructureLocator.Hit hit) {
+        if (rejectEndCityMiss(hit)) return;
 		StructureGuide guide = KitClient.structureGuide();
 		if (guide == null) return;
 		guide.start(hit.label(), hit.x(), hit.z());
@@ -280,11 +290,28 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 
 	/** 对命中开高空巡航。 */
 	private void cruiseTo(StructureLocator.Hit hit) {
+        if (StructureLocator.isEndCity(hit.kind())) {
+            var candidates = visibleCandidates();
+            int selected = candidates.indexOf(hit);
+            if (selected < 0) return;
+            controller.startEndCitySearch(minecraft,candidates.subList(selected,candidates.size()),
+                Math.max(cruiseYForDimension(),minecraft.player.getY()));
+        } else {
+            controller.start(minecraft,hit.x()+.5,hit.z()+.5,cruiseYForDimension());
+        }
 		StructureGuide guide = KitClient.structureGuide();
 		if (guide != null) guide.stop();
-		controller.start(this.minecraft, hit.x() + 0.5, hit.z() + 0.5, cruiseYForDimension());
 		this.minecraft.gui.setScreen(null);
 	}
+
+    private boolean rejectEndCityMiss(StructureLocator.Hit hit) {
+        if (minecraft.level == null || !StructureLocator.isEndCity(hit.kind())
+                || StructureLocator.keepLoadedHit(minecraft.level,hit)) return false;
+        var text = net.minecraft.network.chat.Component.literal("附近区块已核对，未发现末地城建筑，请重新搜索");
+        minecraft.gui.hud.setOverlayMessage(text,false);
+        if (minecraft.player != null) minecraft.player.sendSystemMessage(text);
+        return true;
+    }
 
 	/** 巡航高度按维度。 */
 	private double cruiseYForDimension() {
@@ -299,7 +326,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 	/** 悬停补充说明。 */
 	private static String hitHint(StructureLocator.Hit hit) {
 		if (hit.kind() == StructureLocator.Kind.END_CITY || hit.kind() == StructureLocator.Kind.END_CITY_SHIP) {
-			return "已按末地高地和地面高度过滤（矮岛没有城）。带船按原版城部件推算。点击复制 /tp。";
+			return "按种子推算城和船。已加载且没有末地城建筑的候选会被移除。点击复制坐标。";
 		}
 		if (hit.kind() == StructureLocator.Kind.OUTPOST) {
 			return "身边已加载的空点会丢掉；没加载的远点只按种子估，到了可能没有塔。点击复制 /tp。";

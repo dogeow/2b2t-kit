@@ -5,6 +5,7 @@ import dev.twob2tkit.*;
 import dev.twob2tkit.borer.TunnelBorer;
 import dev.twob2tkit.runtime.api.RotationAim;
 import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -137,6 +138,17 @@ public final class AutomationBridge {
         if(idleYieldAck!=null&&str(idleYieldAck,"world_session").equals(session(c)))result.add("yield_ack",idleYieldAck.deepCopy());
         return result;
     }
+    /** Expected admission failure; native callers keep their ordinary error receipt. */
+    public static final class TaskStartBlocked extends IllegalStateException {
+        TaskStartBlocked(String message) { super(message); }
+
+        public void show(Minecraft client) {
+            var text = Component.literal(getMessage()).withColor(0xFF7777);
+            client.gui.hud.setOverlayMessage(text,false);
+            if (client.player != null) client.player.sendSystemMessage(text);
+        }
+    }
+
     /** A formal entry point may only interrupt this fresh exact idle owner, never a read/probe. */
     public static boolean preemptIdleForPlayer(Minecraft c,String reason){
         return preemptIdle(c,reason,false);
@@ -147,7 +159,7 @@ public final class AutomationBridge {
         if(!cleanupOwn&&!"MANUAL_MOVEMENT".equals(reason)&&IdleActivityPolicy.requestOwned(owner,idleDispatchRequest))return false;
         if(!cleanupOwn&&!"MANUAL_MOVEMENT".equals(reason)){
             idleManualWorld="";
-            if(dev.twob2tkit.combat.EmergencyExit.held(c))throw new IllegalStateException("Safety lock remains active; idle handoff does not unlock it");
+            if(dev.twob2tkit.combat.EmergencyExit.held(c))throw new TaskStartBlocked("安全离线锁仍开启，自动任务未启动");
         }
         if(owner==null)return false;
         var own=idleOwnedActivities(owner);var conflicts=IdleActivityPolicy.conflicts(idleActivities(c),owner,own);
@@ -155,7 +167,7 @@ public final class AutomationBridge {
         boolean foreignScan=pendingScan!=null&&!own.contains("scan");
         if(!IdleActivityPolicy.mayCancel(owner,foreignActive,foreignNative,foreignScan)
             ||conflicts.contains("professional_printer")&&ProfessionalPrinter.owned()||conflicts.contains("scaffold_row"))
-            throw new IllegalStateException("Idle handoff conflicts with another native owner; no foreign work stopped");
+            throw new TaskStartBlocked("自动任务未启动：当前控制权有冲突");
         long before=controlRevision;idlePreempting=true;
         boolean previousDispatching=dispatching,previousNative=nativeMaterialDispatch;
         dispatching=true;nativeMaterialDispatch=true;
@@ -164,7 +176,7 @@ public final class AutomationBridge {
             KitClient.stopWork(reason,own);
             if(nativeMaterialOwner!=null){nativeMaterialOwner.closed=true;nativeMaterialOwner=null;}
             if(own.contains("projection_batch"))projectionBatch.reset();
-            if(!IdleActivityPolicy.inputsReleased(idleActivities(c),own))throw new IllegalStateException("Idle inputs remain active; handoff unconfirmed");
+            if(!IdleActivityPolicy.inputsReleased(idleActivities(c),own))throw new TaskStartBlocked("自动任务未启动：原任务尚未释放按键");
             supervisionLease=null;pendingSafety=null;lastSupervisionHeartbeat=0;idleOwnerReads.invalidate();releaseMaterialMiningLease();
             idleFisherBinding="";
             idleFisherGeneration=-1;

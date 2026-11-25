@@ -156,16 +156,20 @@ public final class KitClient implements ClientModInitializer {
 		} else {
 			while (KitKeys.EMERGENCY_STOP.consumeClick()) emergencyStop("按下紧急停止键");
 			while (KitKeys.OPEN_GUI.consumeClick()) openGui(client);
-			while (KitKeys.START_STOP.consumeClick()) toggleCruiseFromKey(client);
-			while (KitKeys.TOGGLE_BORER.consumeClick()) toggleBorer(client);
-			while (KitKeys.BORER_HOME.consumeClick()) goBorerHome(client);
-			while (KitKeys.PORTAL_HOME.consumeClick()) goNetherPortal(client);
-			while (KitKeys.TOGGLE_SURROUND.consumeClick()) toggleSurround(client);
-			while (KitKeys.TOGGLE_FEEDER.consumeClick()) toggleFeeder(client);
-			while (KitKeys.TOGGLE_PLANTER.consumeClick()) togglePlanter(client);
-			while (KitKeys.TOGGLE_CHOPPER.consumeClick()) toggleChopper(client);
-			while (KitKeys.TOGGLE_FISHER.consumeClick()) toggleFisher(client);
-			while (KitKeys.TOGGLE_VILLAGER_SCAN.consumeClick()) toggleVillagerScan(client);
+			try {
+				while (KitKeys.START_STOP.consumeClick()) toggleCruiseFromKey(client);
+				while (KitKeys.TOGGLE_BORER.consumeClick()) toggleBorer(client);
+				while (KitKeys.BORER_HOME.consumeClick()) goBorerHome(client);
+				while (KitKeys.PORTAL_HOME.consumeClick()) goNetherPortal(client);
+				while (KitKeys.TOGGLE_SURROUND.consumeClick()) toggleSurround(client);
+				while (KitKeys.TOGGLE_FEEDER.consumeClick()) toggleFeeder(client);
+				while (KitKeys.TOGGLE_PLANTER.consumeClick()) togglePlanter(client);
+				while (KitKeys.TOGGLE_CHOPPER.consumeClick()) toggleChopper(client);
+				while (KitKeys.TOGGLE_FISHER.consumeClick()) toggleFisher(client);
+				while (KitKeys.TOGGLE_VILLAGER_SCAN.consumeClick()) toggleVillagerScan(client);
+            } catch (dev.twob2tkit.automation.AutomationBridge.TaskStartBlocked blocked) {
+                blocked.show(client);
+            }
 		}
 		if (combatWatch != null) combatWatch.tick(client);
 		if (client.player != null && client.player.isDeadOrDying()) {

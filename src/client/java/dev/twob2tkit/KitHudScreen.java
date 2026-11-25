@@ -6,6 +6,8 @@ import net.minecraft.client.gui.components.StringWidget;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import dev.twob2tkit.automation.AutomationBridge.TaskStartBlocked;
 import net.minecraft.network.chat.Component;
 
 /**
@@ -53,6 +55,16 @@ public abstract class KitHudScreen extends Screen {
 		this.minecraft.gui.setScreen(parent);
 	}
 
+    @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        try {
+            return super.mouseClicked(event,doubleClick);
+        } catch (TaskStartBlocked blocked) {
+            showNotice(blocked.getMessage(),0xFF7777);
+            return true;
+        }
+    }
+
 	/** 处理紧急停止与功能热键；输入框聚焦时不关界面。 */
 	@Override
 	public boolean keyPressed(KeyEvent event) {
@@ -78,8 +90,13 @@ public abstract class KitHudScreen extends Screen {
 				}
 			}
 		}
-		if (!typing && event.isConfirmation() && onEnterPressed()) return true;
-		return super.keyPressed(event);
+        try {
+            if (!typing && event.isConfirmation() && onEnterPressed()) return true;
+            return super.keyPressed(event);
+        } catch (TaskStartBlocked blocked) {
+            showNotice(blocked.getMessage(),0xFF7777);
+            return true;
+        }
 	}
 
 	/** 回车默认无操作；子类可覆盖做提交。 */

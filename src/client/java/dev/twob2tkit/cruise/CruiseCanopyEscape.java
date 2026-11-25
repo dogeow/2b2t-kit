@@ -22,6 +22,26 @@ public final class CruiseCanopyEscape {
         if(!Double.isFinite(gap)||gap<0)throw new IllegalArgumentException("Finite canopy waypoint gap required");
         return Math.min(.02,gap/25);
     }
+    public static boolean reachedWaypoint(double gap,boolean finalPoint,boolean verticalClear){
+        return gap<=.25&&(!finalPoint||verticalClear);
+    }
+
+    public static final class Progress {
+        private int failures,lastProgress;
+        private double bestGap;
+
+        public void reset(){failures=0;}
+        public boolean retrying(){return failures>0;}
+        public boolean exhausted(){return ++failures>=3;}
+        public void waypoint(int tick){lastProgress=tick;bestGap=Double.POSITIVE_INFINITY;}
+        public boolean stalled(int tick,double gap){
+            if(bestGap-gap>=.04){
+                bestGap=gap;
+                lastProgress=tick;
+            }
+            return tick-lastProgress>=45;
+        }
+    }
     public static List<Offset> find(int radius,BiPredicate<Offset,Offset> stepClear,Predicate<Offset> canRise){
         if(radius<1||radius>8)throw new IllegalArgumentException("Canopy escape radius must be 1..8");
         var start=new Offset(0,0);var queue=new ArrayDeque<Offset>();queue.add(start);

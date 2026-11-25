@@ -169,7 +169,7 @@ public final class OverworldSnowLocator {
 		}
 	}
 
-	private static HolderLookup.Provider vanillaProvider(){
+	static synchronized HolderLookup.Provider vanillaProvider(){
 		if(vanillaLookup==null){vanillaLookup=VanillaRegistries.createLookup();vanillaLookupBuilds++;}
 		return vanillaLookup;
 	}

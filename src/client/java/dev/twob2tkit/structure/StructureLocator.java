@@ -11,6 +11,12 @@ import net.minecraft.tags.BiomeTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.biome.TheEndBiomeSource;
+import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import dev.twob2tkit.runtime.engine.LoadedServerChunkEvidence;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.biome.Climate;
@@ -211,8 +217,11 @@ public final class StructureLocator {
 		return id;
 	}
 
-	private static long cachedEndSeed = Long.MIN_VALUE;
-	private static DensityFunction cachedEndIslands;
+	private record EndIslands(long seed, DensityFunction density) {}
+	private record EndTerrain(long seed, RandomState state, NoiseBasedChunkGenerator generator) {}
+	private static volatile EndIslands cachedEndIslands;
+	private static final LevelHeightAccessor END_HEIGHT = LevelHeightAccessor.create(0, 256);
+	private static EndTerrain cachedEndTerrain;
 	private static long cachedNetherSeed = Long.MIN_VALUE;
 	private static Climate.Sampler cachedNetherSampler;
 	private static MultiNoiseBiomeSource cachedNetherBiomes;
@@ -259,14 +268,12 @@ public final class StructureLocator {
 		int originRegionX = Math.floorDiv(originChunkX, spacing);
 		int originRegionZ = Math.floorDiv(originChunkZ, spacing);
 		List<Hit> hits = new ArrayList<>();
+		List<EndCandidate> endCandidates = new ArrayList<>();
 		for (int rx = originRegionX - regionRadius; rx <= originRegionX + regionRadius; rx++) {
 			for (int rz = originRegionZ - regionRadius; rz <= originRegionZ + regionRadius; rz++) {
 				ChunkPos chunk = kind.placement.getPotentialStructureChunk(seed, rx * spacing, rz * spacing);
 				if (!kind.placement.applyAdditionalChunkRestrictions(chunk.x(), chunk.z(), seed)) continue;
 				if (kind == Kind.END_CITY || kind == Kind.END_CITY_SHIP) {
-					if (!canPlaceEndCity(seed, chunk.x(), chunk.z())) continue;
-					boolean ship = EndCityLayout.hasShip(seed, chunk.x(), chunk.z());
-					if (kind == Kind.END_CITY_SHIP && !ship) continue;
 					int cityX = (chunk.x() << 4) + 7;
 					int cityZ = (chunk.z() << 4) + 7;
 					int cityDx = cityX - originX;
@@ -274,7 +281,7 @@ public final class StructureLocator {
 					int cityDist = (int)Math.round(Math.hypot(cityDx, cityDz));
 					if (cityDist > radiusBlocks) continue;
 					if (filter != null && !filter.test(cityX, cityZ)) continue;
-					hits.add(new Hit(kind, cityX, cityZ, cityDist, ship ? "带船末地城" : "末地城"));
+					endCandidates.add(new EndCandidate(chunk.x(), chunk.z(), cityDist));
 					continue;
 				}
 				BlockPos pos = kind.placement.getLocatePos(chunk);
@@ -294,9 +301,28 @@ public final class StructureLocator {
 				hits.add(new Hit(kind, pos.getX(), pos.getZ(), distance, label));
 			}
 		}
+		if (isEndCity(kind)) return placeableEndCities(seed, kind, endCandidates, limit);
 		hits.sort(Comparator.comparingInt(Hit::distance));
 		if (hits.size() > limit) return new ArrayList<>(hits.subList(0, limit));
 		return hits;
+	}
+
+	private record EndCandidate(int chunkX, int chunkZ, int distance) {}
+
+	/** Real terrain height is costly: walk outward in parallel batches and stop once the list is full. */
+	private static List<Hit> placeableEndCities(long seed, Kind kind, List<EndCandidate> candidates, int limit) {
+		candidates.sort(Comparator.comparingInt(EndCandidate::distance));
+		List<Hit> hits = new ArrayList<>();
+		for (int from = 0; from < candidates.size() && hits.size() < limit; from += 256) {
+			hits.addAll(candidates.subList(from, Math.min(from + 256, candidates.size())).parallelStream().map(candidate -> {
+				if (!canPlaceEndCity(seed, candidate.chunkX(), candidate.chunkZ())) return null;
+				boolean ship = EndCityLayout.hasShip(seed, candidate.chunkX(), candidate.chunkZ());
+				if (kind == Kind.END_CITY_SHIP && !ship) return null;
+				return new Hit(kind, (candidate.chunkX() << 4) + 7, (candidate.chunkZ() << 4) + 7, candidate.distance(),
+					ship ? "带船末地城" : "末地城");
+			}).filter(java.util.Objects::nonNull).toList());
+		}
+		return hits.size() > limit ? new ArrayList<>(hits.subList(0, limit)) : hits;
 	}
 
 	/**
@@ -430,7 +456,10 @@ public final class StructureLocator {
 	}
 
 	/** 已加载区块是否仍像该结构。 */
-	private static boolean keepLoadedHit(ClientLevel level, Hit hit) {
+	static boolean keepLoadedHit(ClientLevel level, Hit hit) {
+        if (level.dimension().equals(Level.END) && isEndCity(hit.kind())) {
+            return observeEndCity(level,hit) != EndCityObservation.ABSENT;
+        }
 		if (hit.kind() != Kind.OUTPOST) return true;
 		if (!chunkReallyLoaded(level, hit.x(), hit.z())) return true;
 		int surface = level.getHeight(Heightmap.Types.WORLD_SURFACE, hit.x(), hit.z());
@@ -439,6 +468,77 @@ public final class StructureLocator {
 		if (!outpostAreaLoaded(level, hit.x(), hit.z())) return true;
 		return hasOutpostEvidence(level, hit.x(), hit.z(), surface);
 	}
+
+    static boolean isEndCity(Kind kind) {
+        return kind == Kind.END_CITY || kind == Kind.END_CITY_SHIP;
+    }
+
+    enum EndCityChunk { UNKNOWN, EMPTY, BUILDING, CITY }
+
+    public enum EndCityObservation { PENDING, ABSENT, TRACES, PRESENT }
+
+    @FunctionalInterface
+    interface EndCityEvidence { EndCityChunk chunk(int x,int z); }
+
+    public static EndCityObservation observeEndCity(ClientLevel level, Hit hit) {
+        if (level == null || !level.dimension().equals(Level.END) || !isEndCity(hit.kind()))
+            return EndCityObservation.PENDING;
+        return observeEndCity(hit.x() >> 4, hit.z() >> 4, (x,z) -> {
+            var chunk = level.getChunkSource().getChunk(x,z,ChunkStatus.FULL,false);
+            if (!LoadedServerChunkEvidence.isServerChunk(level,chunk)) return EndCityChunk.UNKNOWN;
+            int[] materials = {0};
+            for (var section : chunk.getSections()) {
+                if (section.hasOnlyAir() || !section.maybeHas(StructureLocator::isEndCityMaterial)) continue;
+                section.getStates().count((state, count) -> {
+                    if (count > 0 && isEndCityMaterial(state)) {
+                        if (state.is(Blocks.PURPUR_PILLAR)) materials[0] |= 1;
+                        else if (state.is(Blocks.END_STONE_BRICKS)) materials[0] |= 2;
+                        else materials[0] |= 4;
+                    }
+                });
+                if ((materials[0] & 3) == 3) return EndCityChunk.CITY;
+            }
+            return materials[0] != 0 ? EndCityChunk.BUILDING : EndCityChunk.EMPTY;
+        });
+    }
+
+    public static boolean endCityAreaLoaded(ClientLevel level, Hit hit) {
+        int centerX = hit.x() >> 4, centerZ = hit.z() >> 4;
+        for (int x = centerX - 1; x <= centerX + 1; x++) {
+            for (int z = centerZ - 1; z <= centerZ + 1; z++) {
+                if (!LoadedServerChunkEvidence.isServerChunk(level,
+                        level.getChunkSource().getChunk(x,z,ChunkStatus.FULL,false))) return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean hasLiveShulker(ClientLevel level, Hit site) {
+        var box = new AABB(site.x()-48,level.getMinY(),site.z()-48,site.x()+49,level.getMaxY(),site.z()+49);
+        return !level.getEntities(net.minecraft.world.entity.EntityTypes.SHULKER,box,entity -> entity.isAlive()).isEmpty();
+    }
+
+    /** Inspect candidate and its neighbors; absence requires all nine real server chunks. */
+    static EndCityObservation observeEndCity(int chunkX,int chunkZ,EndCityEvidence evidence) {
+        boolean loaded = true;
+        boolean hasTraces = false;
+        for (int x = chunkX - 1; x <= chunkX + 1; x++) {
+            for (int z = chunkZ - 1; z <= chunkZ + 1; z++) {
+                var chunk = evidence.chunk(x,z);
+                if (chunk == EndCityChunk.CITY) return EndCityObservation.PRESENT;
+                loaded &= chunk != EndCityChunk.UNKNOWN;
+                hasTraces |= chunk == EndCityChunk.BUILDING;
+            }
+        }
+        if (!loaded) return EndCityObservation.PENDING;
+        return hasTraces ? EndCityObservation.TRACES : EndCityObservation.ABSENT;
+    }
+
+    private static boolean isEndCityMaterial(BlockState state) {
+        return state.is(Blocks.PURPUR_BLOCK) || state.is(Blocks.PURPUR_PILLAR)
+            || state.is(Blocks.PURPUR_STAIRS) || state.is(Blocks.PURPUR_SLAB)
+            || state.is(Blocks.END_STONE_BRICKS);
+    }
 
 	/** 客户端 {@code hasChunk}/{@code hasChunkAt} 在 26.1 里永远 true，不能用来判断视野。 */
 	private static boolean chunkReallyLoaded(ClientLevel level, int x, int z) {
@@ -505,11 +605,11 @@ public final class StructureLocator {
 	}
 
 	/**
-	 * 原版末地城：外岛高地（岛噪声 &gt; 0.25）且 5×5 角落最低地面 ≥ 60。
-	 * 只判高地会把矮岛列出来，飞过去没有城。
+	 * 原版末地城：外岛高地或中地（has_structure/end_city）且 5×5 角落最低地面 ≥ 60。
+	 * 地面高度必须用原版末地生成器算；岛噪声线性换算会把 56~59 格的矮岛当成能放城。
 	 */
 	public static boolean canPlaceEndCity(long seed, int chunkX, int chunkZ) {
-		if (!isEndHighlands(seed, chunkX, chunkZ)) return false;
+		if (!isEndCityBiome(seed, chunkX, chunkZ)) return false;
 		WorldgenRandom random = new WorldgenRandom(new LegacyRandomSource(0L));
 		random.setLargeFeatureSeed(seed, chunkX, chunkZ);
 		int rot = random.nextInt(4);
@@ -522,36 +622,46 @@ public final class StructureLocator {
 		} else if (rot == 3) oz = -5;
 		int x = (chunkX << 4) + 7;
 		int z = (chunkZ << 4) + 7;
-		int min = endIslandSurfaceY(seed, x, z);
-		min = Math.min(min, endIslandSurfaceY(seed, x, z + oz));
-		min = Math.min(min, endIslandSurfaceY(seed, x + ox, z));
-		min = Math.min(min, endIslandSurfaceY(seed, x + ox, z + oz));
-		return min >= 60;
+		return endIslandSurfaceY(seed, x, z) >= 60
+			&& endIslandSurfaceY(seed, x, z + oz) >= 60
+			&& endIslandSurfaceY(seed, x + ox, z) >= 60
+			&& endIslandSurfaceY(seed, x + ox, z + oz) >= 60;
 	}
 
 	/**
-	 * 原版末地城只生成在高地：主岛 1024 格内是末地群系，小岛噪声太低。
-	 * 高地判定和 {@code TheEndBiomeSource} 一样，岛噪声大于 0.25。
+	 * 原版末地城标签含高地和中地：主岛 1024 格内是末地群系，荒地和小岛噪声太低。
+	 * 判定和 {@code TheEndBiomeSource} 一样，岛噪声 ≥ -0.0625 即中地或高地。
 	 */
-	public static boolean isEndHighlands(long seed, int chunkX, int chunkZ) {
+	public static boolean isEndCityBiome(long seed, int chunkX, int chunkZ) {
 		if ((long)chunkX * chunkX + (long)chunkZ * chunkZ <= 4096L) return false;
 		int x = (chunkX << 4) + 8;
 		int z = (chunkZ << 4) + 8;
-		return endIslandDensity(seed, x, z) > 0.25;
+		return endIslandDensity(seed, x, z) >= -0.0625;
 	}
 
-	/** 岛噪声换算成大约的地面 Y。3D 噪声还会上下晃几格，60 是原版硬门槛。 */
-	private static int endIslandSurfaceY(long seed, int blockX, int blockZ) {
-		return (int)Math.floor(endIslandDensity(seed, blockX, blockZ) * 128.0 + 8.0);
+	/** 原版 {@code Structure.getLowestY} 用的 WORLD_SURFACE_WG 首个实心高度。 */
+	static int endIslandSurfaceY(long seed, int blockX, int blockZ) {
+		EndTerrain terrain = endTerrain(seed);
+		return terrain.generator().getFirstOccupiedHeight(
+			blockX, blockZ, Heightmap.Types.WORLD_SURFACE_WG, END_HEIGHT, terrain.state());
+	}
+
+	private static synchronized EndTerrain endTerrain(long seed) {
+		if (cachedEndTerrain == null || cachedEndTerrain.seed() != seed) {
+			var provider = OverworldSnowLocator.vanillaProvider();
+			cachedEndTerrain = new EndTerrain(seed, RandomState.create(provider, NoiseGeneratorSettings.END, seed),
+				new NoiseBasedChunkGenerator(TheEndBiomeSource.create(provider.lookupOrThrow(Registries.BIOME)),
+					provider.lookupOrThrow(Registries.NOISE_SETTINGS).getOrThrow(NoiseGeneratorSettings.END)));
+		}
+		return cachedEndTerrain;
 	}
 
 	/** 末地外岛密度噪声。 */
 	private static double endIslandDensity(long seed, int blockX, int blockZ) {
-		if (cachedEndIslands == null || cachedEndSeed != seed) {
-			cachedEndSeed = seed;
-			cachedEndIslands = DensityFunctions.endIslands(seed);
-		}
-		return cachedEndIslands.compute(new DensityFunction.SinglePointContext(blockX, 0, blockZ));
+		EndIslands islands = cachedEndIslands;
+		if (islands == null || islands.seed() != seed)
+			cachedEndIslands = islands = new EndIslands(seed, DensityFunctions.endIslands(seed));
+		return islands.density().compute(new DensityFunction.SinglePointContext(blockX, 0, blockZ));
 	}
 
 	/**

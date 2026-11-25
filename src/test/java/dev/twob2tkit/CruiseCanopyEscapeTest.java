@@ -8,6 +8,25 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CruiseCanopyEscapeTest {
+    @Test void exitMustBeClearAtTheActualPlayerPosition(){
+        assertTrue(CruiseCanopyEscape.reachedWaypoint(.20,false,false));
+        assertFalse(CruiseCanopyEscape.reachedWaypoint(.20,true,false));
+        assertTrue(CruiseCanopyEscape.reachedWaypoint(.20,true,true));
+    }
+    @Test void stallsAndStopsAfterThreeFailedPlansButAllowsSteadyProgress(){
+        var progress=new CruiseCanopyEscape.Progress();
+        for(int attempt=0;attempt<3;attempt++){
+            progress.waypoint(0);
+            assertFalse(progress.stalled(0,1));
+            assertFalse(progress.stalled(40,.90));
+            assertFalse(progress.stalled(80,.85));
+            assertTrue(progress.stalled(125,.84));
+            assertEquals(attempt==2,progress.exhausted());
+        }
+        progress.reset();
+        assertFalse(progress.retrying());
+        assertFalse(progress.exhausted());
+    }
     @Test void borrowedFlightSpeedCannotOvershootAShortExitEvenWhileSprinting(){
         for(double gap:new double[]{.26,.5,1,3,6}){
             double speed=CruiseCanopyEscape.speed(gap);
