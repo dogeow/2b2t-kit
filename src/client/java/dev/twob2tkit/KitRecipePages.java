@@ -30,7 +30,7 @@ public final class KitRecipePages {
         private final KitConfig config; private final LocalRecipes.Entry recipe; private int gx, gy;
         Detail(Screen parent, KitConfig config, LocalRecipes.Entry recipe) { super(Component.literal(recipe.name()), parent); this.config = config; this.recipe = recipe; }
         @Override protected void init() {
-            var layout = UiPageLayout.of(width, height); gx = width / 2 - 68; gy = 54;
+            var layout = UiPageLayout.of(width, height); gx = paneCenter() - 68; gy = 54;
             for (int i = 0; i < 9; i++) {
                 ItemStack stack = recipe.grid()[i]; if (stack == null || stack.isEmpty()) continue;
                 addRenderableWidget(new ItemIconButton(gx + i % 3 * 22, gy + i / 3 * 22, 20, 20, stack,
@@ -42,8 +42,8 @@ public final class KitRecipePages {
         @Override public void extractRenderState(GuiGraphicsExtractor g, int x, int y, float delta) {
             super.extractRenderState(g, x, y, delta);
             var layout = UiPageLayout.of(width, height);
-            KitUi.centered(g, font, KitUi.fit(font, recipe.name(), layout.width()), width / 2, 12, 0xFFFFFF);
-            KitUi.centered(g, font, "本地合成配方 · 点击材料继续查看 · 不操作物品", width / 2, 32, 0xAABBCC);
+            KitUi.centered(g, font, KitUi.fit(font, recipe.name(), layout.width()), paneCenter(), 12, 0xFFFFFF);
+            KitUi.centered(g, font, "本地合成配方 · 点击材料继续查看 · 不操作物品", paneCenter(), 32, 0xAABBCC);
             KitUi.text(g, font, "→", gx + 72, gy + 28, 0xFFFFFF);
             for (int i = 0; i < 9; i++) if (recipe.grid()[i] == null || recipe.grid()[i].isEmpty()) {
                 int sx = gx + i % 3 * 22, sy = gy + i / 3 * 22; g.fill(sx, sy, sx + 20, sy + 20, 0xFF263442);

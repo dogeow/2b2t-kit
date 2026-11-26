@@ -25,7 +25,7 @@ public final class KitFormScreen extends KitHudScreen {
     private Supplier<String> state = () -> "";
     private Runnable toggle;
     private String startText = "开始", stopText = "停止";
-    private String footerHint="数值退出自动暂存 · 应用后生效 · 开关即时保存";
+    private String footerHint="";
     private boolean runUsesDraft = true;
     private String applyText = "应用数值";
     private Runnable afterApply = () -> {};
@@ -66,6 +66,9 @@ public final class KitFormScreen extends KitHudScreen {
     private void persist() { if (config != null) config.save(); }
     private boolean settingsLocked() { return active.getAsBoolean() || locked.getAsBoolean(); }
     public KitFormScreen section(String title) { rows.add(new Section(title)); return this; }
+    /** Rarely changed settings: a section that starts folded and shows how many items it holds. */
+    public KitFormScreen advanced() { return advanced("高级"); }
+    public KitFormScreen advanced(String title) { rows.add(new Section(title)); collapsed.add(title); return this; }
     public KitFormScreen note(String text) {
         rows.add((s, y) -> { int start = y; for (String line : KitUi.wrap(font, text, layout.width())) { text(line, y, 0xA4B4C4); y += 12; } return y - start + 8; }); return this;
     }
@@ -180,26 +183,41 @@ public final class KitFormScreen extends KitHudScreen {
             draft = config.uiDrafts.computeIfAbsent(boundDraftKey, key -> new UiDraft());
         }
         scroll = draft.scroll; layout = UiPageLayout.of(width, height); widgets.clear();
-        addRenderableWidget(Button.builder(Component.literal("‹ 返回"), b -> onClose()).bounds(layout.left(), 8, 58, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("紧急停止"), b -> KitClient.emergencyStop("界面紧急停止"))
-            .bounds(layout.left() + layout.width() - 76, 8, 76, 20).build());
+        boolean nested = !sidebarShown() || !(parent instanceof KitWorkspaceScreen);
+        int titleX = layout.left();
+        if (nested) { addRenderableWidget(Button.builder(Component.literal("‹"), b -> onClose()).bounds(layout.left(), 8, 20, 20)
+            .tooltip(Tooltip.create(Component.literal("返回上一页 · 输入草稿保留"))).build()); titleX += 26; }
         int y = layout.top(); boolean skip = false;
         for (Row row : rows) {
             if (row instanceof Section section) { y += row.build(this, y); skip = collapsed.contains(section.title); }
             else if (!skip) y += row.build(this, y);
         }
         contentHeight = y - layout.top();
+        // Header: title on the left, [应用] [开始/停止] on the right, live status on the line below.
         boolean inputs = rows.stream().anyMatch(r -> r instanceof Input);
         boolean submit = inputs || customSubmit;
-        int count = 1 + (submit ? 1 : 0) + (toggle != null ? 1 : 0), index = 0;
-        if (submit) applyButton = addRenderableWidget(Button.builder(Component.literal(applyText), b -> finishEdits())
-            .bounds(layout.footerButtonX(index++, count), layout.footer(), layout.footerButtonWidth(count), 20).build());
-        if (toggle != null) runButton = addRenderableWidget(Button.builder(Component.literal(active.getAsBoolean() ? stopText : startText), b -> {
-            if (active.getAsBoolean()) { toggle.run(); showNotice("已停止；输入草稿保留", 0xFFFF55); }
-            else if (!runUsesDraft || finishEdits()) { toggle.run(); if (active.getAsBoolean()) minecraft.gui.setScreen(null); else if (notice.isEmpty()) showNotice("未启动，请查看状态或游戏提示", 0xFF7777); }
-        }).bounds(layout.footerButtonX(index++, count), layout.footer(), layout.footerButtonWidth(count), 20).build());
-        addRenderableWidget(Button.builder(Component.literal(inputs ? "返回 · 保留草稿" : "返回"), b -> onClose())
-            .bounds(layout.footerButtonX(index, count), layout.footer(), layout.footerButtonWidth(count), 20).build());
+        int right = layout.left() + layout.width();
+        if (toggle != null) {
+            int w = Math.max(60, font.width(stopText.length() > startText.length() ? stopText : startText) + 16); right -= w;
+            runButton = addRenderableWidget(Button.builder(Component.literal(active.getAsBoolean() ? stopText : startText), b -> {
+                if (active.getAsBoolean()) { toggle.run(); showNotice("已停止；输入草稿保留", 0xFFFF55); }
+                else if (!runUsesDraft || finishEdits()) { toggle.run(); if (active.getAsBoolean()) minecraft.gui.setScreen(null); else if (notice.isEmpty()) showNotice("未启动，请查看状态或游戏提示", 0xFF7777); }
+            }).bounds(right, 8, w, 20).build()); right -= 4;
+        }
+        if (submit) {
+            int w = Math.max(60, font.width(applyText) + 16); right -= w;
+            applyButton = addRenderableWidget(Button.builder(Component.literal(applyText), b -> finishEdits()).bounds(right, 8, w, 20)
+                .tooltip(Tooltip.create(Component.literal("数值改完后点这里生效；离开页面只暂存草稿。开关即时保存。"))).build());
+            right -= 4;
+        }
+        String heading = KitUi.fit(font, title.getString(), Math.max(20, right - titleX - 4));
+        var titleWidget = new StringWidget(titleX, 14, font.width(heading), 10, Component.literal(heading).withColor(0xFFFFFF), font);
+        if (!description.isBlank()) titleWidget.setTooltip(Tooltip.create(Component.literal(description)));
+        addRenderableWidget(titleWidget);
+        if (!sidebarShown()) addRenderableWidget(Button.builder(Component.literal(inputs ? "返回 · 保留草稿" : "返回"), b -> onClose())
+            .bounds(layout.footerButtonX(0, 2), layout.footer(), layout.footerButtonWidth(2), 20).build());
+        if (!sidebarShown()) addRenderableWidget(Button.builder(Component.literal("紧急停止"), b -> KitClient.emergencyStop("界面紧急停止"))
+            .bounds(layout.footerButtonX(1, 2), layout.footer(), layout.footerButtonWidth(2), 20).build());
         layoutWidgets();
     }
     private void capture() {
@@ -237,7 +255,7 @@ public final class KitFormScreen extends KitHudScreen {
     }
     @Override protected boolean onEnterPressed() { return false; }
     @Override public boolean mouseScrolled(double x, double y, double sx, double sy) {
-        if (y >= layout.top() && y < layout.bottom()) { scroll -= (int)(sy * 28); layoutWidgets(); return true; }
+        if (!overSidebar(x) && y >= layout.top() && y < layout.bottom()) { scroll -= (int)(sy * 28); layoutWidgets(); return true; }
         return super.mouseScrolled(x, y, sx, sy);
     }
     private void layoutWidgets() {
@@ -257,15 +275,22 @@ public final class KitFormScreen extends KitHudScreen {
     }
     @Override public void extractRenderState(GuiGraphicsExtractor g, int x, int y, float delta) {
         super.extractRenderState(g, x, y, delta);
-        KitUi.text(g, font, KitUi.fit(font, title.getString(), layout.width() - 146), layout.left() + 66, 14, 0xFFFFFF);
-        KitUi.text(g, font, KitUi.fit(font, description, layout.width()), layout.left(), 36, 0xA8B8C8);
-        String message = !notice.isEmpty() ? notice : active.getAsBoolean() ? "运行中 · " + state.get() : footerHint;
-        KitUi.text(g, font, KitUi.fit(font, message, layout.width()), layout.left(), layout.footer() - 14, notice.isEmpty() ? 0xA8B8C8 : noticeColor);
+        boolean running = active.getAsBoolean();
+        String status = running ? "● 运行中 · " + state.get() : toggle != null ? "○ 未运行" + idleState() : Objects.toString(state.get(), "");
+        if (!status.isEmpty()) KitUi.text(g, font, KitUi.fit(font, status, layout.width()), layout.left(), 34, running ? 0x77EE99 : 0x8DA0B0);
+        String message = !notice.isEmpty() ? notice : footerHint;
+        int messageY = sidebarShown() ? layout.footer() + 6 : layout.footer() - 14;
+        KitUi.text(g, font, KitUi.fit(font, message, layout.width()), layout.left(), messageY, notice.isEmpty() ? 0xA8B8C8 : noticeColor);
         if (contentHeight > layout.height()) {
             int h = Math.max(10, layout.height() * layout.height() / contentHeight);
             int sy = layout.top() + (layout.height() - h) * scroll / Math.max(1, contentHeight - layout.height());
             g.fill(layout.left() + layout.width() + 4, sy, layout.left() + layout.width() + 7, sy + h, 0xFF93A8BC);
         }
+    }
+    /** Idle pages still show a status worth reading (e.g. "上次中断"), but not the generic idle word twice. */
+    private String idleState() {
+        String value = state.get();
+        return value == null || value.isBlank() || value.contains("空闲") || value.contains("未运行") ? "" : " · " + value;
     }
     private void place(AbstractWidget widget, int y, boolean setting) { widgets.add(new Placed(addRenderableWidget(widget), y, setting)); }
     private void text(String value, int y, int color) { text(value, y, color, layout.width()); }
@@ -277,9 +302,16 @@ public final class KitFormScreen extends KitHudScreen {
         private final String title;
         private Section(String title) { this.title = title; }
         @Override public int build(KitFormScreen screen, int y) {
-            place(Button.builder(Component.literal((collapsed.contains(title) ? "▸ " : "▾ ") + title), b -> {
+            boolean folded = collapsed.contains(title);
+            place(Button.builder(Component.literal((folded ? "▸ " : "▾ ") + title + (folded ? "（" + items() + "）" : "")), b -> {
                 if (!collapsed.add(title)) collapsed.remove(title); rebuildWidgets();
             }).bounds(layout.left(), y, layout.width(), 20).build(), y, false); return 28;
+        }
+        /** Rows up to the next section. */
+        private int items() {
+            int count = 0; boolean mine = false;
+            for (Row row : rows) { if (row == this) { mine = true; continue; } if (mine) { if (row instanceof Section) break; count++; } }
+            return count;
         }
     }
     private final class LiveNote implements Row {

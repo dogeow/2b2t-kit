@@ -16,14 +16,13 @@ final class SafetyPages {
 
 	static void guard(Screen parent, KitConfig c) {
 		var p = new KitFormScreen(parent, "自动保护", "这里配置保护策略；不主动启动采矿或巡航。").bind(c).id("guard");
-        p.action("独立防护："+(dev.twob2tkit.automation.AutomationBridge.guardArmed()?"开":"关"), "空闲也反击主动威胁；按移动键或空格立即关闭并交还控制。", () -> {dev.twob2tkit.automation.AutomationBridge.toggleGuard(mc());guard(parent,c);});
+        p.action("独立防护："+(dev.twob2tkit.automation.AutomationBridge.guardArmed()?"开":"关"), "空闲也反击主动威胁；按移动键或空格立即关闭并交还控制。\n托管会提前进食，受伤后等生命恢复到 9.5 心再继续。\n紧急停止会关闭它；换维度或离开当前区域 512 格后需重新开启。", () -> {dev.twob2tkit.automation.AutomationBridge.toggleGuard(mc());guard(parent,c);});
         if(dev.twob2tkit.combat.EmergencyExit.held(mc()))p.action("我已回来，解除安全离线锁", "生命恢复到 9 颗心后手动确认；不会自动启动任务。", () -> {dev.twob2tkit.combat.EmergencyExit.acknowledge(mc());guard(parent,c);});
-        p.note("托管会提前进食；受伤后等生命恢复至 9.5 心再继续工作。");
-        p.note("紧急停止会关闭独立防护。换维度或离开当前区域 512 格后需要重新开启。");
 		p.bool("遇袭协调 Meteor 保护", "沿用当前自动保护逻辑。", () -> c.autoProtectOnHit, v -> c.autoProtectOnHit = v);
 		p.bool("恶魂防护", "独立恶魂防护；具体射程和反弹设置见自动打猪人。", () -> c.ghastGuardEnabled, v -> c.ghastGuardEnabled = v);
-		p.action("挂机离线条件", "血量、玩家警戒等当前设置。", () -> TravelPages.cruiseOptions(p, c));
-		p.action("挖矿反击条件", "主动威胁、盾牌和苦力怕保护。", () -> MiningPages.miningSafety(p, c));
+		p.action("玩家白名单", "可信玩家不触发警戒与反击。", () -> UiFeature.TRUSTED.open(p));
+		p.action("挂机离线条件", "在巡航页「挂机保护」：血量、玩家警戒等。", () -> UiFeature.CRUISE.open(p));
+		p.action("挖矿反击条件", "主动威胁、盾牌和苦力怕保护。", () -> UiFeature.MINING_COMMON.open(p));
 		open(parent, p);
 	}
 
@@ -49,6 +48,7 @@ final class SafetyPages {
 				() -> toggleSurroundBlock(config, choice.id())));
 		}
 		panel.chips("多选围箱方块。至少留一种。", blocks);
+		panel.advanced();
 		panel.slider("每拍块数", "每 tick 最多放几块。", 1, 4, () -> config.surroundPlacesPerTick, v -> config.surroundPlacesPerTick = v);
 		panel.bool("围好后继续补洞", "默认关。", () -> config.surroundKeepRepair, v -> config.surroundKeepRepair = v);
 		open(parent, panel);

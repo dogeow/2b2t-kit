@@ -159,7 +159,7 @@ public final class AreaSetupScreen extends KitHudScreen {
         }
     }
     @Override public boolean mouseScrolled(double x, double y, double sx, double sy) {
-        if (y >= top && y < bottom) { scroll -= (int)(sy * 24); layoutContent(); return true; }
+        if (!overSidebar(x) && y >= top && y < bottom) { scroll -= (int)(sy * 24); layoutContent(); return true; }
         return super.mouseScrolled(x, y, sx, sy);
     }
     @Override public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
@@ -235,10 +235,10 @@ public final class AreaSetupScreen extends KitHudScreen {
     }
     @Override public void extractRenderState(GuiGraphicsExtractor g, int x, int y, float delta) {
         super.extractRenderState(g, x, y, delta);
-        KitUi.centered(g, this.font, "区域挖 · 工程", this.width / 2, 14, 0xFFFFFF);
+        KitUi.centered(g, this.font, "区域挖 · 工程", paneCenter(), 14, 0xFFFFFF);
         String status = a.getValue().equals(BorerAreaMarks.format(config.borerAreaASet, config.borerAreaAx, config.borerAreaAy, config.borerAreaAz))
             && b.getValue().equals(BorerAreaMarks.format(config.borerAreaBSet, config.borerAreaBx, config.borerAreaBy, config.borerAreaBz))
             && config.borerAreaASet && config.borerAreaBSet ? BorerAreaMarks.sizeLabel(config) : AreaDrafts.status(a.getValue(), b.getValue());
-        KitUi.centered(g, this.font, KitUi.fit(this.font, notice.isEmpty() ? status : notice, panelWidth()), this.width / 2, bottom + 3, notice.isEmpty() ? 0xBBBBBB : noticeColor);
+        KitUi.centered(g, this.font, KitUi.fit(this.font, notice.isEmpty() ? status : notice, panelWidth()), paneCenter(), bottom + 3, notice.isEmpty() ? 0xBBBBBB : noticeColor);
     }
 }

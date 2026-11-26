@@ -62,7 +62,7 @@ final class KitKeyBindsScreen extends KitHudScreen {
 	/** 列表区内滚轮滚动绑键行。 */
 	@Override
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-		if (mouseY >= listTop && mouseY < listBottom && listScrollMax > 0) {
+		if (!overSidebar(mouseX) && mouseY >= listTop && mouseY < listBottom && listScrollMax > 0) {
 			listScroll = Math.max(0, Math.min(listScrollMax, listScroll - (int)Math.round(scrollY * ROW_H)));
 			rebuildWidgets();
 			return true;
@@ -76,7 +76,7 @@ final class KitKeyBindsScreen extends KitHudScreen {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
 		var layout = UiPageLayout.of(width, height);
 		int left = layout.left();
-		int center = this.width / 2;
+		int center = paneCenter();
 		KitKeys.BindInfo[] infos = KitKeys.allInfos();
 		KitUi.centered(graphics, this.font, "按键绑定", center, 12, 0xFFFFFF);
 		KitUi.centered(graphics, this.font, KitUi.fit(font, "点击按键后按新键；捕获时 Esc 解绑。同步到原版控制选项。", layout.width()), center, 34, 0xA0A0A0);

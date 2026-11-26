@@ -57,7 +57,7 @@ public final class AreaProjectsScreen extends KitHudScreen {
 		list.populate();
 
 		addRenderableWidget(Button.builder(Component.literal("返回"), button -> onClose())
-			.bounds(this.width / 2 - 75, contentBottom(), 150, 20).build());
+			.bounds(paneCenter() - 75, contentBottom(), 150, 20).build());
 		setInitialFocus(projectName);
 	}
 
@@ -65,7 +65,7 @@ public final class AreaProjectsScreen extends KitHudScreen {
 	/** 画当前区域摘要。 */
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		int center = this.width / 2;
+		int center = paneCenter();
 		int left = panelLeft(360);
 		KitUi.centered(graphics, this.font, "区域挖工程 · 共 " + config.areaProjects.size() + " 个", center, headerY(10), 0xFFFFFF);
 		String current = BorerAreaMarks.sizeLabel(config);

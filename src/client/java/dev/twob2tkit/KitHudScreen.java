@@ -32,9 +32,65 @@ public abstract class KitHudScreen extends Screen {
 	protected String notice = "";
 	protected int noticeColor = 0xA0A0A0;
 
+	/** Navigation entry this page belongs to: the feature being opened, else inherited from the screen that opened it. */
+	private final UiFeature feature;
+	private UiSidebar sidebar;
+
 	protected KitHudScreen(Component title, Screen parent) {
 		super(title);
 		this.parent = parent;
+		UiFeature opening = UiFeature.opening();
+		if (opening == null && net.minecraft.client.Minecraft.getInstance().gui.screen() instanceof KitHudScreen from) opening = from.feature;
+		this.feature = opening;
+	}
+
+	/** Feature highlighted in the navigation; the overview and dialogs return null. */
+	protected UiFeature navFeature() {
+		return feature;
+	}
+
+	/** Pages show the navigation column; dialogs turn it off. */
+	protected boolean sidebar() {
+		return true;
+	}
+
+	/** Navigation is shown when the page wants it and the screen is wide enough. */
+	protected final boolean sidebarShown() {
+		return sidebar() && UiPageLayout.sidebarWidth(width) > 0;
+	}
+
+	/** True over the navigation column, so page scroll handlers leave the wheel to it. */
+	protected final boolean overSidebar(double x) {
+		return sidebarShown() && x < UiPageLayout.SIDEBAR_X + UiPageLayout.sidebarWidth(width) + 4;
+	}
+
+	/** Horizontal centre of the page area (right of the navigation when it is shown). */
+	protected int paneCenter() {
+		return sidebar() ? UiPageLayout.of(width, height).center() : width / 2;
+	}
+
+	/**
+	 * Screen calls this right after every {@code init()} (first open and resize), so the navigation is added
+	 * once per rebuild without each page having to remember it.
+	 */
+	@Override
+	protected void setInitialFocus() {
+		sidebar = null;
+		if (sidebarShown() && KitClient.config() != null) addSidebar();
+		super.setInitialFocus();
+	}
+
+	private void addSidebar() {
+		var config = KitClient.config();
+		int x = UiPageLayout.SIDEBAR_X, w = UiPageLayout.sidebarWidth(width), footer = UiPageLayout.of(width, height).footer();
+		var search = addRenderableWidget(KitUi.field(font, x, 8, w, "搜索功能", UiSidebar.query(), 80));
+		search.setHint(Component.literal("搜索功能…"));
+		sidebar = addRenderableWidget(new UiSidebar(font, config, navFeature(), this instanceof KitWorkspaceScreen, x, 32, w, Math.max(20, footer - 36)));
+		search.setResponder(value -> { if (sidebar != null) sidebar.search(value); });
+		addRenderableWidget(Button.builder(Component.literal("紧急停止全部"), b -> {
+			KitClient.emergencyStop("工具箱停止全部");
+			showNotice("任务与独立防护已停止", 0xFFFF55);
+		}).bounds(x, footer, w, 20).tooltip(Tooltip.create(Component.literal("停止所有自动任务与独立防护"))).build());
 	}
 
 	/** 不暂停游戏。 */
@@ -117,7 +173,7 @@ public abstract class KitHudScreen extends Screen {
 	/** 加水平居中文字控件。 */
 	protected StringWidget centeredLabel(String value, int y, int color) {
 		int textWidth = Math.max(1, this.font.width(value));
-		return label(this.width / 2 - textWidth / 2, y, textWidth, value, color);
+		return label(paneCenter() - textWidth / 2, y, textWidth, value, color);
 	}
 
 	/** A new explicit navigation/search action dismisses the previous contextual hint. */
@@ -138,7 +194,7 @@ public abstract class KitHudScreen extends Screen {
 
 	/** 给定面板宽时的左边缘（水平居中）。 */
 	protected int panelLeft(int panelWidth) {
-		return this.width / 2 - panelWidth / 2;
+		return paneCenter() - panelWidth / 2;
 	}
 
 	/** 内容区底边（底栏按钮之上）。 */

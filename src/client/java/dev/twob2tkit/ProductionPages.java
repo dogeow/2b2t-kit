@@ -24,10 +24,10 @@ final class ProductionPages {
 		p.status(()->maker==null?"模块未就绪":maker.status());
 		p.runLabels("开始制作","停止制作");
 		p.slider("制作数量","0 为持续循环；缺料或异常时停止。",0,100000,()->c.concreteLimit,v->c.concreteLimit=v);
+		p.note("自动补粉末、换镐，只挖锁定位置的同色混凝土。打开界面暂停，移动离开、缺料、水失效或工具不足会停止。");
+		p.advanced();
 		p.slider("放置间隔","游戏刻；20 刻约为一秒。",2,40,()->c.concreteDelayTicks,v->c.concreteDelayTicks=v);
 		p.slider("保留工具耐久 %","低于该百分比换另一把可用镐；没有可用镐就停止。",1,90,()->c.concreteToolReservePercent,v->c.concreteToolReservePercent=v);
-		p.note("自动补充背包里的同色粉末并切换镐。只挖锁定位置的同色混凝土，旁边的漏斗、箱子和水保持原样。");
-		p.note("打开界面会暂停；关闭后继续。移动离开、缺料、水失效或工具不足会停止。紧急停止键也可结束。");
 		open(parent,p);
 	}
 
@@ -38,11 +38,9 @@ final class ProductionPages {
 		p.status(()->job==null?"模块未就绪":job.status());
 		p.cycle("走位方式","自动走位使用 Meteor Flight 绕过障碍；定点打印由你自己移动角色。",new String[]{"自动走位建造","定点打印（自己走位）"},()->c.projectionAutoMove?0:1,v->{c.projectionAutoMove=v==0;c.save();});
 		p.liveLine(()->job==null?"":job.progress());
-		p.liveLine(()->job==null?"":"状态："+job.status());
 		p.liveLine(()->job==null?"":job.missing());
 		p.active(()->job!=null&&job.isActive(),()->{KitClient.toggleProjectionBuild(mc());if(job!=null&&!job.isActive())p.showNotice(job.status(),0xFFFF77);});
 		p.runLabels("开始建造","停止建造").footerHint("打开界面暂停 · 关闭后继续 · 可随时紧急停止");
-		p.note("自动模式：检查图纸 → 找可走路线 → 停稳打印 → 核对服务器结果。缺料、有旧方块挡住或找不到路线时，会显示原因并停止。");
 		p.action("操作说明","如何加载投影、开始和停止。",()->builderHelp(p,c));
 		p.action("材料清单与补货","查看需要准备的材料。",()->UiFeature.CHECKLIST.open(p));
 		p.action("自动补齐材料并建造", "按当前投影缺料自动取料、采集、制作，再继续施工。", () -> dev.twob2tkit.material.MaterialJobPages.projection(p, c));
@@ -51,6 +49,7 @@ final class ProductionPages {
 
 	static void builderHelp(Screen parent,KitConfig c){
 		var p=new KitFormScreen(parent,"投影建造 · 操作说明", "从准备到停止").bind(c).id("builder-help");
+		p.note("自动模式：检查图纸 → 找可走路线 → 停稳打印 → 核对服务器结果。缺料、有旧方块挡住或找不到路线时，会显示原因并停止。");
 		p.note("1. 用 M 打开 Litematica，加载图纸并启用一份放置；确认位置、朝向和渲染层。锁定放置可避免误移动图纸。");
 		p.note("2. 把材料放进背包，走到投影附近。打印器需开启自动朝向，关闭悬空打印及 Meteor Air Place。");
 		p.note("3. U → 生产 → 投影建造，选择自动走位或定点打印，再点开始建造。");
@@ -81,8 +80,6 @@ final class ProductionPages {
 		panel.bool("繁殖成体", "喂可以繁殖的成年动物。", () -> config.feederBreedAdults, v -> config.feederBreedAdults = v);
 		panel.bool("催熟幼体", "喂幼体加速长大。", () -> config.feederGrowBabies, v -> config.feederGrowBabies = v);
 		panel.bool("走近再喂", "范围内的动物走过去喂。", () -> config.feederWalk, v -> config.feederWalk = v);
-		panel.bool("喂完收起饲料", "避免 Meteor 自动攻击把动物打死。", () -> config.feederHideFood, v -> config.feederHideFood = v);
-		panel.slider("搜寻范围", "格。", 3.0, 24.0, 1.0, () -> config.feederRange, v -> config.feederRange = v);
 		List<KitFormScreen.Chip> types = new ArrayList<>();
 		for (String id : KitConfig.FEEDER_TYPE_IDS) {
 			String label = KitConfig.feederTypeLabel(id);
@@ -97,6 +94,9 @@ final class ProductionPages {
 		panel.section("饲喂优先顺序");
 		panel.order("按顺序先喂有饲料的种类。", config::feederTypeOrder, KitConfig::feederTypeLabel,
 			(id, delta) -> { config.moveFeederType(id, delta); config.save(); });
+		panel.advanced();
+		panel.bool("喂完收起饲料", "避免 Meteor 自动攻击把动物打死。", () -> config.feederHideFood, v -> config.feederHideFood = v);
+		panel.slider("搜寻范围", "格。", 3.0, 24.0, 1.0, () -> config.feederRange, v -> config.feederRange = v);
 		open(parent, panel);
 	}
 
@@ -109,8 +109,7 @@ final class ProductionPages {
 			() -> planter != null && planter.isActive(),
 			() -> KitClient.togglePlanter(mc()));
 		panel.bool("走近再种", "只走到本次维护名单中的既有耕地，不向周围普通地块扩种。", () -> config.planterWalk, v -> config.planterWalk = v);
-		panel.note("日常种田不翻耕草地或泥土；新开田必须通过独立入口明确确认范围。");
-		panel.note("甘蔗、竹子等普通地面种植不属于日常耕地维护，需独立确认种植范围。");
+		panel.note("日常种田不翻耕草地或泥土，甘蔗、竹子等也不在维护范围；新开田或种这些需另外明确确认范围。");
 		panel.bool("自动收成", "收成熟作物再种。没拿种子时也会先收田里已熟的。开了 Meteor Nuker 就关掉。", () -> config.planterHarvest, v -> config.planterHarvest = v);
 		panel.bool("捡掉落物", "收完或种完一圈后，把附近的小麦、种子等捡进背包。", () -> config.planterPickup, v -> config.planterPickup = v);
 		panel.slider("搜寻范围", "格。", 3.0, 24.0, 1.0, () -> config.planterRange, v -> config.planterRange = v);
@@ -128,8 +127,9 @@ final class ProductionPages {
 		panel.bool("走近再砍", "够得着就落地砍，够不着才飞。", () -> config.chopperWalk, v -> config.chopperWalk = v);
 		panel.bool("连树叶一起挖", "默认只砍原木。勾了会换剪刀。", () -> config.chopperLeaves, v -> config.chopperLeaves = v);
 		panel.bool("砍完补种树苗", "在原位置补对应树苗。", () -> config.chopperReplant, v -> config.chopperReplant = v);
-		panel.bool("必须连着树叶", "木头房子不会动。", () -> config.chopperRequireLeaves, v -> config.chopperRequireLeaves = v);
 		panel.bool("砍完去捡木头", "落到掉落物上再补种。", () -> config.chopperPickup, v -> config.chopperPickup = v);
+		panel.advanced();
+		panel.bool("必须连着树叶", "木头房子不会动。", () -> config.chopperRequireLeaves, v -> config.chopperRequireLeaves = v);
 		panel.slider("搜寻范围", "格。", 4.0, 32.0, 1.0, () -> config.chopperRange, v -> config.chopperRange = v);
 		open(parent, panel);
 	}
@@ -162,12 +162,13 @@ final class ProductionPages {
 		panel.bool("近战自己砍", "关掉则完全交给 Meteor KillAura。", () -> config.brawlerMeleeEnabled, v -> config.brawlerMeleeEnabled = v);
 		panel.bool("反弹恶魂火球", "关掉则交给 Meteor Arrow Dodge 躲。两边只能开一个。", () -> config.brawlerDeflectFireball, v -> config.brawlerDeflectFireball = v);
 		panel.bool("飞行拉扯自己躲", "开了 Meteor Arrow Dodge 就关掉。", () -> config.brawlerStrafeDodge, v -> config.brawlerStrafeDodge = v);
+		panel.slider("最低血量", "掉到这就停手。0=不停。", 0.0, 20.0, 0.5, () -> config.brawlerMinHealth, v -> config.brawlerMinHealth = v);
+		panel.advanced();
 		panel.slider("近战距离", "原版 3。", 1.0, 6.0, 0.1, () -> config.brawlerMeleeReach, v -> config.brawlerMeleeReach = v);
 		panel.slider("火球反弹距离", "要进到这么近才打得回去。", 1.0, 6.0, 0.1, () -> config.brawlerFireballReach, v -> config.brawlerFireballReach = v);
 		panel.slider("恶魂弓射程", "拉弓射恶魂。", 8.0, 96.0, 1.0, () -> config.brawlerGhastRange, v -> config.brawlerGhastRange = v);
 		panel.slider("弩猪弓射程", "射拿弩的猪人。", 8.0, 96.0, 1.0, () -> config.brawlerCrossbowRange, v -> config.brawlerCrossbowRange = v);
 		panel.slider("拉弓 tick", "满弓 20。", 5, 60, () -> config.brawlerBowChargeTicks, v -> config.brawlerBowChargeTicks = v);
-		panel.slider("最低血量", "掉到这就停手。0=不停。", 0.0, 20.0, 0.5, () -> config.brawlerMinHealth, v -> config.brawlerMinHealth = v);
 		panel.slider("悬停高度", "飞行时至少高出猪人这么多。0=不管。", 0.0, 16.0, 0.5, () -> config.brawlerHoverHeight, v -> config.brawlerHoverHeight = v);
 		panel.slider("跟踪角速度", "每 tick 最多转几度。越小越稳，默认 7。", 2.0, 30.0, 0.5, () -> config.brawlerLookDegreesPerTick, v -> config.brawlerLookDegreesPerTick = v);
 		open(parent, panel);

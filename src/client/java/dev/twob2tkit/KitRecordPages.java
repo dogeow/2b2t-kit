@@ -21,7 +21,7 @@ public final class KitRecordPages {
     private static void requireName(String name) { if (name == null || name.isBlank()) throw new IllegalArgumentException("名称不能为空"); }
 
 	public static void places(Screen parent, KitConfig c) {
-		var list = new KitCollectionScreen<KitConfig.SavedPlace>(parent, c, "places", "地点收藏", "点名称查看详情；编辑不会改变当前目标",
+		var list = new KitCollectionScreen<KitConfig.SavedPlace>(parent, c, "places", "地点", "点名称查看详情；编辑不会改变当前目标",
 			() -> c.savedPlaces, p -> (p.home ? "家 · " : "") + p.name + "  " + KitConfig.dimensionLabel(p.dimension), KitRecordPages::placeSummary,
             p -> p.name + " " + placeSummary(p)).key(p -> p.name);
         dimensionFilters(list, p -> p.dimension);
@@ -42,6 +42,7 @@ public final class KitRecordPages {
         }, p -> sameDimension(p.dimension));
         list.action("删除", "删除收藏前确认。", p -> confirm(list, "删除地点「" + p.name + "」", "只删除这条收藏，不改变当前巡航任务。", () -> { c.removePlace(p.name); list.refresh(); }), p -> true);
         list.footer("停止指引", () -> { if (KitClient.structureGuide() != null) KitClient.structureGuide().stop(); list.message("已停止指引"); });
+        list.footer("最近死亡点", () -> UiFeature.DEATH.open(list));
         mc().gui.setScreen(list);
     }
     private static String placeSummary(KitConfig.SavedPlace p) { return "X " + KitUi.formatNumber(p.x) + "  Y " + KitUi.formatNumber(p.cruiseY) + "  Z " + KitUi.formatNumber(p.z) + "\n" + KitConfig.dimensionLabel(p.dimension); }

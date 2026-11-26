@@ -22,8 +22,7 @@ public final class MaterialJobPages {
         var page = new KitFormScreen(parent, projection ? "自动补齐材料并建造" : "材料任务",
             projection ? "按当前投影核对缺料，优先取库存，再采集、制作并施工。" : "选择目标物品与数量，优先使用库存，再按可用配方采集和制作。")
             .bind(config).id(projection ? "material-job-projection" : "material-job-item")
-            .lockWhen(MaterialJobs::running).status(MaterialJobs::status)
-            .footerHint("本地自动执行 · 遇到缺能力或危险时停止并显示原因");
+            .lockWhen(MaterialJobs::running).status(MaterialJobs::status);
         if (projection) {
             page.liveNote(() -> dev.twob2tkit.builder.LitematicaAccess.describe());
             page.note("请先在 Litematica 中选好并锁定一份投影。使用真实放置核对进度；原有方块不会当作可随意拆除的障碍。");
@@ -33,20 +32,20 @@ public final class MaterialJobPages {
                 if (MaterialJobs.running()) { page.message("请先取消当前任务，再修改目标", 0xFFFF77); return; }
                 select(page, config, () -> form(parent, config, false));
             });
-            page.number("背包目标数量", "以任务结束时背包实际数量为准；已有物品计入目标。", 1, 2304, true,
+            page.number("背包目标数量", "以任务结束时背包实际数量为准；已有物品计入目标。后台计算原料和制作步骤，不支持的物品会列出原因。", 1, 2304, true,
                 () -> config.materialJobCount, value -> config.materialJobCount = (int)value);
-            page.note("例如：选择白色混凝土 800。后台会计算原料和制作步骤；现有能力不支持的物品会明确列出原因。");
         }
-        page.action("本地决策模型", "设置常驻模型与按需游戏画面。", () -> LocalDecisionPages.open(page,config));
         page.section("当前任务");
-        page.liveNote(MaterialJobs::status);
         page.action("暂停任务", "先安全收尾，再暂停。不会重新连接服务器。", () -> perform(page, () -> MaterialJobs.pause(mc())));
         page.action("继续已暂停任务", "关闭界面后重新检查世界、背包和安全状态；不会解除低血量锁。", () -> perform(page, () -> MaterialJobs.resume(mc())));
         page.action("取消任务", "取消后保留已取得的材料，不自动重新开始。", () -> perform(page, () -> MaterialJobs.cancel(mc())));
+        page.advanced("记录与模型");
         page.action("复制任务记录路径", "复制当前任务的计划、进度与日志所在路径。", () -> {
             if (MaterialJobs.directory() == null) { page.message("尚无材料任务记录", 0xFFFF77); return; }
             mc().keyboardHandler.setClipboard(MaterialJobs.directory().toString()); page.message("已复制任务记录路径", 0x77DDCC);
         });
+        if (!projection) page.action("技能库", "已学技能、候选技能与验证记录。", () -> dev.twob2tkit.UiFeature.SKILLS.open(page));
+        page.action("本地决策模型", "设置常驻模型与按需游戏画面。", () -> LocalDecisionPages.open(page,config));
         page.submit(projection ? "自动补齐并建造" : "开始获取材料", () -> perform(page, () -> {
             if (projection) MaterialJobs.startProjection(mc(), config);
             else { validateItem(config.materialJobItem); MaterialJobs.startItem(mc(), config, config.materialJobItem, config.materialJobCount); }

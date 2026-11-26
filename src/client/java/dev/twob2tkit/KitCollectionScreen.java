@@ -73,7 +73,7 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
         }
         layout = UiPageLayout.of(width, height);
         addRenderableWidget(Button.builder(Component.literal("‹ 返回"), b -> onClose()).bounds(layout.left(), 8, 58, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("紧急停止"), b -> KitClient.emergencyStop("列表页紧急停止"))
+        if (!sidebarShown()) addRenderableWidget(Button.builder(Component.literal("紧急停止"), b -> KitClient.emergencyStop("列表页紧急停止"))
             .bounds(layout.left() + layout.width() - 76, 8, 76, 20).build());
         int searchWidth = layout.width() - (add == null ? 0 : 100);
         var bar = dev.twob2tkit.ui.components.SearchBar.create(font, layout.left(), 36, searchWidth,
@@ -96,13 +96,15 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
         }
         list = addRenderableWidget(new Items(minecraft, layout.width(), Math.max(24,layout.collectionHeight(filter != null)-(liveDescription==null?0:14)), layout.collectionTop(filter != null)));
         list.setX(layout.left()); list.populate(); list.setScrollAmount(savedScroll);
-        int count = footerActions.size() + 1;
+        // With the navigation column the page has no footer "返回": Esc, "‹ 返回" and the column cover it.
+        boolean back = !sidebarShown();
+        int count = footerActions.size() + (back ? 1 : 0);
         for (int i = 0; i < footerActions.size(); i++) {
             Runnable action = footerActions.get(i);
             addRenderableWidget(Button.builder(Component.literal(footerLabels.get(i)), b -> action.run())
                 .bounds(layout.footerButtonX(i, count), layout.footer(), layout.footerButtonWidth(count), 20).build());
         }
-        addRenderableWidget(Button.builder(Component.literal("返回"), b -> onClose())
+        if (back) addRenderableWidget(Button.builder(Component.literal("返回"), b -> onClose())
             .bounds(layout.footerButtonX(count - 1, count), layout.footer(), layout.footerButtonWidth(count), 20).build());
         setInitialFocus(search);
     }
@@ -117,7 +119,7 @@ public final class KitCollectionScreen<T> extends KitHudScreen {
         KitUi.text(g, font, KitUi.fit(font, heading, layout.width() - 146), layout.left() + 66, 14, notice.isEmpty() ? 0xFFFFFF : noticeColor);
         if(liveDescription!=null && list.getY()+list.getHeight()+3<=layout.footer()-10)
             KitUi.text(g,font,KitUi.fit(font,liveDescription.get(),layout.width()),layout.left(),layout.footer()-12,0xAABBCC);
-        if (list.children().isEmpty()) KitUi.centered(g, font, "暂无匹配记录，可调整筛选或新增", width / 2, list.getY() + 8, 0xAABBCC);
+        if (list.children().isEmpty()) KitUi.centered(g, font, "暂无匹配记录，可调整筛选或新增", paneCenter(), list.getY() + 8, 0xAABBCC);
     }
     private final class Items extends ContainerObjectSelectionList<Items.Entry> {
         Items(Minecraft client, int w, int h, int y) { super(client, w, h, y, actualColumn!=null?54:rowSummary == null ? 24 : 40); centerListVertically = false; }

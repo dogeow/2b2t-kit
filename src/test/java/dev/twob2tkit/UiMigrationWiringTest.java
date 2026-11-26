@@ -123,9 +123,11 @@ class UiMigrationWiringTest {
         assertTrue(calls(method("KitRecordPages", "placeEditor")).contains("recordDraft"));
         assertTrue(calls(method("structure/NearbyStructuresScreen", "openUnifiedSearch")).contains("recordDraft"));
     }
-    @Test void workspaceUsesCompactGridAndActivePagesUseCappedFooterButtons() throws Exception {
-        var grid = calls(method("KitWorkspaceScreen", "rebuildEntries"));
-        assertTrue(grid.containsAll(List.of("of", "x", "y", "openWidth", "favoriteX", "contentHeight")));
+    @Test void overviewListsRunningFavoritesAndRecentAndPagesUseCappedFooterButtons() throws Exception {
+        assertTrue(calls(method("KitWorkspaceScreen", "init")).containsAll(List.of("running", "resolve")));
+        assertTrue(calls(method("KitHudScreen", "setInitialFocus")).contains("addSidebar"), "Every page rebuild adds the navigation column");
+        assertTrue(node("KitHudScreen").methods.stream()
+            .anyMatch(m -> m.name.startsWith("lambda$addSidebar$") && calls(m).contains("emergencyStop")), "Navigation keeps the stop-all button");
         for (String type : List.of("KitWorkspaceScreen", "KitFormScreen", "KitCollectionScreen", "KitConfirmScreen", "KitKeyBindsScreen", "KitRecipePages$Detail", "borer/AreaSetupScreen")) {
             var init = calls(method(type, "init"));
             assertTrue(init.contains("footerButtonX"), type); assertTrue(init.contains("footerButtonWidth"), type);

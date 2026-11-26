@@ -65,7 +65,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 	/** 画维度、数量与说明。 */
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		int center = this.width / 2;
+		int center = paneCenter();
 		int top = contentTop();
 		String dim = switch (dimension) {
 			case NETHER -> "下界";
@@ -91,6 +91,7 @@ public final class NearbyStructuresScreen extends KitHudScreen {
 	@Override
 	/** 结果区滚轮翻页。 */
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+		if (overSidebar(mouseX)) return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
 		if (scrollY > 0) page = Math.max(0, page - 1);
 		else if (scrollY < 0) page++;
 		init();

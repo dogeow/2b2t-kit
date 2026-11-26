@@ -68,7 +68,7 @@ public final class StructureNoteScreen extends KitHudScreen {
 	/** 画标题与说明。 */
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		int center = this.width / 2;
+		int center = paneCenter();
 		KitUi.centered(graphics, this.font, "备注 · " + hit.label() + "  " + hit.x() + " " + hit.z(), center, headerY(10), 0xFFFFFF);
 		KitUi.centered(graphics, this.font, "保存后悬停列表里的「备注*」可以看到内容", center, headerY(38), 0xA0A0A0);
 	}

@@ -53,9 +53,12 @@ public final class KitConfig {
 	public boolean hasTarget;
 	/** UI-only drafts never authorize movement/mining. Keys include server/dimension and stable page id. */
 	public java.util.Map<String, UiDraft> uiDrafts = new java.util.LinkedHashMap<>();
+	/** 旧版分类标签；新版打开工具箱总进入总览，保留字段以便读取旧配置。 */
 	public String workspaceCategory = "HOME";
 	public java.util.List<String> recentUiFeatures = new java.util.ArrayList<>();
 	public java.util.Set<String> favoriteUiFeatures = new java.util.LinkedHashSet<>();
+	/** 工具箱左侧导航中折叠的分组（分类名或 FAVORITES）。 */
+	public java.util.Set<String> collapsedNavGroups = new java.util.LinkedHashSet<>();
 	/** Kit 大地图图层中用户选择隐藏的图层名（KitMapLayers.Layer），每次打开地图沿用。 */
 	public java.util.Set<String> hiddenMapLayers = new java.util.LinkedHashSet<>();
 	/** Deterministic material worker. Empty paths use the installed per-profile worker and local runtime. */

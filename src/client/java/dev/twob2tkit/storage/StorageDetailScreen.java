@@ -40,7 +40,7 @@ public final class StorageDetailScreen extends KitHudScreen {
 		int rows = gridRows();
 		pageSize = COLS * rows;
 		page = Math.max(0, Math.min(page, maxPage()));
-		gridLeft = this.width / 2 - (COLS * CELL) / 2;
+		gridLeft = paneCenter() - (COLS * CELL) / 2;
 
 		int start = page * pageSize;
 		for (int slot = 0; slot < pageSize; slot++) {
@@ -61,7 +61,7 @@ public final class StorageDetailScreen extends KitHudScreen {
 		}
 
 		int footerY = footerButtonY();
-		int footerLeft = this.width / 2 - 120;
+		int footerLeft = paneCenter() - 120;
 		Button previous = addRenderableWidget(Button.builder(Component.literal("上一页"), button -> changePage(-1))
 			.bounds(footerLeft, footerY, 76, 20).build());
 		previous.active = page > 0;
@@ -75,7 +75,7 @@ public final class StorageDetailScreen extends KitHudScreen {
 	@Override
 	/** 画标题、页码与物品格。 */
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
-		int center = this.width / 2;
+		int center = paneCenter();
 		KitUi.centered(graphics, this.font, StorageLabels.headline(snapshot), center, headerY(12), 0xFFFFFF);
 		KitUi.centered(graphics, this.font,
 			StorageLabels.dimensionLabel(snapshot.dimension) + "  X " + snapshot.x + "  Y " + snapshot.y + "  Z " + snapshot.z,

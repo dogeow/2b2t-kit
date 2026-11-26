@@ -15,9 +15,9 @@ class PlanterClickGuiPolicyTest {
         var planter=method(pages,"planter");var strings=strings(planter);
         assertFalse(strings.contains("没有耕地时先锄"));assertFalse(strings.contains("甘蔗仙人掌往上叠"));
         assertEquals(3,Collections.frequency(calls(planter),"bool"));
-        assertEquals(2,Collections.frequency(calls(planter),"note"));
-        assertTrue(strings.contains("日常种田不翻耕草地或泥土；新开田必须通过独立入口明确确认范围。"));
-        assertTrue(strings.contains("甘蔗、竹子等普通地面种植不属于日常耕地维护，需独立确认种植范围。"));
+        // The tilling and ground-crop boundaries stay visible on the page, not only in a tooltip.
+        assertEquals(1,Collections.frequency(calls(planter),"note"));
+        assertTrue(strings.contains("日常种田不翻耕草地或泥土，甘蔗、竹子等也不在维护范围；新开田或种这些需另外明确确认范围。"));
     }
     private static ClassNode code(String name)throws Exception {
         var result=new ClassNode();try(var in=PlanterClickGuiPolicyTest.class.getResourceAsStream("/dev/twob2tkit/"+name+".class")) {

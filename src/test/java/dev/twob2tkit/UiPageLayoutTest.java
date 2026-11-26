@@ -62,4 +62,16 @@ class UiPageLayoutTest {
         assertEquals(150, p.footerButtonWidth(2)); assertEquals(150, p.footerButtonWidth(1));
         assertEquals(p.footer() - 6, p.collectionTop(true) + p.collectionHeight(true));
     }
+    @Test void wideScreensReserveTheNavigationColumnAndNarrowOnesHideIt() {
+        assertEquals(0, UiPageLayout.sidebarWidth(429));
+        for (int w : new int[]{430, 600, 960, 1280}) {
+            int sidebar = UiPageLayout.sidebarWidth(w); var p = UiPageLayout.of(w, 360);
+            assertTrue(sidebar >= 110 && sidebar <= 150);
+            assertTrue(p.left() >= UiPageLayout.SIDEBAR_X + sidebar + 8, "page starts right of the navigation at " + w);
+            assertTrue(p.left() + p.width() <= w - 12); assertTrue(p.width() >= 280);
+        }
+        assertEquals(UiPageLayout.full(320, 240), UiPageLayout.of(320, 240));
+        var dialog = UiPageLayout.full(960, 540);
+        assertEquals((960 - dialog.width()) / 2, dialog.left());
+    }
 }
