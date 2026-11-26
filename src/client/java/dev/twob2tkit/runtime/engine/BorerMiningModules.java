@@ -21,6 +21,12 @@ public final class BorerMiningModules {
 		try { return clicks.getAsBoolean(); }
 		finally { module.disable(); }
 	}
+	/** Give the player's own SpeedMine back while every break is registered by us; pause it again otherwise. */
+	void holdSpeedMine(boolean held) {
+		Module module=pausedSpeedMine;
+		if (module==null || module.active()==held) return;
+		if (held) module.enable(); else module.disable();
+	}
 	boolean instantRebreakRequested() { return repeatRequested; }
 	public BorerMiningModules() { this(BorerMiningModules::find); }
 	BorerMiningModules(Lookup lookup) { this.lookup = lookup; }

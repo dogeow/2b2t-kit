@@ -19,6 +19,10 @@ final class BorerOreTunnel {
 	private final BorerAreaPipeline clicks = new BorerAreaPipeline();
 	private final Map<BlockPos,net.minecraft.world.level.block.state.BlockState> clickedStates = new HashMap<>();
 	private boolean pairRejected;
+	private final BorerMineAhead ahead = new BorerMineAhead();
+	private Set<BlockPos> routeCells = Set.of();
+	private boolean holding;
+	private int heldTick;
 	private BlockPos singleTap, slowFace;
 	private net.minecraft.world.level.block.state.BlockState singleBefore;
 	private int sentTick, airTicks, sampledTick;
@@ -47,7 +51,7 @@ final class BorerOreTunnel {
 	}
 	private void clearPlan() {
 		goal=mining=null; search=null; path=List.of(); observed.clear();
-		index=idle=miningTicks=planningTicks=0; last=null; crossed=false;
+		routeCells=Set.of(); index=idle=miningTicks=planningTicks=0; last=null; crossed=false;
 	}
 	private boolean floor(Minecraft c,BlockPos b) {
 		if (!loaded(c,b) || b.equals(goal)) return false;
@@ -111,18 +115,38 @@ final class BorerOreTunnel {
         return state.isAir() || state.is(Blocks.SNOW) && state.getValue(SnowLayerBlock.LAYERS) == 1;
     }
 
+	private static final int PREDICTED = 2;
+	/** 0 open, 1 diggable, 2 dug locally and awaiting the server, -1 unknown or unsafe. */
 	private int cell(Minecraft c,BlockPos b) {
-		if (!loaded(c,b)) return -1;
+		if (!loaded(c,b)) return c.level.hasChunkAt(b) && routeCells.contains(b)
+			&& c.level.getBlockState(b).isAir() ? PREDICTED : -1;
 		var s=c.level.getBlockState(b);
 		if (openRouteCell(s)) return 0;
 		if (s.hasBlockEntity() || s.getBlock() instanceof FallingBlock || !s.getFluidState().isEmpty()
 			|| s.is(Blocks.FIRE) || s.is(Blocks.SOUL_FIRE) || s.is(Blocks.POWDER_SNOW)
 			|| s.is(Blocks.CACTUS) || s.is(Blocks.MAGMA_BLOCK) || c.level.getBlockState(b.above()).getBlock() instanceof FallingBlock) return -1;
-		for (Direction d:Direction.values()) if (!loaded(c,b.relative(d))) return -1;
+		for (Direction d:Direction.values()) {
+			var side=b.relative(d);
+			if (!loaded(c,side) && !(c.level.hasChunkAt(side) && routeCells.contains(side)
+				&& c.level.getBlockState(side).isAir())) return -1;
+		}
 		return engine.canPlanMine(c,b) ? 1 : -1;
 	}
 	private boolean fail(Minecraft c,String reason) {
 		engine.releaseMine(c); engine.ores.skipActive(c,reason); reset(); return true;
+	}
+
+	/** True while this proven route may keep digging past its own unconfirmed breaks. */
+	boolean mineAhead(Minecraft c) {
+		if (goal==null || search!=null || path.isEmpty()) { ahead.clear(); return false; }
+		var pending=engine.miningConfirmation.positions(c.level);
+		int tick=c.player.tickCount;
+		for (var b:ahead.observe(pending,b->c.level.hasChunkAt(b) && c.level.getBlockState(b).isAir(),tick))
+			engine.fileLog(c,"route-break-refused block="+b+"; dig again");
+		var stuck=ahead.exhausted();
+		if (stuck!=null) { fail(c,"服务器多次恢复方块 "+BorerText.block(stuck)+"，换矿"); return false; }
+		if (ahead.expired(tick)) { engine.stop(c,"服务器5秒未确认方块，已停挖避免幽灵方块和位置回退"); return false; }
+		return BorerMineAhead.allowed(pending,routeCells);
 	}
 
 	boolean awaitClicks(Minecraft c) {
@@ -220,7 +244,7 @@ final class BorerOreTunnel {
 		}
 	}
 
-	void clearClicks() { singleTap=slowFace=null; singleBefore=null; clicks.clear(); clickedStates.clear(); pairRejected=false; }
+	void clearClicks() { ahead.clear(); singleTap=slowFace=null; singleBefore=null; clicks.clear(); clickedStates.clear(); pairRejected=false; }
 
 	boolean tryStraightPair(Minecraft c, BlockPos planned) {
 		BlockPos from=c.player.blockPosition(), to=from.relative(engine.forward);
@@ -299,12 +323,50 @@ final class BorerOreTunnel {
 		for (BlockPos b:List.of(feet.above(),feet)) {
 			int kind=cell(c,b);
 			if (kind<0) return -1;
-			if (kind==0) continue;
+			if (kind==0 || kind==PREDICTED) continue;
 			occupied=true;
 			if (engine.isStandingSupport(c,c.player,b) || engine.isUnsafeFloorMine(c,c.player,b)) return -1;
 			if (BorerAim.inReach(c.player,b) && engine.visibleHitResult(c,c.player,b)!=null) reachable=true;
 		}
 		return reachable ? 1 : occupied ? -1 : 0;
+	}
+
+	private boolean directMining() {
+		try { return engine.host.supportsDirectAreaMining(); }
+		catch (LinkageError oldHost) { return false; }
+	}
+	/** Vanilla's own attack loop must not abort or restart a break this route is holding. */
+	boolean ownsMining() {
+		var player=Minecraft.getInstance().player;
+		return holding && player!=null && Math.abs(player.tickCount-heldTick)<=1;
+	}
+	void releaseHold() {
+		holding=false;
+		engine.miningModules.holdSpeedMine(false);
+	}
+	/** Hold one block through the game-mode API with SpeedMine on; every break is registered for confirmation. */
+	private boolean holdRoute(Minecraft c, net.minecraft.client.player.LocalPlayer p, BlockPos b, Direction face,
+			boolean changed, boolean retry) {
+		try {
+			c.options.keyAttack.setDown(false);
+			engine.miningModules.holdSpeedMine(true);
+			boolean start=changed || retry || !holding;
+			holding=true; heldTick=p.tickCount;
+			if (retry) c.gameMode.stopDestroyBlock();
+			if (engine.miningConfirmation.observedBreak(c,b,face,start)) p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+			return true;
+		} catch (IllegalStateException error) {
+			engine.stop(c,"开路挖掘已暂停："+error.getMessage());
+			return false;
+		}
+	}
+
+	private boolean awaitRoute(Minecraft c) {
+		engine.releaseMine(c);
+		c.options.keyShift.setDown(false);
+		if (!onFoot && flight.ownsHoverLease()) flight.hover();
+		engine.status="等待服务器确认通道，暂不前进";
+		return true;
 	}
 
     boolean tick(Minecraft c, BlockPos ore) {
@@ -326,7 +388,10 @@ final class BorerOreTunnel {
 		var p=c.player;
 		if (ore==null) { if (active() || onFoot) reset(); return false; }
 		if (!engine.wantedBlock(c.level.getBlockState(ore))) return fail(c,"目标矿石已经变化，重新选矿");
-		if (engine.inMiningReach(p,ore) && engine.canSeeBlock(c,p,ore) && cell(c,ore)==1
+		// Ore collection and replanning still start from a fully confirmed world.
+		boolean unconfirmed=engine.miningConfirmation.count(c.level)>0;
+		if (unconfirmed && !ore.equals(goal)) return awaitRoute(c);
+		if (!unconfirmed && engine.inMiningReach(p,ore) && engine.canSeeBlock(c,p,ore) && cell(c,ore)==1
 			&& !engine.isUnsafeFloorMine(c,p,ore) && floor(c,ore.below()) && !ore.equals(p.blockPosition().below())) {
 			if (standToMine(c)) {
 				if (active()) clearPlan();
@@ -365,19 +430,24 @@ final class BorerOreTunnel {
 			engine.overlay(c, planningStatus(search.expanded(), planningTicks, goal), 0x55FFFF);
 			if (!search.done) return true;
 			path=search.path; search=null; observed.clear();
+			var cells=new HashSet<BlockPos>();
+			for (int i=1;i<path.size();i++) cells.addAll(OreTunnelSearch.clearance(path.get(i-1),path.get(i)));
+			routeCells=Set.copyOf(cells);
 			if (path.isEmpty()) return fail(c,"已加载地形内没有到矿石的安全路线");
 			engine.fileLog(c,"full-ore-route goal="+goal+" steps="+path.size());
 		}
+		if (index>=path.size() && unconfirmed) return awaitRoute(c);
 		if (index>=path.size()) return fail(c,"到达计划工位后，矿面视线未通过复核");
 		BlockPos to=path.get(index), from=index==0 ? to : path.get(index-1);
 		int cutIndex=clearanceIndex(path,index,(int)Math.ceil(BorerAim.breakReach(p))+1,b->inspectSlice(c,b));
 		BlockPos cutTo=path.get(cutIndex), cutFrom=cutIndex==0 ? cutTo : path.get(cutIndex-1);
-		if (mining!=null && loaded(c,mining) && c.level.getBlockState(mining).isAir()) mining=null;
-		if (cutIndex>0 && tryPair(c,cutFrom,cutTo)) return true;
+		if (mining!=null && c.level.hasChunkAt(mining) && c.level.getBlockState(mining).isAir()) mining=null;
+		boolean direct=directMining();
+		if (!direct && cutIndex>0 && tryPair(c,cutFrom,cutTo)) return true;
 		if (cutIndex>0) for (var b:OreTunnelSearch.clearance(cutFrom,cutTo)) {
 			int kind=cell(c,b);
 			if (kind<0) return fail(c,"路线方块已变化或靠近危险物");
-			if (kind==0) continue;
+			if (kind==0 || kind==PREDICTED) continue;
 			c.options.keyUp.setDown(false);
 			if (standToMine(c)) {
 				if (!p.onGround()) { engine.releaseMine(c); return true; }
@@ -390,13 +460,21 @@ final class BorerOreTunnel {
 			var actual=BorerAim.clipView(c,p);
 			if (actual==null || !actual.getBlockPos().equals(b) || !BorerAim.hitInReach(p,actual)) return fail(c,"路线方块瞄准未确认");
 			boolean changed=!b.equals(mining);
-			if (changed) { engine.releaseMine(c); mining=b; miningTicks=0; }
+			if (changed) { if (!direct) engine.releaseMine(c); mining=b; miningTicks=0; }
 			if (++miningTicks>200) return fail(c,"路线方块开挖超时");
 			c.hitResult=actual; c.crosshairPickEntity=null;
-			engine.applyMineCadence(c,p,b,changed,miningTicks%40==0);
+			if (direct) { if (!holdRoute(c,p,b,actual.getDirection(),changed,miningTicks%40==0)) return true; }
+			else engine.holdMineCadence(c,p,b,changed,miningTicks%40==0);
 			engine.status="按完整路线开路 "+index+"/"+path.size(); return true;
 		}
-		for (var b:OreTunnelSearch.clearance(from,to)) if (cell(c,b)!=0) return fail(c,"下一步的开挖面不可达");
+		for (var b:OreTunnelSearch.clearance(from,to)) {
+			int kind=cell(c,b);
+			if (kind==PREDICTED) {
+				// Never step into a cell the server has not confirmed.
+				return awaitRoute(c);
+			}
+			if (kind!=0) return fail(c,"下一步的开挖面不可达");
+		}
 		engine.releaseMine(c); mining=null;
 		boolean diagonalDown=to.getY()<from.getY() && (to.getX()!=from.getX() || to.getZ()!=from.getZ());
 		boolean walkDown = diagonalDown && !crossed && !BorerFlight.isFlying(p)
@@ -430,7 +508,9 @@ final class BorerOreTunnel {
 			if (!c.level.noCollision(p,swept)) return fail(c,"步行通道已被阻挡");
 			for (var b:BlockPos.betweenClosed(BlockPos.containing(swept.minX,swept.minY,swept.minZ),
 					BlockPos.containing(swept.maxX,swept.maxY,swept.maxZ))) {
-				if (cell(c,b)!=0) return fail(c,"步行通道已变化");
+				int kind=cell(c,b);
+				if (kind==PREDICTED) return awaitRoute(c);
+				if (kind!=0) return fail(c,"步行通道已变化");
 			}
 			RotationAim.apply(p,input.yaw(),0);
 			engine.rememberOreMove(p);
@@ -445,6 +525,7 @@ final class BorerOreTunnel {
 				if (cell(c,b)!=0) return false;
 			return true;
 		});
+		if (input==null && unconfirmed) return awaitRoute(c);
 		if (input==null) return fail(c,"路线身体空间已变化");
 		RotationAim.apply(p,input.yaw(),0); flight.speed(input.speed());
 		c.options.keyUp.setDown(input.forward()); c.options.keyJump.setDown(input.up()); c.options.keyShift.setDown(input.down());

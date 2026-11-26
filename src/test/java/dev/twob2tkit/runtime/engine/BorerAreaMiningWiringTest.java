@@ -20,8 +20,10 @@ class BorerAreaMiningWiringTest {
         assertTrue(calls(method("borer/TunnelBorer","ownsMining")).contains("ownsMining"));
     }
     @Test void areaClickRegistersVanillaPredictionBeforeMeteorCanRemoveTheLocalBlock()throws Exception{
-        var c=calls(method("runtime/engine/BorerMiningConfirmation","startObservedBreak"));
-        assertTrue(c.indexOf("startPredicting")<c.indexOf("startDestroyBlock"));assertTrue(c.contains("close"));
+        assertTrue(calls(method("runtime/engine/BorerMiningConfirmation","startObservedBreak")).contains("observedBreak"));
+        var c=calls(method("runtime/engine/BorerMiningConfirmation","observedBreak"));
+        assertTrue(c.indexOf("startPredicting")>=0&&c.indexOf("startPredicting")<c.indexOf("startDestroyBlock"));
+        assertTrue(c.indexOf("startPredicting")<c.indexOf("continueDestroyBlock"));assertTrue(c.contains("close"));
         assertFalse(c.contains("endPredictionsUpTo"));assertFalse(c.contains("updateKnownServerState"));assertFalse(c.contains("setBlock"));
     }
     @Test void pendingBurstIsHandledBeforePlanningAnyMovementAndCandidateRaysRemainVerified()throws Exception{

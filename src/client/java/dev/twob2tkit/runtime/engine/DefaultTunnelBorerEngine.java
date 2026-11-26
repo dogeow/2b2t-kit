@@ -288,7 +288,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 	public boolean isActive() {
 		return active || scenery.active();
 	}
-	@Override public boolean ownsMining() { return active && mode==Mode.AREA && areaRunner.ownsMining(); }
+	@Override public boolean ownsMining() { return active && (mode==Mode.AREA ? areaRunner.ownsMining() : mode==Mode.ORE && oreTunnel.ownsMining()); }
 	@Override public boolean isSceneryActive() { return scenery.active(); }
 	@Override public String sceneryStatus() { return scenery.status(); }
 	@Override public boolean startScenery(Minecraft client, int radius, boolean resume) {
@@ -1390,7 +1390,10 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 			return;
 		}
 		if (oreTunnel.awaitClicks(client)) return;
-		if (waitForMiningConfirmation(client)) return;
+		boolean mineAhead = mode == Mode.ORE && !goingHome && !loot.active() && oreTunnel.mineAhead(client);
+		if (!active) return;
+		if (mineAhead) miningConfirmation.reset();
+		else if (waitForMiningConfirmation(client)) return;
 		if (!goingHome && !loot.active() && place.continueDescentBridgeAdvance(client, player)) return;
 		if (goingHome) {
 			if (home.handle(client, player)) return;
@@ -3782,7 +3785,13 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 	/** 按记忆应用点/按挖矿节奏。 */
 	void applyMineCadence(Minecraft client, LocalPlayer player, BlockPos pos, boolean newTarget, boolean retry) {
+		oreTunnel.releaseHold(); // Key-driven mining is not registered by us: SpeedMine must be paused again first.
 		if (newTarget && mode==Mode.ORE && !goingHome && oreTunnel.trySingleTap(client,pos)) return;
+		holdMineCadence(client, player, pos, newTarget, retry);
+	}
+
+	/** Ordinary click-and-hold without the one-shot tap that waits for its own receipt. */
+	void holdMineCadence(Minecraft client, LocalPlayer player, BlockPos pos, boolean newTarget, boolean retry) {
 		float progress = destroyProgress(player, pos);
 		if (newTarget || timingKey == null || !timingActive) {
 			timingKey = mineTimingKey(player, pos);
@@ -4299,6 +4308,7 @@ public final class DefaultTunnelBorerEngine implements BorerEngine {
 
 	/** 松开挖掘键。 */
 	void releaseMine(Minecraft client) {
+		oreTunnel.releaseHold();
 		if (client.options == null) return;
 		retreating = false;
 		client.options.keyAttack.setDown(false);

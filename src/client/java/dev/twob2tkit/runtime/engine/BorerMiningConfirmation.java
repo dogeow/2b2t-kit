@@ -28,14 +28,23 @@ public final class BorerMiningConfirmation {
 	/** Meteor's instamine deletes locally BEFORE its own packet prediction scopes. Opening the
 	 * normal vanilla scope here lets ClientLevel retain the pre-click state for server correction. */
 	boolean startObservedBreak(net.minecraft.client.Minecraft client, BlockPos pos, net.minecraft.core.Direction face) {
+		return observedBreak(client, pos, face, true);
+	}
+	/** A continued hold can restart internally (changed tool), so it needs the same scope. */
+	boolean observedBreak(net.minecraft.client.Minecraft client, BlockPos pos, net.minecraft.core.Direction face, boolean start) {
 		try {
 			var prediction = (BlockStatePredictionHandler) handler.get(client.level);
 			if (prediction.isPredicting()) throw new IllegalStateException("另一挖掘预测尚未结束，已暂停区域挖");
 			syncSelected.invoke(client.gameMode);
 			try (var scope = prediction.startPredicting()) {
-				return client.gameMode.startDestroyBlock(pos, face);
+				return start ? client.gameMode.startDestroyBlock(pos, face) : client.gameMode.continueDestroyBlock(pos, face);
 			}
 		} catch (ReflectiveOperationException e) { throw new IllegalStateException("无法登记区域挖服务器确认", e); }
+	}
+	java.util.Set<BlockPos> positions(ClientLevel level) {
+		var result = new java.util.HashSet<BlockPos>();
+		for (long key : pending(level).keySet()) result.add(BlockPos.of(key));
+		return result;
 	}
 	int count(ClientLevel level) { return pending(level).size(); }
 	int update(int pending) { waiting = pending > 0 ? waiting + 1 : 0; return waiting; }
