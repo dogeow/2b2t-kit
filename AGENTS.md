@@ -14,8 +14,10 @@
 - 配置：`config/twob2tkit.json`；运行日志：`logs/latest.log` 与 `config/twob2tkit/*.log`，均相对于实际游戏目录。
 - 引擎产物：`build/runtime-engine/twob2tkit-engine.jar` → 游戏的 `config/twob2tkit/runtime/twob2tkit-engine.jar`。
 - 主包产物：`build/libs/twob2tkit-<version>.jar` → 游戏的 `mods/`；这里只保留一个本 Mod 主包，替换前备份旧版。
+- 构建校验通过后用 `python3 tools/deploy_kit.py`（先加 `--dry-run` 看计划；只改引擎时加 `--engine-only`）部署：自动备份旧包、保证 mods 只留一个主包、校验哈希。
 - 只改引擎：同步版本、构建校验，部署引擎后用 `/twob2tkit reload` 生效。界面、按键、Mixin、宿主或依赖变化需要完整重启游戏，明确告知用户。
 - 引擎不能反向依赖宿主实现；新增稳定接口须考虑旧宿主兼容，不能只换引擎就假定新接口已存在。只有破坏性接口变化才提高 API 版本。
+- 回执清理：`python3 decision-runtime/kit_cli.py replies --finished-receipts`（先看 dry-run，再加 `--apply`）把 7 天前已结束、没有本地记录引用的回执无损压缩；需要时 `--restore reply-<id>.json` 恢复原字节。
 
 ## 基本要求
 
@@ -29,6 +31,21 @@
 - 诊断先检查实际日志和当前代码；确认模式、版本和时间，不把旧记录或其它功能的日志当成当前复现。
 - 修改关键行为时补充对应回归测试；区分编译通过、逻辑测试、安装完成和实机验证，不夸大验收结果。
 
+## 运行状态
+
+- 下达动作前先看总览：`python3 decision-runtime/kit_cli.py status`（只读）。`notes` 会提示状态过期、安全锁、角色死亡、mods 里有多个主包，以及装好的新版本还没生效。
+- 需要家、农场等坐标时用 `python3 decision-runtime/kit_cli.py places [--match 名称]`（只读，家排第一，在线时附带距离），不要自己翻配置。
+
+## 材料来源
+
+- 任务缺材料时，先查仓库记录，再决定采集、合成或请用户补充：
+  `python3 decision-runtime/kit_cli.py storage find --item iron_ingot --item coal`（只读，不开箱、不发送动作；游戏未运行时加 `--server simpcraft.com`）。
+  不知道物品 id 或要找附魔书时用 `storage find --match mending`（按名称、id、附魔文字搜索）。
+- 结果只列当前服务器和维度的记录；`confirmed=false` 表示箱子附近有过变化，需要开箱复核。`confirmed_total` 才是较可信的数量。
+- `count` 是箱里散放、可直接取的数量；`packed` 是箱内潜影盒里的数量，要走潜影盒取料流程，不能当作散货。`unknown_shulker_containers` 是旧版本记录、盒内物品未知的箱子数，需要开箱一次才会补全。
+- 取料走 `kit_cli.py materials start --item <id> --count N`，只读核对用 `materials stock --depot x y z --out ...`；不要自己解析 `twob2tkit.json` 后直接点箱子。
+- 仓库记录只说明去哪里找，不证明有货，以实际开箱看到的槽位为准。开箱、存取和关箱时 Kit 会自动更新记录，箱子关着时的变化看不到。
+
 ## Minecraft 知识库
 
 - 用户将原本写入 Obsidian 的 Minecraft 项目知识改为保存到 `https://wiki.dogeow.com/` 的 `Minecraft:` 独立命名空间；其他项目使用各自的命名空间，不混入 Minecraft。
@@ -41,6 +58,12 @@
 
 ```bash
 JAVA_HOME=/Users/sam/Code/DogeOW/minecraft-kit/jdk25/Contents/Home ./gradlew test jar verifyRuntimeEngineJar --offline
+```
+
+Python 固定离线测试集使用项目托管环境（已装 `requirements.txt` 依赖；系统 Python 缺 httpx，不要用它跑）：
+
+```bash
+cd decision-runtime && "$HOME/Library/Application Support/MinecraftDecisions/venv/bin/python" check_offline.py
 ```
 
 - 部署后校验版本和文件哈希。未明确要求时，不运行 `runClient`、`genSources`，不修改捆绑 JDK。

@@ -73,6 +73,16 @@ class Tests(unittest.TestCase):
         self.assertEqual([],loose['positions']);self.assertEqual(32,loose['packed_candidates'][0]['items']['minecraft:dirt'])
         self.assertTrue(loose['packed_candidates'][0]['requires_packed_access'])
         self.assertEqual(0,loose['inventory_credit'])
+    def test_native_shulker_contents_are_reported_without_changing_routing(self):
+        box={'minecraft:blue_shulker_box':1}
+        self.save_native([self.native(self.b,box,lastSeenEpochMillis=300)])
+        before=select_sources(self.c,[self.b],{'minecraft:dirt':4},loose_only=True)
+        self.save_native([self.native(self.b,box,lastSeenEpochMillis=300,packedKnown=True,
+            packedItems=[{'id':'minecraft:dirt','name':'Dirt','count':32}])])
+        record=records(self.c)[0]
+        self.assertEqual({'minecraft:dirt':32},record['packed_counts']);self.assertTrue(record['packed_known'])
+        self.assertEqual(box,record['loose_counts'])
+        self.assertEqual(before,select_sources(self.c,[self.b],{'minecraft:dirt':4},loose_only=True))
     def test_unclean_or_different_menu_does_not_overwrite_a_saved_record(self):
         self.menu();bind_source(self.c,self.state,self.b,'minecraft:chest');before=index_path(self.root).read_bytes()
         self.state['menu']['cursor']['count']=1;self.assertFalse(remember_current(self.c))

@@ -76,7 +76,9 @@ def records(client,state=None):
         result.append({'scope':scope,'pos':p,'aliases':aliases,'counts':counts,'loose_counts':counts,'missing':missing,
             'observed_at':r.get('lastSeenEpochMillis',0),'block_id':r.get('blockId'),
             'player_uuid':r.get('playerId',''),'dirty':bool(r.get('contentsDirty')),
-            'origin':'kit_storageSnapshots','packed_unknown':any(k.endswith('shulker_box')for k in counts)})
+            'origin':'kit_storageSnapshots','packed_unknown':any(k.endswith('shulker_box')for k in counts),
+            # Shulker contents are reported for lookup only; routing and withdrawals still use loose counts.
+            'packed_known':r.get('packedKnown') is True,'packed_counts':(_counts(r.get('packedItems'))or{})if not missing else {}})
     own=_read(index_path(root))or{}
     for r in own.get('records',[]):
         if not isinstance(r,dict)or r.get('scope')!=scope:continue

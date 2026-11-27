@@ -1,8 +1,12 @@
-"""Lossless, explicit disk maintenance for old read-only scan replies.
+"""Lossless, explicit disk maintenance for old replies.
 
-Never archives mutation receipts, malformed records, current requests, or replies
-referenced by local journals. Verified gzip stays next to each original filename.
-No game commands, reconnect, task replay, or JSON success-state rewriting.
+By default only read-only scan replies are archived. With ``finished=True`` (CLI
+``--finished-receipts``) old *finished* material receipts (phase done/error/stopped)
+are archived too: never current requests, never pending outcomes, never anything a
+local journal mentions (automation, the Kit config folder and the repo's work/ are
+searched). A recovery step that later needs such a receipt finds it missing, stops as
+"unknown" and never replays; ``--restore NAME`` brings back the exact bytes.
+Verified gzip stays next to each original filename. No game commands or rewriting.
 """
 import argparse
 import fcntl
@@ -72,6 +76,64 @@ def eligible(path, pinned, cutoff):
     return raw, metadata
 
 
+FINISHED = re.compile(r'reply-(materials-[A-Za-z0-9_-]+)\.json')
+FINISHED_PHASES = {'done', 'error', 'stopped'}
+SKIP_DIRS = {'backups', 'runtime', 'automation', 'mod-backups', 'patch-backups'}
+
+
+def journal_roots(root):
+    """Places where journals that may cite a material receipt live, besides the automation root."""
+    kit = Path(root).parent
+    return [kit, Path(__file__).resolve().parents[1] / 'work']
+
+
+def extra_references(roots):
+    ids = set()
+    for base in roots:
+        if not Path(base).is_dir():
+            continue
+        for directory, dirs, files in os.walk(base, followlinks=False):
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in SKIP_DIRS
+                       and not Path(directory, d).is_symlink()]
+            ids |= references_in(directory, files)
+    return ids
+
+
+def references_in(directory, files):
+    ids = set()
+    for name in files:
+        if name.startswith('reply-') or not name.endswith('.json'):
+            continue
+        path = Path(directory, name)
+        if path.is_symlink():
+            raise ValueError('Refusing symlinked journal')
+        if path.stat().st_size > 32 * 1024 * 1024:
+            raise ValueError('Journal exceeds bounded reference scan; archive cancelled')
+        for match in REFS.finditer(path.read_text(errors='strict')):
+            ids.add(match.group(1) or match.group(2))
+    return ids
+
+
+def finished_eligible(path, pinned, cutoff):
+    """An old, finished material receipt that nothing local refers to."""
+    match = FINISHED.fullmatch(path.name)
+    if not match or path.is_symlink() or match.group(1) in pinned:
+        return None
+    metadata = path.stat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_mtime >= cutoff or metadata.st_size > MAX_REPLY:
+        return None
+    raw = path.read_bytes()
+    try:
+        record = json.loads(raw)
+    except (ValueError, UnicodeError):
+        return None
+    if not isinstance(record, dict) or record.get('id') != match.group(1):
+        return None
+    if record.get('phase') not in FINISHED_PHASES or record.get('outcome_pending') or record.get('pending'):
+        return None
+    return raw, metadata
+
+
 def pack(path, raw, metadata):
     destination = path.with_name(path.name + '.gz')
     if destination.exists() or destination.is_symlink():
@@ -105,7 +167,7 @@ def pack(path, raw, metadata):
         Path(temporary).unlink(missing_ok=True)
 
 
-def archive(root, *, days=7, apply=False, max_files=2000, now=None):
+def archive(root, *, days=7, apply=False, max_files=2000, now=None, finished=False, journals=None):
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError('Automation root must be a real directory')
@@ -116,9 +178,14 @@ def archive(root, *, days=7, apply=False, max_files=2000, now=None):
     with (root / '.reply-archive.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         pinned = references(root)
+        if finished:
+            pinned |= extra_references(journal_roots(root) if journals is None else journals)
+            result['finished_receipts'] = True
         result['pinned_requests'] = len(pinned)
         for path in sorted(root.glob('reply-*.json')):
             candidate = eligible(path, pinned, cutoff)
+            if candidate is None and finished:
+                candidate = finished_eligible(path, pinned, cutoff)
             if candidate is None:
                 continue
             raw, metadata = candidate
@@ -162,9 +229,11 @@ def main(argv=None):
     parser.add_argument('--max-files', type=int, default=2000)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--restore')
+    parser.add_argument('--finished-receipts', action='store_true',
+                        help='also archive old finished material receipts nothing local refers to')
     args = parser.parse_args(argv)
     try:
-        result = restore(args.root, args.restore) if args.restore else archive(args.root, days=args.days, apply=args.apply, max_files=args.max_files)
+        result = restore(args.root, args.restore) if args.restore else archive(args.root, days=args.days, apply=args.apply, max_files=args.max_files, finished=args.finished_receipts)
         print(json.dumps(result, ensure_ascii=False)); return 0
     except (OSError, ValueError, UnicodeError) as error:
         print(json.dumps({'mode': 'blocked', 'error': str(error)}, ensure_ascii=False)); return 2

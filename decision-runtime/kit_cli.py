@@ -126,6 +126,18 @@ def main(argv=None):
     supply=sub.add_parser('supply',help='按本地记录允许或取消补给箱，无需打开界面')
     supply.add_argument('action',choices=('allow','deny'))
     supply.add_argument('--pos',type=int,nargs=3,required=True)
+    places=sub.add_parser('places',help='只读列出保存的地点和最近死亡点，在线时附带距离')
+    places.add_argument('--match',default='',help='按名称筛选')
+    sub.add_parser('status',help='只读总览：连接、位置血量、正在运行的任务、安全锁，以及是否需要重启才能用上新版本')
+    storage=sub.add_parser('storage',help='只读查询仓库记录：某物品记录在哪些箱子，不开箱、不发送动作')
+    storage_actions=storage.add_subparsers(dest='action',required=True)
+    find=storage_actions.add_parser('find')
+    what=find.add_mutually_exclusive_group(required=True)
+    what.add_argument('--item',action='append',help='物品 id，可省略 minecraft: 前缀；可重复')
+    what.add_argument('--match',help='按名称、id 或附魔文字搜索，例如 mending、经验修补')
+    find.add_argument('--limit',type=int,default=20)
+    find.add_argument('--server',help='游戏未运行时指定服务器（例如 simpcraft.com）')
+    find.add_argument('--dimension',default='minecraft:overworld')
     recovery=sub.add_parser('recovery',help='只进食、原地升高和等待回血，不解锁或重连')
     recovery.add_argument('action',choices=('run',))
     recovery.add_argument('--out',type=Path,required=True)
@@ -203,6 +215,7 @@ def main(argv=None):
     replies.add_argument('--max-files',type=int,default=2000)
     replies.add_argument('--apply',action='store_true')
     replies.add_argument('--restore')
+    replies.add_argument('--finished-receipts',action='store_true',help='连同 7 天前已结束且无本地记录引用的材料回执一起归档（可 --restore 恢复）')
     args = parser.parse_args(argv)
     root = args.game_dir / 'config/twob2tkit/automation'
     if args.topic=='supply':
@@ -215,11 +228,35 @@ def main(argv=None):
             print(json.dumps(send(root,request,supply_channel=True),ensure_ascii=False));return 0
         except (RuntimeError,ValueError,OSError) as error:
             print(json.dumps({'phase':'waiting','detail':str(error)},ensure_ascii=False));return 2
+    if args.topic=='places':
+        from places_lookup import lookup, read_config
+        try:
+            try:state=live_status(root)
+            except (KitControlError,OSError,ValueError):state={}
+            print(json.dumps(lookup(read_config(args.game_dir),state,args.match),ensure_ascii=False,separators=(',',':')));return 0
+        except (OSError,ValueError) as error:
+            print(json.dumps({'phase':'error','detail':f'读不到配置：{error}'},ensure_ascii=False));return 2
+    if args.topic=='status':
+        from status_summary import read_status, summarize
+        try:
+            print(json.dumps(summarize(args.game_dir,read_status(root)),ensure_ascii=False,separators=(',',':')));return 0
+        except (OSError,ValueError) as error:
+            print(json.dumps({'phase':'error','detail':f'读不到状态文件：{error}'},ensure_ascii=False));return 2
+    if args.topic=='storage':
+        from storage_find import find as find_items, match as match_items
+        try:
+            if args.server:state={'server':args.server,'dimension':args.dimension}
+            else:state=live_status(root)
+            result=match_items(root,args.match,state,args.limit)if args.match else find_items(root,args.item,state,args.limit)
+            print(json.dumps(result,ensure_ascii=False,separators=(',',':')));return 0
+        except (RuntimeError,ValueError,OSError) as error:
+            print(json.dumps({'phase':'error','detail':str(error)},ensure_ascii=False));return 2
     if args.topic=='replies':
         from reply_archive import main as archive_main
         command=['--root',str(root),'--days',str(args.days),'--max-files',str(args.max_files)]
         if args.apply:command += ['--apply']
         if args.restore:command += ['--restore',args.restore]
+        if args.finished_receipts:command += ['--finished-receipts']
         return archive_main(command)
     if args.topic=='recovery':
         from survival_recovery import recover

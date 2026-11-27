@@ -4,6 +4,7 @@ import argparse,os,subprocess,sys
 
 TESTS = (
     'test_material_client', 'test_formal_worker_exclusion', 'test_material_health_exit', 'test_material_shutdown', 'test_kit_cli',
+    'test_storage_find', 'test_material_storage_index', 'test_status_summary', 'test_worker_backups', 'test_places_lookup', 'test_reply_archive',
     'test_material_ground_settlement','test_material_ground_rebase','test_material_idle_ground_finish',
     'test_native_outcome_fence','test_material_audit_cli',
     'test_cave_escape_cli',
