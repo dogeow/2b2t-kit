@@ -106,7 +106,7 @@ public final class StorageDetailScreen extends KitHudScreen {
 		var config = dev.twob2tkit.KitClient.config();
 		if (config == null) return false;
 		var list = new dev.twob2tkit.KitCollectionScreen<KitConfig.StoredItem>(parent, config, "storage-items:" + snapshot.scopedKey(), StorageLabels.headline(snapshot),
-			StorageLabels.evidenceSummary(snapshot), () -> snapshot.items, item -> item.name + " ×" + item.count,
+			StorageLabels.evidenceSummary(snapshot), () -> listedItems(snapshot), item -> item.name + " ×" + item.count,
 			item -> item.id + "\nX " + snapshot.x + " Y " + snapshot.y + " Z " + snapshot.z + "\n" + StorageLabels.evidenceSummary(snapshot), item -> item.name + " " + item.id).icon(StorageItems::stack);
 		list.onOpen(item -> {
 			var detail = new dev.twob2tkit.KitFormScreen(list, item.name, "仓库快照，不是实时库存").bind(config).id("storage-item:" + snapshot.scopedKey() + ":" + item.id);
@@ -119,6 +119,16 @@ public final class StorageDetailScreen extends KitHudScreen {
 		});
 		list.footer("复制箱子坐标", () -> { minecraft.keyboardHandler.setClipboard(snapshot.x + " " + snapshot.y + " " + snapshot.z); list.message("已复制箱子坐标"); });
 		minecraft.gui.setScreen(list); return true;
+	}
+
+	/** Loose items first, then shulker contents marked as such; the saved record itself is never changed. */
+	static java.util.List<KitConfig.StoredItem> listedItems(KitConfig.StorageSnapshot snapshot) {
+		var rows = new java.util.ArrayList<KitConfig.StoredItem>(snapshot.items == null ? java.util.List.of() : snapshot.items);
+		if (snapshot.packedItems != null) for (var item : snapshot.packedItems) {
+			var row = new KitConfig.StoredItem(item.id, item.name + "（潜影盒内）", item.count);
+			row.searchTerms = item.searchTerms; rows.add(row);
+		}
+		return rows;
 	}
 
 	private static void drawSlotBackground(GuiGraphicsExtractor graphics, int x, int y) {

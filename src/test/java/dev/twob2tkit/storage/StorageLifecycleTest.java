@@ -50,6 +50,12 @@ class StorageLifecycleTest {
             assertFalse(StorageLifecycle.observe(r,scope,p->{throw new AssertionError("Foreign worlds must not be probed");},200));}
         assertEquals(StorageLifecycle.ACTIVE,r.status);assertTrue(r.history.isEmpty());
     }
+    @Test void legacyRecordsWithoutShulkerFieldsKeepPackedContentsUnknown(){
+        var legacy=record();legacy.packedItems=null;legacy.packedKnown=true;StorageLifecycle.normalize(legacy);
+        assertNotNull(legacy.packedItems);assertFalse(legacy.packedKnown);
+        var fresh=record();fresh.packedKnown=true;fresh.packedItems.add(new dev.twob2tkit.KitConfig.StoredItem("minecraft:iron_ingot","Iron",128));
+        StorageLifecycle.normalize(fresh);assertTrue(fresh.packedKnown);assertEquals(128,fresh.packedItems.getFirst().count);
+    }
     @Test void unknownLegacyRecordKeepsUnknownProvenanceUntilARealOpen(){
         var r=record();r.server="";StorageLifecycle.normalize(r);assertEquals(StorageLifecycle.UNKNOWN,r.status);
         assertFalse(StorageLifecycle.observe(r,current,p->{throw new AssertionError("Legacy origin cannot be inferred from this server");},200));
@@ -169,6 +175,14 @@ class StorageLifecycleTest {
         }
         assertEquals(0,StorageLifecycle.refresh(records,current,p->box(p,first.blockId),5001,saves::incrementAndGet));
         assertEquals(1,saves.get());
+    }
+    @Test void routineStructureTimestampsAreDeferredWhileRemovalIsSavedAtOnce(){
+        var r=record();r.lastStructureObservedAt=1_000;var saves=new AtomicInteger();var soon=new AtomicInteger();
+        assertEquals(1,StorageLifecycle.refresh(List.of(r),current,p->box(p,r.blockId),70_000,saves::incrementAndGet,soon::incrementAndGet));
+        assertEquals(StorageLifecycle.ACTIVE,r.status);assertEquals(70_000,r.lastStructureObservedAt);
+        assertEquals(0,saves.get(),"a still-present chest must not rewrite the whole config");assertEquals(1,soon.get());
+        assertEquals(1,StorageLifecycle.refresh(List.of(r),current,p->air(),70_100,saves::incrementAndGet,soon::incrementAndGet));
+        assertEquals(StorageLifecycle.MISSING,r.status);assertEquals(1,saves.get(),"removal reaches routing immediately");
     }
     @Test void neighboringUpdateIsProvisionalUntilLoadedMatchingTopologyThenKeepsOriginalContentsConfidence(){
         var r=record();var saves=new AtomicInteger();

@@ -36,7 +36,11 @@ import java.util.Set;
  * twob2tkit 全部设置：Gson 读写 {@code config/twob2tkit.json}，含迁移与默认值。
  */
 public final class KitConfig {
-	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+	/**
+	 * Compact output: the file is mostly storage history (several MB) and is rewritten on every save;
+	 * pretty printing nearly doubled it. Reading accepts either form, so older pretty files still load.
+	 */
+	static final Gson GSON = new GsonBuilder().create();
 	private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("twob2tkit.json");
 	/** 更旧的配置文件名（按优先级尝试迁移）。 */
 	private static final Path[] LEGACY_CONFIG_FILES = {
@@ -559,15 +563,35 @@ public final class KitConfig {
 		if (gravelDepth < 6 || gravelDepth > 32) gravelDepth = 28;
 	}
 
+	/** Coalescing window for {@link #saveSoon()}: the whole multi-megabyte file is rewritten on every save. */
+	static final long SAVE_SOON_MILLIS = 5_000;
+	/** When a deferred save was first requested; 0 when nothing is pending. Not serialized. */
+	private transient long saveRequestedAt;
+
+	/**
+	 * For frequent, low-stakes updates (last attacker, per-hit bookkeeping): written within a few seconds
+	 * by {@link #flushSoon(long)}, or at once on disconnect / exit. User actions keep calling {@link #save()}.
+	 */
+	public synchronized void saveSoon() { if (saveRequestedAt == 0) saveRequestedAt = Math.max(1, System.currentTimeMillis()); }
+
+	/** Called every client tick; writes a pending deferred save once its window has passed. */
+	public void flushSoon(long now) { if (saveDue(saveRequestedAt, now)) save(); }
+
+	/** Writes a pending deferred save immediately (disconnect, exit). */
+	public void flushPending() { if (saveRequestedAt != 0) save(); }
+
+	static boolean saveDue(long requestedAt, long now) { return requestedAt != 0 && now - requestedAt >= SAVE_SOON_MILLIS; }
+
 	/** 写回 twob2tkit.json。 */
-	public void save() {
+	// Disconnect handlers may save from the network thread; writers must not share the temporary file.
+	public synchronized void save() {
 		try {
 			normalizeGravelSettings();
-			Files.createDirectories(PATH.getParent());
-			try (Writer writer = Files.newBufferedWriter(PATH)) {
-				GSON.toJson(this, writer);
-			}
-		} catch (IOException exception) {
+			AtomicFiles.write(PATH, writer -> GSON.toJson(this, writer));
+			saveRequestedAt = 0;
+		} catch (IOException | RuntimeException exception) {
+			// Keep the change pending: flushSoon retries after the window instead of losing it or retrying every tick.
+			saveRequestedAt = Math.max(1, System.currentTimeMillis());
 			KitClient.LOGGER.warn("Could not save {}", PATH, exception);
 		}
 	}
@@ -1202,6 +1226,10 @@ public final class KitConfig {
 		/** Time of the last real menu contents observation, never a block/chunk observation. */
 		public long lastSeenEpochMillis;
 		public List<StoredItem> items = new ArrayList<>();
+		/** Contents of shulker boxes lying in this container, summed by item; never counted as loose stock. */
+		public List<StoredItem> packedItems = new ArrayList<>();
+		/** True once a version that reads shulker contents recorded this container; old records leave packed contents unknown. */
+		public boolean packedKnown;
 
         /** UI/persistence identity; source_key stays dimension+XYZ for the guarded supply protocol. */
         public String scopedKey(){return dev.twob2tkit.storage.StorageLifecycle.serverKey(server)+"|"+(worldId==null?"":worldId)+"|"+key();}

@@ -68,6 +68,8 @@ public final class AutomationBridge {
     private static JsonObject lastInkAttack;
     private static MaterialAirNavigation materialAirNavigation;
     private static JsonObject lastMaterialAirNavigation;
+    /** Request whose reply carries the finished navigation's full trace; later replies get the summary only. */
+    private static String lastMaterialAirNavigationRequest="";
     private static JsonObject idleDispatchRequest,idleYieldAck;
     private static String idleFisherBinding="",idleNavigationBinding="",idleManualWorld="";
     private static int idleHandoffTick=-1;
@@ -1061,6 +1063,8 @@ public final class AutomationBridge {
         return survivalArmed || supervisionLease!=null&&Set.of("materials","parking").contains(str(supervisionLease,"kind")) || active!=null&&op.equals("craft_recipe");
     }
     public static boolean guardBusy(){return guardBusy;}
+    /** The external (kit_cli / agent) operation in progress, or empty when none is running. */
+    public static String runningOp(){return "running".equals(phase)&&op!=null?op:"";}
     public static boolean guardArmed(){return guardScope!=null;}
     public static boolean pveOnly(){return guardScope!=null && guardScope.has("pve_only") && guardScope.get("pve_only").getAsBoolean();}
     private static boolean trialFlag(JsonObject request,String key){
@@ -3582,12 +3586,24 @@ public final class AutomationBridge {
         finish(c,"waiting","air-only waypoint interrupted by new injury; arrival not confirmed");
         return true;
     }
+    /**
+     * The flight trace (~60 KB) belongs to the navigation's own reply. It used to be copied into every
+     * later reply and status write in the same world session, which piled up gigabytes of receipts.
+     */
+    static JsonObject navigationForReply(JsonObject last,String traceOwner,String currentRequest){
+        var copy=last.deepCopy();
+        if(copy.has("trace")&&!Objects.equals(traceOwner,currentRequest)){
+            copy.remove("trace");copy.addProperty("trace_request",traceOwner==null?"":traceOwner);
+        }
+        return copy;
+    }
     private static void closeMaterialAirNavigation(Minecraft c,String outcome){
         materialDefensiveRise=false;
         if(materialAirNavigation==null)return;
         lastMaterialAirNavigation=materialAirNavigation.terminalSnapshot(c);
         lastMaterialAirNavigation.addProperty("world_session",session(c));
         lastMaterialAirNavigation.addProperty("outcome",outcome);
+        lastMaterialAirNavigationRequest=lastId;
         materialAirNavigation.close(c);materialAirNavigation=null;
     }
     private static HorseNudgePolicy.Point horsePoint(JsonObject request,String key){
@@ -4760,7 +4776,7 @@ public final class AutomationBridge {
         j.addProperty("air_only_navigation_protocol",2);
         if(materialAirNavigation!=null)j.add("material_air_navigation",materialAirNavigation.snapshot(c));
         else if(lastMaterialAirNavigation!=null&&str(lastMaterialAirNavigation,"world_session").equals(session(c)))
-            j.add("material_air_navigation",lastMaterialAirNavigation.deepCopy());
+            j.add("material_air_navigation",navigationForReply(lastMaterialAirNavigation,lastMaterialAirNavigationRequest,lastId));
         j.addProperty("material_job_control_protocol",1);
         j.addProperty("material_task_api_protocol",dev.twob2tkit.material.MaterialTaskProtocol.VERSION);j.add("material_task",dev.twob2tkit.material.MaterialJobs.snapshot());
         j.addProperty("projection_supply_protocol",1);
@@ -4913,6 +4929,9 @@ public final class AutomationBridge {
     private static JsonObject snapshotStack(String key,ItemStack item){return stackSnapshots.cached(key,item,AutomationBridge::stack);}
     private static long nextSnapshotSlowWarningAt,nextSnapshotFailureWarningAt,observedStatusWriterFailures;
     private static void writeStatus(Minecraft c){
+        // Fabric's DISCONNECT callback can run on the network thread; item snapshots are client-thread only.
+        // Defer instead of failing, so the final stopped state still reaches status.json.
+        if(!c.isSameThread()){c.execute(()->writeStatus(c));return;}
         preemptIdleForManual(c);
         if(nativeMaterialDispatch)return; // Internal child IDs never replace the consumed external request cursor.
         long began=System.nanoTime();

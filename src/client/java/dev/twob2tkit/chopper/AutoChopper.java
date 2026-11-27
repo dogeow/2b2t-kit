@@ -94,6 +94,7 @@ public final class AutoChopper {
 	private boolean currentTreeOpen;
 	private int logTicks;
 	private String lastFileLog = "";
+	private final dev.twob2tkit.logreview.RepeatLogGate clipLog = new dev.twob2tkit.logreview.RepeatLogGate(5_000);
 
 	public AutoChopper(KitConfig config) {
 		this.config = config;
@@ -170,6 +171,7 @@ public final class AutoChopper {
 		flightHeld = false;
 		logTicks = 0;
 		lastFileLog = "";
+		clipLog.reset();
 		status = "开始找树";
 		ChopperKeys.message(client, "自动挖树已开启。高树飞到工作位隔空放一块泥土，整片树冠清空后回收平台、落地拾取。再按 "
 			+ KitKeys.boundLabel(KitKeys.TOGGLE_CHOPPER) + " 或 End 停止");
@@ -521,9 +523,12 @@ public final class AutoChopper {
 				ChopperKeys.lookAt(player,mineLook);
 			}
 		} else {
-			fileLogOnce(client, "clip-miss target=" + format(pos)
-				+ " aimed=" + (aimed == null ? "-" : format(aimed.getBlockPos()))
-				+ " player=" + precisePosition(player));
+			String aimedAt = aimed == null ? "-" : format(aimed.getBlockPos());
+			// One line per target/aim every 5 s, not one per tick while the player shifts slightly.
+			if (clipLog.allow(format(pos) + "|" + aimedAt, System.currentTimeMillis()))
+				fileLog(client, "clip-miss target=" + format(pos)
+					+ " aimed=" + aimedAt
+					+ " player=" + precisePosition(player));
 			if (mineTarget != null && mineTarget.equals(pos)) mineTarget = null;
 			ChopperKeys.releaseMine(client);
 			return false;

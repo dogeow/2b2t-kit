@@ -87,6 +87,7 @@ public final class AutoPlanter {
 	private boolean harvestStarted;
 	private int logTicks;
 	private String lastFileLog = "";
+	private final dev.twob2tkit.logreview.RepeatLogGate clipLog = new dev.twob2tkit.logreview.RepeatLogGate(5_000);
 	private PlanterPolicy.RowPlan rowPlan;
 	private PlanterFieldBoundary field = PlanterFieldBoundary.empty();
 	private PlanterMaterialBatch materialBatch;
@@ -168,6 +169,7 @@ public final class AutoPlanter {
 		harvestStarted = false;
 		logTicks = 0;
 		lastFileLog = "";
+		clipLog.reset();
 		skipUntilTick.clear();
 		rowPlan = PlanterPolicy.rowPlanFromYaw(client.player.getYRot());
 		loot.resetSession();
@@ -507,9 +509,12 @@ public final class AutoPlanter {
 		BlockHitResult hit = BorerAim.verifiedHit(client, player, look, spot.pos);
 		if (!PlanterPolicy.harvestIfRayHitsCrop(hit != null)) {
 			releaseAttack(client);
-			fileLogOnce(client, "clip-miss crop=" + format(spot.pos)
-				+ " aimed=" + aimedLabel(client, player, look)
-				+ " player=" + precisePosition(player));
+			String aimed = aimedLabel(client, player, look);
+			// Walking toward the crop changes only the player position; one line per crop/aim every 5 s.
+			if (clipLog.allow(format(spot.pos) + "|" + aimed, System.currentTimeMillis()))
+				fileLog(client, "clip-miss crop=" + format(spot.pos)
+					+ " aimed=" + aimed
+					+ " player=" + precisePosition(player));
 			harvestPos = null;
 			harvestTicks = 0;
 			harvestStarted = false;

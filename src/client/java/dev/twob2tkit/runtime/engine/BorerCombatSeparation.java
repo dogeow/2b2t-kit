@@ -18,6 +18,17 @@ final class BorerCombatSeparation {
                boolean previouslyVerifiedSafe,boolean unarmedZombie){
             this(observed,ordinaryCreeper,visible,swelling,distance,clearanceBelowFeet,previouslyVerifiedSafe,unarmedZombie,false);
         }
+        /**
+         * Log de-duplication key: every flag, but distance and clearance only to whole 2-block / 1-block steps,
+         * so a mob drifting a few centimetres per tick does not rewrite the same blocked line 20 times a second.
+         */
+        String logKey(){
+            return observed+","+ordinaryCreeper+","+visible+","+swelling+",d"+(int)Math.floor(distance/2)+",c"+(int)Math.floor(clearanceBelowFeet)
+                +","+previouslyVerifiedSafe+","+unarmedZombie+","+harmlessSubmergedMelee+","+harmlessSubmergedCreeper;
+        }
+        static String logKey(List<Threat> threats){
+            var key=new StringBuilder();for(var t:threats)key.append('[').append(t.logKey()).append(']');return key.toString();
+        }
         Threat(boolean observed,boolean ordinaryCreeper,boolean visible,boolean swelling,double distance,double clearanceBelowFeet){
             this(observed,ordinaryCreeper,visible,swelling,distance,clearanceBelowFeet,false,false);
         }

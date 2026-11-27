@@ -19,8 +19,11 @@ public final class StorageCache {
         return record.history != null && record.history.stream().anyMatch(h -> h != null && h.items != null
             && h.items.stream().anyMatch(i -> i != null && i.count > 0));
     }
-    private static int priority(KitConfig.StorageSnapshot record) {
+    static int priority(KitConfig.StorageSnapshot record) {
         if (record.note != null && !record.note.isBlank()) return 3;
+        // A container already seen removed cannot be a source or destination again; under the cap it
+        // goes before any live container, even an empty one that is still useful for deposits.
+        if (StorageLifecycle.MISSING.equals(record.status)) return 0;
         if (hasItems(record) || hasHistoricalItems(record)) return 2;
         return emptyHopper(record) ? 0 : 1;
     }

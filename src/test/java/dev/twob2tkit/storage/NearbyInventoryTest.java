@@ -29,6 +29,16 @@ class NearbyInventoryTest {
     private List<NearbyInventory.Item> summarize(List<KitConfig.StoredItem> backpack,KitConfig.StorageSnapshot... records){
         return NearbyInventory.summarize(backpack,Arrays.asList(records),scope,"player-a",.5,.5);
     }
+    @Test void shulkerContentsAreListedSeparatelyAndNeverRaiseTheEstimatedTotal(){
+        var boxes=chest(0,0,0,100);boxes.items.clear();boxes.items.add(item("blue_shulker_box",1));
+        boxes.packedItems.add(item("iron_ingot",128));boxes.packedKnown=true;
+        var loose=chest(2,0,0,100);loose.items.clear();loose.items.add(item("iron_ingot",5));
+        var iron=summarize(List.of(item("iron_ingot",3)),boxes,loose).stream().filter(i->i.id().equals("minecraft:iron_ingot")).findFirst().orElseThrow();
+        assertEquals(5,iron.cached());assertEquals(128,iron.packed());assertEquals(8,iron.estimatedTotal());
+        assertEquals(2,iron.sources().size());
+        var boxed=iron.sources().stream().filter(s->s.record()==boxes).findFirst().orElseThrow();
+        assertEquals(0,boxed.count());assertEquals(128,boxed.packed());
+    }
     @Test void includes4096ButExcludes4097AndTheRadiusIsHorizontalRatherThanVerticalOrASquare(){
         var boundary=chest(4096,0,64,100);boundary.y=3000;boundary.containerPositions=List.of(new int[]{4096,3000,0});
         var far=chest(4097,0,999,200);var diagonal=chest(3000,3000,888,300);var negativeBoundary=chest(0,-4096,32,400);

@@ -49,4 +49,21 @@ class StorageLifecycleWiringTest {
         assertTrue(calls("automation/BuildSupplyTask","fail").contains("markContentsDirty"));
         assertTrue(calls("automation/BuildSupplyTask","tick").containsAll(List.of("getSlot","confirmed","handleContainerInput")));
     }
+    @Test void differentlyEnchantedBooksStaySeparateWhilePlainItemsAreSummedById(){
+        assertEquals("minecraft:coal",ContainerAssistant.totalKey("minecraft:coal",Set.of()));
+        var mending=ContainerAssistant.totalKey("minecraft:enchanted_book",new TreeSet<>(Set.of("mending","经验修补")));
+        var sharp=ContainerAssistant.totalKey("minecraft:enchanted_book",new TreeSet<>(Set.of("sharpness","锋利 V")));
+        assertNotEquals(mending,sharp);
+        assertEquals(mending,ContainerAssistant.totalKey("minecraft:enchanted_book",new TreeSet<>(Set.of("经验修补","mending"))));
+    }
+    @Test void supplyCandidatesSumRepeatedItemRows()throws Exception{
+        // Separate enchanted-book rows share an id; a candidate's recorded count must add them, not keep the last.
+        var supply=calls("automation/BuildSupplyTask","candidates");
+        assertTrue(supply.contains("has")&&supply.contains("getAsLong"));
+    }
+    @Test void openedContainersRecordShulkerContentsSeparatelyFromLooseStock()throws Exception{
+        var record=calls("storage/ContainerAssistant","recordSnapshot");
+        assertTrue(record.contains("nonEmptyItemCopyStream"),"Shulker boxes inside a container must expose what they hold");
+        assertTrue(record.indexOf("capture")<record.lastIndexOf("upsertStorageSnapshot"));
+    }
 }

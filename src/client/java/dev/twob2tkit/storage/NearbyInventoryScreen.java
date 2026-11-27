@@ -12,6 +12,7 @@ import java.util.*;
 public final class NearbyInventoryScreen {
     private NearbyInventoryScreen() {}
     private static final DateTimeFormatter TIME=DateTimeFormatter.ofPattern("MM-dd HH:mm").withZone(ZoneId.systemDefault());
+    private static String boxed(long packed){return packed>0?" · 盒内 "+packed:"";}
     private static String time(long value){return value<=0?"时间未知":TIME.format(Instant.ofEpochMilli(value));}
     static String summary(NearbyInventory.Item item){
         if(item.sources().isEmpty())return "附近没有此物品的已记录缓存";
@@ -36,8 +37,8 @@ public final class NearbyInventoryScreen {
         var view=new View(config);
         var list=new KitCollectionScreen<NearbyInventory.Item>(parent,config,"nearby-inventory","查看我物品数量 · 附近物资",
             "当前服务器与维度 · 水平4096格内；附近缓存是已记录预计数量",
-            ()->view.items,item->item.name()+" · 预计总量 "+item.estimatedTotal()+"（含缓存）",
-            item->item.id()+"\n背包实际 "+item.carried()+"；附近缓存 "+item.cached()+"\n"+summary(item),
+            ()->view.items,item->item.name()+" · 预计总量 "+item.estimatedTotal()+"（含缓存）"+boxed(item.packed()),
+            item->item.id()+"\n背包实际 "+item.carried()+"；附近缓存 "+item.cached()+(item.packed()>0?"；潜影盒内 "+item.packed()+"（不计入总量）":"")+"\n"+summary(item),
             item->item.name()+" "+item.id()).key(NearbyInventory.Item::id)
             .icon(item->StorageItems.stack(new KitConfig.StoredItem(item.id(),item.name(),1)))
             .comparisonColumns(item->"背包实际："+item.carried(),item->"附近缓存："+item.cached())
@@ -56,9 +57,9 @@ public final class NearbyInventoryScreen {
             Minecraft.getInstance().gui.setScreen(detail);return;
         }
         var list=new KitCollectionScreen<NearbyInventory.Source>(parent,config,"nearby-sources:"+id,item.name()+" · 缓存来源",
-            "背包实际 "+item.carried()+" · 附近缓存 "+item.cached()+" · 预计总量 "+item.estimatedTotal()+"（含缓存）",
+            "背包实际 "+item.carried()+" · 附近缓存 "+item.cached()+" · 预计总量 "+item.estimatedTotal()+"（含缓存）"+boxed(item.packed()),
             ()->view.items.stream().filter(row->row.id().equals(id)).findFirst().map(NearbyInventory.Item::sources).orElse(List.of()),
-            source->StorageLabels.headline(source.record())+" · 缓存 "+source.count(),
+            source->StorageLabels.headline(source.record())+" · 缓存 "+source.count()+boxed(source.packed()),
             source->"X "+source.record().x+" Y "+source.record().y+" Z "+source.record().z+"\n"+StorageLabels.evidenceSummary(source.record()),
             source->StorageLabels.headline(source.record())+" "+source.record().x+" "+source.record().z)
             .key(NearbyInventory.Source::key).summary((source,query)->"水平 "+Math.round(source.distance())+" 格 · 内容 "+time(source.observedAt())

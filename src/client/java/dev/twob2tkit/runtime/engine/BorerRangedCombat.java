@@ -781,7 +781,7 @@ final class BorerRangedCombat {
         boolean flight=Boolean.TRUE.equals(BorerFlight.meteorFlightActive());
         boolean decision=BorerCombatSeparation.safe(engine.standaloneGuard,flight,healthyDryClear,false,otherThreat,threats);
         if(session.pending()&&!decision){
-            String key=engine.standaloneGuard+"|"+flight+"|"+healthyDryClear+"|"+otherThreat+"|"+threats;
+            String key=engine.standaloneGuard+"|"+flight+"|"+healthyDryClear+"|"+otherThreat+"|"+BorerCombatSeparation.Threat.logKey(threats);
             if(!key.equals(separationLogKey)||(long)p.tickCount-separationLogTick>=100){
                 separationLogKey=key;separationLogTick=p.tickCount;
                 engine.fileLog(c,"guard-separation-blocked standalone="+engine.standaloneGuard+" flight="+flight

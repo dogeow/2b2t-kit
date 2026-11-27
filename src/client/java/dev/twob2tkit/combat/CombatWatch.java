@@ -28,6 +28,8 @@ public final class CombatWatch {
 	private float lastHealth = -1.0F;
     private float lastBaseHealth=-1.0F,lastAbsorption=-1.0F;
 	private boolean wasDead;
+	private String lastChatLabel = "";
+	private long lastChatAt;
 
 	/** 按配置构造战斗监视。 */
 	public CombatWatch(KitConfig config) {
@@ -72,12 +74,16 @@ public final class CombatWatch {
 			config.lastAttacker = attacker;
 			config.lastAttackHealth = health;
 			config.lastAttackActivity = currentActivity();
-			config.save();
+			// Poison or fire can hurt every second; rewriting the whole config each time stalls the client.
+			config.saveSoon();
 			CombatFileLog.append(client, String.format(Locale.ROOT,
 				"hurt attacker=%s hp=%.1f->%.1f activity=%s at %.1f %.1f %.1f",
 				attacker, lastHealth, health, config.lastAttackActivity, player.getX(), player.getY(), player.getZ()));
-			if (client.player != null) {
-				String verb = env ? "烫伤" : "被打";
+			long now = System.currentTimeMillis();
+			boolean quiet = CombatDamageLabel.quietChat(attacker, lastChatLabel, now, lastChatAt);
+			if (!quiet) { lastChatLabel = attacker; lastChatAt = now; }
+			if (client.player != null && !quiet) {
+				String verb = env ? "烫伤" : CombatDamageLabel.effectTick(attacker) ? "掉血" : "被打";
 				client.player.sendSystemMessage(Component.literal(
 					String.format(Locale.ROOT, "[twob2tkit] %s：%s  血 %.1f→%.1f", verb, attacker, lastHealth, health)
 				).withColor(0xFFAA55));
@@ -203,7 +209,9 @@ public final class CombatWatch {
 				if (archer != null) return archer;
 			}
 		}
-		return "未知";
+		return CombatDamageLabel.fallback(source == null ? null : source.getMsgId(),
+			player.hasEffect(net.minecraft.world.effect.MobEffects.POISON),
+			player.hasEffect(net.minecraft.world.effect.MobEffects.WITHER));
 	}
 
 	/** 死亡击杀归属名。 */
@@ -265,6 +273,8 @@ public final class CombatWatch {
 		if (KitClient.planter() != null && KitClient.planter().isActive()) return "种田";
 		if (KitClient.feeder() != null && KitClient.feeder().isActive()) return "喂养";
 		if (KitClient.brawler() != null && KitClient.brawler().isActive()) return "打猪人";
-		return "空闲";
+		return CombatActivity.describe(CombatActivity.IDLE,
+			dev.twob2tkit.UiFeature.running().stream().map(f -> f.title).toList(),
+			dev.twob2tkit.automation.AutomationBridge.runningOp());
 	}
 }

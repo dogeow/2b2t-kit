@@ -8,9 +8,10 @@ import java.util.*;
 public final class NearbyInventory {
     public static final int RADIUS=4096;
     private NearbyInventory() {}
-    public record Source(String key,KitConfig.StorageSnapshot record,long count,double distance,
+    /** {@code count} is loose stock; {@code packed} sits inside shulker boxes and needs packed access. */
+    public record Source(String key,KitConfig.StorageSnapshot record,long count,long packed,double distance,
                          long observedAt,boolean dirty,String reason) {}
-    public record Item(String id,String name,long carried,long cached,List<Source> sources) {
+    public record Item(String id,String name,long carried,long cached,long packed,List<Source> sources) {
         public long estimatedTotal(){return carried+cached;}
         public long oldestContentTime(){return sources.stream().mapToLong(Source::observedAt).min().orElse(0);}
         public long latestContentTime(){return sources.stream().mapToLong(Source::observedAt).max().orElse(0);}
@@ -55,21 +56,25 @@ public final class NearbyInventory {
                 :"container:"+root(parents,new BlockPos(record.x,record.y,record.z)).toShortString();
             unique.merge(key,record,NearbyInventory::newer);
         }
-        var carried=new TreeMap<String,Long>();var cached=new TreeMap<String,Long>();var names=new HashMap<String,String>();
+        var carried=new TreeMap<String,Long>();var cached=new TreeMap<String,Long>();var packed=new TreeMap<String,Long>();var names=new HashMap<String,String>();
         var sources=new HashMap<String,List<Source>>();
         addCounts(backpack,carried,names);
         for(var entry:unique.entrySet()){
             var record=entry.getValue();var counts=new TreeMap<String,Long>();addCounts(record.items,counts,names);
+            var inside=new TreeMap<String,Long>();addCounts(record.packedItems,inside,names);
+            var present=new TreeSet<String>(counts.keySet());present.addAll(inside.keySet());
             boolean dirty=record.contentsDirty||!StorageLifecycle.ACTIVE.equals(record.status);
             String reason=record.contentsDirtyReason==null||record.contentsDirtyReason.isBlank()?record.invalidReason:record.contentsDirtyReason;
-            for(var item:counts.entrySet()){
-                cached.merge(item.getKey(),item.getValue(),Long::sum);
-                sources.computeIfAbsent(item.getKey(),id->new ArrayList<>()).add(new Source(entry.getKey(),record,item.getValue(),
+            for(var id:present){
+                long loose=counts.getOrDefault(id,0L),boxed=inside.getOrDefault(id,0L);
+                if(loose>0)cached.merge(id,loose,Long::sum);
+                if(boxed>0)packed.merge(id,boxed,Long::sum);
+                sources.computeIfAbsent(id,ignored->new ArrayList<>()).add(new Source(entry.getKey(),record,loose,boxed,
                     distance(record,x,z),record.lastSeenEpochMillis,dirty,reason==null?"":reason));
             }
         }
-        var ids=new TreeSet<String>(carried.keySet());ids.addAll(cached.keySet());var result=new ArrayList<Item>();
-        for(var id:ids)result.add(new Item(id,names.getOrDefault(id,id),carried.getOrDefault(id,0L),cached.getOrDefault(id,0L),
+        var ids=new TreeSet<String>(carried.keySet());ids.addAll(cached.keySet());ids.addAll(packed.keySet());var result=new ArrayList<Item>();
+        for(var id:ids)result.add(new Item(id,names.getOrDefault(id,id),carried.getOrDefault(id,0L),cached.getOrDefault(id,0L),packed.getOrDefault(id,0L),
             List.copyOf(sources.getOrDefault(id,List.of()).stream().sorted(Comparator.comparingDouble(Source::distance)).toList())));
         result.sort(Comparator.comparing(Item::name).thenComparing(Item::id));return List.copyOf(result);
     }

@@ -137,6 +137,7 @@ public final class StorageLifecycle {
         record.lastVerifiedAt=record.lastSeenEpochMillis;
         if(record.containerPositions==null)record.containerPositions=new ArrayList<>();
         if(record.history==null)record.history=new ArrayList<>();
+        if(record.packedItems==null){record.packedItems=new ArrayList<>();record.packedKnown=false;}
         if(!known(record))record.status=UNKNOWN;
         else if(!Set.of(ACTIVE,MISSING,RECHECK,UNKNOWN).contains(record.status==null?"":record.status))record.status=RECHECK;
         if(MISSING.equals(record.status)||RECHECK.equals(record.status)){
@@ -212,20 +213,32 @@ public final class StorageLifecycle {
     }
     public static int refresh(Minecraft c,KitConfig config){
         Scope scope=scope(c);if(scope==null||config==null||config.storageSnapshots==null)return 0;
-        return refresh(config.storageSnapshots,scope,world(c.level),System.currentTimeMillis(),config::save);
+        return refresh(config.storageSnapshots,scope,world(c.level),System.currentTimeMillis(),config::save,config::saveSoon);
     }
     static int refresh(List<KitConfig.StorageSnapshot> records,Scope scope,World world,long now,Runnable save){
+        return refresh(records,scope,world,now,save,save);
+    }
+    /**
+     * @param save     for status or confidence changes that routing must see at once
+     * @param saveSoon for routine "structure still there" timestamps, which would otherwise rewrite the
+     *                 whole config about once a second while standing near a base
+     */
+    static int refresh(List<KitConfig.StorageSnapshot> records,Scope scope,World world,long now,Runnable save,Runnable saveSoon){
         // Removed/replaced records must not leave retained references in the transient packet queue.
         var retained=new HashSet<>(records);blockUpdates.keySet().removeIf(record->!retained.contains(record));
-        int changed=0;
+        int changed=0;boolean material=false;
         for(var record:records){
+            String status=record.status;boolean dirtyBefore=record.contentsDirty;String seed=record.worldSeed;
             boolean changedRecord=observe(record,scope,world,now);
             var update=pendingUpdate(record);
-            if(update!=null&&!update.persisted){update.persisted=true;changedRecord=true;}
-            if(changedRecord)changed++;
+            if(update!=null&&!update.persisted){update.persisted=true;changedRecord=true;material=true;}
+            if(changedRecord){
+                changed++;
+                material|=!Objects.equals(status,record.status)||dirtyBefore!=record.contentsDirty||!Objects.equals(seed,record.worldSeed);
+            }
         }
         // All packet invalidations and structure observations share one persistence write.
-        if(changed>0)save.run();return changed;
+        if(changed>0)(material?save:saveSoon).run();return changed;
     }
     /** Closed-container maintenance runs independently of which UI is open. */
     public static void tick(Minecraft c,KitConfig config){

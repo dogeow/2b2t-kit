@@ -427,8 +427,11 @@ public final class KitController {
 		if (!leavingWorld && "按键停止巡航".equals(reason)) CruiseScreenHud.finish("巡航已停止");
 		else CruiseScreenHud.hide();
 		releaseKeys(client);
-		KitClient.LOGGER.info("[Cruise] stopped: {}", reason);
+		// Material navigation stops cruise at every waypoint (every 2–3 s); keep one INFO line per reason a minute.
+		if (stopLog.allow(String.valueOf(reason), System.currentTimeMillis())) KitClient.LOGGER.info("[Cruise] stopped: {}", reason);
+		else KitClient.LOGGER.debug("[Cruise] stopped: {}", reason);
 	}
+	private final dev.twob2tkit.logreview.RepeatLogGate stopLog = new dev.twob2tkit.logreview.RepeatLogGate(60_000);
 
 	/** 每拍导航：高度、绕障、前进、卡住与到达。 */
 	public void tick(Minecraft client) {

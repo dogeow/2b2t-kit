@@ -4,6 +4,16 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 class BorerCombatSeparationTest {
+    @Test void blockedLogKeyIgnoresSubBlockDriftButNotFlagsOrRealApproach(){
+        var a=new BorerCombatSeparation.Threat(true,false,true,false,8.51,-0.91,false,true);
+        var drift=new BorerCombatSeparation.Threat(true,false,true,false,8.93,-0.42,false,true);
+        assertEquals(BorerCombatSeparation.Threat.logKey(List.of(a)),BorerCombatSeparation.Threat.logKey(List.of(drift)));
+        var closer=new BorerCombatSeparation.Threat(true,false,true,false,5.9,-0.91,false,true);
+        assertNotEquals(a.logKey(),closer.logKey());
+        var hidden=new BorerCombatSeparation.Threat(true,false,false,false,8.51,-0.91,false,true);
+        assertNotEquals(a.logKey(),hidden.logKey());
+        assertNotEquals(BorerCombatSeparation.Threat.logKey(List.of(a)),BorerCombatSeparation.Threat.logKey(List.of(a,a)));
+    }
     @Test void visibleTrackedZombieAtSafeHeightDoesNotOverrideAnAdditionalThreat(){
         var tracked=new BorerCombatSeparation.Threat(true,false,true,false,14.15,12.2,false,true);
         assertTrue(BorerCombatSeparation.safe(true,true,true,false,false,List.of(tracked)));

@@ -28,6 +28,19 @@ class StorageCacheTest {
         assertEquals(StorageCache.MAX_RECORDS,records.size());assertTrue(records.contains(supplies));assertTrue(records.contains(named));
         assertTrue(records.stream().noneMatch(r->r.lastSeenEpochMillis==3||r.lastSeenEpochMillis==4));
     }
+    @Test void removedContainersAreEvictedBeforeLiveOnesEvenWhenTheyStillListItems() {
+        var records=new ArrayList<KitConfig.StorageSnapshot>();
+        var gone=record("chest",900);gone.status=StorageLifecycle.MISSING;gone.items.add(new KitConfig.StoredItem("minecraft:coal","煤炭",64));
+        var goneNamed=record("chest",901);goneNamed.status=StorageLifecycle.MISSING;goneNamed.note="旧基地";
+        var emptyLive=record("chest",1);emptyLive.status=StorageLifecycle.ACTIVE;
+        records.add(gone);records.add(goneNamed);records.add(emptyLive);
+        for(int i=0;i<StorageCache.MAX_RECORDS-2;i++){var r=record("chest",i+2);r.status=StorageLifecycle.ACTIVE;r.items.add(new KitConfig.StoredItem("minecraft:stone","石头",1));records.add(0,r);}
+        StorageCache.trim(records);
+        assertEquals(StorageCache.MAX_RECORDS,records.size());
+        assertFalse(records.contains(gone),"a removed chest goes first, however recent");
+        assertTrue(records.contains(emptyLive),"a live empty chest is still a deposit target");
+        assertTrue(records.contains(goneNamed),"user notes are kept even for removed containers");
+    }
     @Test void hopperWithNamedOrHistoricalSuppliesIsNotTreatedAsDiscardableEmptyTransit() {
         var records=new ArrayList<KitConfig.StorageSnapshot>();
         var historical=record("hopper",1);var old=new KitConfig.StorageHistory();

@@ -139,24 +139,32 @@ public final class ContainerAssistant {
 	/** 把箱内物品记进仓库记录。 */
 	private void recordSnapshot(Minecraft client, String title, AbstractContainerMenu menu) {
 		Map<String, ItemTotal> totals = new LinkedHashMap<>();
+		Map<String, ItemTotal> packed = new java.util.TreeMap<>();
 		for (Slot slot : menu.slots) {
 			if (slot.container == client.player.getInventory() || !slot.hasItem()) continue;
 			ItemStack stack = slot.getItem();
 			String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-			ItemTotal total = totals.computeIfAbsent(id, ignored -> new ItemTotal(id, stack.getHoverName().getString()));
-            var stored = stack.get(net.minecraft.core.component.DataComponents.STORED_ENCHANTMENTS);
-            if (stored != null) for (var enchantment : stored.entrySet()) {
-                total.searchTerms.add(net.minecraft.world.item.enchantment.Enchantment.getFullname(
-                    enchantment.getKey(), enchantment.getIntValue()).getString());
-                enchantment.getKey().unwrapKey().ifPresent(key -> total.searchTerms.add(key.identifier().getPath()));
-            }
+			var terms = enchantments(stack);
+			ItemTotal total = totals.computeIfAbsent(totalKey(id, terms), ignored -> new ItemTotal(id, stack.getHoverName().getString()));
+            total.searchTerms.addAll(terms);
             total.count += stack.getCount();
+            var contents = stack.get(net.minecraft.core.component.DataComponents.CONTAINER);
+            if (contents != null) contents.nonEmptyItemCopyStream().limit(27).forEach(child -> {
+                String childId = BuiltInRegistries.ITEM.getKey(child.getItem()).toString();
+                var childTerms = enchantments(child);
+                ItemTotal inside = packed.computeIfAbsent(totalKey(childId, childTerms), ignored -> new ItemTotal(childId, child.getHoverName().getString()));
+                inside.searchTerms.addAll(childTerms);
+                inside.count += child.getCount();
+            });
 		}
 
 		List<ItemTotal> ordered = new ArrayList<>(totals.values());
-		ordered.sort(Comparator.comparing(total -> total.id));
+		ordered.sort(Comparator.<ItemTotal, String>comparing(total -> total.id).thenComparing(total -> total.searchTerms.toString()));
 		StringBuilder fingerprint = new StringBuilder();
 		for (ItemTotal total : ordered) fingerprint.append(total.id).append('/').append(total.name).append('=').append(total.count).append(total.searchTerms).append(';');
+		// Swapping one shulker for another of the same colour changes only the packed contents.
+		fingerprint.append('|');
+		for (ItemTotal total : packed.values()) fingerprint.append(total.id).append('=').append(total.count).append(total.searchTerms).append(';');
 		if (fingerprint.toString().equals(lastFingerprint)) {
 			KitConfig.StorageSnapshot labels = new KitConfig.StorageSnapshot();
 			labels.dimension = openedDimension;
@@ -185,8 +193,32 @@ public final class ContainerAssistant {
             item.searchTerms = String.join(" ",total.searchTerms);
             snapshot.items.add(item);
 		}
+		for (ItemTotal total : packed.values()) {
+			var item = new KitConfig.StoredItem(total.id, total.name, total.count);
+			item.searchTerms = String.join(" ", total.searchTerms);
+			snapshot.packedItems.add(item);
+		}
+		snapshot.packedKnown = true;
 		config.upsertStorageSnapshot(snapshot);
 		lastFingerprint = fingerprint.toString();
+	}
+
+	/** Enchanted-book names and ids, so a search for "mending" finds the right book. */
+	private static java.util.Set<String> enchantments(ItemStack stack) {
+		var terms = new java.util.TreeSet<String>();
+		var stored = stack.get(net.minecraft.core.component.DataComponents.STORED_ENCHANTMENTS);
+		if (stored == null) return terms;
+		for (var enchantment : stored.entrySet()) {
+			terms.add(net.minecraft.world.item.enchantment.Enchantment.getFullname(
+				enchantment.getKey(), enchantment.getIntValue()).getString());
+			enchantment.getKey().unwrapKey().ifPresent(key -> terms.add(key.identifier().getPath()));
+		}
+		return terms;
+	}
+
+	/** Books with different enchantments stay separate rows; everything else is summed by item id. */
+	static String totalKey(String id, java.util.Set<String> enchantments) {
+		return enchantments.isEmpty() ? id : id + "|" + String.join(" ", enchantments);
 	}
 
 	/** 按标签从箱补到背包。 */

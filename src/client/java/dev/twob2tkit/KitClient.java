@@ -107,10 +107,13 @@ public final class KitClient implements ClientModInitializer {
 			dev.twob2tkit.automation.AutomationBridge.disconnected(client);
 			emergencyStop("离开世界");
 			dev.twob2tkit.automation.AutomationBridge.afterDisconnectCleanup();
+			// DISCONNECT may fire on the network thread; serialize the config on the client thread.
+			if (client.isSameThread()) config.flushPending(); else client.execute(config::flushPending);
 		});
 		net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
 			dev.twob2tkit.material.LocalDecisionRuntime.stop(client);
 			emergencyStop("退出游戏");
+			config.flushPending();
 		});
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 			KitCommands.register(dispatcher, config, controller, machineBuilder));
@@ -119,6 +122,7 @@ public final class KitClient implements ClientModInitializer {
 
 	/** 帧尾：热键、监视器、围箱与观察类逻辑。 */
 	private void onEndTick(Minecraft client) {
+		config.flushSoon(System.currentTimeMillis());
 		dev.twob2tkit.trial.SingleplayerTrialRuntime.tick(client);
 		dev.twob2tkit.automation.AutomationBridge.tick(client);
 		dev.twob2tkit.material.MaterialJobs.tick(client);

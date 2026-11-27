@@ -126,7 +126,7 @@ public final class BuildSupplyTask {
             j.addProperty("contents_dirty",s.record.contentsDirty);j.addProperty("contents_dirty_reason",s.record.contentsDirtyReason);
             j.addProperty("structure_observed_at",s.record.lastStructureObservedAt);j.addProperty("inventory_evidence","cached_menu_contents");
             j.add("pos",JSON.toJsonTree(new int[]{s.record.x,s.record.y,s.record.z}));var items=new JsonObject();
-            s.record.items.stream().filter(i->wanted.containsKey(i.id)).forEach(i->items.addProperty(i.id,i.count));j.add("recorded_items",items);out.add(j);
+            s.record.items.stream().filter(i->wanted.containsKey(i.id)).forEach(i->items.addProperty(i.id,(items.has(i.id)?items.get(i.id).getAsLong():0)+i.count));j.add("recorded_items",items);out.add(j);
         }return out;
     }
     public BuildSupplyTask(Minecraft c,String expectedJob,String key)throws Exception{this(c,expectedJob,key,null);}

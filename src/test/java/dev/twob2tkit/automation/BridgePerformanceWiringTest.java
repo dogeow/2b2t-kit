@@ -64,4 +64,10 @@ class BridgePerformanceWiringTest {
         assertTrue(names.indexOf("update")<names.indexOf("submit"));assertFalse(names.contains("save"));
         assertTrue(calls(method("saveTerminalConfirmation")).contains("save"));
     }
+    @Test void offThreadStatusWritesAreDeferredToTheClientThreadBeforeAnySnapshot()throws Exception{
+        var names=calls(method("writeStatus"));
+        assertTrue(names.contains("isSameThread")&&names.contains("execute"));
+        assertTrue(names.indexOf("isSameThread")<names.indexOf("snapshot"),"network-thread disconnects must not reach item snapshots");
+        assertTrue(names.indexOf("execute")<names.indexOf("snapshot"));
+    }
 }
