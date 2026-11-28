@@ -9,7 +9,6 @@ import time
 import unittest
 from unittest.mock import patch
 
-from decision_advisor import Advisor
 from material_jobs import JobPaused, MaterialJob
 from material_jobs.profile import load as load_profile, profile_path
 from material_jobs.protocol import JobBlocked
@@ -43,21 +42,6 @@ def state():
             'pos': [761020.5, 100, 797854.5], 'inventory': []}
 
 
-class Model:
-    def __init__(self):
-        self.calls = 0
-        self.prompt = None
-
-    def predict(self, state_value, question):
-        self.calls += 1
-        self.prompt = {'state': state_value, 'question': question}
-        keys = question['action']['criteria']
-        return {'model': 'offline-jev', 'answers': {'action': {
-            'type': 'choice', 'choice': 'supply_02', 'confidence': .95,
-            'probabilities': {key: (1 if key == 'supply_02' else 0) for key in keys}}}}
-
-    def close(self):
-        pass
 
 
 class ProjectionAdviceTests(unittest.TestCase):
@@ -117,31 +101,6 @@ class ProjectionAdviceTests(unittest.TestCase):
             with self.assertRaises(JobPaused):
                 job._projection_batch(ITEMS)
 
-    def test_default_projection_path_never_offers_model_or_spends_budget(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            request = {'schema': 1, 'id': 'projection-test', 'mode': 'projection',
-                       'targets': {}, 'projection_key': audit()['placement_key'],
-                       'context': {'server': 'private.example', 'dimension': 'minecraft:overworld',
-                                   'world_session': 'private-player-world',
-                                   'expected_revision': 1, 'start_pos': [0, 64, 0]},
-                       'created_at': 1000}
-            job = MaterialJob(request, Path(tmp) / 'job')
-            job.snapshot = {'projection_audit': audit()}
-            job.held = {}
-            job._fit_batch = lambda item, count: min(count, 8)
-
-            def unexpected(*args, **kwargs):
-                raise AssertionError('Default projection path attempted Jev')
-
-            job.backend = SimpleNamespace(advise_projection_supply=unexpected)
-            self.assertEqual({'minecraft:deepslate_tiles': 8}, job._projection_batch(ITEMS))
-            self.assertEqual(0, job.state['ai_calls'])
-            self.assertFalse((job.out / 'events.jsonl').exists())
-            backend = material_jobs_backend.Backend.__new__(material_jobs_backend.Backend)
-            backend.profile = {}
-            backend.ensure_client = unexpected
-            self.assertEqual('projection_jev_disabled',
-                             backend.advise_projection_supply(offer(), {})['reason'])
 
     def test_world_profile_requires_boolean_opt_in(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -161,17 +120,6 @@ class ProjectionAdviceTests(unittest.TestCase):
             with self.assertRaises(JobBlocked):
                 load_profile(automation, context)
 
-    def test_local_menu_enables_projection_advice_without_cloud_profile_opt_in(self):
-        with tempfile.TemporaryDirectory()as tmp:
-            root=Path(tmp)/'automation';root.mkdir()
-            settings=root.parent/'decision-advisor';settings.mkdir()
-            backend=material_jobs_backend.Backend.__new__(material_jobs_backend.Backend)
-            backend.root=root;backend.profile={'projection_jev_advice':False}
-            self.assertFalse(backend.projection_advice_enabled())
-            (settings/'settings.json').write_text(json.dumps({'provider':'ollama','enabled':True}))
-            self.assertTrue(backend.projection_advice_enabled())
-            (settings/'settings.json').write_text(json.dumps({'provider':'jev','enabled':True}))
-            self.assertFalse(backend.projection_advice_enabled())
 
     def test_world_profile_rejects_malformed_resource_and_search_shapes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -219,161 +167,9 @@ class ProjectionAdviceTests(unittest.TestCase):
                     config.write_text(json.dumps(value))
                     with self.assertRaises(JobBlocked):load_profile(automation,context)
 
-    def test_backend_uses_shared_adviser_and_rechecks_full_audit(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            backend = material_jobs_backend.Backend.__new__(material_jobs_backend.Backend)
-            backend.root = backend.out = Path(tmp)
-            backend.profile = {'projection_jev_advice': True}
-            backend.request = {'projection_key': audit()['placement_key'], 'context': {}}
-            backend.ensure_client = lambda: object()
-            backend.refresh_audit = lambda: copy.deepcopy(audit())
-            model = Model()
-            backend.projection_advisor = Advisor(tmp, Path(tmp) / 'settings', lambda: model)
-            with (patch.object(material_jobs_backend, 'read_fresh', return_value=state()),
-                  patch.object(material_jobs_backend, 'require_unlocked'),
-                  patch.object(material_jobs_backend, 'require_scope'),
-                  patch.object(material_jobs_backend, 'owns_material_state', return_value=True)):
-                decision = backend.advise_projection_supply(offer(), {})
-            self.assertEqual(('jev', 'supply_02'), (decision['source'], decision['choice']))
-            self.assertEqual(1, model.calls)
-            self.assertNotIn('761020', json.dumps(model.prompt))
-            self.assertNotIn('private-placement', json.dumps(model.prompt))
-            kinds = [json.loads(line)['kind'] for line in (Path(tmp) / 'jev-decisions.jsonl').read_text().splitlines()]
-            self.assertEqual(['decision', 'outcome'], kinds)
 
-    def test_missing_credential_falls_back_locally_and_changed_audit_discards_answer(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            backend = material_jobs_backend.Backend.__new__(material_jobs_backend.Backend)
-            backend.root = backend.out = Path(tmp)
-            backend.profile = {'projection_jev_advice': True}
-            backend.request = {'projection_key': audit()['placement_key'], 'context': {}}
-            backend.ensure_client = lambda: object()
-            backend.refresh_audit = lambda: copy.deepcopy(audit())
-            backend.projection_advisor = Advisor(tmp, Path(tmp) / 'settings',
-                                                 lambda: (_ for _ in ()).throw(FileNotFoundError()))
-            with (patch.object(material_jobs_backend, 'read_fresh', return_value=state()),
-                  patch.object(material_jobs_backend, 'require_unlocked'),
-                  patch.object(material_jobs_backend, 'require_scope'),
-                  patch.object(material_jobs_backend, 'owns_material_state', return_value=True)):
-                decision = backend.advise_projection_supply(offer(), {})
-            self.assertEqual(('supply_01', 'provider_error'),
-                             (decision['choice'], decision['reason']))
-            self.assertTrue(decision['model_call_scheduled'])
 
-            changed = audit();changed['mismatches'][0]['pos'][0] += 1
-            observations = iter((audit(), changed))
-            backend.refresh_audit = lambda: copy.deepcopy(next(observations))
-            model = Model()
-            backend.projection_advisor = Advisor(Path(tmp) / 'changed', Path(tmp) / 'new-settings', lambda: model)
-            with (patch.object(material_jobs_backend, 'read_fresh', return_value=state()),
-                  patch.object(material_jobs_backend, 'require_unlocked'),
-                  patch.object(material_jobs_backend, 'require_scope'),
-                  patch.object(material_jobs_backend, 'owns_material_state', return_value=True)):
-                with self.assertRaisesRegex(JobPaused, '建议期间已改变'):
-                    backend.advise_projection_supply(offer(), {})
-            rows = [json.loads(line) for line in (Path(tmp) / 'changed' / 'jev-decisions.jsonl').read_text().splitlines()]
-            self.assertEqual('discarded_changed_audit_or_stock', rows[-1]['result'])
 
-    def test_timeout_uses_local_material_order(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            backend = material_jobs_backend.Backend.__new__(material_jobs_backend.Backend)
-            backend.root = backend.out = Path(tmp)
-            backend.profile = {'projection_jev_advice': True}
-            backend.request = {'projection_key': audit()['placement_key'], 'context': {}}
-            backend.ensure_client = lambda: object()
-            backend.refresh_audit = lambda: copy.deepcopy(audit())
-            gate = threading.Event()
-
-            class Slow(Model):
-                def predict(self, state_value, question):
-                    gate.wait(.5)
-                    return super().predict(state_value, question)
-
-            settings = Path(tmp) / 'settings'
-            settings.mkdir()
-            (settings / 'settings.json').write_text(json.dumps({'timeout_seconds': .1}))
-            backend.projection_advisor = Advisor(tmp, settings, lambda: Slow())
-            try:
-                with (patch.object(material_jobs_backend, 'read_fresh', return_value=state()),
-                      patch.object(material_jobs_backend, 'require_unlocked'),
-                      patch.object(material_jobs_backend, 'require_scope'),
-                      patch.object(material_jobs_backend, 'owns_material_state', return_value=True)):
-                    decision = backend.advise_projection_supply(offer(), {})
-                self.assertEqual(('supply_01', 'timeout'),
-                                 (decision['choice'], decision['reason']))
-                self.assertTrue(decision['model_call_scheduled'])
-            finally:
-                gate.set()
-
-    def test_native_receipt_records_observed_material_change_separately(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            request = {'schema': 1, 'id': 'projection-test', 'mode': 'projection',
-                       'targets': {}, 'projection_key': audit()['placement_key'],
-                       'context': {'server': 'private.example', 'dimension': 'minecraft:overworld',
-                                   'world_session': 'private-player-world',
-                                   'expected_revision': 1, 'start_pos': [0, 64, 0]},
-                       'created_at': 1000}
-
-            class Backend:
-                projection_jev_enabled = True
-
-                def __init__(self):
-                    self.held = 0
-                    self.single = False
-                    self.outcomes = []
-
-                def observe(self):
-                    projection = audit()
-                    if self.single:
-                        projection['matched'] = 9
-                        projection['mismatches'] = projection['mismatches'][:1]
-                        projection['replacement_items'] = {'minecraft:grass_block': 12}
-                    return {'connected': True, 'server': 'private.example',
-                            'dimension': 'minecraft:overworld',
-                            'world_session': 'private-player-world',
-                            'control_revision': 1, 'manual_movement': False,
-                            'health': 20, 'inventory': [
-                                {'slot': 0, 'item': 'minecraft:grass_block', 'count': self.held}],
-                            'projection_audit': projection}
-
-                def stock(self):
-                    return {'minecraft:grass_block': self.held} if self.held else {}
-
-                def fetch(self, targets):
-                    self.held = targets['minecraft:grass_block']
-                    return {'phase': 'done'}
-
-                def build(self, key):
-                    self.held = 0
-                    self.single = True
-                    return {'phase': 'done'}
-
-                def advise_projection_supply(self, offer, stock):
-                    raise AssertionError('One candidate should not invoke Jev')
-
-                def record_projection_advice_outcome(self, decision, result, **evidence):
-                    self.outcomes.append((decision['id'], result, evidence))
-
-            backend = Backend()
-            job = MaterialJob(request, Path(tmp) / 'job', backend)
-            job._observe()
-            job.batch_item = 'minecraft:grass_block'
-            job.active_advice = {'id': 'decision-a', 'choice': 'supply_01'}
-            job._call('fetch', [{'minecraft:grass_block': 3}], 'fetching',
-                      {'minecraft:grass_block': 3})
-            self.assertEqual(3, backend.held)
-            self.assertEqual(('decision-a', 'native_step_observed'), backend.outcomes[0][:2])
-            self.assertEqual((0, 3),
-                             (backend.outcomes[0][2]['item_before'], backend.outcomes[0][2]['item_after']))
-            job._build_batch()
-            self.assertIsNone(job.active_advice)
-            self.assertEqual(2, len(backend.outcomes))
-            job._fit_batch = lambda item, count: 4
-            next_target = job._projection_batch({'minecraft:grass_block': 12})
-            self.assertEqual({'minecraft:grass_block': 4}, next_target)
-            job._call('fetch', [next_target], 'fetching', next_target)
-            self.assertEqual(2, len(backend.outcomes),
-                             'A later one-candidate batch must not inherit the old decision ID')
 
 
 if __name__ == '__main__':

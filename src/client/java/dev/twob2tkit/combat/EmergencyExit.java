@@ -30,7 +30,6 @@ public final class EmergencyExit {
     private static SafetyHoldStore store(Minecraft c){if(cachedStore==null)cachedStore=new SafetyHoldStore(c.gameDirectory.toPath().resolve("config/twob2tkit/automation/safety-hold.json"));return cachedStore;}
     private static boolean nativeHeld(Minecraft c){return memoryHold||store(c).active();}
     public static boolean held(Minecraft c){
-        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))return false;
         return nativeHeld(c)||MaterialHealthHoldPolicy.active(
             c.gameDirectory.toPath().resolve("config/twob2tkit/automation/material-health-hold.json"),store(c).read());
     }
@@ -143,7 +142,7 @@ public final class EmergencyExit {
         // The normal client tick also observes health; a network callback must
         // not mutate controls, inventory or the disconnect screen off-thread.
         if(!c.isSameThread())return;
-        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c)||nativeHeld(c)||escaping
+        if(nativeHeld(c)||escaping
                 ||c.player==null||c.level==null||c.player.isDeadOrDying()){
             ResidualFireRecovery.cancel();environmentalDamage.reset();return;
         }
@@ -165,7 +164,6 @@ public final class EmergencyExit {
         }
     }
     public static boolean tick(Minecraft c){
-        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))return false;
         if(held(c))MeteorModules.disable(AUTO_RECONNECT);
         if(!escaping){
             // A script hold stops work/reconnect, but never suppresses the native low-health escape.

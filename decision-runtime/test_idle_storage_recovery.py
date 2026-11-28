@@ -2,6 +2,13 @@ from copy import deepcopy
 from unittest import TestCase
 from idle_storage_recovery import may_recover_ui
 class IdleStorageRecoveryTest(TestCase):
+ def test_dispenser_close_requires_unchanged_owned_scope_and_empty_cursor(self):
+  s=self.fixture();s['screen']='DispenserScreen';s['menu']['type']='DispenserMenu'
+  self.assertTrue(may_recover_ui(s,s,30,authorized=True))
+  changed=deepcopy(s);changed['menu']['slots'][0]['count']=63
+  self.assertFalse(may_recover_ui(s,changed,30,authorized=True))
+  changed=deepcopy(s);changed['menu']['cursor']['count']=1
+  self.assertFalse(may_recover_ui(changed,changed,30,authorized=True))
  def fixture(self):return {'world_session':'world','control_revision':4,'connected':True,'manual_movement':False,'window_active':False,'health':19.687,'food':17,'pos':[1.,69.,2.],'recent_hurt_at':1,'screen':'ShulkerBoxScreen','menu':{'id':18,'type':'ShulkerBoxMenu','cursor':{'item':'minecraft:air','count':0},'slots':[{'slot':0,'item':'minecraft:stone','count':64}]}}
  def test_stable_inactive_storage_can_close_only_for_authorized_recovery(self):
   s=self.fixture();self.assertTrue(may_recover_ui(s,s,30,authorized=True));self.assertFalse(may_recover_ui(s,s,30));self.assertFalse(may_recover_ui(s,s,29,authorized=True))
@@ -36,6 +43,14 @@ class IdleStorageCloseFlowTest(TestCase):
    def __init__(self,*args,**kw):calls.append(('init',kw))
    def checked(self,op):
     calls.append(('op',op));s['screen']='';return {'phase':'done'}
+  self.assertTrue(close_stable_storage('/tmp','/tmp','example',observe=lambda:deepcopy(s),clock=lambda:t[0],sleep=lambda n:t.__setitem__(0,t[0]+n),hardware=lambda:None,client_type=Client))
+  self.assertEqual(1,sum(op=='op' for op,_ in calls))
+ def test_stable_hopper_closes_only_after_unchanged_observation(self):
+  from idle_storage_recovery import close_stable_storage
+  s=self.state();s['screen']='HopperScreen';s['menu']['type']='HopperMenu';t=[0];calls=[]
+  class Client:
+   def __init__(self,*args,**kw):calls.append(('init',kw))
+   def checked(self,op):calls.append(('op',op));s['screen']='';return {'phase':'done'}
   self.assertTrue(close_stable_storage('/tmp','/tmp','example',observe=lambda:deepcopy(s),clock=lambda:t[0],sleep=lambda n:t.__setitem__(0,t[0]+n),hardware=lambda:None,client_type=Client))
   self.assertEqual(1,sum(op=='op' for op,_ in calls))
  def test_changed_slot_never_dispatches(self):

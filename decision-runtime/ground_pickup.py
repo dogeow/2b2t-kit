@@ -95,7 +95,10 @@ def collect_nearby_ground(client,drop):
     rows=client.request('scan',min=low,max=high,details=True)['blocks']
     choices=pickup_candidates(origin,pos,rows)
     route=[]
-    if not choices and item in ('minecraft:wheat','minecraft:wheat_seeds'):
+    # Honeycomb can roll down a single natural soil step after a dispenser
+    # harvest. Reuse the same bounded, scanned ground route; do not repeat the
+    # original collect_item request or move if any cell is unsafe.
+    if not choices and item in ('minecraft:wheat','minecraft:wheat_seeds','minecraft:honeycomb'):
         route=farmland_route(origin,pos,rows)
     if not choices and not route:return False
     # One bounded normal walk; never replay an ambiguous inventory/arrival failure.

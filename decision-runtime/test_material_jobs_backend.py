@@ -31,6 +31,19 @@ def inventory_rows(counts):
     return rows+[{'slot':i,'item':'minecraft:air','count':0,'max_stack':1} for i in range(len(rows),36)]
 
 
+class MissingEnderSourceTest(unittest.TestCase):
+    def test_only_complete_current_exact_cell_can_skip_source(self):
+        from material_jobs_backend import verified_absent_ender
+        pos = [1, 64, 2]
+        good = {'phase': 'done', 'world_session': 'w', 'scan_cells_read': 1,
+                'scan_total_cells': 1, 'unloaded_chunks': 0, 'blocks': []}
+        self.assertTrue(verified_absent_ender(good, pos, 'w'))
+        self.assertFalse(verified_absent_ender({**good, 'world_session': 'other'}, pos, 'w'))
+        self.assertFalse(verified_absent_ender({**good, 'scan_cells_read': 0}, pos, 'w'))
+        self.assertFalse(verified_absent_ender({**good, 'unloaded_chunks': 1}, pos, 'w'))
+        self.assertFalse(verified_absent_ender({**good, 'blocks': [{'pos': pos, 'state': 'Block{minecraft:ender_chest}'}]}, pos, 'w'))
+        self.assertTrue(verified_absent_ender({**good, 'blocks': [{'pos': pos, 'state': 'Block{minecraft:stone}'}]}, pos, 'w'))
+
 class BackendTest(unittest.TestCase):
     def test_clay_ball_item_input_uses_registered_home_farm_before_generic_ore_dispatch(self):
         self.job.profile={'clay_conversion_farm':{'authorized':True,'positions':[[1,71,2]]}}

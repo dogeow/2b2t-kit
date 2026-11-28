@@ -34,4 +34,16 @@ class AtomicFilesTest {
         AtomicFiles.write(target, writer -> writer.write("{}"));
         assertEquals("{}", Files.readString(target));
     }
+    @Test void anUnreadableConfigIsCopiedAsideBeforeDefaultsCanOverwriteIt() throws IOException {
+        Path target = directory.resolve("twob2tkit.json");
+        Files.writeString(target, "{\"areas\":[1,2");
+        Path kept = AtomicFiles.keepAside(target, "123");
+        assertEquals(directory.resolve("twob2tkit.json.unreadable-123"), kept);
+        assertEquals("{\"areas\":[1,2", Files.readString(kept));
+        AtomicFiles.write(target, writer -> writer.write("{}"));
+        assertEquals("{\"areas\":[1,2", Files.readString(kept), "the copy survives the next save");
+        assertNull(AtomicFiles.keepAside(directory.resolve("missing.json"), "1"));
+        Files.writeString(directory.resolve("empty.json"), "");
+        assertNull(AtomicFiles.keepAside(directory.resolve("empty.json"), "1"), "nothing worth keeping");
+    }
 }

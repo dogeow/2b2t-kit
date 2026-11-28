@@ -1,6 +1,7 @@
 """Admission for an authorized, stable unowned storage close used only to recover food/health."""
 import math
-SAFE={'ShulkerBoxScreen':'ShulkerBoxMenu','ContainerScreen':'ChestMenu','InventoryScreen':'InventoryMenu'}
+SAFE={'ShulkerBoxScreen':'ShulkerBoxMenu','ContainerScreen':'ChestMenu','InventoryScreen':'InventoryMenu',
+      'DispenserScreen':'DispenserMenu','HopperScreen':'HopperMenu'}
 
 def signature(state):
     menu=state.get('menu')or{}
@@ -41,7 +42,7 @@ def close_stable_storage(root,out,server,dimension='minecraft:overworld',*,obser
     clock=clock or time.monotonic;sleep=sleep or time.sleep;hardware=hardware or hardware_idle_seconds
     client_type=client_type or Client
     before=observe()
-    if before.get('screen') not in ('ContainerScreen','ShulkerBoxScreen'):return False
+    if before.get('screen') not in ('ContainerScreen','ShulkerBoxScreen','DispenserScreen','HopperScreen'):return False
     start=clock()
     while clock()-start<30:
         sleep(.25);current=observe()

@@ -4,11 +4,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from survival import Runner
-from survival_bridge import Paused
 from survival_mining_access import mining_plan, ray_cells
 from survival_world import World
-from test_survival import MiningBridge, row, terrain
+from test_survival_world import MiningBridge, row, terrain
 
 
 def observation():
@@ -86,46 +84,8 @@ class MiningAccessTests(unittest.TestCase):
         world = World(rows, [-6, 0, -6], [6, 5, 6])
         self.assertIsNone(mining_plan(world, [.5, 2, .5], (2, 1, 0)))
 
-    def test_normal_gather_clears_only_litter_then_confirms_soil_inventory(self):
-        rows = litter_bank()
-        with tempfile.TemporaryDirectory() as tmp:
-            bridge = SoilMiningBridge(tmp, rows)
-            bridge.state['pos'] = [.5, 2, .5]
-            runner = Runner(bridge, None, tmp)
-            with patch.object(World, 'resource', return_value=((2, 1, 0), [])):
-                runner.gather({'dirt', 'grass_block'}, {'dirt'}, 1)
-            digs = [args for op, args in bridge.requests if op == 'mine_block']
-            self.assertEqual([args['pos'] for args in digs], [[1, 2, 0], [2, 2, 0], [2, 1, 0]])
-            self.assertEqual(digs[0]['face'], 'down')
-            self.assertEqual(runner.count('dirt'), 1)
-            events = [json.loads(line) for line in (Path(tmp) / 'events.jsonl').read_text().splitlines()]
-            self.assertEqual(sum(e['event'] == 'mining_vegetation_cleared' for e in events), 2)
 
-    def test_unconfirmed_plant_dig_stops_before_soil_dig(self):
-        rows = litter_bank()
-        with tempfile.TemporaryDirectory() as tmp:
-            bridge = SoilMiningBridge(tmp, rows)
-            bridge.state['pos'] = [.5, 2, .5]
-            runner = Runner(bridge, None, tmp)
-            original = bridge.request
-            def unknown(op, **args):
-                if op == 'mine_block':
-                    bridge.requests.append((op, args))
-                    raise Paused('single target outcome pending; no second excavation sent')
-                return original(op, **args)
-            with patch.object(World, 'resource', return_value=((2, 1, 0), [])), patch.object(bridge, 'request', side_effect=unknown):
-                with self.assertRaisesRegex(Paused, 'outcome pending'):
-                    runner.gather({'dirt', 'grass_block'}, {'dirt'}, 1)
-            self.assertEqual([args['pos'] for op, args in bridge.requests if op == 'mine_block'], [[1, 2, 0]])
 
-    def test_legacy_owned_soil_is_excluded_from_candidate_selection(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            bridge = SoilMiningBridge(tmp, terrain() + [row((2, 1, 0), 'dirt')])
-            runner = Runner(bridge, None, tmp)
-            runner.owned = {'2,1,0': 'dirt'}
-            with self.assertRaises(Paused):
-                runner.gather({'dirt', 'grass_block'}, {'dirt'}, 1)
-            self.assertFalse(any(op == 'mine_block' for op, args in bridge.requests))
 
 
 if __name__ == '__main__':

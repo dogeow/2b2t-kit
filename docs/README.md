@@ -5,7 +5,6 @@
 ## 使用说明
 
 - [usage/只开Minecraft的调用方式.md](usage/只开Minecraft的调用方式.md)
-- [usage/单人通关试验.md](usage/单人通关试验.md)
 - [features/chat-translation.md](features/chat-translation.md)
 - [concrete-maker.md](concrete-maker.md)、[placement-speed.md](placement-speed.md)、[material-jobs-ui.md](material-jobs-ui.md)
 - 热更新：[decision-runtime/HOT-UPDATE.md](../decision-runtime/HOT-UPDATE.md)

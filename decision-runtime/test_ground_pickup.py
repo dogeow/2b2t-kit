@@ -1,6 +1,14 @@
 import unittest
 from ground_pickup import pickup_candidates,clear_segment,farmland_route
 class Tests(unittest.TestCase):
+ def test_honeycomb_can_reach_a_dry_one_block_lower_soil_cell(self):
+  rows=[{'pos':[2,70,0],'state':'Block{minecraft:grass_block}[snowy=false]','solid':True,'fluid':False,'block_entity':False},
+        {'pos':[1,70,0],'state':'Block{minecraft:grass_block}[snowy=false]','solid':True,'fluid':False,'block_entity':False},
+        {'pos':[1,69,1],'state':'Block{minecraft:grass_block}[snowy=false]','solid':True,'fluid':False,'block_entity':False}]
+  self.assertEqual([],pickup_candidates([2.5,71,.5],[.85,70,1.625],rows))
+  self.assertEqual([[1.5,71,.5],[1.5,70,1.5]],farmland_route([2.5,71,.5],[.85,70,1.625],rows))
+  rows[-1]['fluid']=True
+  self.assertEqual([],farmland_route([2.5,71,.5],[.85,70,1.625],rows))
  def test_known_wheat_can_step_down_to_dry_grass_border_without_jumping_back_on_crops(self):
   rows=[{'pos':[27,64,68],'state':'Block{minecraft:farmland}[moisture=7]','solid':False,'fluid':False,'block_entity':False},
         {'pos':[26,63,68],'state':'Block{minecraft:grass_block}[snowy=false]','solid':True,'fluid':False,'block_entity':False}]

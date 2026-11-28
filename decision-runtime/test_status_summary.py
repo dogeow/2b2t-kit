@@ -46,6 +46,22 @@ class StatusSummaryTest(unittest.TestCase):
         running = summarize(self.game, self.state(material_task={'id': 'm3', 'state': 'gathering'}), now=1_000)
         self.assertEqual([], running['notes'])
 
+    def test_fresh_damage_and_low_health_are_flagged(self):
+        self.install()
+        hurt = summarize(self.game, self.state(recent_attacker='骷髅', recent_hurt_at=995_000, health=8.0), now=1_000)
+        notes = ' '.join(hurt['notes'])
+        self.assertIn('5 秒前受伤（骷髅）', notes); self.assertIn('血量 8/20 偏低', notes)
+        calm = summarize(self.game, self.state(recent_hurt_at=900_000, health=20.0), now=1_000)
+        self.assertEqual([], calm['notes'])
+
+    def test_receipt_pileup_is_reported_and_archives_are_not_counted(self):
+        self.install(); auto = self.game / 'config/twob2tkit/automation'
+        (auto / 'reply-materials-a.json').write_bytes(b'x' * 10); (auto / 'reply-materials-b.json.gz').write_bytes(b'x' * 99)
+        out = summarize(self.game, self.state(), now=1_000)
+        self.assertEqual({'files': 1, 'mib': 0}, out['receipts']); self.assertEqual([], out['notes'])
+        with patch('status_summary.REPLY_WARN_BYTES', 5):
+            self.assertIn('replies --finished-receipts', ' '.join(summarize(self.game, self.state(), now=1_000)['notes']))
+
     def test_reports_when_installed_versions_are_newer_than_running(self):
         self.install(kit='2026.11.27.2', engine='2026.11.27.1')
         out = summarize(self.game, self.state(kit_version='2026.11.26.1', runtime_version='2026.11.25.4'), now=1_000)

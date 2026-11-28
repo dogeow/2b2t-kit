@@ -22,6 +22,43 @@ class AuditBlocked(RuntimeError):
     pass
 
 
+# These values can legitimately change between the native projection snapshot
+# and the later full server-chunk scan. All other properties remain exact.
+_LIVE_FIELDS = {
+    'minecraft:redstone_wire': frozenset({'power'}),
+    'minecraft:repeater': frozenset({'powered'}),
+    'minecraft:comparator': frozenset({'powered'}),
+    'minecraft:dropper': frozenset({'triggered'}),
+    'minecraft:dispenser': frozenset({'triggered'}),
+    'minecraft:redstone_torch': frozenset({'lit'}),
+    'minecraft:redstone_wall_torch': frozenset({'lit'}),
+    'minecraft:beehive': frozenset({'honey_level'}),
+    'minecraft:bee_nest': frozenset({'honey_level'}),
+}
+
+
+def _same_stable_block_state(before, after):
+    if before == after:
+        return True
+    from projection_completion import block_state
+    try:
+        old_name, old_props = block_state(before)
+        new_name, new_props = block_state(after)
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return False
+    live = _LIVE_FIELDS.get(old_name)
+    if not live or new_name != old_name or set(old_props) != set(new_props):
+        return False
+    if any(old_props[key] != new_props[key] for key in old_props if key not in live):
+        return False
+    for key in live & old_props.keys():
+        valid = ({str(n) for n in range(16)} if key == 'power' else
+                 {str(n) for n in range(6)} if key == 'honey_level' else {'true', 'false'})
+        if old_props[key] not in valid or new_props[key] not in valid:
+            return False
+    return True
+
+
 def _selection(state):
     selected = state.get('projection_selection') or {}
     low, high = selected.get('min'), selected.get('max')
@@ -225,15 +262,19 @@ def _server_proof(client, out, before, selected, model, expected, audit):
         if (kind != 'state_only' and target['item'] != 'minecraft:air'
                 and 'half=upper' not in target['state'] and 'part=head' not in target['state']):
             items[target['item']] += 1
-    identity = lambda row: (tuple(row['pos']), row['expected'], row['actual'], row['kind'])
-    if (matched != audit['matched'] or len(expected) != audit['total']
-            or dict(kinds) != {k: n for k, n in audit['kinds'].items() if n}
+    native = {tuple(row['pos']): row for row in audit['mismatches']}
+    if (len(native) != len(audit['mismatches']) or len(expected) != audit['total']
             or dict(items) != audit['replacement_items']
-            or {identity(r) for r in rows} != {identity(r) for r in audit['mismatches']}):
+            or any(pos not in expected or row['expected'] != expected[pos]['state']
+                   for pos, row in native.items())
+            or any(not _same_stable_block_state(
+                native[pos]['actual'] if pos in native else target['state'],
+                actual.get(pos, {}).get('state', 'Block{minecraft:air}'))
+                for pos, target in expected.items())):
         raise AuditBlocked('原生投影缓存审计与真实服务器方块不一致；保留全部证据，重新加载后核验')
     end = max(t[1] for t in times)
     client.minimum_status_time = max(end, getattr(client, 'minimum_status_time', 0) or 0)
-    return {**audit, 'observed_at': end, 'native_projection_audit_observed_at': audit['observed_at'],
+    return {**audit, 'matched': matched, 'observed_at': end, 'native_projection_audit_observed_at': audit['observed_at'],
             'mismatches': rows, 'kinds': dict(kinds), 'replacement_items': dict(items),
             'actual_mismatch_blocks': dict(mismatch_blocks), 'loaded_server_chunks_verified': True,
             'observation_source': 'native_scan_loaded_server_chunks',

@@ -847,6 +847,19 @@ class AcquisitionTest(unittest.TestCase):
                 self.assertEqual('blocked',self.run_acquire(c,out,target=6,profile=profile)['phase'])
                 self.assertEqual(count,len(c.actions))
 
+    def test_tall_fixed_tree_without_dirt_stops_before_travel_or_chop(self):
+        with tempfile.TemporaryDirectory() as out:
+            c=FakeClient(item='minecraft:cherry_log',before=0,gain=4)
+            c.state['fixed_tree_chop_protocol']=1
+            c.trees=[{'pos':[0,64,0],'top':75,'natural_leaves':8}]
+            profile=self.profile(c.item,[-12,60,-12],[12,105,12])
+            profile['resource_regions'][0].update(source='natural_survey',fixed_tree_chop=True)
+            result=self.run_acquire(c,out,target=2,profile=profile)
+            self.assertEqual(('waiting','tree_platform_material_required'),(result['phase'],result['code']))
+            self.assertEqual({'minecraft:dirt':1},result['requirements'])
+            self.assertFalse(result['native_chop_started'])
+            self.assertFalse(any(op in ('navigate','walk','chop') for op,_ in c.actions))
+
     def test_owned_tree_uses_explicit_root_only_when_the_native_protocol_is_available(self):
         for protocol in (0,1):
             with self.subTest(protocol=protocol), tempfile.TemporaryDirectory() as out:
@@ -885,6 +898,52 @@ class AcquisitionTest(unittest.TestCase):
             result=self.run_acquire(c,out,target=12)
             self.assertEqual('blocked',result['phase']);self.assertEqual([],c.actions)
             self.assertEqual(before,path.read_bytes())
+
+    def test_fixed_tree_returns_to_landing_after_scan_moves_player(self):
+        with tempfile.TemporaryDirectory() as out:
+            c=FakeClient(item='minecraft:cherry_log',before=0,gain=4)
+            c.task='fixed-tree-fixture'
+            c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=1,
+                on_ground=True,flight=False,supervision_lease={'kind':'materials',
+                    'job_session':c.task,'world_session':c.world,'revision':c.rev})
+            c.rows=[block((x,63,z),'grass_block') for x in range(-11,12) for z in range(-11,12)]
+            c.rows += [block((0,y,0),'cherry_log') for y in range(64,68)]
+            c.trees=[{'pos':[0,64,0],'top':68,'natural_leaves':8}]
+            original=c.request
+            def request(op,**params):
+                result=original(op,**params)
+                if op=='scan_trees' and params.get('radius')==12:
+                    c.state['pos'][1]+=6
+                return result
+            c.request=request
+            profile=self.profile(c.item,[-12,60,-12],[12,105,12])
+            profile['resource_regions'][0].update(source='natural_survey',fixed_tree_chop=True)
+            def prepare(client,checkpoint):
+                self.assertLess(abs(client.status()['pos'][1]-64.15),.5)
+            with patch('material_jobs.fixed_tree_ground.prepare',side_effect=prepare):
+                result=self.run_acquire(c,out,target=2,profile=profile)
+            self.assertEqual('done',result['phase'])
+            self.assertEqual(1,sum(op=='chop' for op,_ in c.actions))
+
+    def test_fixed_tree_ground_failure_records_no_inflight_chop(self):
+        with tempfile.TemporaryDirectory() as out:
+            c=FakeClient(item='minecraft:cherry_log',before=0,gain=4)
+            c.task='fixed-tree-fixture'
+            c.state.update(pos=[-6.5,71,.5],fixed_tree_chop_protocol=1,
+                on_ground=True,flight=False,supervision_lease={'kind':'materials',
+                    'job_session':c.task,'world_session':c.world,'revision':c.rev})
+            c.rows=[block((x,63,z),'grass_block') for x in range(-11,12) for z in range(-11,12)]
+            c.rows += [block((0,y,0),'cherry_log') for y in range(64,68)]
+            c.trees=[{'pos':[0,64,0],'top':68,'natural_leaves':8}]
+            profile=self.profile(c.item,[-12,60,-12],[12,105,12])
+            profile['resource_regions'][0].update(source='natural_survey',fixed_tree_chop=True)
+            from material_jobs.protocol import JobBlocked
+            with patch('material_jobs.fixed_tree_ground.prepare',side_effect=JobBlocked('unsafe floor')):
+                with self.assertRaises(JobBlocked):
+                    self.run_acquire(c,out,target=2,profile=profile)
+            self.assertFalse(any(op=='chop' for op,_ in c.actions))
+            ledger=json.loads(next(Path(out).glob('acquisition-*.json')).read_text())
+            self.assertFalse(any(row.get('state')=='inflight' for row in ledger['visited'].values()))
 
     def test_natural_fixed_tree_keeps_selected_wide_root_after_nearest_corner_changes(self):
         for enabled in (False,True):

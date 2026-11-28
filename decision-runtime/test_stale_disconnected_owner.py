@@ -1,6 +1,18 @@
 import copy,unittest
 from game_connection_cli import stale_owner_releasable
 class StaleOwnerTests(unittest.TestCase):
+ def test_parked_owner_requires_exact_native_receipt_and_settled_action(self):
+  lease={'id':'lease','world_session':'old','job_session':'task','kind':'parking','revision':7}
+  state={'connected':False,'screen':'DisconnectedScreen','world_session':'new','supervision_lease':copy.deepcopy(lease)}
+  proof={'native_receipt':True,'action':'KEEP_PVE_GUARD','lease':'lease','job_session':'task',
+         'parking_confirmation':{'world_session':'old','connected':True,'health':20,'guard_armed':True,'guard_pve_only':True,'supervision_lease':copy.deepcopy(lease)},
+         'drain':{'safe_to_cleanup':True,'reason':'owned_action_settled','observed':{'world_session':'old'}}}
+  self.assertTrue(stale_owner_releasable(state,'old','task',proof))
+  for key in ('native_receipt','action','lease','job_session','parking_confirmation','drain'):
+   broken=copy.deepcopy(proof);broken.pop(key)
+   with self.subTest(key=key):self.assertFalse(stale_owner_releasable(state,'old','task',broken))
+  other=copy.deepcopy(state);other['supervision_lease']['revision']=8
+  self.assertFalse(stale_owner_releasable(other,'old','task',proof))
  def test_only_disconnected_exact_old_scope_without_safety_hold_is_eligible(self):
   state={'connected':False,'screen':'DisconnectedScreen','world_session':'new','supervision_lease':{'world_session':'old','job_session':'task','kind':'materials'}}
   self.assertTrue(stale_owner_releasable(state,'old','task'))

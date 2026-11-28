@@ -144,7 +144,7 @@ def run(client,low,high,target,out):
 
 
 def select_region(client,regions,target,out):
-    """Let Jev rank freshly verified dry quarry alternatives, never raw coordinates."""
+    """Pick among freshly verified dry quarry alternatives with the local fallback order; no model is consulted."""
     if not 1<=len(regions)<=10:raise ValueError('Provide 1..10 bounded regions')
     available={};options={'wait':'Keep protection and wait; no offered dry quarry is suitable.'}
     for name,(low,high) in regions.items():
@@ -165,7 +165,7 @@ def select_region(client,regions,target,out):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--region',nargs=6,type=int,action='append',required=True,help='Repeat for Jev selection among verified dry regions')
+    p.add_argument('--region',nargs=6,type=int,action='append',required=True,help='Repeat to offer several verified dry regions')
     p.add_argument('--target-carried',type=int,required=True)
     p.add_argument('--park-high',nargs=3,type=float,required=True)
     p.add_argument('--out',type=Path,required=True)

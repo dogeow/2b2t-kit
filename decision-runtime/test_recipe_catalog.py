@@ -18,4 +18,8 @@ class Tests(unittest.TestCase):
   c=self.catalog({'x':{'type':'minecraft:crafting_shapeless','ingredients':['minecraft:diamond'],'result':{'id':'minecraft:test'}}})
   self.assertEqual(c.choose('minecraft:test',{})['missing_for_one'],{'minecraft:diamond':1})
   with self.assertRaises(ValueError):c.choose('minecraft:nether_star',{})
+ def test_sand_is_default_for_a_missing_sand_choice_but_existing_red_sand_remains_valid(self):
+  c=self.catalog({'x':{'type':'minecraft:crafting_shapeless','ingredients':[['minecraft:red_sand','minecraft:sand']],'result':{'id':'minecraft:test'}}})
+  self.assertEqual(c.choose('minecraft:test',{})['missing_for_one'],{'minecraft:sand':1})
+  self.assertEqual(c.choose('minecraft:test',{'minecraft:red_sand':1})['ingredients'],{'minecraft:red_sand':[1]})
 if __name__=='__main__':unittest.main()

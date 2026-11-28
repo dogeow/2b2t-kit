@@ -26,6 +26,12 @@ class WorkFoodTests(unittest.TestCase):
         result=ensure_work_food(self.c,self.out)
         self.assertEqual(['select_item','use_item'],self.c.calls)
         self.assertEqual(1,result['food_used']);self.assertEqual(20,result['food_after'])
+    def test_golden_carrot_restores_the_work_reserve(self):
+        self.c.state['inventory'][0]['item']='minecraft:golden_carrot'
+        result=ensure_work_food(self.c,self.out)
+        self.assertEqual(['select_item','use_item'],self.c.calls)
+        self.assertEqual('minecraft:golden_carrot',result['item'])
+        self.assertEqual(1,result['food_used'])
     def test_full_reserve_and_auto_eat_before_use_do_not_eat_twice(self):
         self.c.state['food']=18;ensure_work_food(self.c,self.out);self.assertEqual([],self.c.calls)
         self.c.state['food']=17;self.c.auto_before_use=True

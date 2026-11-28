@@ -28,6 +28,25 @@ def native_cone_edge_candidate(rows,start,target):
                     and block_state(row['state'])[1].get('waterlogged')=='false' for row in rows))
 
 
+def native_west_chest_edge_candidate(rows,start,target):
+    """Recognize one exact outward move beside the inset side of a double chest.
+
+    The native navigator still checks its real collision shape.  Never treat
+    the chest voxel as air or accept a move toward, into, or above the chest.
+    """
+    from projection_completion import block_state
+    if len(rows)!=1 or len(start)!=3 or len(target)!=3:return False
+    row=rows[0];pos=row.get('pos');name,props=block_state(row.get('state',''))
+    if (not isinstance(pos,list) or len(pos)!=3 or name!='minecraft:chest'
+            or props!={'facing':'west','type':'left','waterlogged':'false'}
+            or row.get('block_entity') is not True or row.get('fluid') is not False):return False
+    if (not 0<start[0]-target[0]<=.4 or abs(start[2]-target[2])>.4
+            or abs(start[1]-target[1])>.05):return False
+    # For west-facing left double chests, the connected side is north;
+    # the western outline begins 1/16 block inside the stored voxel.
+    return start[0]+.300000012<=pos[0]+1/16+1e-8
+
+
 def plan(rows, start, target, low, high, *, max_straight=16, foot_offset=0):
     if type(max_straight)is not int or not 1<=max_straight<=16:
         raise JobBlocked('局部空气路线步长必须在1至16格之间')
@@ -114,11 +133,12 @@ def plan(rows, start, target, low, high, *, max_straight=16, foot_offset=0):
 
 
 def move(client,target,out,*,max_straight=16,foot_offset=0,max_horizontal=12,exact_target=False,scan_bounds=None,
-         allow_dry_cone_edge=False,allow_surface_lift=True):
+         allow_dry_cone_edge=False,allow_west_chest_edge=False,allow_surface_lift=True):
     out=Path(out);out.mkdir(parents=True,exist_ok=True)
     start=client.status()['pos']
-    if (type(exact_target)is not bool or type(allow_dry_cone_edge)is not bool
+    if (type(exact_target)is not bool or type(allow_dry_cone_edge)is not bool or type(allow_west_chest_edge)is not bool
             or type(allow_surface_lift)is not bool or allow_dry_cone_edge and not exact_target
+            or allow_west_chest_edge and not exact_target
             or type(max_horizontal)not in(int,float)or not math.isfinite(max_horizontal)or not 1<=max_horizontal<=24
             or not isinstance(target,list)or len(target)!=3
             or any(type(v)not in(int,float)or not math.isfinite(v)for v in target)
@@ -163,7 +183,8 @@ def move(client,target,out,*,max_straight=16,foot_offset=0,max_horizontal=12,exa
                 and all(math.floor(actual[i])==math.floor(point[i])for i in range(3))):continue
         occupied=_air_scan(client,*_body_sweep(actual,point))
         if point[1]>=actual[1]:occupied=[r for r in occupied if not _below_vertical_start(r,actual)]
-        cone_probe=precise and allow_dry_cone_edge and native_cone_edge_candidate(occupied,actual,point)
+        cone_probe=precise and ((allow_dry_cone_edge and native_cone_edge_candidate(occupied,actual,point))
+                              or (allow_west_chest_edge and native_west_chest_edge_candidate(occupied,actual,point)))
         if occupied and not cone_probe:
             book['blocked_before_next_move']={'target':point,'actual':actual,'blocks':occupied}
             write_json(file,book)

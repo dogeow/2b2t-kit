@@ -130,7 +130,7 @@ public final class ProjectionBuildJob {
         if(!selection.key().equals(LitematicaAccess.buildSelection().key()))throw new IllegalStateException("Projection changed during supervision");
         lastSupervisionTick=tick;supervisionCount++;lastSupervision=action;
         switch(action){
-            case "replan" -> replan(c,"Jev 请求重新规划施工站位");
+            case "replan" -> replan(c,"外部请求重新规划施工站位");
             case "rescan" -> {discardSearch();rescan=new ArrayList<>(expected.keySet()).iterator();ProfessionalPrinter.pause();release(c);}
             case "pause_and_report" -> finishJob(c,"托管已暂停，现场已记录", "needs_review");
             default -> throw new IllegalArgumentException("Unsupported build supervision action");

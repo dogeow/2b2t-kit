@@ -72,6 +72,37 @@ class FakeClient:
 
 
 class AuditTests(unittest.TestCase):
+    def test_live_fields_allow_only_the_same_block_and_static_properties(self):
+        cases = [
+            ('Block{minecraft:redstone_wire}[north=side,power=0]', 'Block{minecraft:redstone_wire}[north=side,power=15]'),
+            ('Block{minecraft:repeater}[delay=4,facing=north,powered=false]', 'Block{minecraft:repeater}[delay=4,facing=north,powered=true]'),
+            ('Block{minecraft:beehive}[facing=west,honey_level=0]', 'Block{minecraft:beehive}[facing=west,honey_level=5]'),
+        ]
+        for before,after in cases:
+            with self.subTest(before=before):self.assertTrue(module._same_stable_block_state(before,after))
+        for before,after in [
+            ('Block{minecraft:beehive}[facing=west,honey_level=0]', 'Block{minecraft:beehive}[facing=east,honey_level=5]'),
+            ('Block{minecraft:repeater}[delay=4,facing=north,powered=false]', 'Block{minecraft:repeater}[delay=3,facing=north,powered=true]'),
+            ('Block{minecraft:beehive}[facing=west,honey_level=0]', 'Block{minecraft:bee_nest}[facing=west,honey_level=5]'),
+            ('Block{minecraft:redstone_wire}[north=side,power=0]', 'Block{minecraft:redstone_wire}[power=15]'),
+            ('Block{minecraft:redstone_wire}[north=side,power=0]', 'Block{minecraft:redstone_wire}[north=side,power=16]'),
+        ]:
+            with self.subTest(before=before,after=after):self.assertFalse(module._same_stable_block_state(before,after))
+
+    def test_running_redstone_reports_fresh_server_state_without_fabricating_materials(self):
+        def change(c):
+            old='Block{minecraft:redstone_wire}[north=side,power=0]'
+            new='Block{minecraft:redstone_wire}[north=side,power=15]'
+            rows=c.model['projection_model']['expected'];rows[0].update(state=old,item='minecraft:redstone')
+            lines=[','.join(map(str,r['pos']))+'\t'+r['state']+'\t'+r['item'] for r in rows]
+            c.model['projection_model']['content_hash']=hashlib.sha256(''.join(line+'\n' for line in sorted(lines)).encode()).hexdigest()
+            c.scan['blocks'][0]['state']=new
+        result=self.execute(change)
+        saved=json.loads((self.out/'current-projection.json').read_text())
+        self.assertEqual(0,saved['matched']);self.assertEqual({'missing':1,'state_only':1},saved['kinds'])
+        self.assertEqual({'minecraft:dirt':1},saved['replacement_items'])
+        self.assertTrue(any(v['actual'].endswith('power=15]') for v in saved['mismatches']))
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

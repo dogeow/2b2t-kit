@@ -1,4 +1,4 @@
-"""Shear one ripe wild nest with a proved, covered smoke source; keep the nest."""
+"""Shear one ripe nest or hive with a proved covered smoke source; retain it."""
 import math,time
 from pathlib import Path
 from kit_runtime.journal import write_json
@@ -10,10 +10,28 @@ from drop_collection import collect_drop
 from ground_pickup import clear_body
 from .colored_sources import _protected
 from .acquisition import block_id
+from potato_farm import valid_entity_scope
+
+def fire_cells_clear(scene,fire):
+    """Require observed living entities to be clear of the fire and cover."""
+    entities=scene.get('scan_entities')
+    if not isinstance(entities,list) or not valid_entity_scope(scene.get('scan_entity_scope')):return False
+    for entity in entities:
+        if not entity.get('alive'):continue
+        bounds=entity.get('bounds') or {};low=bounds.get('min');high=bounds.get('max')
+        if not isinstance(low,list) or not isinstance(high,list) or len(low)!=3 or len(high)!=3:return False
+        if all(low[i] < fire[i]+(2 if i==1 else 1) and high[i] > fire[i] for i in range(3)):return False
+    return True
+
+def extinguishing_shovel(stock):
+    for material in ('wooden','stone','iron','golden','diamond','netherite'):
+        item='minecraft:'+material+'_shovel'
+        if stock.get(item,0)>0:return item
+    raise RuntimeError('A shovel is required to extinguish the campfire before harvesting')
 
 def smoke_plan(rows,nest):
     by={tuple(v['pos']):v for v in rows};x,y,z=nest['pos']
-    if block_id(nest)!='minecraft:bee_nest'or block_state(nest['state'])[1].get('honey_level')!='5':return None
+    if block_id(nest) not in ('minecraft:bee_nest','minecraft:beehive') or block_state(nest['state'])[1].get('honey_level')!='5':return None
     for distance in range(2,6):
         fire=[x,y-distance,z];cover=[x,fire[1]+1,z];soil=by.get((x,fire[1]-1,z))
         if not soil or not soil.get('solid')or soil.get('fluid')or soil.get('block_entity'):continue
@@ -22,11 +40,14 @@ def smoke_plan(rows,nest):
         return {'nest':nest,'campfire':fire,'cover':cover,'support':soil,'smoke_distance':distance}
     return None
 
-def harvest(c,plan,profile,out,checkpoint):
+def harvest(c,plan,profile,out,checkpoint,*,authorized_nests=()):
     out=Path(out);out.mkdir(parents=True,exist_ok=False);path=out/'honeycomb.json';nest=plan['nest'];p=nest['pos'];fire=plan['campfire'];cover=plan['cover'];soil=plan['support']
-    if _protected(p,profile,checkpoint()):raise RuntimeError('Wild honey nest overlaps protected construction')
+    if block_id(nest) not in ('minecraft:bee_nest','minecraft:beehive') or block_state(nest['state'])[1].get('honey_level')!='5':raise RuntimeError('An exact ripe nest or hive is required before any action')
+    if any(not isinstance(v,(list,tuple)) or len(v)!=3 or any(type(n)is not int for n in v) for v in authorized_nests):raise ValueError('Explicit nest authorization requires exact integer positions')
+    if _protected(p,profile,checkpoint()) and tuple(p) not in {tuple(v) for v in authorized_nests}:raise RuntimeError('Honey nest overlaps protected construction without exact authorization')
     before=inventory_counts(checkpoint())
     if before['minecraft:campfire']!=1 or before['minecraft:stone_slab']<2 or before['minecraft:shears']<1:raise RuntimeError('Actual smoke source, spare cover, and shears required')
+    shovel=extinguishing_shovel(before)
     book={'world_session':c.world,'plan':plan,'inventory_before':dict(before),'pending':None,'complete':False,'steps':[]};write_json(path,book)
     def verify(pos,predicate,label):
         end=time.monotonic()+6;stamps=[]
@@ -49,13 +70,24 @@ def harvest(c,plan,profile,out,checkpoint):
     if scene.get('phase')!='done'or scene.get('scan_cells_read')!=math.prod(b-a+1 for a,b in zip(low,high)):raise RuntimeError('Actual honey work area not fully loaded')
     by={tuple(v['pos']):v for v in scene['blocks']}
     if cell_at(c,p)['state']!=nest['state']or any((fire[0],h,fire[2])in by for h in range(fire[1],p[1])):raise RuntimeError('Original ripe nest or smoke column changed')
-    poses=[[fire[0]+.5+dx,fire[1]+.1,fire[2]+.5+dz]for dx,dz in[(1.5,0),(-1.5,0),(0,1.5),(0,-1.5)]]
-    poses=[q for q in poses if clear_body(q,by)]
-    if not poses:raise RuntimeError('No flame-separated honey work pose')
-    pose=min(poses,key=lambda q:math.dist(q,checkpoint()['pos']))
-    c.checked('navigate',target=pose,arrival=.08,air_only=True,seconds=30)
-    q=checkpoint()
+    if not fire_cells_clear(scene,fire):raise RuntimeError('Living entity or incomplete entity evidence at fire/cover; do not light')
+    q=checkpoint();current=q['pos']
+    # A successful approach may already be safely to the side. Avoid forcing
+    # a lower arbitrary pose through uneven terrain beneath a tree canopy.
+    current_side=(clear_body(current,by) and not q.get('under_water')
+                  and math.hypot(current[0]-fire[0]-.5,current[2]-fire[2]-.5)>=1.35)
+    if not current_side:
+        poses=[[fire[0]+.5+dx,fire[1]+.1,fire[2]+.5+dz]for dx,dz in[(1.5,0),(-1.5,0),(0,1.5),(0,-1.5)]]
+        poses=[v for v in poses if clear_body(v,by)]
+        if not poses:raise RuntimeError('No flame-separated honey work pose')
+        pose=min(poses,key=lambda v:math.dist(v,current))
+        c.checked('navigate',target=pose,arrival=.08,air_only=True,seconds=30)
+        q=checkpoint()
     if math.hypot(q['pos'][0]-fire[0]-.5,q['pos'][2]-fire[2]-.5)<1.35:raise RuntimeError('Actual work pose too close to future campfire')
+    scene=c.request('scan',min=low,max=high,details=True)
+    if (scene.get('phase')!='done' or scene.get('scan_cells_read')!=math.prod(b-a+1 for a,b in zip(low,high))
+            or not fire_cells_clear(scene,fire)):
+        raise RuntimeError('Living entity or incomplete fresh evidence at fire/cover; do not light')
     use(soil['pos'],'up',soil['state'],'minecraft:campfire','one_normal_campfire_placement')
     actual_fire=verify(fire,lambda v:block_id(v)=='minecraft:campfire'and block_state(v['state'])[1].get('lit')=='true','Lit campfire')
     if inventory_counts(checkpoint())['minecraft:campfire']!=before['minecraft:campfire']-1:raise RuntimeError('Campfire stock consumption unconfirmed')
@@ -73,7 +105,8 @@ def harvest(c,plan,profile,out,checkpoint):
     if cell_at(c,p)['state']!=nest['state']:raise RuntimeError('Ripe nest changed before shearing')
     old={e['uuid']for e in checkpoint().get('entities',[])if e['type']=='minecraft:item'}
     use(p,face,nest['state'],'minecraft:shears','one_smoked_nest_shear')
-    empty=verify(p,lambda v:block_id(v)=='minecraft:bee_nest'and block_state(v['state'])[1].get('honey_level')=='0','Retained emptied bee nest')
+    original_kind=block_id(nest)
+    empty=verify(p,lambda v:block_id(v)==original_kind and block_state(v['state'])[1].get('honey_level')=='0','Retained emptied bee nest or hive')
     end=time.monotonic()+15
     while inventory_counts(checkpoint())['minecraft:honeycomb']<before['minecraft:honeycomb']+3:
         q=checkpoint();drops=[e for e in q.get('entities',[])if e['type']=='minecraft:item'and e['uuid']not in old and e.get('stack',{}).get('item')=='minecraft:honeycomb'and math.dist(e['pos'],[v+.5 for v in p])<8]
@@ -84,7 +117,7 @@ def harvest(c,plan,profile,out,checkpoint):
         time.sleep(.15)
     book['steps'].append('actual_three_honeycomb_and_retained_nest_confirmed');book['pending']=None;write_json(path,book)
     actual_fire=cell_at(c,fire);face=approach_faces(c,fire,actual_fire['state'],('west','east','north','south'),seconds=45,stand_distance=2.8)
-    use(fire,face,actual_fire['state'],'minecraft:diamond_shovel','one_campfire_extinguish')
+    use(fire,face,actual_fire['state'],shovel,'one_campfire_extinguish')
     off=verify(fire,lambda v:block_id(v)=='minecraft:campfire'and block_state(v['state'])[1].get('lit')=='false','Extinguished reusable campfire')
     book.update(pending=None,complete=True,actual_honeycomb_gain=inventory_counts(checkpoint())['minecraft:honeycomb']-before['minecraft:honeycomb'],nest_preserved=True,cover_preserved=True,campfire_extinguished=True,actual_empty_nest=empty,actual_unlit_fire=off);write_json(path,book)
     return book

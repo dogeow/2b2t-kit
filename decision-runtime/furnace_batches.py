@@ -156,7 +156,7 @@ def wait_loading_balance(client,state,source,output,loaded_source,loaded_fuel,me
 
 def load(client,positions,source,output,amount,journal,*,keep=None,recipe_jar=None,fuel_allow_items=None):
     if (source,output) not in [('minecraft:cobblestone','minecraft:stone'),('minecraft:stone','minecraft:smooth_stone'),
-                               ('minecraft:sand','minecraft:glass'),('minecraft:raw_iron','minecraft:iron_ingot'),
+                               ('minecraft:sand','minecraft:glass'),('minecraft:oak_log','minecraft:charcoal'),('minecraft:raw_iron','minecraft:iron_ingot'),
                                ('minecraft:raw_copper','minecraft:copper_ingot')]:
         raise ValueError('Only approved construction, raw-iron or raw-copper furnace recipes are enabled')
     if not 1<=amount<=len(positions)*64:raise ValueError('Batch does not fit the supplied furnace bank')

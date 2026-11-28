@@ -39,13 +39,12 @@ public final class MaterialJobPages {
         page.action("暂停任务", "先安全收尾，再暂停。不会重新连接服务器。", () -> perform(page, () -> MaterialJobs.pause(mc())));
         page.action("继续已暂停任务", "关闭界面后重新检查世界、背包和安全状态；不会解除低血量锁。", () -> perform(page, () -> MaterialJobs.resume(mc())));
         page.action("取消任务", "取消后保留已取得的材料，不自动重新开始。", () -> perform(page, () -> MaterialJobs.cancel(mc())));
-        page.advanced("记录与模型");
+        page.advanced("记录与技能");
         page.action("复制任务记录路径", "复制当前任务的计划、进度与日志所在路径。", () -> {
             if (MaterialJobs.directory() == null) { page.message("尚无材料任务记录", 0xFFFF77); return; }
             mc().keyboardHandler.setClipboard(MaterialJobs.directory().toString()); page.message("已复制任务记录路径", 0x77DDCC);
         });
         if (!projection) page.action("技能库", "已学技能、候选技能与验证记录。", () -> dev.twob2tkit.UiFeature.SKILLS.open(page));
-        page.action("本地决策模型", "设置常驻模型与按需游戏画面。", () -> LocalDecisionPages.open(page,config));
         page.submit(projection ? "自动补齐并建造" : "开始获取材料", () -> perform(page, () -> {
             if (projection) MaterialJobs.startProjection(mc(), config);
             else { validateItem(config.materialJobItem); MaterialJobs.startItem(mc(), config, config.materialJobItem, config.materialJobCount); }

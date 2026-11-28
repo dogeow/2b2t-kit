@@ -6,11 +6,40 @@ import tempfile
 import unittest
 from unittest.mock import Mock,patch
 
-from material_jobs.local_air_path import plan,move,move_replanning_once
+from material_jobs.local_air_path import plan,move,move_replanning_once,native_west_chest_edge_candidate
 from material_jobs.protocol import JobBlocked
 
 
 class LocalAirPathTests(unittest.TestCase):
+    def test_west_double_chest_edge_only_allows_short_outward_motion(self):
+        chest={'pos':[761037,75,797867], 'state':'Block{minecraft:chest}[facing=west,type=left,waterlogged=false]', 'fluid':False,'block_entity':True}
+        start=[761036.7624999881,73.23152379758702,797867.83833842]
+        outward=[761036.5,73.2,797867.5]
+        self.assertTrue(native_west_chest_edge_candidate([chest],start,outward))
+        for rows,a,b in [([chest],start,[761036.8,73.2,797867.5]),
+                         ([chest],[761036.77,*start[1:]],outward),
+                         ([{**chest,'state':chest['state'].replace('facing=west','facing=north')}],start,outward),
+                         ([{**chest,'fluid':True}],start,outward),
+                         ([chest,{'pos':[0,0,0],'state':'Block{minecraft:stone}'}],start,outward)]:
+            self.assertFalse(native_west_chest_edge_candidate(rows,a,b))
+    def test_chest_edge_requires_explicit_opt_in_and_native_collision_check(self):
+        chest={'pos':[761037,75,797867], 'state':'Block{minecraft:chest}[facing=west,type=left,waterlogged=false]', 'fluid':False,'block_entity':True}
+        start=[761036.7624999881,73.23152379758702,797867.83833842]
+        target=[761036.5,73.2,797867.5]
+        for allow in (False,True):
+            with self.subTest(allow=allow),tempfile.TemporaryDirectory() as d:
+                position=list(start);calls=[]
+                def scan(c,lo,hi):return [chest] if all(lo[i]<=chest['pos'][i]<=hi[i] for i in range(3)) else []
+                def request(op,**kwargs):
+                    calls.append((op,kwargs));position[:]=kwargs['target'];return {'phase':'done'}
+                c=SimpleNamespace(world='w',last='native',status=lambda:{'pos':list(position)},request=request)
+                with patch('material_jobs.local_air_path._air_scan',side_effect=scan),patch('material_jobs.navigation.settled_state',side_effect=lambda *a,**k:c.status()):
+                    if allow:
+                        result=move(c,target,d,foot_offset=.2,exact_target=True,allow_west_chest_edge=True)
+                        self.assertTrue(result['complete']);self.assertTrue(calls[0][1]['air_only'])
+                    else:
+                        with self.assertRaises(JobBlocked):move(c,target,d,foot_offset=.2,exact_target=True)
+                        self.assertFalse(calls)
     def test_observed_water_cover_allows_only_the_dry_positive_margin_route(self):
         magma={'pos':[1,0,1],'state':'Block{minecraft:magma_block}','solid':True,'fluid':False,'block_entity':False}
         for state in ['Block{minecraft:water}[level=4]','Block{minecraft:bubble_column}[drag=true]']:

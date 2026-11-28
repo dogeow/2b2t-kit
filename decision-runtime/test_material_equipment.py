@@ -7,6 +7,31 @@ from unittest.mock import patch
 from material_jobs import equipment as e
 
 
+class RegisteredDepotPreflightTest(unittest.TestCase):
+    def test_stale_first_depot_does_not_hide_valid_second_depot(self):
+        from container_access import OutdoorChestChanged
+        client = ToolChest()
+        def open_depot(c, pos):
+            if pos == [1, 2, 3]:
+                raise OutdoorChestChanged(pos, 'minecraft:chest', '', [])
+            return c.status()
+        with tempfile.TemporaryDirectory() as directory, patch.object(e, 'open_grounded_chest', side_effect=open_depot):
+            e.store_silk(client, {'depots': [[1, 2, 3], [4, 5, 6]]}, Path(directory))
+            journal = json.loads((Path(directory) / 'silk-tools.json').read_text())
+            self.assertEqual([1, 2, 3], journal['unavailable_depots'][0]['pos'])
+            self.assertEqual([4, 5, 6], journal['tools'][0]['pos'])
+            self.assertEqual('stored', journal['tools'][0]['state'])
+
+    def test_post_open_change_never_continues_to_another_depot(self):
+        from container_access import OutdoorChestChanged
+        client = ToolChest()
+        error = OutdoorChestChanged([1, 2, 3], 'minecraft:chest', '', [], scan_max=[1, 2, 3])
+        with tempfile.TemporaryDirectory() as directory, patch.object(e, 'open_grounded_chest', side_effect=error) as opener:
+            with self.assertRaises(OutdoorChestChanged):
+                e.store_silk(client, {'depots': [[1, 2, 3], [4, 5, 6]]}, Path(directory))
+            self.assertEqual(1, opener.call_count)
+            self.assertEqual([], client.moves)
+
 class ToolChest:
     """Normal unstackable quick-moves; exercise actual store and restore code."""
     world='world'

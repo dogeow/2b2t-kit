@@ -1,6 +1,6 @@
 import unittest
 from natural_terrain import NaturalWorld
-from test_survival import row,terrain
+from test_survival_world import row,terrain
 
 class NaturalTerrainTests(unittest.TestCase):
     def test_leaf_corner_ray_has_margin_for_real_waypoint_arrival(self):

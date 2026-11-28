@@ -95,7 +95,7 @@ def _idle_ground_frame(s,*,returned_scan=None):
 
 
 def capture_closed_menu_baseline(c,state):
-    """A confirmed menu close may start one new read baseline, never a fake walk."""
+    """After an owned close, allow bounded fresh reads while inventory packets settle."""
     terminal=getattr(c,'last_terminal_evidence',None)or{}
     try:
         _idle_ground_frame(state)
@@ -112,9 +112,31 @@ def capture_closed_menu_baseline(c,state):
     except (GroundFinishStop,AttributeError,KeyError,TypeError,ValueError):return False
     # The normal request path itself retains the exact native before/reply/after
     # frames only if idle_read_proof succeeds. Do not manufacture that proof.
-    c.request('snapshot')
-    proof=getattr(c,'last_owned_idle_ground_read',None)
-    return isinstance(proof,dict)and proof.get('idle_ground_read_schema')==1 and proof.get('request_id')==c.last
+    for attempt in range(3):
+        c.request('snapshot')
+        proof=getattr(c,'last_owned_idle_ground_read',None)
+        if isinstance(proof,dict) and proof.get('idle_ground_read_schema')==1 and proof.get('request_id')==c.last:
+            return True
+        if attempt==2:return False
+        # A completed read that saw late inventory updates may be followed by a
+        # distinct read, but never by a movement or a retry of an unknown request.
+        try:
+            current=observe(c);_idle_ground_frame(current)
+            terminal=getattr(c,'last_terminal_evidence',None) or {}
+            current_lease=current['supervision_lease']
+            if (terminal.get('op')!='snapshot' or terminal.get('phase') not in (None,'done')
+                    or terminal.get('request_id')!=c.last or current.get('last_request')!=c.last
+                    or terminal.get('world_session')!=c.world or terminal.get('task_session')!=c.task
+                    or terminal.get('revision_after')!=c.rev or current.get('control_revision')!=c.rev
+                    or current.get('world_session')!=c.world or current_lease.get('id')!=lease['id']
+                    or current_lease.get('job_session')!=c.task
+                    or getattr(c,'native_inflight',None) is not None
+                    or getattr(c,'unconfirmed_native_request',None) is not None
+                    or math.dist(current['pos'],state['pos'])>.08
+                    or current.get('recent_hurt_at')!=state.get('recent_hurt_at')):
+                return False
+        except (GroundFinishStop,AttributeError,KeyError,TypeError,ValueError):return False
+    return False
 
 
 def idle_read_proof(c,op,params,before,receipt,current):

@@ -29,6 +29,14 @@ class NearbyInventoryTest {
     private List<NearbyInventory.Item> summarize(List<KitConfig.StoredItem> backpack,KitConfig.StorageSnapshot... records){
         return NearbyInventory.summarize(backpack,Arrays.asList(records),scope,"player-a",.5,.5);
     }
+    @Test void enchantmentTermsFromLooseAndPackedBooksReachTheSearchText(){
+        var r=chest(0,0,0,100);r.items.clear();
+        var mending=item("enchanted_book",1);mending.searchTerms="mending 经验修补";r.items.add(mending);
+        var sharp=item("enchanted_book",2);sharp.searchTerms="sharpness 锋利 V";r.packedItems.add(sharp);r.packedKnown=true;
+        var book=summarize(List.of(),r).getFirst();
+        assertTrue(book.searchTerms().contains("经验修补"));assertTrue(book.searchTerms().contains("锋利 V"));
+        assertEquals("",summarize(List.of(),chest(1,0,5,100)).getFirst().searchTerms());
+    }
     @Test void shulkerContentsAreListedSeparatelyAndNeverRaiseTheEstimatedTotal(){
         var boxes=chest(0,0,0,100);boxes.items.clear();boxes.items.add(item("blue_shulker_box",1));
         boxes.packedItems.add(item("iron_ingot",128));boxes.packedKnown=true;

@@ -71,19 +71,35 @@ def connect(root, address, expected_player, out, *, seconds=60):
         time.sleep(.25)
     raise RuntimeError('Connection observation expired; original request was not replayed')
 
-def stale_owner_releasable(state,world,task):
+def stale_owner_releasable(state,world,task,park_proof=None):
     lease=state.get('supervision_lease')or{}
-    return (state.get('connected')is False and state.get('screen')in ('TitleScreen','DisconnectedScreen')
+    common=(state.get('connected')is False and state.get('screen')in ('TitleScreen','DisconnectedScreen')
             and isinstance(world,str)and bool(world)and isinstance(task,str)and bool(task)
             and state.get('world_session')!=world and lease.get('world_session')==world
-            and lease.get('job_session')==task and lease.get('kind')=='materials'
+            and lease.get('job_session')==task
             and not state.get('safety_hold',{}).get('active')and not state.get('health_recovery_hold'))
+    if not common:return False
+    if lease.get('kind')=='materials':return True
+    # A finished guard park can survive disconnect. Only the exact native
+    # parked receipt and drained action proof authorize releasing its stale
+    # offline lease; the old world and every old request remain untouched.
+    if lease.get('kind')!='parking' or not isinstance(park_proof,dict):return False
+    confirmation=park_proof.get('parking_confirmation')or{};old=confirmation.get('supervision_lease')or{}
+    drain=park_proof.get('drain')or{};obs=drain.get('observed')or{}
+    return (park_proof.get('native_receipt') is True and park_proof.get('action')=='KEEP_PVE_GUARD'
+            and park_proof.get('lease')==lease.get('id') and park_proof.get('job_session')==task
+            and confirmation.get('world_session')==world and confirmation.get('connected') is True
+            and confirmation.get('health')==20 and confirmation.get('guard_armed') is True
+            and confirmation.get('guard_pve_only') is True and old.get('kind')=='parking'
+            and all(old.get(k)==lease.get(k) for k in ('id','world_session','job_session','revision'))
+            and drain.get('safe_to_cleanup') is True and drain.get('reason')=='owned_action_settled'
+            and obs.get('world_session')==world)
 
 def release_disconnected_owner(root,out,terminal):
     """Stop only a confirmed-terminal owner's stale disconnected scope; retain all journals."""
     root,out=Path(root),Path(out);state=read_fresh(root);require_unlocked(root,state)
     if (terminal.get('exec_terminal_confirmed')is not True or type(terminal.get('exit_code'))is not int
-            or not stale_owner_releasable(state,terminal.get('world_session'),terminal.get('task_session'))):
+            or not stale_owner_releasable(state,terminal.get('world_session'),terminal.get('task_session'),terminal.get('park_proof'))):
         raise RuntimeError('No exact terminal disconnected owner to release')
     out.mkdir(exist_ok=False);write_json(out/'before.json',state);write_json(out/'terminal.json',terminal)
     request={'id':'stale-stop-'+uuid.uuid4().hex[:12],'op':'stop','world_session':state['world_session'],'expected_revision':state['control_revision']}

@@ -37,6 +37,32 @@ class IdleGroundReadTests(unittest.TestCase):
         self.assertFalse(c.last_owned_idle_ground_read['original_walk_performed'])
         self.assertEqual(state['inventory'],c.last_owned_idle_ground_read['terminal']['inventory'])
 
+    def test_late_inventory_packet_gets_one_new_read_not_a_movement(self):
+        c,state=self.close_baseline_fixture();current=deepcopy(state);calls=[]
+        def request(op):
+            self.assertEqual('snapshot',op);calls.append(op);before=deepcopy(current);c.last='read-'+str(len(calls))
+            if len(calls)==1:
+                current['inventory'][0]={'slot':0,'item':'minecraft:wheat_seeds','count':15}
+            current['time']+=100;current['last_request']=c.last
+            receipt={**deepcopy(current),'id':c.last};receipt.pop('last_request')
+            c.last_terminal_evidence={'op':'snapshot','phase':None,'request_id':c.last,'world_session':c.world,
+                'task_session':c.task,'revision_after':c.rev}
+            c.last_owned_idle_ground_read=module.idle_read_proof(c,op,{},before,receipt,current)
+        c.request=Mock(side_effect=request);c.raw=lambda **kwargs:deepcopy(current)
+        self.assertTrue(module.capture_closed_menu_baseline(c,state))
+        self.assertEqual(['snapshot','snapshot'],calls)
+        self.assertEqual(15,c.last_owned_idle_ground_read['terminal']['inventory'][0]['count'])
+
+    def test_unconfirmed_read_never_triggers_another_snapshot(self):
+        c,state=self.close_baseline_fixture();current=deepcopy(state);calls=[]
+        def request(op):
+            calls.append(op);c.last='read-1';current['last_request']=c.last
+            c.last_terminal_evidence={'op':'snapshot','phase':None,'request_id':c.last,'world_session':c.world,
+                'task_session':c.task,'revision_after':c.rev};c.unconfirmed_native_request='unknown'
+            c.last_owned_idle_ground_read=None
+        c.request=Mock(side_effect=request);c.raw=lambda **kwargs:deepcopy(current)
+        self.assertFalse(module.capture_closed_menu_baseline(c,state));self.assertEqual(['snapshot'],calls)
+
     def test_unknown_close_or_changed_owner_never_requests_new_baseline(self):
         for change in ('unknown','foreign','pending','manual','moved','inventory_ui','damage'):
             c,state=self.close_baseline_fixture();c.request=Mock()

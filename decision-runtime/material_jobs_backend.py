@@ -221,6 +221,19 @@ def unavailable_registered_source(pos, error):
             'reason': getattr(error,'reason','registered_chest_changed'), 'scan_evidence': error.evidence}
 
 
+def verified_absent_ender(receipt, position, world):
+    """An exact, fully read cell can prove the registered ender chest moved."""
+    if (receipt.get('phase') != 'done' or receipt.get('world_session') != world
+            or receipt.get('scan_cells_read') != 1 or receipt.get('scan_total_cells') != 1
+            or receipt.get('unloaded_chunks', 0) != 0
+            or not isinstance(receipt.get('blocks'), list)):
+        return False
+    rows = receipt['blocks']
+    if any(row.get('pos') != list(position) for row in rows) or len(rows) > 1:
+        return False
+    return not rows or not rows[0].get('state', '').startswith('Block{minecraft:ender_chest}')
+
+
 def next_sequence(out):
     values = []
     for path in Path(out).iterdir():
@@ -494,72 +507,13 @@ class Backend:
         return self.audit
 
     def projection_advice_enabled(self):
-        from decision_advisor import local_opt_in
-        root=getattr(self,'root',None)
-        return (self.profile.get('projection_jev_advice') is True or
-                root is not None and local_opt_in(root.parent/'decision-advisor'))
+        """Model advice (Jev / local models) was removed; projection batches use the native plan."""
+        return False
 
     def advise_projection_supply(self, offer, expected_stock):
-        """Rank prechecked material batches without giving Jev a game action.
-
-        The native audit and inventory must agree both before and after the
-        bounded model call. If either changes, the worker pauses and replans
-        only after an explicit resume. No position or placement key is sent.
-        """
-        # Cloud advice still needs the per-world opt-in. The Kit menu can
-        # instead explicitly enable local loopback decisions for this game.
-        if not self.projection_advice_enabled():
-            return {'choice': offer['fallback'], 'source': 'local',
-                    'reason': 'projection_jev_disabled', 'model_call_scheduled': False}
-        from decision_advisor import Advisor, safe_to_consult
-
-        c = self.ensure_client()
-        key = self.request['projection_key']
-        fingerprint_before = offer['audit_fingerprint']
-
-        def current_fingerprint():
-            audit = self.refresh_audit()
-            observed = audit.get('observed_at')
-            if (type(observed) is not int
-                    or not -1000 <= time.time() * 1000 - observed <= 5000):
-                raise JobPaused('投影审计不是当前现场，请重新规划')
-            try:
-                targets = dict(quantities(audit['replacement_items']))
-            except (KeyError, TypeError, ValueError) as error:
-                raise JobPaused('投影差料已改变，请重新规划') from error
-            return audit_fingerprint(audit, key, targets)
-
-        def current_state():
-            state = read_fresh(self.root, wait_seconds=.25)
-            require_unlocked(self.root, state)
-            require_scope(state, self.request['context'])
-            if (not owns_material_state(c, state)
-                    or (state.get('projection_selection') or {}).get('key') != key):
-                raise JobPaused('材料控制权或选定投影已改变，请重新规划')
-            return state
-
-        if current_fingerprint() != fingerprint_before:
-            raise JobPaused('投影差料在建议前已改变，请重新规划')
-        if dict(inventory_counts(current_state())) != expected_stock:
-            raise JobPaused('背包在建议前已改变，请重新规划')
-        if not hasattr(self, 'projection_advisor'):
-            self.projection_advisor = Advisor(self.out,self.root.parent/'decision-advisor')
-        decision = self.projection_advisor.select(
-            'Choose one useful next material batch for the selected projection; native planning and safety gates decide all execution.',
-            offer['choices'], current_state, offer['scene'], offer['fallback'],
-            image_supplier=getattr(c,'decision_image',None),
-            on_wait=getattr(getattr(c,'heartbeat',None),'touch',None))
-        fresh_fingerprint = current_fingerprint()
-        fresh_state = current_state()
-        if (fresh_fingerprint != fingerprint_before
-                or dict(inventory_counts(fresh_state)) != expected_stock
-                or not safe_to_consult(fresh_state)):
-            self.projection_advisor.outcome(decision, 'discarded_changed_audit_or_stock',
-                                            audit_fingerprint=fingerprint_before)
-            raise JobPaused('投影或背包在建议期间已改变，请重新规划')
-        self.projection_advisor.outcome(decision, 'selected_for_local_material_plan',
-                                        audit_fingerprint=fingerprint_before)
-        return decision
+        """Always the locally prechecked fallback batch; no model is consulted."""
+        return {'choice': offer['fallback'], 'source': 'local',
+                'reason': 'model_advice_removed', 'model_call_scheduled': False}
 
     def record_projection_advice_outcome(self, decision, result, **evidence):
         if hasattr(self, 'projection_advisor'):
@@ -1104,6 +1058,16 @@ class Backend:
         route=select_sources(c,[self.profile['ender_chest']],targets,ender=True)
         if not route['positions']:return
         self.prepare_travel();self.stage_near_base(route['positions'])
+        # A stale registered ender chest is not proof of empty storage. Skip it
+        # only after an exact loaded scan, before any container interaction.
+        ender = self.profile['ender_chest']
+        observed = c.request('scan', min=ender, max=ender, details=True)
+        if verified_absent_ender(observed, ender, c.world):
+            write_json(self.out/'unavailable-ender-chest.json', {
+                'pos': list(ender), 'world_session': c.world,
+                'request_id': observed.get('id'), 'reason': 'registered_ender_chest_changed',
+                'contents_known': False})
+            return
         for _ in range(27):
             held = self.stock()
             if all(held.get(i,0)>=n for i,n in targets.items()):

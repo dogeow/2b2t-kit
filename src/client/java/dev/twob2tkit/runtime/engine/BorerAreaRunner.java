@@ -46,11 +46,8 @@ final class BorerAreaRunner {
 	private int rescueTicks;
 	private final BorerAreaTorch torch = new BorerAreaTorch();
 	private final BorerAreaCargo cargo;
-	private BorerMiningStallAdvisor stallAdvisor;
 	private StallHold stallHold;
-	private AdviceFollowup followup;
 	private boolean suspendCheckpointed;
-	private static final int FOLLOWUP_PROOF_TICKS = 240;
 	static String recoveryKey(BlockPos target, BlockPos column) {
 		return target == null ? "column:" + column.asLong() : "block:" + target.asLong();
 	}
@@ -60,25 +57,9 @@ final class BorerAreaRunner {
 		final Vec3 origin;
 		final BorerAreaPlan plan;
 		final BlockPos target;
-		BorerMiningStallAdvisor.Decision decision;
-		boolean unsafeSinceRequest;
 		StallHold(Minecraft client, LocalPlayer player, BorerAreaPlan plan, BlockPos target) {
 			this.world = client.level; this.player = player; this.origin = player.position(); this.plan = plan;
 			this.target = target;
-		}
-	}
-	private static final class AdviceFollowup {
-		final BorerMiningStallAdvisor.Decision decision;
-		final Object world;
-		final Vec3 origin;
-		final BlockPos target;
-		final int completed;
-		boolean stopped;
-		int resumedAt = -1, airSamples;
-		AdviceFollowup(BorerMiningStallAdvisor.Decision decision, Minecraft client, LocalPlayer player,
-			BlockPos target, int completed) {
-			this.decision = decision; this.world = client.level; this.origin = player.position();
-			this.target = target; this.completed = completed;
 		}
 	}
 
@@ -99,10 +80,6 @@ final class BorerAreaRunner {
 
 	/** At the top of an excavated shaft, restoring gravity would drop the player into it. */
 	void releaseFlight(Minecraft client) {
-		if (followup != null && !followup.stopped) {
-			followup.stopped = true;
-			stallAdvisor.outcome(followup.decision, "mining_stopped_awaiting_explicit_restart");
-		}
 		stallHold = null;
 		suspendCheckpointed = false;
 		pipeline.clear(); // Vanilla retains and corrects any unacknowledged predictions independently.
@@ -113,10 +90,6 @@ final class BorerAreaRunner {
 	}
 
 	void reset() {
-		if (followup != null) {
-			stallAdvisor.outcome(followup.decision, "session_reset_without_verified_progress");
-			followup = null;
-		}
 		pipeline.clear();
 		failedFastTarget = null;
 		deferredSideTargets.clear();
@@ -142,7 +115,6 @@ final class BorerAreaRunner {
 	}
 
 	void suspend(Minecraft client) {
-		if (stallHold != null && client.gui.screen() != null) stallHold.unsafeSinceRequest = true;
 		cargo.pause(client);
 		if (!suspendCheckpointed) { checkpoint(); suspendCheckpointed = true; }
 		look = null;
@@ -156,7 +128,6 @@ final class BorerAreaRunner {
 		moveIdleTicks = 0;
 	}
 	void suspendForCombat(Minecraft client) {
-		if (stallHold != null) stallHold.unsafeSinceRequest = true;
 		cargo.pause(client);
 		look = null;
 		stopAttack(client);
@@ -171,14 +142,12 @@ final class BorerAreaRunner {
 
     /** Release the area's lease once before emergency flight borrows the same Meteor settings. */
     void yieldFlightForEscape(Minecraft client){
-		if (stallHold != null) stallHold.unsafeSinceRequest = true;
         cargo.pause(client);look=null;stopAttack(client);releaseMovement(client);checkpoint();
         flight.closeKeepingFlight();
     }
 
 	/** Unlike ordinary suspend, never releases Use or changes the selected food slot. */
 	void suspendForEating(Minecraft client, boolean entering) {
-		if (stallHold != null) stallHold.unsafeSinceRequest = true;
 		if (entering) { cargo.pause(client); checkpoint(); }
 		look = null;
 		stopAttack(client);
@@ -257,7 +226,6 @@ final class BorerAreaRunner {
 					+ " height=" + (engine.areaMax.getY() - bottom + 1) + " breakReach=" + BorerAim.breakReach(player));
 				engine.status=standing ? "海平面以上：分层站挖" : shallow ? "浅层区域：水平清挖" : "深层区域：逐列清挖";
 			}
-			observeFollowup(client, player);
 			if (player.isInWater() || player.isInLava()) { rescue(client, player); return; }
 			rescueTicks = 0;
 			if (stallHold != null) { tickStallHold(client, player); return; }
@@ -830,42 +798,15 @@ final class BorerAreaRunner {
 		show(client, player.isInLava() ? "意外进入岩浆，停挖并启飞上升脱离" : "意外进水，停挖并启飞上浮");
 	}
 
+	/** A stalled area step hovers and waits for an explicit restart; the cause is logged for diagnosis. */
 	private void enterStall(Minecraft client, LocalPlayer player, String cause, BlockPos target, int ticks, String ack) {
 		if (stallHold != null) return;
-		if (followup != null) finishFollowup("post_restart_re_stalled");
-		String key = recoveryKey(target, plan.column()); // Local cache key only; never written or sent.
-		BorerMiningStallAdvisor.Incident incident = new BorerMiningStallAdvisor.Incident(
-			cause, plan.phase().name(), Math.min(600, ticks / 20), toolClass(player), blockClass(client, target),
-			inventoryBand(player), healthBand(player), ack);
-		StallHold hold = new StallHold(client, player, plan, target);
-		stallHold = hold;
-		suspend(client); // One checkpoint; no movement or breaking while advice is pending.
-		show(client, "区域动作卡住，已悬停并记录现场");
-		boolean safe = safeForAdvice(client, player) && flight.ownsHoverLease();
-		boolean acknowledgementUncertain = cause.equals("server_ack") || cause.equals("pipeline_ack");
-		boolean waitOnce = safe && acknowledgementUncertain;
-		boolean retryOnce = safe && !acknowledgementUncertain && !cause.equals("move")
-			&& !cargo.active() && !pipeline.active()
-			&& engine.miningConfirmation.count(client.level) == 0;
-		boolean rescan = safe && !acknowledgementUncertain && !cargo.active()
-			&& !pipeline.active() && engine.miningConfirmation.count(client.level) == 0
-			&& plan.phase() != BorerAreaPlan.Phase.SURVEY && plan.phase() != BorerAreaPlan.Phase.BLOCKED;
-		if (stallAdvisor == null) stallAdvisor = new BorerMiningStallAdvisor(
-			client.gameDirectory.toPath().resolve("config/twob2tkit/jev-mining-stalls.jsonl"));
-		stallAdvisor.consult(key, incident, waitOnce, retryOnce, rescan,
-			decision -> client.execute(() -> recordStallAdvice(client, hold, decision)));
-	}
-
-	private boolean safeForAdvice(Minecraft client, LocalPlayer player) {
-		return engine.active && engine.mode == DefaultTunnelBorerEngine.Mode.AREA
-			&& client.gui.screen() == null && !manualMovementHeld(client)
-			&& player.getHealth() >= 18 && !player.isInWater() && !player.isInLava()
-			&& !player.isUsingItem() && !engine.host.surroundActive()
-			&& BorerThreats.combatPauseReason(player) == null
-			&& !engine.rangedCombat.hasImmediateHostileThreat(client)
-			&& !engine.rangedCombat.hasCreeperEmergency(client)
-			&& (!engine.host.borerPauseOnMob() || engine.mobs.closestCombat(client, player,
-				BorerMobPolicy.pauseRadius(engine.host.borerMobRadius())) == null);
+		stallHold = new StallHold(client, player, plan, target);
+		suspend(client); // One checkpoint; no movement or breaking until the player restarts.
+		engine.fileLog(client, "area-stall cause=" + cause + " phase=" + plan.phase().name() + " seconds=" + Math.min(600, ticks / 20)
+			+ " tool=" + toolClass(player) + " block=" + blockClass(client, target) + " inventory=" + inventoryBand(player)
+			+ " health=" + healthBand(player) + " ack=" + ack);
+		show(client, "区域动作卡住，已悬停暂停；需手动重新开始");
 	}
 	private static boolean manualMovementHeld(Minecraft client) {
         return physicalMovementHeld(client,client.options.keyUp,client.options.keyDown,client.options.keyLeft,client.options.keyRight);
@@ -882,23 +823,6 @@ final class BorerAreaRunner {
 		return false;
 	}
 
-	/** Jev ranks a diagnostic candidate only. It never releases the held miner. */
-	private void recordStallAdvice(Minecraft client, StallHold hold, BorerMiningStallAdvisor.Decision decision) {
-		boolean current = stallHold == hold && client.level == hold.world && client.player == hold.player
-			&& plan == hold.plan && engine.active && engine.mode == DefaultTunnelBorerEngine.Mode.AREA;
-		if (!current) {
-			stallAdvisor.receipt(decision, "advice_arrived_after_handoff_no_action");
-			stallAdvisor.outcome(decision, "stale_incident_no_action");
-			return;
-		}
-		hold.decision = decision;
-		stallAdvisor.receipt(decision, hold.unsafeSinceRequest
-			? "advice_recorded_after_safety_change_no_action" : "advice_recorded_mining_paused_no_action");
-		stallAdvisor.outcome(decision, "paused_pending_explicit_restart");
-		followup = new AdviceFollowup(decision, client, hold.player, hold.target, plan.completed());
-		show(client, "区域卡住已暂停，诊断结果已记录；需手动重新开始");
-	}
-
 	private void tickStallHold(Minecraft client, LocalPlayer player) {
 		StallHold hold = stallHold;
 		if (client.level != hold.world || player != hold.player || manualMovementHeld(client)
@@ -908,36 +832,13 @@ final class BorerAreaRunner {
 			return;
 		}
 		holdWithoutCheckpoint(client);
-		if (!safeForAdvice(client, player) || !flight.ownsHoverLease()) hold.unsafeSinceRequest = true;
-		show(client, hold.decision == null ? "区域卡住，已悬停并等待诊断" :
-			"区域卡住已暂停，诊断已记录；需手动重新开始");
+		show(client, "区域卡住已暂停；需手动重新开始");
 	}
 	private void holdWithoutCheckpoint(Minecraft client) {
 		look = null;
 		stopAttack(client);
 		releaseMovement(client);
 		flight.hover();
-	}
-	private void observeFollowup(Minecraft client, LocalPlayer player) {
-		if (followup == null || !followup.stopped || stallHold != null || plan == null) return;
-		if (client.level != followup.world) { finishFollowup("world_changed_without_verified_progress"); return; }
-		if (followup.resumedAt < 0) followup.resumedAt = player.tickCount;
-		boolean air = followup.target != null && !pipeline.contains(followup.target)
-			&& client.level.hasChunkAt(followup.target) && client.level.getBlockState(followup.target).isAir()
-			&& !engine.miningConfirmation.pending(client.level, followup.target);
-		followup.airSamples = air ? Math.min(2, followup.airSamples + 1) : 0;
-		if (followup.airSamples >= 2)
-			finishFollowup("post_restart_observed_target_air");
-		else if (plan.completed() > followup.completed) finishFollowup("post_restart_confirmed_column_progress");
-		else if (player.position().distanceToSqr(followup.origin) >= .75 * .75)
-			finishFollowup("post_restart_movement_progress");
-		else if (player.tickCount - followup.resumedAt >= FOLLOWUP_PROOF_TICKS)
-			finishFollowup("post_restart_no_confirmed_progress");
-	}
-	private void finishFollowup(String outcome) {
-		if (followup == null) return;
-		stallAdvisor.outcome(followup.decision, outcome);
-		followup = null;
 	}
 	private static String toolClass(LocalPlayer player) {
 		var stack = player.getMainHandItem();

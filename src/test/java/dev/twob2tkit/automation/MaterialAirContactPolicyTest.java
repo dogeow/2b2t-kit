@@ -32,8 +32,24 @@ final class MaterialAirContactPolicyTest {
         var node=new ClassNode();try(var in=getClass().getResourceAsStream("/dev/twob2tkit/automation/AutomationBridge.class")){assertNotNull(in);new ClassReader(in).accept(node,0);}
         var m=node.methods.stream().filter(v->v.name.equals("airNavigationClear")).findFirst().orElseThrow();
         var calls=java.util.stream.StreamSupport.stream(m.instructions.spliterator(),false).filter(i->i instanceof MethodInsnNode).map(i->((MethodInsnNode)i).name).toList();
-        for(String name:new String[]{"minimumCell","maximumCell","deflate","noCollision","getFluidState","getBlockState"})assertTrue(calls.contains(name),name);
+        for(String name:new String[]{"minimumCell","maximumCell","deflate","noCollision","getFluidState","getBlockState","cactusTransitionSafe"})assertTrue(calls.contains(name),name);
         assertFalse(calls.contains("setBlock"));
+    }
+    @Test void cactusContactRejectsApproachButPermitsDirectEscape(){
+        var cactus=new net.minecraft.core.BlockPos(0,0,0);
+        var approach=new AABB(-1,1,-.3,-.4,2.8,.3);
+        assertFalse(MaterialAirContactPolicy.cactusTransitionSafe(approach,new net.minecraft.world.phys.Vec3(.3,0,0),cactus));
+        var near=new AABB(-.5,1,-.3,.1,2.8,.3);
+        assertTrue(MaterialAirContactPolicy.cactusTransitionSafe(near,new net.minecraft.world.phys.Vec3(-1,0,0),cactus));
+        assertFalse(MaterialAirContactPolicy.cactusTransitionSafe(near,new net.minecraft.world.phys.Vec3(2,0,0),cactus));
+        var above=new AABB(.2,1,.2,.8,2.8,.8);
+        assertTrue(MaterialAirContactPolicy.cactusTransitionSafe(above,new net.minecraft.world.phys.Vec3(0,1,0),cactus));
+        assertFalse(MaterialAirContactPolicy.cactusTransitionSafe(above,new net.minecraft.world.phys.Vec3(0,.1,0),cactus));
+        assertFalse(MaterialAirContactPolicy.cactusTransitionSafe(above,new net.minecraft.world.phys.Vec3(Double.NaN,0,0),cactus));
+        var clearHigh=new AABB(-2,2,.2,-1.4,3.8,.8);
+        assertTrue(MaterialAirContactPolicy.cactusTransitionSafe(clearHigh,new net.minecraft.world.phys.Vec3(4,0,0),cactus));
+        var clearSide=new AABB(-2,1,2,-1.4,2.8,2.6);
+        assertTrue(MaterialAirContactPolicy.cactusTransitionSafe(clearSide,new net.minecraft.world.phys.Vec3(4,0,0),cactus));
     }
     @org.junit.jupiter.api.Test void dryFeetAboveActualWaterSurfaceCanRiseWithoutEnteringTheFluidVoxel(){
         org.junit.jupiter.api.Assertions.assertFalse(MaterialAirContactPolicy.fluidIntersects(62.94375,65.2,62,8d/9));

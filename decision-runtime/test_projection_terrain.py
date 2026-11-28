@@ -97,7 +97,7 @@ class JournaledTerrainTests(unittest.TestCase):
   audit,state,row=Tests().fixture();row['actual']='Block{minecraft:stone}'
   actual={'pos':row['pos'],'state':row['actual'],'fluid':False,'block_entity':False,'solid':True,'passable':False}
   state.update(world_session='w',screen='',flight=True,hand={'item':'minecraft:diamond_pickaxe'},entities=[])
-  state['inventory'].append({'slot':1,'item':'minecraft:air','count':0})
+  state['inventory'].extend([{'slot':1,'item':'minecraft:diamond_pickaxe','count':1,'durability':300}, {'slot':2,'item':'minecraft:diamond_shovel','count':1,'durability':300}, {'slot':3,'item':'minecraft:air','count':0}])
   class Client:
    world='w';last=None
    def __init__(self):self.root=root;self.out=root;self.mines=0;self.removed=False
@@ -112,6 +112,20 @@ class JournaledTerrainTests(unittest.TestCase):
              'confirmation_scope':'single_target_server_block_update_and_native_sequence_ack'}
     raise AssertionError(op)
   return Client(),row
+ def test_netherite_shovel_is_accepted_for_dirt(self):
+  with tempfile.TemporaryDirectory() as d:
+   c,row=self.fake(Path(d));row['actual']='Block{minecraft:dirt}';original=c.request;selected=[]
+   for item in c.status()['inventory']:
+    if item['item']=='minecraft:diamond_shovel':item['item']='minecraft:netherite_shovel'
+   def request(op,**kw):
+    reply=original(op,**kw)
+    if op=='scan' and reply['blocks']:reply['blocks'][0]['state']=row['actual']
+    return reply
+   def select(op,**kw):selected.append(kw['item']);return {'phase':'done'}
+   c.request=request;c.checked=select
+   with patch('projection_terrain.require_unlocked'),patch('projection_terrain.approach_faces',return_value='up'),patch('projection_terrain.time.sleep'):
+    result=clear_batch(c,1,positions=[row['pos']])
+   self.assertEqual(['minecraft:netherite_shovel'],selected);self.assertEqual(1,c.mines)
  def test_exact_supplied_cell_requires_server_ack_and_never_credits_drops(self):
   with tempfile.TemporaryDirectory()as d:
    c,row=self.fake(Path(d))

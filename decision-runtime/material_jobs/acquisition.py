@@ -2064,6 +2064,17 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
     for tree in trees:
         root = tree['pos']; key = _key(item, root, root)
         if ledger['visited'].get(key, {}).get('state') in ('empty_or_unsafe', 'no_progress', 'progress'):continue
+        region=next(r for r in regions if in_box(root,*_bounds(r)))
+        # The native fixed-tree worker can mine lower logs before discovering
+        # that a tall crown needs a dirt platform. Reserve one before departure
+        # so a missing platform cannot strand already-dropped logs.
+        top=tree.get('top')
+        if (region.get('source')=='natural_survey' and region.get('fixed_tree_chop') is True
+                and type(state.get('fixed_tree_chop_protocol')) is int and state['fixed_tree_chop_protocol']>=1 and type(top)is int
+                and top-root[1]>4 and carried(state,'minecraft:dirt')<1):
+            return {'phase':'waiting','code':'tree_platform_material_required',
+                    'detail':'高树可能需要临时泥土平台；先备一块，尚未开始砍树',
+                    'requirements':{'minecraft:dirt':1},'native_chop_started':False}
         rows = _scan(c, [root[0]-11, root[1]-5, root[2]-11], [root[0]+11, root[1]+39, root[2]+11], checkpoint)
         logs = [row for row in rows if block_id(row) == item]
         valid_logs = all(any(in_box(row['pos'], *_bounds(region)) for region in regions) for row in logs)
@@ -2138,11 +2149,17 @@ def _wood(c, item, target, regions, out, path, ledger, checkpoint, profile=None)
         # The broad access scan includes other living trees. Its lowest log is
         # not necessarily part of the selected native harvest.
         plant_cell = list(root)
-        entry = {'state': 'inflight', 'root': root, 'before': before, 'route': trace}
-        ledger['visited'][key] = entry; write_json(path, ledger); checkpoint()
         if fixed_tree:
             from .fixed_tree_ground import prepare
+            # A long block scan can leave the flying player displaced above
+            # the previously verified landing. Re-enter that exact landing,
+            # then let prepare freshly verify the floor before walking.
+            checkpoint();here=c.status()['pos']
+            if math.dist(here,spot)>.5:
+                _travel(c,spot,checkpoint,trace,guard_budget,route_scope=route_scope)
             prepare(c,checkpoint)
+        entry = {'state': 'inflight', 'root': root, 'before': before, 'route': trace}
+        ledger['visited'][key] = entry; write_json(path, ledger); checkpoint()
         reply = c.request('chop', item=item, target_count=target, tree_limit=1, seconds=240, **fixed_params)
         after = c.status(); _safe(after)
         entry['native'] = {name: reply[name] for name in ('id', 'world_session', 'phase', 'detail')

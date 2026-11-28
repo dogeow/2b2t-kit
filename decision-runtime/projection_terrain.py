@@ -169,8 +169,17 @@ def clear_batch(client, limit=8, *, expected_item=None, positions=None, allow_pa
         if unsafe_nearby_fluid(region,pos):
             deferred.add(tuple(pos)); continue
         block, _ = block_state(row['actual'])
-        tool = 'minecraft:diamond_shovel' if block in ('minecraft:dirt', 'minecraft:grass_block','minecraft:dirt_path') else 'minecraft:diamond_pickaxe'
-        if client.status().get('hand',{}).get('item')!=tool:
+        shovel = block in ('minecraft:dirt', 'minecraft:grass_block', 'minecraft:dirt_path')
+        allowed_tools = ('minecraft:netherite_shovel', 'minecraft:diamond_shovel') if shovel else ('minecraft:netherite_pickaxe', 'minecraft:diamond_pickaxe')
+        tool_state = client.status()
+        usable_tools = [item for item in tool_state.get('inventory', [])
+                        if item.get('item') in allowed_tools and item.get('count') == 1
+                        and item.get('durability', 0) >= 2 and item.get('slot', 99) < 36]
+        if not usable_tools:
+            raise RuntimeError('No durable suitable terrain tool in inventory')
+        held_item = tool_state.get('hand', {}).get('item')
+        tool = next((item['item'] for item in usable_tools if item['item'] == held_item), usable_tools[0]['item'])
+        if held_item != tool:
             client.checked('select_item',item=tool)
         try:face=approach_faces(client,pos,row['actual'],exposed_faces(pos,region))
         except ApproachUnavailable:

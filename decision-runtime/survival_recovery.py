@@ -7,7 +7,7 @@ from material_client import MaterialClient
 from job_progress import JobProgress
 from safety_interlock import require_unlocked
 
-FOOD=('minecraft:cooked_beef','minecraft:cooked_porkchop','minecraft:baked_potato','minecraft:cooked_mutton','minecraft:cooked_chicken','minecraft:bread','minecraft:cooked_salmon','minecraft:cooked_cod')
+FOOD=('minecraft:cooked_beef','minecraft:cooked_porkchop','minecraft:baked_potato','minecraft:cooked_mutton','minecraft:cooked_chicken','minecraft:bread','minecraft:cooked_salmon','minecraft:cooked_cod','minecraft:golden_carrot')
 
 def ensure_work_food(client,out,minimum=18):
     """Use one carried ordinary food on the same idle dry material owner."""

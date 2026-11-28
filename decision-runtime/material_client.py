@@ -44,7 +44,11 @@ def bounded_canopy_path(rows,pos,target_y,radius=4):
          'minecraft:podzol','minecraft:stone','minecraft:cobblestone',
          'minecraft:deepslate','minecraft:moss_block',
          'minecraft:stone_bricks','minecraft:polished_andesite'}
- soft={'minecraft:short_grass','minecraft:tall_grass','minecraft:fern','minecraft:large_fern'}
+ soft={'minecraft:short_grass','minecraft:tall_grass','minecraft:fern','minecraft:large_fern',
+       'minecraft:dandelion','minecraft:poppy','minecraft:blue_orchid','minecraft:allium',
+       'minecraft:azure_bluet','minecraft:red_tulip','minecraft:orange_tulip',
+       'minecraft:white_tulip','minecraft:pink_tulip','minecraft:oxeye_daisy',
+       'minecraft:cornflower','minecraft:lily_of_the_valley'}
  def block_id(row):
   state=row.get('state')
   return state.split('}',1)[0].removeprefix('Block{') if isinstance(state,str) else ''
@@ -61,7 +65,14 @@ def bounded_canopy_path(rows,pos,target_y,radius=4):
  def safe(x,z):return (abs(x-x0)<=radius and abs(z-z0)<=radius
                        and body_clear(x,z) and floor_clear(x,z))
  def open_column(x,z):return all((x,h,z) not in cells for h in range(y,math.ceil(target_y)+3))
- if not safe(x0,z0):return None
+ # A player may be hovering on the full top face of a hive after recovering a
+ # drop. Permit that observed solid starting support solely for departure;
+ # every subsequent horizontal cell still requires natural/approved ground.
+ start_floor=cells.get((x0,y-1,z0),{})
+ hive_start=(block_id(start_floor) in ('minecraft:bee_nest','minecraft:beehive')
+             and start_floor.get('solid') is True and start_floor.get('fluid') is False
+             and start_floor.get('block_entity') is True and body_clear(x0,z0))
+ if not safe(x0,z0) and not hive_start:return None
  queue=deque([(x0,z0)]);parent={(x0,z0):None};goal=None
  while queue:
   x,z=queue.popleft()
@@ -120,7 +131,7 @@ class Client:
   s=self.raw();assert s.get('server','').removesuffix(':25565')==self.server.removesuffix(':25565') and s['dimension']==dimension
   if idle_storage_proof is not None:
    from idle_storage_recovery import may_recover_ui
-   assert s.get('screen') in ('ContainerScreen','ShulkerBoxScreen')
+   assert s.get('screen') in ('ContainerScreen','ShulkerBoxScreen','DispenserScreen','HopperScreen')
    assert may_recover_ui(idle_storage_proof['before'],s,idle_storage_proof['idle_seconds'],authorized=True,hardware_idle=idle_storage_proof.get('hardware_idle'))
   else:assert not s['screen']
   assert not s.get('manual_movement') and s['health']>=min_health
@@ -183,6 +194,12 @@ class Client:
     if not processing_owned:
      from owned_added_container_menu import allowed as owned_added_menu_allowed,late_allowed as late_added_menu_allowed
      processing_owned=owned_added_menu_allowed(s,self.world,getattr(self,'task',None),self.rev)or late_added_menu_allowed(self,s)
+    if not processing_owned and s.get('screen') in ('DispenserScreen','HopperScreen') and getattr(self,'_idle_storage_attempted',False):
+     from idle_storage_recovery import may_recover_ui
+     from manual_idle_resume import hardware_idle_seconds
+     proof=getattr(self,'idle_storage_proof',None)or{}
+     processing_owned=may_recover_ui(proof.get('before',{}),s,proof.get('idle_seconds',0),
+                                    authorized=True,hardware_idle=hardware_idle_seconds())
     if not processing_owned:raise Handoff('User opened a different interface')
    return s
  def request(self,op,**params):
@@ -496,10 +513,14 @@ class MaterialClient(Client):
       or not row['state'].split('}',1)[0].endswith('_leaves') for row in obstacles)):
    raise RuntimeError('Blocked park column has no eligible local canopy escape')
   start=list(state['pos']);x,z=math.floor(start[0]),math.floor(start[2]);y=math.floor(start[1])
-  low=[x-4,y-1,z-4];high=[x+4,min(319,math.ceil(self.park_target[1])+2),z+4]
+  # The player can be hovering one block above natural ground after a work
+  # approach. Include that floor so a safe small descent can be proved.
+  low=[x-4,max(-64,y-5),z-4];high=[x+4,min(319,math.ceil(self.park_target[1])+2),z+4]
   reply=self.request('scan',min=low,max=high,details=True)
-  if (reply.get('phase') not in (None,'done') or reply.get('world_session')!=self.world
-      or not isinstance(reply.get('blocks'),list)):
+  if (reply.get('phase')!='done' or reply.get('world_session')!=self.world
+      or not isinstance(reply.get('blocks'),list)
+      or reply.get('scan_cells_read')!=math.prod(high[i]-low[i]+1 for i in range(3))
+      or reply.get('scan_total_cells')!=math.prod(high[i]-low[i]+1 for i in range(3))):
    raise RuntimeError('Local canopy corridor was not completely scanned')
   for row in reply['blocks']:
    point=row.get('pos') if isinstance(row,dict) else None
@@ -511,6 +532,27 @@ class MaterialClient(Client):
       or not fresh.get('guard_armed') or not fresh.get('flight')):
    raise RuntimeError('Canopy position or protection changed after scan')
   route=bounded_canopy_path(reply['blocks'],start,self.park_target[1])
+  if not route and abs(start[1]-y)<.25:
+   cells={tuple(row['pos']):row for row in reply['blocks']}
+   for depth in range(1,5):
+    lower=[start[0],y-depth+.05,start[2]]
+    if lower[1]<low[1]+1:break
+    # Every swept body cell must be passable, dry and non-container. Native
+    # navigation performs its own collision check before the single descent.
+    clear=all((row:=cells.get((x,h,z))) is None or
+              (row.get('passable') is True and row.get('fluid') is False and row.get('block_entity') is False)
+              for h in range(math.floor(lower[1]),math.floor(start[1]+1.8)+1))
+    if not clear:continue
+    candidate=bounded_canopy_path(reply['blocks'],lower,self.park_target[1])
+    if not candidate:continue
+    self._safe_canopy_step(fresh,lower)
+    descended=self.request('navigate',target=lower,arrival=.15,seconds=15,air_only=True)
+    if descended.get('phase')!='done':raise RuntimeError('Canopy descent was not confirmed: '+str(descended.get('detail')))
+    fresh=self.status()
+    if (math.dist(fresh['pos'],lower)>.3 or fresh.get('health',0)<18
+        or not fresh.get('guard_armed') or not fresh.get('flight')):
+     raise RuntimeError('Canopy descent or protection changed')
+    route=candidate;break
   if not route:
    raise RuntimeError('No verified short natural-ground exit from canopy')
   route_started=time.monotonic();start_step_deadline=route_started+12
@@ -820,17 +862,16 @@ class MaterialClient(Client):
  def advance_progress(self,amount):
   if getattr(self,'job_progress',None):self.set_progress(done=self.job_progress.done+amount)
  def advise(self,goal,candidates,scene=None,fallback='wait'):
-  from decision_advisor import Advisor
-  if not hasattr(self,'advisor'):self.advisor=Advisor(self.out,self.root.parent/'decision-advisor')
-  return self.advisor.select(goal,candidates,self.status,scene,fallback,image_supplier=self.decision_image,
-                             on_wait=self.heartbeat.touch if self.heartbeat else None)
+  # Model advice (Jev / local models) was removed: callers always get their locally verified fallback.
+  if fallback not in candidates:raise ValueError('Fallback must be one of the locally verified choices')
+  return {'id':uuid.uuid4().hex,'choice':fallback,'source':'local','reason':'model_advice_removed','model_call_scheduled':False}
  def decision_image(self):
   state=self.status()
   if state.get('decision_image_protocol')!=1:raise RuntimeError('Native game image capture is unavailable')
   reply=self.checked('decision_screenshot')
   return reply['decision_image']
  def record_advice_outcome(self,decision,result,**evidence):
-  if hasattr(self,'advisor'):self.advisor.outcome(decision,result,**evidence)
+  pass # No model advice is taken, so there is no model outcome to record.
  def recover_park_health(self,seconds=60):
   """Pause work and use safe high parking for recovery; 19 HP is not a logout threshold."""
   from food_refuel_policy import PREFERRED

@@ -59,13 +59,25 @@ final class BorerAreaThinkStore {
 	static void save(Minecraft client, File data) {
 		if (client == null || data == null) return;
 		try {
-			Path path = file(client);
-			Files.createDirectories(path.getParent());
-			try (Writer writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8)) {
-				GSON.toJson(data, writer);
-			}
-		} catch (IOException exception) {
+			write(file(client), GSON.toJson(data));
+		} catch (IOException | RuntimeException exception) {
 			LOGGER.warn("Could not write config/twob2tkit/area-think.json", exception);
+		}
+	}
+
+	/** Temp file + rename so a crash mid-write never leaves half a file (the engine cannot use host helpers). */
+	static void write(Path path, String json) throws IOException {
+		Files.createDirectories(path.toAbsolutePath().getParent());
+		Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
+		try {
+			Files.writeString(temporary, json, StandardCharsets.UTF_8);
+			try {
+				Files.move(temporary, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+			} catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+				Files.move(temporary, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+			}
+		} finally {
+			Files.deleteIfExists(temporary);
 		}
 	}
 

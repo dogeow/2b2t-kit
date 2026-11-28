@@ -7,6 +7,21 @@ REFRESH_ONLY={'Drop identity or stack changed','Drop is no longer loaded; observ
 NO_ACCESS={'No visible collision-free depot approach','No loaded collision-free route to this depot; no ceiling is broken'}
 NO_ACCESS_AIR_ITEMS=frozenset('minecraft:'+n for n in ('dirt','cobblestone','stone','coal','sand','gravel'))
 
+def air_then_ground(client,drop,before):
+    """Use ground recovery only after a proved, motionless air-route refusal."""
+    try:
+        if collect_nearby_air(client,drop,before):return True
+    except RuntimeError as error:
+        proof=getattr(client,'last_terminal_evidence',{}) or {}
+        if (str(error)!='No actual air body position near the current settled drop'
+                or getattr(client,'native_inflight',None) is not None
+                or getattr(client,'unconfirmed_native_request',None) is not None
+                or proof.get('op')!='scan' or proof.get('phase')!='done'
+                or proof.get('request_id')!=getattr(client,'last',None)
+                or proof.get('world_session')!=getattr(client,'world',None)):
+            raise
+    return collect_nearby_ground(client,drop)
+
 def collect_nearby_plant_shape(client,drop,before):
     """One tiny native collision-checked step for a plant drop by a thin stem."""
     item=drop.get('stack',{}).get('item');amount=drop.get('stack',{}).get('count')
@@ -174,8 +189,7 @@ def collect_drop(client,drop,observation=None,seconds=90):
         if reply.get('phase')=='error' and reply.get('detail') in REFRESH_ONLY:
             time.sleep(.2);continue
         if reply.get('detail') in NO_ACCESS:
-            if collect_nearby_air(client,current,before):return True
-            if collect_nearby_ground(client,current):return True
+            if air_then_ground(client,current,before):return True
             return collect_nearby_plant_shape(client,current,before)
         if reply.get('phase')=='waiting' and reply.get('detail')=='Drop pickup not confirmed at the reached position':
             latest=client.status()
@@ -188,7 +202,6 @@ def collect_drop(client,drop,observation=None,seconds=90):
                 # An airborne approach can stop just outside pickup reach.
                 # Reuse the existing exactly scoped fractional air correction
                 # before the ground fallback; never send collect_item twice.
-                if collect_nearby_air(client,same,before):return True
-                return collect_nearby_ground(client,same)
+                return air_then_ground(client,same,before)
         return False
     return False

@@ -39,10 +39,10 @@ public final class NearbyInventoryScreen {
             "当前服务器与维度 · 水平4096格内；附近缓存是已记录预计数量",
             ()->view.items,item->item.name()+" · 预计总量 "+item.estimatedTotal()+"（含缓存）"+boxed(item.packed()),
             item->item.id()+"\n背包实际 "+item.carried()+"；附近缓存 "+item.cached()+(item.packed()>0?"；潜影盒内 "+item.packed()+"（不计入总量）":"")+"\n"+summary(item),
-            item->item.name()+" "+item.id()).key(NearbyInventory.Item::id)
+            item->item.name()+" "+item.id()+" "+item.searchTerms()).key(NearbyInventory.Item::id)
             .icon(item->StorageItems.stack(new KitConfig.StoredItem(item.id(),item.name(),1)))
             .comparisonColumns(item->"背包实际："+item.carried(),item->"附近缓存："+item.cached())
-            .summary((item,query)->summary(item)).searchHint("搜索物品名称或ID…")
+            .summary((item,query)->summary(item)).searchHint("搜索物品名称、ID 或附魔…")
             .liveDescription(()->"当前服务器/维度 · 水平4096格内 · 背包含装备/副手 · 缓存取料时确认")
             .refreshWhen(view::revision);
         list.onOpen(item->sources(list,config,view,item.id()));

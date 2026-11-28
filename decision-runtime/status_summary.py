@@ -5,12 +5,16 @@ the next step: is the game connected, where and how healthy is the player, what 
 whether the installed jars are newer than the ones the game actually loaded (restart needed).
 """
 import json
+import os
 from pathlib import Path
 import re
 import time
 import zipfile
 
 STALE_SECONDS = 3
+RECENT_HURT_SECONDS = 30
+LOW_HEALTH = 10
+REPLY_WARN_BYTES = 1 << 30  # 1 GiB of plain receipts
 
 
 def _installed_kit_version(game_dir):
@@ -31,6 +35,19 @@ def _installed_engine_version(game_dir):
     except (OSError, KeyError, zipfile.BadZipFile):
         pass
     return None
+
+
+def reply_usage(automation):
+    """Plain reply-*.json receipts in the automation folder (archived .gz files excluded)."""
+    count = size = 0
+    try:
+        with os.scandir(automation) as entries:
+            for entry in entries:
+                if entry.name.startswith('reply-') and entry.name.endswith('.json') and entry.is_file(follow_symlinks=False):
+                    count += 1; size += entry.stat(follow_symlinks=False).st_size
+    except OSError:
+        pass
+    return count, size
 
 
 def _pick(value, *keys):
@@ -69,6 +86,11 @@ def summarize(game_dir, state, now=None):
         out['recent_hurt'] = _pick(state, 'recent_attacker', 'recent_hurt_at')
         if state.get('recent_hurt_at'):
             out['recent_hurt']['seconds_ago'] = max(0, round(now - state['recent_hurt_at'] / 1000))
+            if out['recent_hurt']['seconds_ago'] < RECENT_HURT_SECONDS:
+                notes.append(f"{out['recent_hurt']['seconds_ago']} 秒前受伤（{state.get('recent_attacker') or '未知'}）：先确认安全再下达移动或采集")
+        health = state.get('health')
+        if isinstance(health, (int, float)) and health < LOW_HEALTH:
+            notes.append(f'血量 {health:.0f}/20 偏低：先回血，不要开始新任务')
     job = state.get('material_job')
     if isinstance(job, dict) and (job.get('active') or job.get('phase')):
         out['material_job'] = _pick(job, 'active', 'title', 'done', 'total', 'phase')
@@ -89,6 +111,10 @@ def summarize(game_dir, state, now=None):
     if isinstance(hold, dict) and hold.get('active'):
         out['safety_hold'] = _pick(hold, 'reason', 'health', 'escape_result')
         notes.append('安全锁生效中：先处理安全锁，不要继续下达动作')
+    count, size = reply_usage(Path(game_dir, 'config/twob2tkit/automation'))
+    out['receipts'] = {'files': count, 'mib': round(size / 2**20)}
+    if size >= REPLY_WARN_BYTES:
+        notes.append(f'回执已有 {count} 个、{size / 2**30:.1f} GiB：可运行 kit_cli.py replies --finished-receipts（先看 dry-run）')
     if state.get('player_dead'):
         notes.append('角色已死亡')
     out['notes'] = notes

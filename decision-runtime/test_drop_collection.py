@@ -111,4 +111,23 @@ class Tests(unittest.TestCase):
   with patch('drop_collection.collect_nearby_air',side_effect=RuntimeError('unknown correction'))as air,patch('drop_collection.collect_nearby_ground')as ground:
    with self.assertRaisesRegex(RuntimeError,'unknown correction'):collect_drop(c,DROP)
   self.assertEqual(c.calls,1);air.assert_called_once();ground.assert_not_called()
+ def test_known_air_stance_refusal_falls_back_only_after_confirmed_scan(self):
+  class C:
+   calls=0;world='w';last='scan-1';native_inflight=None;unconfirmed_native_request=None
+   last_terminal_evidence={'op':'scan','phase':'done','request_id':'scan-1','world_session':'w'}
+   def status(self):return {'inventory':[],'entities':[DROP]}
+   def request(self,*a,**k):self.calls+=1;return {'phase':'waiting','detail':'Drop pickup not confirmed at the reached position'}
+  c=C()
+  with patch('drop_collection.collect_nearby_air',side_effect=RuntimeError('No actual air body position near the current settled drop')),patch('drop_collection.collect_nearby_ground',return_value=True) as ground:
+   self.assertTrue(collect_drop(c,DROP))
+  self.assertEqual(c.calls,1);ground.assert_called_once_with(c,DROP)
+ def test_air_stance_refusal_with_unconfirmed_motion_still_stops(self):
+  class C:
+   world='w';last='scan-1';native_inflight='pending';unconfirmed_native_request=None
+   last_terminal_evidence={'op':'scan','phase':'done','request_id':'scan-1','world_session':'w'}
+   def status(self):return {'inventory':[],'entities':[DROP]}
+   def request(self,*a,**k):return {'phase':'waiting','detail':'Drop pickup not confirmed at the reached position'}
+  with patch('drop_collection.collect_nearby_air',side_effect=RuntimeError('No actual air body position near the current settled drop')),patch('drop_collection.collect_nearby_ground') as ground:
+   with self.assertRaises(RuntimeError):collect_drop(C(),DROP)
+  ground.assert_not_called()
 if __name__=='__main__':unittest.main()

@@ -16,14 +16,14 @@ def animal(uuid, ident, species='minecraft:cow', baby=False, pos=None):
 
 
 class BreedClient(HarvestClient):
-    def __init__(self, species='minecraft:cow', food=2):
+    def __init__(self, species='minecraft:cow', food=2, food_item=None):
         super().__init__(); self.rows = {}; self.extra['pos'] = [.5,64,.5]
-        self.species = species; self.feeding = 0; self.no_consume = False
+        self.species = species; self.food_item = food_item or FOODS[species]; self.feeding = 0; self.no_consume = False
         self.no_birth = False; self.transient_baby = False; self.birth_scans = 0
         self.phase = 'done'; self.consume = 1; self.after_feed = None; self.refresh_ids = False
         self.entities = [animal('adult-a', 10, species, pos=[-.3,64,.5]),
                          animal('adult-b', 11, species, pos=[1.3,64,.5])]
-        self.inv[12].update(item=FOODS[species], count=food, max_stack=64)
+        self.inv[12].update(item=self.food_item, count=food, max_stack=64)
 
     def request(self, op, **params):
         if op == 'scan' and self.feeding == 2:
@@ -36,7 +36,7 @@ class BreedClient(HarvestClient):
             actual = next(e for e in self.entities if e['uuid'] == params['expected_uuid'])
             assert params['entity_id'] == actual['id']
             if self.phase == 'done' and not self.no_consume:
-                hand = self.inv[self.selected]; assert hand['item'] == FOODS[self.species]
+                hand = self.inv[self.selected]; assert hand['item'] == self.food_item
                 hand['count'] -= self.consume
                 if hand['count'] == 0: hand['item'] = 'minecraft:air'
             if self.feeding == 2 and not self.no_birth and not self.transient_baby:
@@ -53,6 +53,22 @@ class BreedClient(HarvestClient):
 
 
 class AnimalBreedTests(unittest.TestCase):
+    def test_bee_food_can_be_selected_without_changing_other_species(self):
+        spec = {**SPEC, 'species': 'minecraft:bee', 'food': 'minecraft:dandelion'}
+        self.assertEqual('minecraft:dandelion', plan(spec)['food'])
+        with self.assertRaises(ValueError):
+            plan({**spec, 'food': 'minecraft:stone'})
+        with self.assertRaises(ValueError):
+            plan({**SPEC, 'food': 'minecraft:dandelion'})
+
+    def test_bees_consume_selected_dandelions_and_observe_birth(self):
+        client = BreedClient('minecraft:bee', food_item='minecraft:dandelion')
+        result, book = self.execute(client, {**SPEC, 'species': 'minecraft:bee', 'food': 'minecraft:dandelion'})
+        self.assertEqual('done', result['phase'], result)
+        self.assertEqual(2, result['fed_adults'])
+        self.assertEqual(1, result['observed_births'])
+        self.assertEqual('minecraft:dandelion', book['scope']['layout']['food'])
+
     def execute(self, client, request=None, directory=None, **options):
         clock = Clock(); spec = request or {**SPEC, 'species': client.species}
         if directory is not None:

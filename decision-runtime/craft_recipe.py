@@ -101,8 +101,17 @@ def deposit_one(state,menu_id,slot,item):
         and(not m['cursor']['count']or m['cursor']['item']==item),
         'craft_single_deposit_later_frames',confirmations=2,interval=.1,fresh=True)
 
-def mixed(recipe,output,output_per_recipe,target_total):
+def ingredient_sources(rows,item,forced_slot=None):
+    """Return only the explicitly selected menu slot when one is supplied."""
+    if forced_slot is not None and (type(forced_slot)is not int or forced_slot<0):
+        raise ValueError('Ingredient slot must be a nonnegative integer')
+    return [row for row in rows if row.get('item')==item and (forced_slot is None or row.get('slot')==forced_slot)]
+
+def mixed(recipe,output,output_per_recipe,target_total,ingredient_slots=None):
     """recipe maps item IDs to their 1-based crafting-grid slots."""
+    ingredient_slots={} if ingredient_slots is None else ingredient_slots
+    if not isinstance(ingredient_slots,dict) or any(item not in recipe or type(slot)is not int or slot<0 for item,slot in ingredient_slots.items()):
+        raise ValueError('Ingredient slot restrictions must name recipe items and nonnegative menu slots')
     while True:
         s=k.status();m=s['menu']
         remaining=target_total-count(s,output)
@@ -118,7 +127,7 @@ def mixed(recipe,output,output_per_recipe,target_total):
             if merged:continue
             raise InventoryCapacity('No output space; place or store finished materials first')
         start=len(m['slots'])-36 if m['type']=='CraftingMenu' else 9
-        sources={item:sorted((x for x in m['slots'][start:start+36] if x['item']==item),key=lambda x:-x['count']) for item in recipe}
+        sources={item:sorted(ingredient_sources(m['slots'][start:start+36],item,ingredient_slots.get(item)),key=lambda x:-x['count']) for item in recipe}
         if any(not v for v in sources.values()):raise RuntimeError('Missing recipe ingredient')
         rounds=min(math.ceil(remaining/output_per_recipe),room//output_per_recipe,1 if known is None else 64,*(sources[i][0]['count']//len(v) for i,v in recipe.items()))
         # Mixed concrete inputs use four separate gravel and sand cells. A
@@ -134,7 +143,7 @@ def mixed(recipe,output,output_per_recipe,target_total):
             continue
         before={i:count(s,i) for i in recipe};old_output=count(s,output)
         for item,slots in recipe.items():
-            amount=rounds*len(slots);source=next(v for v in s['menu']['slots'][start:start+36] if v['item']==item and v['count']>=amount)
+            amount=rounds*len(slots);source=next(v for v in ingredient_sources(s['menu']['slots'][start:start+36],item,ingredient_slots.get(item)) if v['count']>=amount)
             if len(slots)==1 and rounds==1:
                 # A one-cell ingredient needs no half-stack split. Split loops
                 # can race the server on successive right-clicks; place one
@@ -175,13 +184,13 @@ def mixed(recipe,output,output_per_recipe,target_total):
         print(json.dumps({'recipe':output,'produced':made,'inventory_total':count(s,output),'verified':True}),flush=True)
 
 
-def execute(client,plan,target_total):
+def execute(client,plan,target_total,*,ingredient_slots=None):
     global k
     import craft_grid
     k=client;craft_grid.k=client
     if plan['missing_for_one']:raise RuntimeError('Missing ingredients: '+str(plan['missing_for_one']))
     try:
-        result=mixed(plan['ingredients'],plan['output'],plan['produces'],target_total)
+        result=mixed(plan['ingredients'],plan['output'],plan['produces'],target_total,ingredient_slots=ingredient_slots)
         with (client.out/'craft-recipe-events.jsonl').open('a') as stream:
             stream.write(json.dumps({'time':int(time.time()*1000),'recipe':plan['recipe_id'],'output':plan['output'],'target_total':target_total,'verified_inventory_total':count(result,plan['output'])})+'\n')
         return result

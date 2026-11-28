@@ -27,6 +27,9 @@ class ProjectionMaterialPlanTest(unittest.TestCase):
                 archive.writestr('data/minecraft/recipe/' + output + '.json', json.dumps({
                     'type': 'minecraft:smelting', 'ingredient': 'minecraft:' + source,
                     'result': {'id': 'minecraft:' + output}, 'cookingtime': 200}))
+            archive.writestr('data/minecraft/recipe/glass.json', json.dumps({
+                'type':'minecraft:smelting', 'ingredient':['minecraft:red_sand','minecraft:sand'],
+                'result':{'id':'minecraft:glass'}, 'cookingtime':200}))
         self.catalog = ProcessingCatalog(self.jar)
 
     def projection(self, **targets):
@@ -41,6 +44,11 @@ class ProjectionMaterialPlanTest(unittest.TestCase):
 
     def audit(self, *sources):
         return {'complete': True, 'sources': list(sources)}
+
+    def test_glass_smelting_requests_normal_sand_when_no_variant_is_available(self):
+        result = plan(self.projection(glass=64), self.audit(self.source()), self.catalog)
+        self.assertEqual({'minecraft:sand':64}, result['acquire'])
+        self.assertEqual({'minecraft:sand':64}, result['smelt'][0]['ingredients'])
 
     def test_net_smooth_stone_includes_only_remaining_build_and_blast_recipe(self):
         result = plan(self.projection(smooth_stone=135, blast_furnace=17), self.audit(self.source(

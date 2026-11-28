@@ -9,6 +9,7 @@ from .protocol import JobBlocked
 
 FLOORS={'minecraft:grass_block','minecraft:dirt','minecraft:coarse_dirt','minecraft:rooted_dirt',
         'minecraft:podzol','minecraft:stone','minecraft:cobblestone','minecraft:deepslate','minecraft:moss_block'}
+PASSABLE_LIGHTS={'minecraft:torch','minecraft:wall_torch','minecraft:soul_torch','minecraft:soul_wall_torch'}
 
 def ready(q):return q.get('on_ground')is True and q.get('flight')is False
 
@@ -33,7 +34,13 @@ def prepare(c,checkpoint):
             if name not in FLOORS or not floor.get('solid')or floor.get('fluid')or floor.get('block_entity'):
                 raise JobBlocked('固定树正常落地需要完整干燥自然地面')
             for h in (y,y+1):
-                if (x,h,z)in rows:raise JobBlocked('固定树落地身体空间存在方块，未发送走路')
+                row=rows.get((x,h,z))
+                if row:
+                    body_name=row.get('state','').split('}',1)[0].removeprefix('Block{')
+                    if (body_name not in PASSABLE_LIGHTS or row.get('passable') is not True
+                            or row.get('solid') is not False or row.get('fluid') is not False
+                            or row.get('block_entity') is not False):
+                        raise JobBlocked('固定树落地身体空间存在方块，未发送走路')
     path=c.out/('fixed-tree-ground-'+str(time.time_ns())+'.json')
     book={'world_session':c.world,'before':{k:q.get(k)for k in ('pos','on_ground','flight')},'pending':'ordinary_ground_walk','complete':False}
     write_json(path,book);previous=c.last

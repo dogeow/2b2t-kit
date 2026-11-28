@@ -11,7 +11,11 @@ from potato_farm import FarmWait, valid_entity_scope
 from potato_harvest import _counts, _lease
 
 FOODS = {'minecraft:cow': 'minecraft:wheat', 'minecraft:sheep': 'minecraft:wheat',
-         'minecraft:chicken': 'minecraft:wheat_seeds'}
+         'minecraft:chicken': 'minecraft:wheat_seeds', 'minecraft:bee': 'minecraft:cornflower'}
+BEE_FLOWERS = frozenset('minecraft:' + name for name in (
+    'dandelion', 'poppy', 'blue_orchid', 'allium', 'azure_bluet', 'red_tulip',
+    'orange_tulip', 'white_tulip', 'pink_tulip', 'oxeye_daisy', 'cornflower',
+    'lily_of_the_valley', 'sunflower', 'lilac', 'rose_bush', 'peony', 'torchflower'))
 PROOF_SCOPE = 'two_distinct_loaded_client_food_delta_frames_then_new_nearby_baby_uuid_frames_not_server_parentage_ack'
 
 
@@ -25,10 +29,13 @@ def plan(request):
             or not isinstance(center, list) or len(center) != 3
             or any(type(v) is not int or abs(v) > 30_000_000 for v in center)
             or not -63 <= center[1] <= 316 or type(radius) is not int or not 1 <= radius <= 4):
-        raise ValueError('Choose one cow/sheep/chicken adult UUID pair and a bounded integer center/radius1..4')
+        raise ValueError('Choose one supported adult UUID pair and a bounded integer center/radius1..4')
+    food = request.get('food', FOODS[species])
+    if food != FOODS[species] and not (species == 'minecraft:bee' and food in BEE_FLOWERS):
+        raise ValueError('Breeding food is not supported for this species')
     return {'species': species, 'adults': adults[:], 'center': center[:], 'radius': radius,
             'scan_min': [center[0]-radius, center[1]-1, center[2]-radius],
-            'scan_max': [center[0]+radius, center[1]+3, center[2]+radius], 'food': FOODS[species]}
+            'scan_max': [center[0]+radius, center[1]+3, center[2]+radius], 'food': food}
 
 
 def _point(value):
@@ -61,7 +68,7 @@ def _pair(state, rows, layout, *, reach=False):
                 or not all(a <= b < d+1 for a, b, d in zip(layout['scan_min'], adult['pos'], layout['scan_max']))):
             raise FarmWait('WAIT_PAIR', 'Both selected UUIDs must remain actual live adults in the authorized region')
         if reach:
-            player = state.get('pos'); lift = {'minecraft:cow':.77,'minecraft:sheep':.715,'minecraft:chicken':.385}[layout['species']]
+            player = state.get('pos'); lift = {'minecraft:cow':.77,'minecraft:sheep':.715,'minecraft:chicken':.385,'minecraft:bee':.25}[layout['species']]
             if (adult.get('visible') is not True or not _point(player)
                     or math.dist([player[0], player[1]+1.62, player[2]],
                                  [adult['pos'][0], adult['pos'][1]+lift, adult['pos'][2]]) > 2.8):

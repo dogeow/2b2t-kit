@@ -8,7 +8,7 @@ import math
 from pathlib import Path
 import time
 
-from container_access import open_grounded_chest
+from container_access import open_grounded_chest, OutdoorChestChanged
 from kit_runtime.inventory import InventorySession
 from kit_runtime.journal import write_json
 from material_cleanup import register, complete
@@ -183,7 +183,17 @@ def store_silk(c,profile,out,minimum=0):
     for tool in tools:
         stored=False
         for pos in profile.get('depots',[]):
-            state=open_grounded_chest(c,pos)
+            try:
+                state=open_grounded_chest(c,pos)
+            except OutdoorChestChanged as error:
+                # Skip only the initial read-only column refusal. A later
+                # verification failure may follow an interaction and must stop.
+                scan=error.evidence.get('scan', {})
+                if scan.get('min') != list(pos) or scan.get('max') != [pos[0], pos[1]+6, pos[2]]:
+                    raise
+                journal.setdefault('unavailable_depots', []).append(error.evidence)
+                write_json(path,journal)
+                continue
             if not any(not r['count'] for r in state['menu']['slots'][:-36]):
                 c.checked('close_menu');continue
             source=next((r for r in state['menu']['slots'][-36:] if r.get('count') and identity(r)==identity(tool)),None)

@@ -100,11 +100,8 @@ public final class SeedScout {
 	/** 写回 seed-scout.json。 */
 	public void save() {
 		try {
-			Files.createDirectories(STORE.getParent());
-			try (Writer writer = Files.newBufferedWriter(STORE)) {
-				GSON.toJson(store, writer);
-			}
-		} catch (IOException exception) {
+			dev.twob2tkit.AtomicFiles.write(STORE, writer -> GSON.toJson(store, writer));
+		} catch (IOException | RuntimeException exception) {
 			KitClient.LOGGER.warn("Could not save seed scout store", exception);
 		}
 	}

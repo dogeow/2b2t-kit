@@ -41,7 +41,7 @@ class RecipeCatalog:
         return [value]
     def candidates(self,output,inventory,menu_width=None):
         choices=[]
-        preference=['minecraft:oak_planks','minecraft:oak_slab','minecraft:coal','minecraft:oak_log','minecraft:quartz_block','minecraft:cobblestone','minecraft:white_wool','minecraft:stone','minecraft:leather']
+        preference=['minecraft:oak_planks','minecraft:oak_slab','minecraft:coal','minecraft:oak_log','minecraft:quartz_block','minecraft:cobblestone','minecraft:white_wool','minecraft:stone','minecraft:leather','minecraft:sand']
         for r in self.recipes.get(output,[]):
             if menu_width and r.width>menu_width:continue
             left=Counter(inventory);groups=defaultdict(list);missing=Counter()

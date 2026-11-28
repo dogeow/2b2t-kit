@@ -6,6 +6,10 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PrinterExternalModeHistoryTest {
+    @Test void pauseCanRecoverFromAmbiguousProjectionButStartNeedsOne(){
+        assertFalse(PrinterExternalModeHistory.requiresProjection(false));
+        assertTrue(PrinterExternalModeHistory.requiresProjection(true));
+    }
     @Test void initialModeAndOwnedChangesDoNotBecomeUserRequests(){
         var h=new PrinterExternalModeHistory();h.observe(true);h.written(false);h.observe(false);
         h.written(true);h.observe(true);h.written(false);h.observe(false);

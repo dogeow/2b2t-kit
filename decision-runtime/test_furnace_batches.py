@@ -1,4 +1,5 @@
 import copy,json,tempfile,unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 from furnace_batches import collect,distribution,load,recipe_balance,wait_loading_balance
@@ -59,6 +60,17 @@ class GlassBankClient(FurnaceBankClient):
 
 
 class FurnaceBatchTest(unittest.TestCase):
+ def test_charcoal_load_reserves_other_logs_and_two_sticks_as_fuel(self):
+  with tempfile.TemporaryDirectory() as d:
+   client=FurnaceBankClient(raw=(4,),coal=(20,));path=Path(d)/'charcoal.json';pos=[1,2,3]
+   client.state['menu']['slots'][3]['item']='minecraft:oak_log'
+   client.state['menu']['slots'][4]['item']='minecraft:stick'
+   catalog=SimpleNamespace(durations={'minecraft:stick':100},evidence={'kind':'verified-test-fixture'})
+   with patch('furnace_batches.snapshot',side_effect=lambda c,p:c.open(p)),patch('furnace_batches.FuelCatalog',return_value=catalog):
+    job=load(client,[pos],'minecraft:oak_log','minecraft:charcoal',1,path,recipe_jar='fixture',fuel_allow_items=['minecraft:stick'])
+   self.assertEqual((1,2,'loaded'),tuple(job['furnaces'][0][k] for k in ('loaded_source','loaded_fuel','stage')))
+   self.assertEqual(3,sum(v['count'] for v in client.state['menu']['slots'][3:] if v['item']=='minecraft:oak_log'))
+   self.assertEqual(18,sum(v['count'] for v in client.state['menu']['slots'][3:] if v['item']=='minecraft:stick'))
  def test_sand_to_glass_loads_once_preserves_partial_output_and_collects_exact_batch(self):
   with tempfile.TemporaryDirectory() as d:
    client=GlassBankClient(raw=(8,),coal=(1,));path=Path(d)/'glass.json';pos=[1,2,3]

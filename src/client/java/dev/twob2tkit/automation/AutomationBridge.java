@@ -1031,12 +1031,6 @@ public final class AutomationBridge {
     private static boolean survivalMenu(Minecraft c){return c.gui.screen()==null || Set.of("InventoryScreen","CraftingScreen","FurnaceScreen","BlastFurnaceScreen","SmokerScreen").contains(c.gui.screen().getClass().getSimpleName());}
     private static void survivalGuard(Minecraft c,JsonObject r){
         if(!survival(r))return;
-        if(r.has("local_trial")&&r.get("local_trial").getAsBoolean()){
-            dev.twob2tkit.trial.SingleplayerTrialRuntime.require(c,r);
-            if(!str(r,"world_session").equals(session(c))||!survivalMenu(c)||c.player==null||c.player.isDeadOrDying())
-                throw new IllegalStateException("Trial world, player, or menu changed");
-            return;
-        }
         if(!str(r,"world_session").equals(session(c)) || c.getCurrentServer()!=null || c.getSingleplayerServer()==null
             || c.gameMode.getPlayerMode()!=net.minecraft.world.level.GameType.SURVIVAL)throw new IllegalStateException("Survival test world/session changed");
         if(c.player.getHealth()<16 || c.player.getFoodData().getFoodLevel()<8 || c.player.isOnFire() || c.player.isInWater()
@@ -1067,41 +1061,6 @@ public final class AutomationBridge {
     public static String runningOp(){return "running".equals(phase)&&op!=null?op:"";}
     public static boolean guardArmed(){return guardScope!=null;}
     public static boolean pveOnly(){return guardScope!=null && guardScope.has("pve_only") && guardScope.get("pve_only").getAsBoolean();}
-    private static boolean trialFlag(JsonObject request,String key){
-        return request!=null&&request.has(key)&&request.get(key).isJsonPrimitive()
-            &&request.getAsJsonPrimitive(key).isBoolean()&&request.get(key).getAsBoolean();
-    }
-    private static dev.twob2tkit.trial.TrialGuardPolicy.Scope trialScope(JsonObject request){
-        if(request==null)return null;
-        return new dev.twob2tkit.trial.TrialGuardPolicy.Scope(trialFlag(request,"local_trial"),trialFlag(request,"pve_only"),
-            str(request,"trial_id"),str(request,"run_id"),str(request,"world_id"),str(request,"world_session"),str(request,"dimension"));
-    }
-    private static dev.twob2tkit.trial.TrialGuardPolicy.Owner trialOwner(Minecraft c){
-        if(c.level==null)return null;
-        return dev.twob2tkit.trial.SingleplayerTrialRuntime.currentOwner(c,session(c),c.level.dimension().identifier().toString());
-    }
-    /** Only this exact live trial's native chopper may borrow Flight from its parent. */
-    public static boolean ownedTrialChop(Minecraft c){
-        if(active==null||!op.equals("chop")||!phase.equals("running"))return false;
-        try{return dev.twob2tkit.trial.TrialGuardPolicy.ownedChop(trialOwner(c),trialScope(active),
-            true,KitClient.chopper()!=null&&KitClient.chopper().isActive());}
-        catch(RuntimeException invalid){return false;}
-    }
-    /** Only the actual live trial's exact PvE guardian may use trial combat. */
-    public static boolean ownedTrialCombat(Minecraft c){
-        if(c==null||c.player==null||c.level==null||c.gui.screen()!=null||c.isPaused()
-                ||dev.twob2tkit.combat.EmergencyExit.active())return false;
-        float health=c.player.getHealth();
-        boolean alive=!c.player.isDeadOrDying()&&Float.isFinite(health)&&health>0;
-        try{return dev.twob2tkit.trial.TrialGuardPolicy.ownsGuardCombat(trialOwner(c),trialScope(guardScope),
-            guardArmed(),alive,KitKeys.manualMovementDown(c));}
-        catch(RuntimeException invalid){return false;}
-    }
-    private static boolean trialHealthRecoveryEnabled(Minecraft c,boolean enabled){
-        if(!enabled||!trialFlag(guardScope,"local_trial")||!trialFlag(guardScope,"pve_only"))return enabled;
-        try{return dev.twob2tkit.trial.TrialGuardPolicy.healthRecoveryEnabled(enabled,trialOwner(c),trialScope(guardScope));}
-        catch(RuntimeException invalid){return enabled;}
-    }
     private static boolean projectionScaffoldOwnerCurrent(Minecraft c){
         if(c.player==null||c.level==null||active==null||!op.equals("projection_scaffold_fill")
             ||!currentMaterialRequest(c,active)||!active.has("expected_revision")
@@ -1411,9 +1370,7 @@ public final class AutomationBridge {
             }
         }
         guardBusy=KitClient.borer().tickStandaloneGuard(c,enabled);
-        // The disposable trial may keep working to obtain food after injury.
-        // Actual combat/eating priority remains the native guardBusy result.
-        healthRecoveryHold=healthRecovery.hold(trialHealthRecoveryEnabled(c,enabled),c.player==null?20:c.player.getHealth(),guardBusy);
+        healthRecoveryHold=healthRecovery.hold(enabled,c.player==null?20:c.player.getHealth(),guardBusy);
         if(healthRecoveryHold){
             for(var key:new net.minecraft.client.KeyMapping[]{c.options.keyUp,c.options.keyDown,c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint,c.options.keyAttack})key.setDown(false);
             if(c.gameMode!=null)c.gameMode.stopDestroyBlock();guardBusy=true;
@@ -1472,23 +1429,6 @@ public final class AutomationBridge {
                 nativeMaterialOwner.immediate=nativeMaterialReceipt(c,nativeMaterialOwner.pendingId,"stopped",reason);
         }
         else KitClient.emergencyStop(reason);
-    }
-    public static void stopTrialInputs(Minecraft c,String trialId,String runId){
-        if(pendingScan!=null&&str(pendingScan.request,"trial_id").equals(trialId)&&str(pendingScan.request,"run_id").equals(runId))
-            finishScan(c,"waiting","singleplayer trial observation paused");
-        if(active!=null&&active.has("local_trial")&&active.get("local_trial").getAsBoolean()
-                &&str(active,"trial_id").equals(trialId)&&str(active,"run_id").equals(runId)){
-            if(op.equals("chop")&&dev.twob2tkit.trial.TrialGuardPolicy.stopOwnedChop(trialOwner(c),trialScope(active),
-                    trialId,runId,true,KitClient.chopper()!=null&&KitClient.chopper().isActive())){
-                KitClient.chopper().stop(c,"当前单人试验已停止挖树");
-                // Chopper owns movement/mining, while AutoEat/guard retains use.
-                if(c.options!=null)for(var key:new net.minecraft.client.KeyMapping[]{c.options.keyUp,c.options.keyDown,
-                        c.options.keyLeft,c.options.keyRight,c.options.keyJump,c.options.keyShift,c.options.keySprint,c.options.keyAttack})key.setDown(false);
-                if(c.gameMode!=null)c.gameMode.stopDestroyBlock();
-            }
-            finish(c,"waiting","singleplayer trial action paused; receipt retained");survivalArmed=false;
-        }
-        if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))survivalArmed=false;
     }
     public static void cancelWork(Minecraft c,String reason){
         terminalInventoryClick(c,false,"Inventory click interrupted: "+reason);
@@ -1679,16 +1619,11 @@ public final class AutomationBridge {
             catch(Exception error){KitClient.controller().stop(c,"材料精确停靠停止");finish(c,"waiting",error.getMessage());return true;}
         }
         if(survivalArmed && c.player!=null && (KitKeys.manualMovementDown(c) || !survivalBackground && !c.isWindowActive() || !survivalMenu(c))){
-            if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c)){dev.twob2tkit.trial.SingleplayerTrialRuntime.control(c,"pause");survivalArmed=false;return true;}
             KitClient.emergencyStop("生存试运行交还控制");return true;
         }
         if(active!=null && Set.of("build_supply","collect_supply","approach_block","collect_item","concrete_batch").contains(op) && supplyTask!=null){supplyTask.input(c);return true;}
         if(active==null || !Set.of("walk","walk_path","mine_block","use_item").contains(op) || c.player==null || c.level==null)return false;
         if(survival(active))try{survivalGuard(c,active);}catch(Exception e){
-            if(active!=null&&active.has("local_trial")&&active.get("local_trial").getAsBoolean()){
-                if(dev.twob2tkit.trial.SingleplayerTrialRuntime.activeHere(c))dev.twob2tkit.trial.SingleplayerTrialRuntime.control(c,"pause");
-                else stopTrialInputs(c,str(active,"trial_id"),str(active,"run_id"));return true;
-            }
             KitClient.emergencyStop(e.getMessage());return true;
         }
         if(op.equals("walk")&&active.has("freefall_brake_y")){
@@ -1921,7 +1856,7 @@ public final class AutomationBridge {
                                 if(Files.size(f)>16384&&!str(r,"op").equals("projection_batch_set"))throw new IllegalArgumentException("Request exceeds the bounded action size");
                                 if(nativeMaterialOwner!=null&&!Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","map_audit","gravel_stop","inventory_probe").contains(str(r,"op")))
                                     throw new IllegalStateException("A local material session owns all write actions");
-                                if(active!=null && !str(r,"op").equals("stop") && !Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","map_audit","gravel_stop","material_job_pause","trial_stop","inventory_probe").contains(str(r,"op")))throw new IllegalStateException("A job is active; stop it first");
+                                if(active!=null && !str(r,"op").equals("stop") && !Set.of("snapshot","scan","scan_snow_biomes","snow_seed_candidates","scan_trees","projection_audit","projection_model","map_audit","gravel_stop","material_job_pause","inventory_probe").contains(str(r,"op")))throw new IllegalStateException("A job is active; stop it first");
                                 boolean previousDispatching=dispatching,previousHandoff=materialHandoffDispatch;
                                 try{
                                 dispatching=true;
@@ -1944,13 +1879,6 @@ public final class AutomationBridge {
         }
         tickScan(c);
         if(interfacePaused(c)){tickInterfacePause(c);return;}
-        if(active!=null&&op.equals("trial_respawn")){
-            try{dev.twob2tkit.trial.SingleplayerTrialRuntime.require(c,active);
-                if(c.player!=null&&!c.player.isDeadOrDying()&&c.player.getHealth()>0&&c.gui.screen()==null)finish(c,"done","normal trial respawn observed alive");
-                else if(ticks>=deadline)finish(c,"waiting","trial respawn not observed; preserve request");
-            }catch(Exception changed){finish(c,"waiting",changed.getMessage());}
-            writeStatus(c);return;
-        }
         if(active!=null){
             try{
                 guard(c,active);
@@ -2290,23 +2218,6 @@ public final class AutomationBridge {
             return;
         }
         if(command.equals("inventory_probe")){inventoryProbe(c,r);return;}
-        if(command.equals("trial_respawn")||command.equals("trial_stop")){
-            dev.twob2tkit.trial.SingleplayerTrialRuntime.require(c,r);
-            if(!r.has("local_trial")||!r.get("local_trial").getAsBoolean()
-                ||!r.has("expected_revision")||r.get("expected_revision").getAsLong()!=controlRevision
-                ||!str(r,"world_session").equals(session(c))||!r.has("expires_at")
-                ||r.get("expires_at").getAsLong()<System.currentTimeMillis()
-                ||r.get("expires_at").getAsLong()-System.currentTimeMillis()>15000)
-                throw new IllegalStateException("Trial command expired or changed owner");
-            if(command.equals("trial_respawn")){
-                dev.twob2tkit.trial.SingleplayerTrialRuntime.respawn(c,r);active=r.deepCopy();statusId=lastId;op=command;phase="running";
-                detail="normal trial respawn requested; waiting for alive player";deadline=ticks+200;writeStatus(c);return;
-            }
-            stopTrialInputs(c,str(r,"trial_id"),str(r,"run_id"));
-            statusId=lastId;op=command;phase="done";detail="trial inputs released";
-            var out=snapshot(c);out.addProperty("id",lastId);out.addProperty("op",command);out.addProperty("phase","done");
-            save(root(c).resolve("reply-"+safeId(lastId)+".json"),out);writeStatus(c);return;
-        }
         if(command.equals("stop")){if(r.has("expected_revision") && (r.get("expected_revision").getAsLong()!=controlRevision || !str(r,"world_session").equals(session(c))))throw new IllegalStateException("Stop belongs to an old controller");statusId=lastId;ProfessionalPrinter.stop(c,true);KitClient.emergencyStop("本地脚本停止");active=null;phase="stopped";detail="stopped";writeStatus(c);return;}
         if(command.equals("gravel_stop")){
             gravelScope(c,r);
@@ -2638,11 +2549,14 @@ public final class AutomationBridge {
                     ||c.gui.screen()!=null||KitKeys.manualMovementDown(c)||c.player.getHealth()<19
                     ||c.player.containerMenu!=c.player.inventoryMenu||!c.player.containerMenu.getCarried().isEmpty()
                     ||c.player.isUsingItem())throw new IllegalStateException("Idle healthy printer handoff required");
-            if(!dev.twob2tkit.builder.LitematicaAccess.buildSelection().key().equals(str(r,"placement_key")))
-                throw new IllegalStateException("Printer handoff projection changed");
             for(String name:List.of("enabled","expected_enabled"))
                 if(!r.has(name)||!r.get(name).isJsonPrimitive()||!r.get(name).getAsJsonPrimitive().isBoolean())
                     throw new IllegalArgumentException("Exact boolean printer modes required");
+            // Disabling cannot place blocks and must work even with multiple enabled
+            // projections. Enabling still requires the exact selected projection.
+            if(PrinterExternalModeHistory.requiresProjection(r.get("enabled").getAsBoolean())
+                    && !dev.twob2tkit.builder.LitematicaAccess.buildSelection().key().equals(str(r,"placement_key")))
+                throw new IllegalStateException("Printer handoff projection changed");
             if(!r.has("expected_external_revision")||!r.get("expected_external_revision").isJsonPrimitive()
                     ||!r.get("expected_external_revision").getAsJsonPrimitive().isNumber())
                 throw new IllegalArgumentException("Observed external printer revision required");
@@ -2875,17 +2789,11 @@ public final class AutomationBridge {
             String kind=str(r,"kind");ContainerInput input=switch(kind){case "pickup"->ContainerInput.PICKUP;case "quick_move"->ContainerInput.QUICK_MOVE;case "swap"->ContainerInput.SWAP;default->throw new IllegalArgumentException("Unsupported slot action");};
             int button=r.has("button")?r.get("button").getAsInt():0;
             if(button<0 || button>(kind.equals("swap")?8:1))throw new IllegalArgumentException("Bad slot button");
-            if(r.has("inventory_confirm")&&r.get("inventory_confirm").getAsBoolean()){
-                if(!r.has("local_trial")||!r.get("local_trial").getAsBoolean())throw new IllegalArgumentException("Confirmed inventory click requires an exact local trial request");
-                inventoryClick=InventoryDiagnostics.begin(c,lastId,session(c),controlRevision,slot,button,input,
-                    root(c).resolve("reply-"+safeId(lastId)+".json"));
-                active=r.deepCopy();op="inventory_click";phase="running";detail="one normal inventory click; awaiting exact server processing";deadline=ticks+120;
-                inventoryClickCandidate="";inventoryClickMatches=0;inventoryClickLastServerObservation=-1;
-                saveInventoryIntent(c,inventoryClick);
-                c.gameMode.handleContainerInput(menu.containerId,slot,button,input,c.player);
-                inventoryClick.predicted(c);
-                saveInventoryIntent(c,inventoryClick);
-            }else{c.gameMode.handleContainerInput(menu.containerId,slot,button,input,c.player);settle(r,8);}
+            // Server-confirmed clicks existed only for the removed single-player trial; refuse rather than
+            // silently downgrading a request that expects a confirmation receipt.
+            if(r.has("inventory_confirm")&&r.get("inventory_confirm").getAsBoolean())
+                throw new IllegalArgumentException("Confirmed inventory clicks are no longer supported");
+            c.gameMode.handleContainerInput(menu.containerId,slot,button,input,c.player);settle(r,8);
         }else if(command.equals("interact")){
             boolean vanillaInput=VanillaBlockInput.requested(r);
             JsonArray p=r.getAsJsonArray("pos");checkSiteTarget(r,p);BlockPos pos=new BlockPos(p.get(0).getAsInt(),p.get(1).getAsInt(),p.get(2).getAsInt());
@@ -4009,6 +3917,17 @@ public final class AutomationBridge {
         var sweep=c.player.getBoundingBox().expandTowards(new Vec3(x-c.player.getX(),y-c.player.getY(),z-c.player.getZ()));
         if((sweep.maxX-sweep.minX+1)*(sweep.maxY-sweep.minY+1)*(sweep.maxZ-sweep.minZ+1)>8192
                 ||!c.level.noCollision(c.player,sweep.deflate(MaterialAirContactPolicy.EPSILON)))return false;
+        // Cactus hurts on contact even where its inset collision shape leaves
+        // a nominally clear corridor. Include the support/adjacent halo.
+        var halo=sweep.inflate(.2,1.3,.2);
+        if((halo.maxX-halo.minX+1)*(halo.maxY-halo.minY+1)*(halo.maxZ-halo.minZ+1)>12000)return false;
+        var delta=new Vec3(x-c.player.getX(),y-c.player.getY(),z-c.player.getZ());
+        for(BlockPos p:BlockPos.betweenClosed(new BlockPos(MaterialAirContactPolicy.minimumCell(halo.minX),Math.max(c.level.getMinY(),MaterialAirContactPolicy.minimumCell(halo.minY)),MaterialAirContactPolicy.minimumCell(halo.minZ)),
+                new BlockPos(MaterialAirContactPolicy.maximumCell(halo.maxX),Math.min(c.level.getMaxY()-1,MaterialAirContactPolicy.maximumCell(halo.maxY)),MaterialAirContactPolicy.maximumCell(halo.maxZ)))){
+            if(!c.level.hasChunkAt(p))return false;
+            if(c.level.getBlockState(p).is(net.minecraft.world.level.block.Blocks.CACTUS)
+                    &&!MaterialAirContactPolicy.cactusTransitionSafe(c.player.getBoundingBox(),delta,p))return false;
+        }
         for(BlockPos p:BlockPos.betweenClosed(new BlockPos(MaterialAirContactPolicy.minimumCell(sweep.minX),MaterialAirContactPolicy.minimumCell(sweep.minY),MaterialAirContactPolicy.minimumCell(sweep.minZ)),
                 new BlockPos(MaterialAirContactPolicy.maximumCell(sweep.maxX),MaterialAirContactPolicy.maximumCell(sweep.maxY),MaterialAirContactPolicy.maximumCell(sweep.maxZ)))){
             if(!c.level.hasChunkAt(p))return false;
@@ -4649,6 +4568,7 @@ public final class AutomationBridge {
     private static void addItemDetails(JsonObject target,ItemStack item){
         target.addProperty("max_stack",item.getMaxStackSize());
         MapAutomation.addItemDetails(target,item);
+        BeehiveItemObservation.add(target,item);
         if(itemId(item).endsWith("_banner"))target.add("banner_patterns",ProjectionDecorations.patterns(item.getOrDefault(net.minecraft.core.component.DataComponents.BANNER_PATTERNS,net.minecraft.world.level.block.entity.BannerPatternLayers.EMPTY)));
         if(item.isDamageableItem()){
             target.addProperty("durability",item.getMaxDamage()-item.getDamageValue());
@@ -4746,11 +4666,7 @@ public final class AutomationBridge {
         }else if(lastInventoryClick!=null&&statusId.equals(str(lastInventoryClick,"request_id"))){
             j.add("inventory_click_receipt",lastInventoryClick.deepCopy());j.addProperty("outcome_pending",str(lastInventoryClick,"classification").equals("unknown"));
         }
-        j.addProperty("singleplayer_trial_protocol",1);var trial=dev.twob2tkit.trial.SingleplayerTrialRuntime.snapshot(c);j.add("trial_identity",trial);
-        j.addProperty("singleplayer_trial_api_protocol",1);
-        j.addProperty("trial_run_id",trial.get("run_id").getAsString());j.addProperty("trial_deaths",trial.get("deaths").getAsInt());
-        j.addProperty("death_epoch",trial.get("death_epoch").getAsInt());j.addProperty("player_dead",c.player!=null&&c.player.isDeadOrDying());
-        j.addProperty("dragon_defeated",trial.get("dragon_defeated").getAsBoolean());
+        j.addProperty("player_dead",c.player!=null&&c.player.isDeadOrDying());
         j.addProperty("game_version",net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer("minecraft").map(m->m.getMetadata().getVersion().getFriendlyString()).orElse("unknown"));
         j.addProperty("idle_activity_protocol",1);j.add("idle_activity",idleActivitySnapshot(c));
         j.addProperty("idle_fishing_protocol",1);

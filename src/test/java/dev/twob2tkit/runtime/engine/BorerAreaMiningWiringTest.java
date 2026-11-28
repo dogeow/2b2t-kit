@@ -68,26 +68,15 @@ class BorerAreaMiningWiringTest {
         var p=new java.util.Properties();try(var in=java.nio.file.Files.newInputStream(java.nio.file.Path.of("gradle.properties"))){p.load(in);}
         assertEquals(p.getProperty("runtime_engine_version"),EngineBuildVersion.VALUE);
     }
-    @Test void everyJevAnswerIsRecordedWhileAreaMiningRemainsPaused()throws Exception{
+    @Test void aStalledAreaStepSuspendsAndHoversUntilAnExplicitRestart()throws Exception{
         var entry=calls(method("runtime/engine/DefaultTunnelBorerEngine","tickArea"));
         assertTrue(entry.contains("tick"));
         assertFalse(entry.contains("handle"),"AREA must not start the legacy Think/Grok movement owner");
         var stall=calls(method("runtime/engine/BorerAreaRunner","enterStall"));
-        assertTrue(stall.indexOf("suspend")>=0 && stall.indexOf("suspend")<stall.indexOf("consult"));
-        var advice=method("runtime/engine/BorerAreaRunner","recordStallAdvice");
-        var callbacks=calls(advice);
-        assertTrue(callbacks.containsAll(List.of("receipt","outcome")));
-        assertFalse(callbacks.contains("choice"),"No model choice may branch to an action");
-        assertFalse(callbacks.contains("rescanAfterStall"));
-        assertFalse(callbacks.contains("startRecovery"));
-        assertFalse(callbacks.contains("mine"));
-        assertFalse(callbacks.contains("move"));
-        assertFalse(callbacks.contains("stop"));
-        for(var instruction:advice.instructions)
-            if(instruction instanceof FieldInsnNode field)
-                assertFalse(field.getOpcode()==org.objectweb.asm.Opcodes.PUTFIELD && field.name.equals("stallHold"));
+        assertTrue(stall.containsAll(List.of("suspend","fileLog")));
+        for(String action:List.of("rescanAfterStall","startRecovery","mine","move"))assertFalse(stall.contains(action),action);
         var hold=calls(method("runtime/engine/BorerAreaRunner","tickStallHold"));
-        assertTrue(hold.containsAll(List.of("holdWithoutCheckpoint","safeForAdvice","ownsHoverLease")));
+        assertTrue(hold.contains("holdWithoutCheckpoint"));
         assertFalse(hold.contains("checkpoint"),"Idle hold must not rewrite area progress every tick");
         assertFalse(hold.contains("rescanAfterStall"));
         assertFalse(hold.contains("mine"));
@@ -99,7 +88,7 @@ class BorerAreaMiningWiringTest {
             if(instruction instanceof FieldInsnNode field && field.owner.equals("net/minecraft/client/Options")
                 &&field.name.startsWith("key"))movementKeys.add(field.name);
         assertEquals(List.of("keyUp","keyDown","keyLeft","keyRight"),movementKeys,
-            "Advice hold retains exactly its four original movement mappings");
+            "The hold keeps exactly its four original movement mappings");
         var physical=method("runtime/engine/BorerAreaRunner","physicalMovementHeld");
         boolean actualMouse=false,actualKeyboard=false,boundKey=false;
         for(var instruction:physical.instructions)if(instruction instanceof MethodInsnNode call){
@@ -109,14 +98,6 @@ class BorerAreaMiningWiringTest {
         }
         assertTrue(actualMouse&&actualKeyboard&&boundKey,"Shared helper reads actual bound mouse and keyboard input");
         assertTrue(calls(physical).contains("isWindowActive"));
-        assertFalse(calls(method("runtime/engine/BorerAreaRunner","safeForAdvice")).contains("isWindowActive"),
-            "Unfocused, safe incidents may still get anonymous advice");
-    }
-    @Test void onlyExplicitRestartCanProduceAnActualFollowupOutcome()throws Exception{
-        assertTrue(calls(method("runtime/engine/BorerAreaRunner","releaseFlight")).contains("outcome"));
-        var followup=calls(method("runtime/engine/BorerAreaRunner","observeFollowup"));
-        assertTrue(followup.contains("finishFollowup"));
-        assertFalse(calls(method("runtime/engine/BorerAreaRunner","recordStallAdvice")).contains("finishFollowup"));
     }
 
 }

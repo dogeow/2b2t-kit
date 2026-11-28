@@ -309,7 +309,7 @@ public final class KitConfig {
 
 		try (Reader reader = Files.newBufferedReader(PATH)) {
 			KitConfig config = GSON.fromJson(reader, KitConfig.class);
-			if (config == null) return new KitConfig();
+			if (config == null) return unreadable(null);
 			if (config.trustedPlayers == null) config.trustedPlayers = new ArrayList<>();
 			if (config.savedPlaces == null) config.savedPlaces = new ArrayList<>();
 			migrateSavedPlaceDimensions(config);
@@ -508,9 +508,15 @@ public final class KitConfig {
 			}
 			return config;
 		} catch (Exception exception) {
-			KitClient.LOGGER.warn("Could not read {}, using defaults", PATH, exception);
-			return new KitConfig();
+			return unreadable(exception);
 		}
+	}
+
+	/** Defaults for this session, but only after the unparseable file is copied aside: the next save overwrites it. */
+	private static KitConfig unreadable(Exception exception) {
+		Path kept = AtomicFiles.keepAside(PATH, Long.toString(System.currentTimeMillis()));
+		KitClient.LOGGER.error("Could not read {}; using defaults. Original kept at {}", PATH, kept, exception);
+		return new KitConfig();
 	}
 
 	/** 把结构搜索半径夹到合法范围。 */

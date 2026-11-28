@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -59,6 +60,73 @@ class Tests(unittest.TestCase):
   self.assertEqual([p[0] for p in bounded_canopy_path(floors+roof,[.5,64.2,.5],95)], [.5,1.5,2.5])
   floors[0]['state']='Block{minecraft:polished_andesite}'
   self.assertEqual(len(bounded_canopy_path(floors+roof,[.5,64.2,.5],95)),3)
+ def test_canopy_escape_descends_only_after_proving_lower_floor_and_exit(self):
+  for floor_available in (True,False):
+   with self.subTest(floor_available=floor_available),tempfile.TemporaryDirectory() as temp:
+    c=MaterialClient.__new__(MaterialClient);c.world='world';c.out=Path(temp);c.park_target=[.5,95,.5]
+    state={'pos':[.5,65.,.5],'health':20,'guard_armed':True,'guard_pve_only':True,
+           'flight':True,'under_water':False,'entities':[]}
+    rows=[{'pos':[x,63,0],'state':'Block{minecraft:grass_block}',
+           'solid':True,'passable':False,'fluid':False,'block_entity':False} for x in (0,1)]
+    if not floor_available:rows=rows[1:]
+    rows.append({'pos':[0,68,0],'state':'Block{minecraft:oak_leaves}',
+                 'solid':True,'passable':False,'fluid':False,'block_entity':False})
+    sent=[]
+    c.status=lambda:dict(state)
+    def request(op,**kw):
+     if op=='scan':
+      cells=math.prod(kw['max'][i]-kw['min'][i]+1 for i in range(3))
+      return {'phase':'done','world_session':'world','blocks':rows,'scan_cells_read':cells,'scan_total_cells':cells}
+     sent.append(kw['target']);state['pos']=kw['target'];return {'phase':'done'}
+    c.request=request
+    if floor_available:
+     result=c._finish_canopy_escape(state,[rows[-1]])
+     self.assertAlmostEqual(64.05,sent[0][1]);self.assertEqual([1.5,64.05,.5],result['pos'])
+    else:
+     with self.assertRaisesRegex(RuntimeError,'No verified short natural-ground exit'):
+      c._finish_canopy_escape(state,[rows[-1]])
+     self.assertEqual([],sent)
+ def test_canopy_path_may_depart_from_hive_but_not_walk_across_other_hives(self):
+  hive={'pos':[0,63,0],'state':'Block{minecraft:bee_nest}[facing=north,honey_level=2]',
+        'solid':True,'passable':False,'fluid':False,'block_entity':True}
+  ground={'pos':[1,63,0],'state':'Block{minecraft:grass_block}',
+          'solid':True,'passable':False,'fluid':False,'block_entity':False}
+  roof={'pos':[0,68,0],'state':'Block{minecraft:oak_leaves}',
+        'solid':True,'passable':False,'fluid':False,'block_entity':False}
+  self.assertEqual([[.5,64.2,.5],[1.5,64.2,.5]],bounded_canopy_path([hive,ground,roof],[.5,64.2,.5],95))
+  other={**hive,'pos':[1,63,0]}
+  self.assertIsNone(bounded_canopy_path([hive,other,roof],[.5,64.2,.5],95))
+ def test_canopy_exit_accepts_passable_flower_but_not_wither_rose(self):
+  floors=[{'pos':[x,63,0],'state':'Block{minecraft:grass_block}',
+           'solid':True,'passable':False,'fluid':False,'block_entity':False} for x in (0,1)]
+  roof={'pos':[0,68,0],'state':'Block{minecraft:oak_leaves}','solid':True,'passable':False,'fluid':False,'block_entity':False}
+  flower={'pos':[0,64,0],'state':'Block{minecraft:dandelion}','solid':False,'passable':True,'fluid':False,'block_entity':False}
+  self.assertEqual([[.5,64.05,.5],[1.5,64.05,.5]],bounded_canopy_path(floors+[roof,flower],[.5,64.05,.5],95))
+  flower['state']='Block{minecraft:wither_rose}'
+  self.assertIsNone(bounded_canopy_path(floors+[roof,flower],[.5,64.05,.5],95))
+ def test_canopy_escape_can_descend_three_verified_clear_cells(self):
+  for obstructed in (False,True):
+   with self.subTest(obstructed=obstructed),tempfile.TemporaryDirectory() as temp:
+    c=MaterialClient.__new__(MaterialClient);c.world='world';c.out=Path(temp);c.park_target=[.5,95,.5]
+    state={'pos':[.5,67.08,.5],'health':20,'guard_armed':True,'guard_pve_only':True,
+           'flight':True,'under_water':False,'entities':[]}
+    rows=[{'pos':[x,63,0],'state':'Block{minecraft:grass_block}',
+           'solid':True,'passable':False,'fluid':False,'block_entity':False} for x in (0,1)]
+    roof={'pos':[0,70,0],'state':'Block{minecraft:oak_leaves}',
+          'solid':True,'passable':False,'fluid':False,'block_entity':False};rows.append(roof)
+    if obstructed:rows.append({'pos':[0,65,0],'state':'Block{minecraft:stone}','solid':True,'passable':False,'fluid':False,'block_entity':False})
+    sent=[];c.status=lambda:dict(state)
+    def request(op,**kw):
+     if op=='scan':
+      cells=math.prod(kw['max'][i]-kw['min'][i]+1 for i in range(3))
+      return {'phase':'done','world_session':'world','blocks':rows,'scan_cells_read':cells,'scan_total_cells':cells}
+     sent.append(kw['target']);state['pos']=kw['target'];return {'phase':'done'}
+    c.request=request
+    if obstructed:
+     with self.assertRaisesRegex(RuntimeError,'No verified short natural-ground exit'):c._finish_canopy_escape(state,[roof])
+     self.assertEqual([],sent)
+    else:
+     c._finish_canopy_escape(state,[roof]);self.assertAlmostEqual(64.05,sent[0][1]);self.assertEqual([1.5,64.05,.5],sent[-1])
  def test_canopy_path_rejects_a_long_maze_even_within_the_nine_by_nine_scan(self):
   floors=[{'pos':[x,63,z],'state':'Block{minecraft:grass_block}',
            'solid':True,'passable':False,'fluid':False,'block_entity':False}
@@ -98,7 +166,8 @@ class Tests(unittest.TestCase):
    def request(op,**params):
     calls.append((op,params))
     if op=='scan':
-     return {'world_session':c.world,'blocks':[{'pos':[100,66,200],
+     cells=math.prod(params['max'][i]-params['min'][i]+1 for i in range(3))
+     return {'phase':'done','world_session':c.world,'scan_cells_read':cells,'scan_total_cells':cells,'blocks':[{'pos':[100,66,200],
              'state':'Block{minecraft:oak_leaves}'}]}
     if op=='safe_logout':return {'phase':'done'}
     raise AssertionError('The blocked canopy must never receive a navigation command')
